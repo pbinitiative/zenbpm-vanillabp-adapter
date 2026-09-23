@@ -10,15 +10,16 @@ holds it or says it is an assumption and what would disprove it.
 
 - [ ] **Depends on:** E11.
 
-Wiki (`zenbpm-adapter.wiki`): `Home` (getting started per platform, minimal configuration = one
-`rest-address`, the outbox requirement, what a handler may assume about its thread with the 30-second
-lock, the engine version tested), `Configuration` (every key of the architecture table with level and
-default; the BPMN model for ZenBPM: `zenbpm:taskDefinition type` names the task definition, user tasks
-by type, no correlation key has to be modelled, what reaches the engine; keeping workflow modules
-apart: `use-prefix` default, `none`; timeouts and worker settings; boot behaviour; what an operator
-gets to see), `Deviations` (from `architecture/03-deviations-and-gaps.md`, each entry linking the
-README section), `Engine-APIs` (every REST endpoint and the stream the adapter uses, when and why,
-what it never calls - the page to hand to whoever puts a proxy in front), `_Footer`.
+Wiki (`zenbpm-vanillabp-adapter.wiki`): `Home` (getting started per platform, minimal configuration
+= one `rest-address`, the outbox requirement, what a handler may assume about its thread with the
+job lock the adapter sizes by `job-timeout` and renews, and the leader-change residual, the engine version tested), `Configuration` (every key of the architecture table
+with level and default; the BPMN model for ZenBPM: `zenbpm:taskDefinition type` names the task
+definition, user tasks by type, no correlation key has to be modelled, what reaches the engine;
+keeping workflow modules apart: `use-prefix` default, `none`; timeouts and worker settings; boot
+behaviour; what an operator gets to see), `Deviations` (from
+`architecture/03-deviations-and-gaps.md`, each entry linking the README section), `Engine-APIs`
+(every REST endpoint and the stream the adapter uses, when and why, what it never calls - the page
+to hand to whoever puts a proxy in front), `_Footer`.
 
 README: status, supported engine version (tested, not newer), coordinates, configuration, behaviour
 per section of the C8 README structure with ZenBPM's facts (deployment, two-phase start, the probes
@@ -37,14 +38,15 @@ application against a fresh engine container.
 
 `blueprints` belongs to `vanillabp-blueprints`, so this story is a pull request there, prepared and
 tested in the workspace checkout: a fourth profile next to `camunda7`, `camunda8`,
-`process-engine-api` selecting `org.pbinitiative.zenbpmadapter:zenbpm-adapter-spring-boot` resp. the
-Quarkus pair, `resources-location` `<module>/processes/zenbpm` where a model differs (most blueprint
-models use `zeebe:` extensions which the engine reads; a model with a signal or a conditional event
-needs a ZenBPM variant or is documented as not runnable there), a `bin/zenbpm_engine.sh` starting the
-container for CI like `camunda8_cluster.sh`, and the CI matrix entry. `blueprints/README.md` and
-`CONTRIBUTING.md` name the profile; `blueprints-organisation-page/AGENTS.md` if it lists BPMS. The
-blueprints' CI has to read `pbinitiative`'s packages (or Maven Central once S12.4.1 publishes there),
-which the pull request says.
+`process-engine-api` selecting `org.pbinitiative.zenbpmadapter:zenbpm-vanillabp-adapter-spring-boot`
+resp. the Quarkus pair, `resources-location` `<module>/processes/zenbpm` where a model differs (most
+blueprint models use `zeebe:` extensions which the engine reads; a model with a signal or a
+conditional event needs a ZenBPM variant or is documented as not runnable there), a
+`bin/zenbpm_engine.sh` starting the container for CI like `camunda8_cluster.sh`, and the CI matrix
+entry. `blueprints/README.md` and `CONTRIBUTING.md` name the profile;
+`blueprints-organisation-page/AGENTS.md` if it lists BPMS. The blueprints' CI has to read
+`pbinitiative`'s packages (or Maven Central once S12.4.1 publishes there), which the pull request
+says.
 
 **Acceptance criteria**: `./mvnw install -Pzenbpm` is green in the blueprints CI after the pull
 request is merged; until then, green locally against the workspace checkout.
@@ -56,8 +58,9 @@ request is merged; until then, green locally against the workspace checkout.
 `renovate.json` reviewed against the finished dependency tree (the engine pin's custom manager, the
 VanillaBP platform version, the Spring Boot and Quarkus BOMs which have to move together with the
 platform). Root `AGENTS.md` and `README.md` of the workspace updated with the final facts. Two pull
-requests to the VanillaBP project: the two skills of S1.1.2 re-read against the finished adapter, and
-a row for this adapter on the platform wiki's `BPMS-adapters` page linking `pbinitiative/zenbpm-adapter`.
+requests to the VanillaBP project: the two skills of S1.1.2 re-read against the finished adapter,
+and a row for this adapter on the platform wiki's `BPMS-adapters` page linking
+`pbinitiative/zenbpm-vanillabp-adapter`.
 
 ## S12.4.1 Release workflow and the first release
 
@@ -68,9 +71,9 @@ from the tag (`v2.0.0` -> `2.0.0`), runs the full build with Docker ITs, `mvn de
 target - GitHub Packages of `pbinitiative` at least, Maven Central under `org.pbinitiative` if the
 organisation's namespace and signing key are available (the Java client is published there, so the
 process exists) - and creates the GitHub release with the tag's notes. The wiki and README name
-`2.0.0` and the engine version tested; the blueprints' `zenbpm-adapter.version` points at it. A
-`UPGRADE.md` header says there is nothing to upgrade from.
+`2.0.0` and the engine version tested; the blueprints' `zenbpm-vanillabp-adapter.version` points at
+it. A `UPGRADE.md` header says there is nothing to upgrade from.
 
 **Acceptance criteria**: an application depending on
-`org.pbinitiative.zenbpmadapter:zenbpm-adapter-spring-boot:2.0.0` boots against the pinned engine
-image; the release workflow is the only path a release takes.
+`org.pbinitiative.zenbpmadapter:zenbpm-vanillabp-adapter-spring-boot:2.0.0` boots against the pinned
+engine image; the release workflow is the only path a release takes.

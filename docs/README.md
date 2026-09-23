@@ -1,11 +1,11 @@
 # VanillaBP adapter for ZenBPM - analysis, architecture and implementation plan
 
-This folder holds everything needed to build `zenbpm-adapter`, the VanillaBP 2 adapter for the
-ZenBPM engine (`github.com/pbinitiative/zenbpm`). The adapter is owned and built by the ZenBPM
-maintainers at `github.com/pbinitiative/zenbpm-adapter` (MIT licence, packages
-`org.pbinitiative.zenbpmadapter`), not by the VanillaBP project; it implements VanillaBP's adapter SPI
-and follows the conventions of the VanillaBP adapters so that a reader of one recognises the other.
-The plan was produced on 2026-09-07 and revised for that ownership on 2026-09-13, against
+This folder holds everything needed to build `zenbpm-vanillabp-adapter`, the VanillaBP 2 adapter for
+the ZenBPM engine (`github.com/pbinitiative/zenbpm`). The adapter is owned and built by the ZenBPM
+maintainers at `github.com/pbinitiative/zenbpm-vanillabp-adapter` (MIT licence, packages
+`org.pbinitiative.zenbpmadapter`), not by the VanillaBP project; it implements VanillaBP's adapter
+SPI and follows the conventions of the VanillaBP adapters so that a reader of one recognises the
+other. The plan was produced on 2026-09-07 and revised for that ownership on 2026-09-13, against
 
 - `adapter-platform-integration` `2.0.0-SNAPSHOT` (adapter SPI as of decision 37),
 - `camunda8-adapter` at decision 20 (the structural template),
@@ -28,6 +28,7 @@ re-checked file by file rather than re-analysed.
 | 7 | [`plan/00-roadmap.md`](plan/00-roadmap.md) | Epics, milestones, the dependency graph and the global story order. |
 | 8 | `plan/epic-*.md` | One file per epic: features, stories, development instructions, acceptance criteria. |
 | 9 | [`open-questions.md`](open-questions.md) | What could not be settled from the code, who has to answer it, and the recommendation for each. |
+| 10 | `engine-enablement/E13.*.md` | Stories for the engine changes the ZenBPM maintainers picked up: the configurable job lock (E13.1, **implemented** in engine commit `071460cc`, 2026-09-23) and job retries (E13.3, open). |
 
 ## Who owns what
 
@@ -35,7 +36,7 @@ re-checked file by file rather than re-analysed.
 |---|---|
 | every decision of `architecture/02-design-decisions.md`, the gaps, the configuration keys | the adapter SPI (`adapter-platform-integration`) and its `ADAPTER-AUTHORS.md` |
 | the engine changes of the engine-enablement epic (same maintainers, same organisation) | the skills in the workspace's `.claude/skills/` which still say the ZenBPM adapter is built on the PEA adapter |
-| CI, releases, wiki at `pbinitiative/zenbpm-adapter.wiki`, coverage pages | the `blueprints` repository (a `-Pzenbpm` profile is a pull request there) and the wiki page `BPMS-adapters` which lists adapters |
+| CI, releases, wiki at `pbinitiative/zenbpm-vanillabp-adapter.wiki`, coverage pages | the `blueprints` repository (a `-Pzenbpm` profile is a pull request there) and the wiki page `BPMS-adapters` which lists adapters |
 | the code copied from `camunda8-adapter` and `process-engine-api-adapter` (Apache 2.0), which keeps its notices | the `2.0.0-SNAPSHOT` platform artifacts the build reads from VanillaBP's GitHub Packages |
 
 The last row is why CI is part of the plan from the first story: a build in a foreign organisation
@@ -63,7 +64,8 @@ adapter except for paging).
 Four things were added to what was asked for, because the analysis made them unavoidable:
 
 1. **An engine-enablement epic.** Ten features of the VanillaBP contract hit a limit of the engine
-   itself (a fixed 30-second job lock, no lock extension, no retries, no business key on message
+   itself (a fixed 30-second job lock and no lock extension - both solved by E13.1 on 2026-09-23 -,
+   no retries, no business key on message
    starts, no variable filter, no listeners, no user-task lifecycle events, output propagation only
    through mappings, no authentication). Since the engine lives in this workspace, each limit is
    written up as a small engine change with the adapter story which consumes it. The adapter ships a

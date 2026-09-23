@@ -5,8 +5,8 @@ engine, contributed upstream (`pbinitiative/zenbpm`, Go, follow `zenbpm/AGENTS.m
 after touching SQL, OpenAPI or protobuf; run `make test`, `make test-e2e`, `make go-static-analysis`;
 review with the `zenbpm-code-review` skill; tests per the `zenbpm-e2e-tests` skill).
 
-**Ordering.** By value for the adapter: E13.1 and E13.4 remove the two limits a user meets first
-(the 30-second lock, the unfindable message-started workflow); E13.2, E13.3, E13.5, E13.6 make the
+**Ordering.** By value for the adapter: E13.1 (done 2026-09-23) and E13.4 remove the two limits a
+user meets first (the 30-second lock, the unfindable message-started workflow); E13.2, E13.3, E13.5, E13.6 make the
 adapter simpler; E13.7 to E13.10 are quality. Each feature names the adapter story it supersedes; the
 adapter keeps its fallback until the engine version carrying the change is the pinned one, then
 switches by version (read from `/system/status`) or drops the fallback with a `UPGRADE.md` entry.
@@ -30,18 +30,19 @@ This is set up as part of the first E13 feature which lands, and documented in b
 
 ## E13.1 Configurable job lock and acknowledgement
 
-- [ ] **Engine:** honour `lock_duration` and `max_active_jobs` on `StreamSubscriptionRequest`
-  (uncomment and implement in `internal/cluster/jobmanager`: per-subscription lock instead of the
-  30-second constant, per-subscription active cap instead of ten per client), and add a
-  `JobExtendLockRequest {key}` to the stream (or `POST /v1/jobs/{key}/extend-lock`) which resets the
-  distributed job's `sentTime`. E2E tests in `test/e2e/`: a job locked for 2 s is redelivered after
-  2 s; an extended lock is not; a client with `max_active_jobs=1` receives one job while another
-  client receives the rest.
-- [ ] **Adapter twin (supersedes parts of S6.1.1, S6.1.2, S8.1.1):** `job-timeout` (per module,
-  workflow, task; default `PT5M`) sent with the subscription; lock renewal for asynchronous tasks
-  (`async-task-lock-renewal`, Camunda 8's shape) instead of a redelivery every 30 s; `max-jobs-active`
-  per subscription = slots; the user-task poller may become a stream subscription with a long lock
-  which is renewed and never completed (still decision 12's concern about slots - decide then).
+Full story with analysis, design, tests and acceptance criteria:
+[`../engine-enablement/E13.1-configurable-job-lock-and-lock-extension.md`](../engine-enablement/E13.1-configurable-job-lock-and-lock-extension.md).
+
+- [x] **Engine:** done - commit `071460cc` ("#841: Implement job locking capability per
+  subscription", pull request #842, 2026-09-23). What shipped and where it differs from the story:
+  the story's section 0.
+- [x] **Adapter twin:** folded into the main plan instead of superseding stories later, because no
+  adapter code existed yet. The adapter requires an engine carrying the feature (decision 15) and
+  uses it from the first story: S2.2.1 (REST `extendJobLock`), S2.2.2 (its codes), S2.3.1
+  (subscription settings, `lock_until`), S6.1.1 (`job-timeout`, renewal while a handler runs),
+  S6.1.2 (parking asynchronous tasks by `async-task-lock-renewal`), S6.2.1 (the backoff as a lock
+  extension), S6.2.2 (a closed stream releases the locks). Decision 12 (user tasks are polled) was
+  re-examined and stands, for a reason other than slots: a terminated job is never delivered.
 
 ## E13.2 Propagate job outputs without mappings
 
@@ -54,6 +55,9 @@ This is set up as part of the first E13 feature which lands, and documented in b
   set the attribute while rewriting; decision 7 superseded.
 
 ## E13.3 Job retries
+
+Full story with analysis, design, tests and acceptance criteria:
+[`../engine-enablement/E13.3-job-retries-with-backoff.md`](../engine-enablement/E13.3-job-retries-with-backoff.md).
 
 - [ ] **Engine:** implement `zenbpm:taskDefinition retries` (the TODO in `pkg/bpmn/engine.go`): a
   `fail` without an error code decrements retries and re-activates the job after an optional backoff

@@ -56,7 +56,7 @@ ZenBPM offers for it, the verdict and the design the adapter takes. The verdicts
 | `awarenessOfTask` / `awarenessOfUserTask` | `GET /v1/jobs/{key}` then the instance for the scope | SUPPORTED | non-advancing read; a job of another scope is UNKNOWN |
 | `canLocateWorkflows` | true | SUPPORTED | - |
 | `workflowVisibilityDelay` | leader reads its own writes; followers lag by replication | PARTIAL | `workflow-visibility-timeout`, default `PT2S`, polled every 250 ms |
-| `deliversTasksAtLeastOnce` | redelivery after 30 s | SUPPORTED | `true`; delivery id = job key |
+| `deliversTasksAtLeastOnce` | redelivery after the lock lapses, on a leader change, after a stream reconnect | SUPPORTED | `true`; delivery id = job key |
 | `openTaskCount` | `GET /v1/jobs?...` has `totalCount`, no filter by process id | PARTIAL | answered through `GET /v1/process-definitions/{key}/statistics` per known definition key, `null` where the module deployed nothing |
 
 ## E. Inbound: task delivery
@@ -72,16 +72,16 @@ ZenBPM offers for it, the verdict and the design the adapter takes. The verdicts
 | `getMultiInstances` | iteration = child instance; input element as variable; index from history; no total | PARTIAL | element from the child instance's variables; index and total from `GET .../child-processes` of the parent, cached per parent (engine-gated E13.7 for a cheaper answer) |
 | Complete with shared values | variables reach the scope only via output mappings | SUPPORTED with a twist | `PATCH variables` on the job's instance, then `complete` with the same values; both idempotent |
 | BPMN error | `fail {errorCode}` | SUPPORTED | unmatched code = incident, documented |
-| Technical failure | no retries | PARTIAL | do NOT `fail`; leave the job to the 30-second redelivery, back off locally per job key (`retry-backoff`, exponential, bounded); after `max-redeliveries` fail the job so an incident names it (engine-gated E13.3) |
-| Handler longer than the lock | second delivery runs concurrently | PARTIAL | documented; the core warns on concurrent deliveries; `worker-threads` sizing note; engine-gated E13.1 |
-| Asynchronous task (`@TaskId`) staying open | redelivered every 30 s for as long as it is open, occupying the client's slots | PARTIAL | answered from the delivery record (COMPLETION_PENDING) at once; `async-task-` messages; engine-gated E13.1 |
-| `stopWorkflowProcessing` drains | stream close is immediate; the lock lapses after 30 s | SUPPORTED | unsubscribe, wait `shutdown-grace` for handlers, never `fail` while shutting down |
+| Technical failure | no retries | PARTIAL | do NOT `fail`; extend the job's lock by the backoff (`retry-backoff`, exponential, bounded) so the engine hands it out again after exactly that time, count attempts locally per job key; after `max-redeliveries` fail the job so an incident names it (engine-gated E13.3) |
+| Handler longer than the lock | lock per subscription (`lock_duration_ms`), extension relative to now (E13.1, shipped) | SUPPORTED | subscription lock = `job-timeout` (default `PT5M`, four levels); a timing thread extends the lock of a running handler at half the job timeout; a leader change still redelivers (documented residual) |
+| Asynchronous task (`@TaskId`) staying open | lock extension up to `jobManager.maxLockDurationMs` (24 h by default) | SUPPORTED | after COMPLETION_PENDING extend the lock by `async-task-lock-renewal` (default `PT1H`); the next delivery after it lapses is answered from the delivery record and renews again (Camunda 8's shape) |
+| `stopWorkflowProcessing` drains | closing the stream releases the client's locks at once | SUPPORTED | unsubscribe, wait `shutdown-grace` for handlers, never `fail` while shutting down; the factory closes the stream last, which hands the open jobs back to the engine |
 
 ## F. Inbound: notifications
 
 | Requirement | ZenBPM | Verdict | Design |
 |---|---|---|---|
-| `@TaskEvent CREATED` for user tasks | a job of the user task's type; a stream subscription would re-send it every 30 s and count against the 10-slot cap | PARTIAL | poll `GET /v1/jobs?jobType=&state=active` at `user-task-poll-interval` (default `PT5S`), seen-set per node, delivery record as the net; engine-gated E13.5 |
+| `@TaskEvent CREATED` for user tasks | a job of the user task's type; a stream subscription would deliver it once per lock and cannot report its termination | PARTIAL | poll `GET /v1/jobs?jobType=&state=active` at `user-task-poll-interval` (default `PT5S`), seen-set per node, delivery record as the net; engine-gated E13.5 |
 | `@TaskEvent CANCELED` for user tasks | poll `state=terminated` | PARTIAL | same poller, `terminated` jobs |
 | `@TaskEvent CANCELED` for service tasks | nobody is told | MISSING | deviation, like Camunda 8 |
 | `@WorkflowEnded` | no listener, no event stream | MISSING natively | model rewrite: a marker service task (`vanillabp__ended`) is inserted before every end event of the top-level process where a handler exists; kind COMPLETED only, end event id known, terminated instances report nothing; engine-gated E13.6 |

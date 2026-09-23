@@ -45,6 +45,12 @@ simplicity and on what a user may do inside a handler.
 
 **ZenBPM maintainers answer:** Hi priority.
 
+**Story:** [`engine-enablement/E13.1-configurable-job-lock-and-lock-extension.md`](engine-enablement/E13.1-configurable-job-lock-and-lock-extension.md) (2026-09-19).
+
+**Implemented (2026-09-23):** engine commit `071460cc` (pull request #842). The adapter plan was
+rewritten to build on it directly: the "Plan meanwhile" above no longer applies, see the story's
+section 0 and `plan/epic-13-engine-enablement.md` E13.1.
+
 ### 3. Are job retries planned?
 
 **Found.** `zenbpm:taskDefinition retries` is parsed and ignored (`pkg/bpmn/engine.go` TODO); a
@@ -56,6 +62,8 @@ incident after `max-redeliveries` (E6 S6.2.1, decision 8).
 **Recommendation.** Retries with an optional backoff on the fail request. E13.3.
 
 **ZenBPM maintainers answer:** Medium priority. Retry strategy?
+
+**Story:** [`engine-enablement/E13.3-job-retries-with-backoff.md`](engine-enablement/E13.3-job-retries-with-backoff.md) (2026-09-19); the strategy is its section 4.1, the one default to decide its section 9.1.
 
 ### 4. Is there a way to propagate job outputs without output mappings?
 
@@ -101,8 +109,9 @@ deduplication, as Camunda 8 offers. E13.8.
 
 ### 7. Stability, versioning, authentication
 
-- Which release to pin for the first adapter release: `v1.7.0` (released) or `v1.8.0` (working tree,
-  `application/octet-stream` deploy contract)? Does the engine serve its OpenAPI document at runtime
+- Which release to pin for the first adapter release? Since 2026-09-23 the answer is constrained:
+  the adapter needs E13.1 (commit `071460cc`), so the earliest candidate is the release after
+  `v1.7.0` (`VERSION` says `v1.8.0`). When will it be tagged? Does the engine serve its OpenAPI document at runtime
   (`/v1/openapi` or similar), so the adapter can diff its pinned copy against the running engine?
 - Is an API stability statement planned (which endpoints are stable, which are tooling)? The adapter
   pins one engine version per release (decision 15) until there is one.
@@ -153,14 +162,16 @@ entirely until E13.4 lands. The plan ships the opt-in.
 
 ### 13. Repository, organisation, coordinates and licence
 
-**Decided (2026-09-13):** the repository is `github.com/pbinitiative/zenbpm-adapter` (exists, `main`,
-MIT), packages start with `org.pbinitiative.zenbpmadapter`. **Still to confirm:** the groupId. The plan
-uses `org.pbinitiative.zenbpmadapter`, equal to the root package; the alternative is the Java client's
-`org.pbinitiative.zenbpm` with artifact ids `zenbpm-adapter-*`, which puts engine client and adapter
-under one group. Either works; the choice has to be made before S1.1.1 and never changed afterwards.
-Artifact ids in any case: `zenbpm-adapter` (core), `zenbpm-adapter-spring-boot`, `zenbpm-adapter-quarkus`,
-`zenbpm-adapter-quarkus-deployment`, `zenbpm-adapter-engine-test-support`. The wiki lives at
-`pbinitiative/zenbpm-adapter.wiki`.
+**Decided (2026-09-13):** the repository is `github.com/pbinitiative/zenbpm-vanillabp-adapter`
+(exists, `main`, MIT), packages start with `org.pbinitiative.zenbpmadapter`. **Still to confirm:**
+the groupId. The plan uses `org.pbinitiative.zenbpmadapter`, equal to the root package; the
+alternative is the Java client's `org.pbinitiative.zenbpm` with artifact ids
+`zenbpm-vanillabp-adapter-*`, which puts engine client and adapter under one group. Either works;
+the choice has to be made before S1.1.1 and never changed afterwards. Artifact ids in any case:
+`zenbpm-vanillabp-adapter` (core), `zenbpm-vanillabp-adapter-spring-boot`,
+`zenbpm-vanillabp-adapter-quarkus`, `zenbpm-vanillabp-adapter-quarkus-deployment`,
+`zenbpm-vanillabp-adapter-engine-test-support`. The wiki lives at
+`pbinitiative/zenbpm-vanillabp-adapter.wiki`.
 
 **Licence.** MIT is compatible with what the plan does: the adapter links no engine code (network
 protocol only, so the engine's AGPL does not reach it), and the code adapted from the Apache-2.0

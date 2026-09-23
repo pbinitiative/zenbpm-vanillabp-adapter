@@ -89,13 +89,22 @@ after the first survey because the design depends on them; everything else was r
   `WaitingJob{key, instance_key, input_variables, type, element_id, created_at, element_type}`.
   Client identity = gRPC metadata `client_id` (UUID generated if absent; a second stream with the same
   id is rejected).
-- **Lock (verified)**: `jobLockDuration = 30 s`, `maxActiveJobsPerClient = 10`
-  (`internal/cluster/jobmanager/server.go:27-29`). The lock is an in-memory list on the partition
-  leader; the DB row is untouched. After 30 s without complete/fail the job is handed out again, also
-  on worker disconnect, leader restart or leadership change. **No lock extension** (`lock_duration`
-  and `max_active_jobs` are commented out in the proto). **No ownership check**: any client may
-  complete any active job. **An assignee does not stop a job from being handed out** (the waiting
-  query ignores it). The active-job cap is per CLIENT across all job types.
+- **Lock (since commit `071460cc`, 2026-09-23, E13.1)**: each subscription names its own
+  `lock_duration_ms` and `max_active_jobs` per job type (`0` = engine defaults
+  `jobManager.defaultLockDurationMs` = 30 s and `jobManager.defaultMaxActiveJobs` = 10; capped at
+  `maxLockDurationMs` = 24 h and `maxActiveJobsCap` = 1000, silently). Every `WaitingJob` carries
+  `lock_until` (leader clock, conservative). A holder extends the lock to "now plus a duration" with
+  `JobExtendLockRequest` on the stream (answer `LockExtended` or `ErrorResult` codes 1 lock not held,
+  2 held by another client, 3 leader unavailable - outcome unknown) or `POST /v1/jobs/{key}/extend-lock
+  {clientId, lockDuration}` (`200 {lockUntil}`, `409`, `404`, `502`). Any positive duration is accepted,
+  so an extension by a short duration makes a job deliverable again at a chosen moment. The cap is
+  counted per (client, job type). The lock is still in memory on the partition leader: a leader change
+  forgets every lock and the new leader redelivers at once; closing a stream releases all locks of
+  its client at once; a leader holds at most about 32,700 locked jobs. **No ownership check**: any
+  client may complete any active job. **An assignee does not stop a job from being handed out** (the
+  waiting query ignores it).
+- Before that commit (up to `v1.7.0`): a fixed 30 s lock, no extension, ten active jobs per CLIENT
+  across all types. The adapter does not support those engine versions (decision 15).
 - `POST /v1/jobs/{key}/complete {variables}` -> 201. **(verified)** Already completed -> engine logs
   and returns `nil` (201). Terminated/failed job or an instance not `active` -> 500.
   **(verified)** The variables reach the process scope ONLY through `zenbpm:output` mappings of the
@@ -108,7 +117,8 @@ after the first survey because the design depends on them; everything else was r
   **incident** is created and the instance turns `failed`. There is no `message` field on REST.
 - **Retries are not implemented (verified: `pkg/bpmn/engine.go` "TODO: Implement Headers as worker
   parameters and Retries")**. A technical failure the worker cannot recover from is either left to the
-  30-second redelivery or escalated by `fail`, which is an incident. `POST /v1/incidents/{key}/resolve`
+  lock's redelivery (or brought back earlier by extending the lock by a short duration) or escalated
+  by `fail`, which is an incident. `POST /v1/incidents/{key}/resolve`
   re-activates the job.
 - `POST /v1/jobs/{key}/assign {assignee}` for user tasks; REST cannot unassign.
 
@@ -172,7 +182,9 @@ after the first survey because the design depends on them; everything else was r
 
 ## 8. Limits which shape the adapter (all verified in source)
 
-1. Job lock 30 s, in memory, not extendable, at most 10 active jobs per client id across job types.
+1. ~~Job lock 30 s, not extendable, 10 active jobs per client~~ - solved by E13.1 (commit `071460cc`):
+   the lock is configurable per subscription and extendable, the cap is per job type. What remains:
+   the lock lives in memory on the partition leader, so a leader change redelivers every open job.
 2. No retries: `fail` without an error code is an incident at once.
 3. Job completion variables reach the process scope only through output mappings.
 4. A message nobody waits for is refused with 404 and lost; an unmatched correlation key may start a

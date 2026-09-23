@@ -10,8 +10,8 @@ gap cites the same number.
 | # | Gap | Evidence (zenbpm/) | Adapter behaviour | Engine-enablement | ZenBPM dev discussion notes |
 |---|---|---|---|---|---|
 | 1 | A message-started instance carries no business key and cannot be found afterwards | `openapi/api.yaml` `PublishMessageRequest` has no `businessKey`; `POST /process-instances` is the only place it is set; no variable filter (`internal/sql/queries/process_instance.sql`) | `startWorkflowByMessage` works, but the probe finds such a workflow only through the bounded client-side scan behind `message-start-lookup: scan` (default `refuse`, which fails the start with a guiding message) | E13.4 `businessKey` on `POST /v1/messages` or a variable filter | |
-| 2 | The job lock is 30 s and cannot be extended | `internal/cluster/jobmanager/server.go:27` constant; `lock_duration` commented out in `pkg/zenclient/proto/zenbpm.proto` | a handler longer than 30 s meets a second delivery of the same job on another slot; the core names and counts it; an open `@TaskId` task is redelivered every 30 s and answered from the record | E13.1 per-subscription lock duration and an "acknowledge without completing" | |
-| 3 | At most ten active jobs per client id, across all job types | `jobmanager/server.go:29`, `server.go:130` | the dispatcher accepts only what a free slot can run; open asynchronous tasks compete for the ten | E13.1 `max_active_jobs` per subscription | |
+| 2 | ~~The job lock is 30 s and cannot be extended~~ **Closed by E13.1** (engine commit `071460cc`, 2026-09-23). What remains: the lock lives in the partition leader's memory, so a leader change redelivers every open job at once | `internal/cluster/jobmanager/server.go` (in-memory `distributedJobs`) | subscription lock = `job-timeout`, renewed at half while a handler runs; open `@TaskId` tasks parked by `async-task-lock-renewal`; a second delivery after a leader change is answered from the record where the first committed, and named by the core where it did not | E13.1 done; persisting locks is a possible follow-up | |
+| 3 | ~~At most ten active jobs per client id, across all job types~~ **Closed by E13.1**: `max_active_jobs` per subscription, counted per job type | `jobmanager/server.go` | every type subscribed with `max_active_jobs` = the handler slots | E13.1 done | |
 | 4 | A message with an unmatched correlation key falls back to a start subscription of the same name | `internal/cluster/node.go` `publishCorrelatedMessageByName` (fallback with warning) | a message name used by a start event AND a catch element in one module is refused while deploying; correlating a message which is only a start message fails in phase one | E13.8 a strict mode on publish | |
 | 5 | A message nobody waits for is refused (404) and lost | `node.go:844,867` | phase two answers `PhaseTwoRetryLater(workflow-visibility-timeout)`; the outbox is the buffer, bounded by `vanillabp.outbox.block-after-attempts` | E13.8 buffering with a TTL | |
 | 6 | No retries: a failed job is an incident | `pkg/bpmn/engine.go` TODO, `jobs_api.go` `JobFailByKey` | a thrown handler is not reported; local backoff, `max-redeliveries`, then `fail` | E13.3 retries on the task definition | |
@@ -40,10 +40,11 @@ what a remote BPMS looks like.
 1. **A workflow started by message cannot be found again** unless `message-start-lookup: scan` is set,
    which walks the active instances of that process. Outlook: a business key on the publish command or
    a variable filter in the engine (GAPS 1).
-2. **A handler has 30 seconds** before the engine hands the same job to another handler; VanillaBP
-   names both deliveries in the log and the second one is answered from the record once the first
-   committed. Size `worker-threads` against the connection pool and keep handlers short. Outlook: a
-   configurable lock (GAPS 2, 3).
+2. **A change of the engine's partition leader hands every open job out again**, a job whose handler is
+   still running included, because the engine keeps job locks in the leader's memory. VanillaBP names
+   both deliveries in the log, and a delivery arriving after the first one committed is answered from
+   the record. Handlers may run as long as they need otherwise: the adapter renews their lock
+   (`job-timeout`, GAPS 2).
 3. **`sendSignal` is not supported**; the engine has no signals (GAPS 13).
 4. **A message may reach the engine before its subscription** and is then refused; VanillaBP repeats it
    for the visibility window until `vanillabp.outbox.block-after-attempts` (GAPS 5).

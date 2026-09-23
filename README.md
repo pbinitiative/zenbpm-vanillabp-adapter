@@ -1,4 +1,4 @@
-# zenbpm-adapter
+# zenbpm-vanillabp-adapter
 
 The [VanillaBP](https://www.vanillabp.io) adapter for the [ZenBPM](https://github.com/pbinitiative/zenbpm)
 engine, owned by the ZenBPM maintainers.

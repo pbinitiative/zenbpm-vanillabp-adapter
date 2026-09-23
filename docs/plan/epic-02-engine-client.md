@@ -95,6 +95,7 @@ Reference implementations to read before starting: `Camunda8AdapterConfiguration
    | `completeJob(key, variables)` | `POST /jobs/{key}/complete` |
    | `failJob(key, errorCode, variables)` | `POST /jobs/{key}/fail` (errorCode may be null) |
    | `publishMessage(name, correlationKey, variables)` | `POST /messages` |
+   | `extendJobLock(key, clientId, duration)` -> `Instant lockUntil` | `POST /jobs/{key}/extend-lock {clientId, lockDuration}` (ISO-8601); `200 {lockUntil}` (E13.1) |
    | `openApi()` -> `Optional<String>` | `GET /v1/openapi` if the engine serves it (open question 12); empty on 404 |
 
 2. Any non-2xx answer (except where the table says otherwise) throws
@@ -138,6 +139,7 @@ Reference implementations to read before starting: `Camunda8AdapterConfiguration
 | `permanentFailure(Throwable)` | `ZenBpmApiException` 400, 413, 415; `NumberFormatException` (a key which is not a number) |
 | `isGoneJob(Throwable)` | `ZenBpmApiException` 404 raised by a job endpoint |
 | `nobodyWaits(Throwable)` | `ZenBpmApiException` 404 raised by `POST /messages` |
+| `lockLost(Throwable)` | `ZenBpmApiException` 409 raised by `extend-lock`: the lock lapsed, the job was completed or failed, or another client holds it - stop renewing, a second delivery may be under way |
 | `isUnavailable(Throwable)` | `ZenBpmUnavailableException`; `ZenBpmApiException` 502, 503, 504; `SocketTimeoutException`, `HttpTimeoutException`, `ConnectException` |
 | `isRepeatable(Throwable)` | everything not permanent (500 included, decision 10) |
 
@@ -165,14 +167,21 @@ wrapped in `CompletionException` and `RuntimeException`.
 
 1. `org.pbinitiative.zenbpmadapter.client.ZenBpmJobStream`: owns one `ManagedChannel` (plaintext or TLS per
    `grpc-plaintext`) and one bidirectional `JobStream` call with metadata `client_id`. API:
-   `subscribe(jobType)` / `unsubscribe(jobType)` with a reference count per type (two modules may
-   share a type only where scoping is `none`; the count keeps the second unsubscribe from cutting the
-   first module off), `onJob(Consumer<WaitingJob>)`, `close()`. The stream is opened lazily on the
+   `subscribe(jobType, lockDuration, maxActiveJobs)` / `unsubscribe(jobType)` with a reference count
+   per type (two modules may share a type only where scoping is `none`; the count keeps the second
+   unsubscribe from cutting the first module off; two subscribers of one type asking for different
+   settings end the boot naming both, the engine keeps one setting per client and type),
+   `onJob(Consumer<WaitingJob>)`, `close()`. The settings travel as `lock_duration_ms` and
+   `max_active_jobs` of `StreamSubscriptionRequest` (E13.1) and are re-sent with every
+   resubscription after a reconnect. The stream is opened lazily on the
    first subscription and reopened after a failure with an exponential backoff (1 s doubling to 30 s,
    jitter), re-sending every subscription with a reference count above zero. Reconnects are counted
    (`ZenBpmMetrics.streamReconnects`, E11) and logged at WARN once per outage and INFO when back.
-2. `WaitingJob` is the generated message; the stream hands it on unchanged to the consumer on a
-   TIMING thread of the executor (S2.4.2), never on the gRPC transport thread, and never blocks.
+2. `WaitingJob` is the generated message; the stream hands it on unchanged, `lock_until` included,
+   to the consumer on a TIMING thread of the executor (S2.4.2), never on the gRPC transport thread,
+   and never blocks. The receive instant is recorded next to it, so the lock can be counted from
+   receipt with the subscribed duration where the clocks of engine and application differ (the
+   engine's own recommendation).
 3. `ErrorResult` frames are logged with code and message and, where they follow a subscribe, fail the
    subscription with a guiding exception naming the job type.
 4. The client id must be unique per node: a second stream with the same id is rejected by the
@@ -186,14 +195,19 @@ wrapped in `CompletionException` and `RuntimeException`.
   instance completed; then stop the container (`engine.stop()`), start a new one, assert the stream
   reconnected and receives the next job (this proves the backoff path against a real engine).
 - `ZenBpmJobStreamTest` with an in-process `io.grpc.inprocess` server implementing `ZenBpm`:
-  reference counting, resubscription after reconnect, an error frame failing a subscription, `close()`
-  ending the call.
+  reference counting, resubscription after reconnect (settings included), an error frame failing a
+  subscription, `close()` ending the call, conflicting settings of one type refused.
+- `ZenBpmJobLockIT` (Docker): a subscription with a 2 s lock redelivers an unfinished job to a second
+  client after about 2 s and not before; `extendJobLock` by 5 s keeps it away; `409` after the lock
+  lapsed; closing the first stream hands its locked job to the second client at once.
 
 **Acceptance criteria**
 
 - [ ] A job created while the stream is subscribed arrives; one created while the stream is down
   arrives after the reconnect (the engine hands undelivered jobs out on the next poll).
 - [ ] Two subscriptions and one unsubscription of the same type leave the type subscribed.
+- [ ] Each subscription carries the lock duration and the active-job cap it was given, and they
+  survive a reconnect.
 - [ ] The consumer runs on an adapter thread, proven by asserting the thread name prefix.
 
 ---

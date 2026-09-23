@@ -33,12 +33,13 @@ mapping in `02-spi-requirements-mapping.md`.
 
 ## Decision taken for this plan
 
-**Build `zenbpm-adapter` natively, on the Camunda 8 adapter as the structural template, and borrow
-the engine-neutral raw-XML utilities from the Process-Engine-API adapter.** The ZenBPM adapter
-depends on neither of them as an artifact; both are copied-and-adapted code, cited in the README as
-the origin. This is written up as draft decision 1 in `architecture/02-design-decisions.md` and as
-open question 8 for the maintainer, because it contradicts the skill sentence, and the skills
-`vanillabp-bpms-characteristics` and `vanillabp-adapter-building` have to be updated with the outcome.
+**Build `zenbpm-vanillabp-adapter` natively, on the Camunda 8 adapter as the structural template,
+and borrow the engine-neutral raw-XML utilities from the Process-Engine-API adapter.** The ZenBPM
+adapter depends on neither of them as an artifact; both are copied-and-adapted code, cited in the
+README as the origin. This is written up as draft decision 1 in
+`architecture/02-design-decisions.md` and as open question 8 for the maintainer, because it
+contradicts the skill sentence, and the skills `vanillabp-bpms-characteristics` and
+`vanillabp-adapter-building` have to be updated with the outcome.
 
 ## What comes from where
 
@@ -50,9 +51,9 @@ open question 8 for the maintainer, because it contradicts the skill sentence, a
 | Per-id client factory and registry, eager construction, startup validation with the three outcomes (unconfigured -> WARN and boot, inconsistent -> fail unless nowhere-first with `warn`, complete -> client built), never echoing a credential | `Camunda8ClientFactory`, `Camunda8ClientFactoryRegistry`, `Camunda8StartupValidation`, `Camunda8AdapterConfiguration` | fewer keys; no auth block in release 1 |
 | The start waits once for its engine (`startup-wait`) | `Camunda8ClusterWait` (decision 17) | asks `GET /system/health/ready` |
 | Error classification read from codes, one class serving outbox and worker commands | `Camunda8Errors` (decision 16) | HTTP codes only; 404 is retry-later for messages and "gone" for jobs |
-| Handler executor with bounded slots, two platform threads for timing, `worker-threads` and `virtual`, poll only while a slot is free | `Camunda8Executor`, `Camunda8ExecutionModel`, `Camunda8VirtualThreadExecutor` (decisions 7, 18) | the stream cannot be gated per slot; the adapter buffers at most `worker-threads` jobs and lets the rest of the client's 10-slot budget lapse |
+| Handler executor with bounded slots, two platform threads for timing, `worker-threads` and `virtual`, fetch only what a slot can run | `Camunda8Executor`, `Camunda8ExecutionModel`, `Camunda8VirtualThreadExecutor` (decisions 7, 18) | with E13.1 each job type is subscribed with `max_active_jobs` = slots and the adapter renews the lock of a queued job when its handler starts, which takes the place of Camunda 8's "poll only while a slot is free" |
 | Job handler: new transaction, invoke, commit, then report; outcome mapping; delivery id; retries and backoff | `Camunda8JobHandler`, `Camunda8CommandRetry` (decision 9) | no retries at the engine, so the backoff is local and `fail` is the escalation |
-| Drain on shutdown, never fail a job while shutting down | `Camunda8Drain` (decision 6) | the lock lapses in 30 s anyway |
+| Drain on shutdown, never fail a job while shutting down | `Camunda8Drain` (decision 6) | closing the stream releases the adapter's locks, so the next node gets the jobs at once |
 | Ownership by scope, never by key; probes compare the scoped process id of the CALL | `Camunda8DeployedProcesses`, decision 3 | instance lookup gives the `bpmnProcessId` directly |
 | Model rewriting at deployment: scoped identifiers, injected correlation keys, injected listeners for lifecycle, injected multi-instance mappings; idempotent and never overwriting what the modeller wrote | decision 5 | listeners become marker service tasks; multi-instance mappings become instance-cache reads |
 | Viewer from two sources (what this boot deployed, the engine for the rest) | `Camunda8WorkflowViewer` | REST endpoints replace the query API |

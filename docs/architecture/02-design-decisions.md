@@ -1,4 +1,4 @@
-# Draft `DECISIONS.md` of `zenbpm-adapter`
+# Draft `DECISIONS.md` of `zenbpm-vanillabp-adapter`
 
 These are the entries the plan expects the repository to carry once its stories are done. Numbers are
 handed out here so stories can already say `see decision 5 in the repository's DECISIONS.md`; the
@@ -87,21 +87,24 @@ class and its annotations, not on the model.
 ### 8. A failed handler is not failed at the engine, because the engine has no retries
 
 `POST /jobs/{key}/fail` without an error code creates an incident at once. A handler which threw is
-therefore not reported; the job keeps its 30-second lock, the engine hands it out again, and the adapter
-backs off locally per job key (`retry-backoff`, doubling to five minutes) so a redelivery is not run
-into the same failure immediately. After `max-redeliveries` the job IS failed, so an operator sees an
+therefore not reported. Instead the adapter extends the job's lock by the backoff (`retry-backoff`,
+doubling to five minutes): an extension is counted from now (E13.1), so the engine hands the job out
+again after exactly the backoff, to whichever node has a slot, and counts the attempts locally per job
+key. After `max-redeliveries` the job IS failed, so an operator sees an
 incident naming the aggregate instead of a job which fails forever. The `fail` with an error code is
 untouched: it is the BPMN error the model asked for.
 
-### 9. Job delivery takes the stream, and a job nobody can run is left to lapse
+### 9. Job delivery takes the stream, with a lock the adapter sizes and renews
 
 Only the gRPC stream hands a job to one client at a time; the REST list is a plain query two nodes
-would answer identically. The stream pushes up to ten jobs per client id, and a job waiting in front of
-busy handlers would spend its 30-second lock in a queue. So the dispatcher accepts a job only while a
-handler slot is free and drops the rest without a word to the engine: the lock lapses, and the job
-goes to whichever node has room. Every command back to the engine goes over REST, so that the one
-classification of decision 10 reads a status code for all of them and a completion survives a stream
-reconnect.
+would answer identically. Every job type is subscribed with `lock_duration_ms` = the resolved
+`job-timeout` and `max_active_jobs` = the handler slots (E13.1). A job which waits in the queue in
+front of busy slots is harmless, because the handler extends its lock when it starts and at half the
+timeout while it runs, so the lock a handler works under is always a full one. Every command back to
+the engine goes over REST - the lock extensions included, with the stream's client id - so that the
+one classification of decision 10 reads a status code for all of them and a completion survives a
+stream reconnect. What the lock cannot cover is a leader change, which forgets every lock; the second
+delivery that follows is the documented at-least-once residual.
 
 ### 10. What the engine did is read from status codes, not from message text
 
@@ -122,9 +125,9 @@ cached, which is what makes the comparison affordable on every task delivery as 
 
 ### 12. User-task notifications are polled, not streamed
 
-A ZenBPM user task is a job. Subscribing its type on the stream would re-send every open user task
-every 30 seconds and count each against the ten active jobs the engine grants a client, which would
-starve the service tasks of the same adapter id. So a poller lists the user-task jobs of the deployed
+A ZenBPM user task is a job. Subscribing its type on the stream would hold a lock for the whole life of
+every open user task, renewed by the adapter for days, and it would still not tell the adapter when a
+user task is terminated, because a terminated job is never delivered. So a poller lists the user-task jobs of the deployed
 modules at `user-task-poll-interval`, remembers what it reported per node, and lets the platform's
 delivery record answer whatever a restart forgets. A `terminated` job is the `CANCELED` notification
 the engine cannot push.
@@ -142,7 +145,10 @@ versions of a process, which is what the check is for.
 
 ### 15. One pinned engine version, no release lines
 
-The adapter compiles against no engine artifact, so no pin decides the lowest engine it accepts; the
+The lowest engine the adapter accepts is the first release carrying E13.1 (commit `071460cc`: lock
+per subscription, lock extension, `lock_until`), because the task delivery of decision 9 is built on
+it; the adapter asks `GET /system/status` at startup and ends the boot guiding where the engine is
+older. Beyond that the adapter compiles against no engine artifact, so no pin decides anything else; the
 REST contract is the copy of `api.yaml` this repository ships, and the integration tests run against the
 image of that version. Supported means tested: the pinned image and nothing newer. Release lines are
 what Camunda 8 needs because its client is the minimum cluster; here they would be branches for a
@@ -151,15 +157,15 @@ the answer is a new adapter release against the new pin, and this entry is revis
 
 ### 16. The adapter follows VanillaBP's adapter conventions although another organisation owns it
 
-`zenbpm-adapter` belongs to the ZenBPM maintainers at pbinitiative, implements VanillaBP's adapter SPI
-and is read by people who know the Camunda and Process-Engine-API adapters. It therefore keeps their
-shape: the `core` / `spring-boot` / `quarkus` split with platform modules which only construct and
-register, Spotless with the platform's formatting conventions, coverage measured per platform with the
-same gate and rule, `test-utils` in every test, a `DECISIONS.md` as the only thing code cites, a
-user-facing wiki and a contributor-facing README, and configuration under `vanillabp.adapters.<id>.*`
-validated at startup with guiding messages. What differs is what ownership decides: the licence, the
-coordinates (`org.pbinitiative.zenbpmadapter`), the CI and where releases are published. The Go
-conventions of the engine repository do not reach into this one.
+`zenbpm-vanillabp-adapter` belongs to the ZenBPM maintainers at pbinitiative, implements VanillaBP's
+adapter SPI and is read by people who know the Camunda and Process-Engine-API adapters. It therefore
+keeps their shape: the `core` / `spring-boot` / `quarkus` split with platform modules which only
+construct and register, Spotless with the platform's formatting conventions, coverage measured per
+platform with the same gate and rule, `test-utils` in every test, a `DECISIONS.md` as the only thing
+code cites, a user-facing wiki and a contributor-facing README, and configuration under
+`vanillabp.adapters.<id>.*` validated at startup with guiding messages. What differs is what
+ownership decides: the licence, the coordinates (`org.pbinitiative.zenbpmadapter`), the CI and where
+releases are published. The Go conventions of the engine repository do not reach into this one.
 
 ### 17. Code adapted from the Apache-2.0 adapters keeps its licence and its notice
 

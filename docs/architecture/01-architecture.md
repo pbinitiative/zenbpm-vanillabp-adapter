@@ -1,18 +1,19 @@
-# Architecture of `zenbpm-adapter`
+# Architecture of `zenbpm-vanillabp-adapter`
 
 ## 1. Repository and coordinates
 
-- Repository `github.com/pbinitiative/zenbpm-adapter` (exists, default branch `main`, MIT licence,
-  owned by the ZenBPM maintainers), checked out as a sibling of the other adapters in the workspace and
-  registered in the superproject's `.gitmodules` as a LOCAL-ONLY member like `zenbpm` (the
-  superproject's own CI never sees either); plus `pbinitiative/zenbpm-adapter.wiki`. What the
-  workspace still needs is in S1.1.2.
+- Repository `github.com/pbinitiative/zenbpm-vanillabp-adapter` (exists, default branch `main`, MIT
+  licence, owned by the ZenBPM maintainers), checked out as a sibling of the other adapters in the
+  workspace and registered in the superproject's `.gitmodules` as a LOCAL-ONLY member like `zenbpm`
+  (the superproject's own CI never sees either); plus `pbinitiative/zenbpm-vanillabp-adapter.wiki`.
+  What the workspace still needs is in S1.1.2.
 - groupId `org.pbinitiative.zenbpmadapter` (equal to the root package, so a class name tells the
-  artifact), artifacts `zenbpm-adapter` (core), `zenbpm-adapter-spring-boot`, `zenbpm-adapter-quarkus`,
-  `zenbpm-adapter-quarkus-deployment`, `zenbpm-adapter-engine-test-support`; version `${revision}` =
-  `2.0.0-SNAPSHOT`, Java 21, Spring Boot 4.1.x and Quarkus 3.39.x as managed by
-  `adapter-platform-integration`. The VanillaBP platform artifacts (`io.vanillabp:*`, still
-  `2.0.0-SNAPSHOT`) are read from VanillaBP's GitHub Packages, which needs a token in CI (S1.3.1).
+  artifact), artifacts `zenbpm-vanillabp-adapter` (core), `zenbpm-vanillabp-adapter-spring-boot`,
+  `zenbpm-vanillabp-adapter-quarkus`, `zenbpm-vanillabp-adapter-quarkus-deployment`,
+  `zenbpm-vanillabp-adapter-engine-test-support`; version `${revision}` = `2.0.0-SNAPSHOT`, Java 21,
+  Spring Boot 4.1.x and Quarkus 3.39.x as managed by `adapter-platform-integration`. The VanillaBP
+  platform artifacts (`io.vanillabp:*`, still `2.0.0-SNAPSHOT`) are read from VanillaBP's GitHub
+  Packages, which needs a token in CI (S1.3.1).
 - Licence: MIT for the repository. Code copied and adapted from `camunda8-adapter` and
   `process-engine-api-adapter` is Apache 2.0 and keeps its licence: the copied files carry their
   original header, `NOTICE` names both origins with a pointer to the Apache licence text kept as
@@ -24,8 +25,9 @@
   conventions of `zenbpm/AGENTS.md` do not apply here.
 - Adapter type constant `zenbpm` (`ZenBpmAdapter.ADAPTER_TYPE`), Quarkus capability
   `io.vanillabp.adapter.zenbpm`, extension name `vanillabp-zenbpm`.
-- Engine pin: one property `zenbpm.version` (initially `v1.8.0`, or `v1.7.0` if 1.8 is not
-  released when the first story runs, see open question 9), filtered into
+- Engine pin: one property `zenbpm.version`, at least the first release carrying E13.1 (engine
+  commit `071460cc`; `VERSION` calls it `v1.8.0`), which the task delivery requires (decision 15;
+  open question 9), filtered into
   `core/src/main/resources/META-INF/vanillabp/adapter-zenbpm.properties` (`adapter.version`,
   `platform.version`, `zenbpm.engine`) and into the test resource `zenbpm-engine.properties`
   (`engine.image=ghcr.io/pbinitiative/zenbpm:${zenbpm.version}`). The API contract the adapter is
@@ -34,7 +36,7 @@
   `/v1/openapi` where the engine serves it, otherwise the copy is the contract.
 
 ```
-zenbpm-adapter/
+zenbpm-vanillabp-adapter/
   pom.xml                         parent: modules, BOM imports, Spotless, JaCoCo, flatten, engine pin
   formatting_conventions.xml      copied from adapter-platform-integration
   AGENTS.md  DECISIONS.md  GAPS.md  UPGRADE.md  README.md  LICENSE  NOTICE  readme/
@@ -75,7 +77,8 @@ from the pinned proto), because a hand-written gRPC client is not a reasonable t
 | `ZenBpmClientFactory` | builds ONE `ZenBpmClient` per adapter id eagerly; owns its lifecycle; closes what a module never stopped |
 | `ZenBpmClientRegistry` | id -> factory, the platform's lookup; knows whether two ids address one engine |
 | `ZenBpmRestClient` | `java.net.http.HttpClient` + Jackson; one method per used endpoint returning typed records (`ProcessDefinitionRef`, `ProcessInstanceRef`, `JobRef`, `HistoryPage`, ...); `request-timeout` on every call; maps `{code,message}` into `ZenBpmApiException(status, code, message, path)` |
-| `ZenBpmJobStream` | one bidirectional `JobStream` per adapter id and node, metadata `client_id`; subscribe/unsubscribe per job type with reference counting across modules; reconnect with backoff; hands `WaitingJob`s to a `JobDispatcher` |
+| `ZenBpmJobStream` | one bidirectional `JobStream` per adapter id and node, metadata `client_id`; subscribe/unsubscribe per job type with reference counting across modules, each subscription carrying `lock_duration_ms` (the resolved `job-timeout`) and `max_active_jobs` (the handler slots); reconnect with backoff; hands `WaitingJob`s (with `lock_until`) to a `JobDispatcher` |
+| `ZenBpmJobLocks` | extends locks over REST `POST /v1/jobs/{key}/extend-lock` with the stream's client id: renewal of running handlers, parking of open asynchronous tasks, "come back after the backoff" of a failed handler; `409` = the lock is lost (a second delivery may be under way), `502` = repeat, `404` = gone; warns once per adapter id where the answered deadline shows the engine capped the request (`JOB_MANAGER_MAX_LOCK_DURATION_MS`) |
 | `ZenBpmErrors` | the one classification: `permanentFailure(Throwable)` (400, 413, 415, key not a number), `isGone(Throwable)` (404 on a job), `retryLater(Throwable)` (404 on a message), `unavailable(Throwable)` (I/O, timeout, 502, 503, 5xx); read from status codes, never from text (Camunda 8 decision 16 applies verbatim) |
 | `ZenBpmEngineWait` | before the first deployment round per adapter id: poll `GET /system/health/ready` until 200, `startup-wait` runs out, or a permanent answer; log the address and the last answer every few seconds |
 | `ZenBpmHealth` | `checkHealth()`: READY -> UP, 503 -> DOWN with `reasons`, unreachable -> DOWN, unconfigured -> UNKNOWN |
@@ -168,8 +171,11 @@ instance through the cache; instance not in scope -> UNKNOWN; job `active` -> AC
 ### 4.3 Delivering a task
 
 ```
-JobStream ──WaitingJob──▶ JobDispatcher ──(slot free?)──▶ ZenBpmExecutor ──▶ ZenBpmJobHandler
-                                          │ no slot: drop it, the lock lapses in 30 s
+JobStream ──WaitingJob──▶ JobDispatcher ──(queue, bounded by the subscriptions' caps)──▶ ZenBpmExecutor ──▶ ZenBpmJobHandler
+                          subscription per job type: lock_duration_ms = job-timeout, max_active_jobs = slots
+ZenBpmJobHandler, before invoking:
+  lock renewal: if lock_until - now < job-timeout / 2, extend by job-timeout (a job which waited in the
+  queue starts with a full lock); while the handler runs, a timing thread extends every job-timeout / 2
 ZenBpmJobHandler:
   facts   = instanceCache.get(job.instance_key)              (GET /process-instances/{key} once)
   context = TaskInvocationContext{ taskDefinition = plain(job.type), aggregateId = facts.businessKey
@@ -180,9 +186,11 @@ ZenBpmJobHandler:
   COMPLETED           → PATCH /process-instances/{facts.key}/variables {shared values + id var}
                         POST /jobs/{key}/complete {same values}
   BPMN_ERROR          → PATCH variables; POST /jobs/{key}/fail {errorCode: scoped code}
-  COMPLETION_PENDING  → nothing (the job stays; every 30 s redelivery is answered from the record)
-  exception           → nothing sent; local backoff per job key (retry-backoff, x2, max 5 min);
-                        after max-redeliveries: POST /jobs/{key}/fail {} → incident naming the aggregate
+  COMPLETION_PENDING  → extend the lock by async-task-lock-renewal (default PT1H); when it lapses the
+                        redelivery is answered from the record (COMPLETION_PENDING again) and renews
+  exception           → nothing sent but a lock extension by the backoff (retry-backoff, x2, max 5 min):
+                        the engine hands the job out again after exactly that time; attempts counted
+                        locally per job key; after max-redeliveries: POST /jobs/{key}/fail {} → incident
 ```
 
 The `PATCH` before `complete` is what makes a gateway behind the task see the values (job outputs
@@ -190,9 +198,10 @@ propagate only through output mappings, section 4 of the capability analysis). B
 idempotent: a repeated PATCH writes the same values, a repeated complete is answered 201.
 
 Every handler runs `load -> invoke -> save -> commit -> report`, at least once. `deliversTasksAtLeastOnce()`
-is `true`, and the delivery id is the job key. `Concurrent deliveries` happen when a handler outlives
-the 30-second lock: documented, warned by the core, and the reason `worker-threads` is sized against the
-connection pool AND the lock.
+is `true`, and the delivery id is the job key. A second delivery while a handler still runs happens
+only where the lock was lost: the renewal answered `409`, or the partition leader changed (the lock
+lives in the leader's memory, E13.1 section 0). The adapter logs the lost lock with the task and the
+aggregate, and the core names and counts the concurrent delivery.
 
 ### 4.4 Messages
 
@@ -218,8 +227,9 @@ timing thread): every `user-task-poll-interval` it lists `GET /v1/jobs?jobType=<
 and `state=terminated` per user-task type of the deployed modules, keeps a bounded seen-set per node,
 and invokes the core with `TaskEvent CREATED` resp. `CANCELED`, delivery id = `job.key + ":created"`
 resp. `":canceled"`. The delivery record makes a restarted node harmless. `COMPLETE_USER_TASK` /
-`CANCEL_USER_TASK` are the job commands. The stream is deliberately NOT subscribed to user-task types:
-an open user task would be re-sent every 30 s and occupy the client's ten slots.
+`CANCEL_USER_TASK` are the job commands. The stream is deliberately NOT subscribed to user-task types
+(decision 12): a lock would have to be renewed for the whole life of a user task, and a terminated
+job is never delivered, so polling is needed for `CANCELED` anyway.
 
 ### 4.7 Workflow ended and BPMS-initiated start
 
@@ -234,17 +244,21 @@ values of the built aggregate). A cancelled instance runs no marker: kind TERMIN
 
 `stopWorkflowProcessing(module)`: unsubscribe the module's job types, stop the module's pollers, wait
 `shutdown-grace` (default `PT20S`) for handlers still inside the application, never `fail` a job while
-shutting down (its lock lapses in 30 s and the delivery record answers the redelivery). The client
-factory closes the stream and the HTTP client last, for every module which never reached the stop.
+shutting down (the delivery record answers the redelivery). The client factory closes the stream
+and the HTTP client last, for every module which never reached the stop; closing the stream releases
+every lock of the adapter's client at once (E13.1), so another node gets the open jobs immediately
+instead of after `job-timeout`. Asynchronous tasks parked by a lock extension are released with them
+and are re-parked by whichever node receives them next.
 
 ## 5. Threading
 
 - Handler slots: `worker-threads` (default 4) or `virtual` with `worker-threads-bound`; sized against
-  the database connection pool and against the 30-second lock (a queue in front of the slots would
-  spend the lock waiting, so at most `worker-threads` jobs are accepted from the stream and the rest is
-  left to lapse and be redelivered elsewhere).
-- Timing threads: two per adapter id, for the stream's reconnect and heartbeat, the user-task poller,
-  the local retry backoff and the engine wait. No handler runs on them.
+  the database connection pool. Every job type is subscribed with `max_active_jobs` = the slot count,
+  and the engine counts that cap per type, so the queue in front of the slots is bounded by the
+  number of subscribed types times the slots; a queued job does not lose its lock, because the handler
+  renews it when it starts.
+- Timing threads: two per adapter id, for the stream's reconnect, the lock renewals, the user-task
+  poller and the engine wait. No handler runs on them.
 - The core may call probes from any thread and from the outbox dispatcher concurrently; the REST
   client is thread-safe (`HttpClient` is), the caches are concurrent.
 
@@ -260,7 +274,9 @@ factory closes the stream and the HTTP client last, for every module which never
 | `request-timeout` | adapter | `PT10S` | every REST call |
 | `startup-wait` | adapter | `PT10M` | how long the first deployment waits for `/system/health/ready` |
 | `worker-threads` / `worker-threads-bound` | adapter | `4` / same | handler slots, `virtual` allowed |
-| `retry-backoff` | adapter, module, workflow, task | `PT10S` | first local backoff after a failed handler; doubles up to `PT5M` |
+| `job-timeout` | adapter, module, workflow, task | `PT5M` | `lock_duration_ms` of the subscription; renewed at half while a handler runs; one value per job type, so conflicting task-level values of one type end the boot naming both |
+| `async-task-lock-renewal` | adapter | `PT1H` | how far an open asynchronous task's lock is extended; must stay below `vanillabp.delivery.retention` and at or below the engine's `jobManager.maxLockDurationMs` |
+| `retry-backoff` | adapter, module, workflow, task | `PT10S` | first backoff after a failed handler, applied as a lock extension; doubles up to `PT5M` |
 | `max-redeliveries` | adapter, module, workflow, task | `10` | after which a failing job is failed into an incident |
 | `shutdown-grace` | adapter | `PT20S` | |
 | `workflow-visibility-timeout` | adapter | `PT2S` | `workflowVisibilityDelay()` and the retry-later window of a message |
@@ -291,7 +307,7 @@ once the wait answered.
 - Every message names module, process, aggregate id, the attempted operation and the way out, keys in
   full (`vanillabp.adapters.<id>.<key>`), following the config-validation skill.
 - Meters where Micrometer is present (`ZenBpmMetrics`, optional on both platforms):
-  `vanillabp.zenbpm.jobs.received`, `.completed`, `.failed`, `.dropped` (no slot),
+  `vanillabp.zenbpm.jobs.received`, `.completed`, `.failed`, `.queued` (waiting for a slot), `.lock.renewed`, `.lock.lost`,
   `.redelivered` (a delivery id seen before), `vanillabp.zenbpm.stream.reconnects`,
   `vanillabp.zenbpm.slots.busy` / `.free`, `vanillabp.zenbpm.usertasks.polls`.
 - Health contributes the engine's readiness per adapter id.
@@ -333,7 +349,8 @@ org.pbinitiative.zenbpmadapter
   processservice/ZenBpmProcessService  MigratableProcessService<A>: handler map, probes, viewer
   processservice/ZenBpmWorkflowViewer  definitions, XML, history
   processservice/ZenBpmSharedValues    shared values + id variable for every command
-  wiring/JobDispatcher                 stream -> slots, drop when full
+  wiring/JobDispatcher                 stream -> bounded queue -> slots
+  wiring/ZenBpmLockRenewal             renews locks of running handlers, parks async tasks, applies backoffs
   wiring/ZenBpmJobHandler              section 4.3
   wiring/ZenBpmLocalRetry              per-job backoff and max-redeliveries
   wiring/ZenBpmUserTaskPoller          section 4.6

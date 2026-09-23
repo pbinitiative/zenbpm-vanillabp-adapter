@@ -4,7 +4,7 @@
 
 | Epic | Name | What is true when it is done | File |
 |---|---|---|---|
-| E1 | Repository and workspace foundation | the repository builds green with an empty core locally and in GitHub Actions at `pbinitiative/zenbpm-adapter`, publishes snapshots and coverage pages from `main`, is a workspace submodule, and can start the engine in a container from a test | [epic-01-foundation.md](epic-01-foundation.md) |
+| E1 | Repository and workspace foundation | the repository builds green with an empty core locally and in GitHub Actions at `pbinitiative/zenbpm-vanillabp-adapter`, publishes snapshots and coverage pages from `main`, is a workspace submodule, and can start the engine in a container from a test | [epic-01-foundation.md](epic-01-foundation.md) |
 | E2 | Engine client | configuration, REST client, job stream, error classification, engine wait, health and executor exist in plain Java and are proven against the container | [epic-02-engine-client.md](epic-02-engine-client.md) |
 | E3 | Platform registration | an application with the adapter on the classpath boots on Spring Boot and Quarkus, discovers one adapter per id, validates its configuration at startup and reports health - with every SPI method still a guiding stub | [epic-03-platform-registration.md](epic-03-platform-registration.md) |
 | E4 | Deployment pipeline | BPMN and DMN of a workflow module are read, rewritten (scoped, correlation keys, task parameters), wired against the core and deployed; unsupported models are refused before the engine sees them | [epic-04-deployment-pipeline.md](epic-04-deployment-pipeline.md) |
@@ -37,6 +37,8 @@ E1 ─▶ E2 ─▶ E3 ─▶ E4 ─▶ E5 ─▶ E6 ─┬─▶ E7 ─┬─�
                                    └─▶ E8 ─┘
 E13.x may start once E2 exists (they need the client to prove the engine change); each lands
 together with its adapter twin story, which supersedes the fallback story of E6-E9.
+E13.1 already landed in the engine (2026-09-23, commit 071460cc) before any adapter story ran, so
+E2, E6 and E8 are written against it directly and have no fallback for the old 30-second lock.
 ```
 
 Inside an epic the stories are numbered in execution order; a story names the stories it depends on

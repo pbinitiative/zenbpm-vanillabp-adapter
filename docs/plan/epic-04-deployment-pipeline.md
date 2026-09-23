@@ -244,8 +244,9 @@ pattern): every call made once per process with the expected arguments; a task w
 **Instructions**
 
 `startWorkflowProcessing(module, context)`: for every job type of the module's deployed processes
-(scoped), `stream.subscribe(type)` with a `JobDispatcher` which, until E6 lands, logs at WARN that
-a job arrived for a type without a handler and leaves it (the lock lapses). Register the module's
+(scoped), `stream.subscribe(type, lockDuration, maxActiveJobs)` (until E6 lands: the engine defaults,
+`0` and `0`) with a `JobDispatcher` which, until E6 lands, logs at WARN that a job arrived for a type
+without a handler and leaves it (the lock lapses; closing the stream would release it at once). Register the module's
 types in the context. `stopWorkflowProcessing`: unsubscribe them; the drain arrives in E6. Register
 the factory hook which stops leftover modules on `close()`.
 

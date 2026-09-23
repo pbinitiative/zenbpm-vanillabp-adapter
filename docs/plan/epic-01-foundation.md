@@ -1,8 +1,8 @@
 # E1 - Repository and workspace foundation
 
 **Goal.** A repository which builds green with an empty core - locally AND in GitHub Actions at
-`pbinitiative/zenbpm-adapter` - is wired into the workspace superproject, carries the documents every
-adapter carries, and can start the ZenBPM engine from a test.
+`pbinitiative/zenbpm-vanillabp-adapter` - is wired into the workspace superproject, carries the
+documents every adapter carries, and can start the ZenBPM engine from a test.
 
 **Why first.** Every later story adds tests which need the coverage gate, the Spotless rules, the
 container helper and a green pull-request check; adding those later means touching every module
@@ -14,9 +14,9 @@ proven before any Java exists.
 snapshots and coverage pages are published from `main`, the superproject's warmup builds it, and one
 test has talked to a ZenBPM container.
 
-The repository already exists (`https://github.com/pbinitiative/zenbpm-adapter`, default branch
-`main`, `LICENSE` = MIT, a one-line `README.md`, a Java `.gitignore`) and is checked out in the
-workspace; the plan lives in its `docs/` folder. Stories below start from that state.
+The repository already exists (`https://github.com/pbinitiative/zenbpm-vanillabp-adapter`, default
+branch `main`, `LICENSE` = MIT, a one-line `README.md`, a Java `.gitignore`) and is checked out in
+the workspace; the plan lives in its `docs/` folder. Stories below start from that state.
 
 Conventions for every story of this plan: Java 21, Spotless with the copied `formatting_conventions.xml`
 (import order `java,javax,org,com,at.phactum`, one fluent call per line, `String#formatted`, text
@@ -35,30 +35,33 @@ wiki sentence promising behaviour names the test which holds it.
 **Instructions**
 
 1. In the existing checkout: keep `LICENSE` (MIT); add `LICENSE-APACHE-2.0` (the Apache licence
-   text) and a `NOTICE` naming `vanillabp/camunda8-adapter` and `vanillabp/process-engine-api-adapter`
-   as the origin of adapted code (draft decision 17); copy from `camunda8-adapter`: `readme/` (replace
-   the VanillaBP headline by a ZenBPM one or drop it), `formatting_conventions.xml`, the Maven parts of
-   `.gitignore` (merge into the existing Java one, keep `/zenbpm-adapter.iml`), `test-coverage-report/`
-   (three modules). Rename every `camunda8`/`Camunda8` occurrence; every copied Java file keeps its
-   Apache header, every new file gets an MIT header. The workflows are F1.3, not copied here.
-2. Root `pom.xml`: groupId `org.pbinitiative.zenbpmadapter`, artifactId `zenbpm-adapter-parent`, version
-   `${revision}` with `<revision>2.0.0-SNAPSHOT</revision>`, `flatten-maven-plugin`
-   (`resolveCiFriendliesOnly`), modules `core`, `spring-boot`, `smoke-test`, `quarkus/runtime`,
-   `quarkus/deployment`, `quarkus/integration-tests`, `test-coverage-report`. Import the Spring Boot
-   BOM and the Quarkus BOM in the versions the platform uses (read them from
-   `adapter-platform-integration/pom.xml` at the time of the story), manage `spi-for-java`,
-   `vanillabp-adapter-spi`, `vanillabp-spring-boot-integration`, `vanillabp-quarkus-integration`,
+   text) and a `NOTICE` naming `vanillabp/camunda8-adapter` and
+   `vanillabp/process-engine-api-adapter` as the origin of adapted code (draft decision 17); copy
+   from `camunda8-adapter`: `readme/` (replace the VanillaBP headline by a ZenBPM one or drop it),
+   `formatting_conventions.xml`, the Maven parts of `.gitignore` (merge into the existing Java one,
+   keep `/zenbpm-vanillabp-adapter.iml`), `test-coverage-report/` (three modules). Rename every
+   `camunda8`/`Camunda8` occurrence; every copied Java file keeps its Apache header, every new file
+   gets an MIT header. The workflows are F1.3, not copied here.
+2. Root `pom.xml`: groupId `org.pbinitiative.zenbpmadapter`, artifactId
+   `zenbpm-vanillabp-adapter-parent`, version `${revision}` with
+   `<revision>2.0.0-SNAPSHOT</revision>`, `flatten-maven-plugin` (`resolveCiFriendliesOnly`),
+   modules `core`, `spring-boot`, `smoke-test`, `quarkus/runtime`, `quarkus/deployment`,
+   `quarkus/integration-tests`, `test-coverage-report`. Import the Spring Boot BOM and the Quarkus
+   BOM in the versions the platform uses (read them from `adapter-platform-integration/pom.xml` at
+   the time of the story), manage `spi-for-java`, `vanillabp-adapter-spi`,
+   `vanillabp-spring-boot-integration`, `vanillabp-quarkus-integration`,
    `vanillabp-quarkus-integration-deployment`, `test-utils`, `testcontainers`,
    `testcontainers-junit-jupiter`, `grpc-*`, `protobuf-java`. Properties `zenbpm.version` (see
-   S1.2.1), `coverage.threshold.spring-boot` = `coverage.threshold.quarkus` = 85, `coverage.rule` = 90.
-   No `line-*` profiles, no `build-helper` per-line sources.
+   S1.2.1), `coverage.threshold.spring-boot` = `coverage.threshold.quarkus` = 85, `coverage.rule` =
+   90. No `line-*` profiles, no `build-helper` per-line sources.
 3. Copy the Spotless, JaCoCo (`@{jacoco.agent}`, excludes `**/it/**`, `**/test/**`), surefire and
    failsafe configuration from the Camunda 8 parent; add `**/generated-sources/**` to the Spotless
    excludes (S1.2.2 puts stubs there).
-4. `core/pom.xml`: artifactId `zenbpm-adapter`, dependencies `vanillabp-adapter-spi`, `spi-for-java`,
-   `slf4j-api`, `jackson-databind` (provided by both platforms; declare it `compile` here, the
-   platforms manage the version), `grpc-netty-shaded`, `grpc-protobuf`, `grpc-stub`, `protobuf-java`,
-   `lombok` optional; resource filtering on for `META-INF/vanillabp/adapter-zenbpm.properties`:
+4. `core/pom.xml`: artifactId `zenbpm-vanillabp-adapter`, dependencies `vanillabp-adapter-spi`,
+   `spi-for-java`, `slf4j-api`, `jackson-databind` (provided by both platforms; declare it `compile`
+   here, the platforms manage the version), `grpc-netty-shaded`, `grpc-protobuf`, `grpc-stub`,
+   `protobuf-java`, `lombok` optional; resource filtering on for
+   `META-INF/vanillabp/adapter-zenbpm.properties`:
 
    ```properties
    adapter.version=${project.version}
@@ -108,47 +111,50 @@ wiki sentence promising behaviour names the test which holds it.
 
 **Instructions**
 
-The superproject already lists `zenbpm-adapter` in `.gitmodules` (uncommitted) and the checkout
-exists. Like `zenbpm`, the adapter is a LOCAL member of the workspace only: the superproject's GitHub
-CI (`update-submodules.yml`) is not meant to see either of the two pbinitiative repositories, and
-their directories stay ignored at the top level (root `AGENTS.md` says so for `zenbpm`). What is
-missing, as of 2026-09-13:
+The superproject already lists `zenbpm-vanillabp-adapter` in `.gitmodules` (uncommitted) and the
+checkout exists. Like `zenbpm`, the adapter is a LOCAL member of the workspace only: the
+superproject's GitHub CI (`update-submodules.yml`) is not meant to see either of the two
+pbinitiative repositories, and their directories stay ignored at the top level (root `AGENTS.md`
+says so for `zenbpm`). What is missing, as of 2026-09-13:
 
 1. `.gitmodules`: the entry says `branch = master` while the repository's default branch is `main`;
-   change it to `main` (`git submodule set-branch -b main zenbpm-adapter`) or `git submodule update
-   --remote` will fail. Add `zenbpm-adapter.wiki` (`master`, created empty on GitHub first) if the
-   wiki is to be checked out like the other adapters' wikis. To keep the CI's `git submodule update
-   --init --remote --recursive` from touching the two pbinitiative entries once `.gitmodules` is
-   committed, give both `update = none`; a developer initialises them explicitly with
-   `git submodule update --init --checkout zenbpm zenbpm-adapter`, which overrides the setting.
-2. `.gitignore`: NO re-include for `/zenbpm-adapter/` (everything at top level is ignored by `/*`, and
-   that is intended here, as for `/zenbpm/`). Only the `.gitmodules` entry travels.
+   change it to `main` (`git submodule set-branch -b main zenbpm-vanillabp-adapter`) or
+   `git submodule update --remote` will fail. Add `zenbpm-vanillabp-adapter.wiki` (`master`, created
+   empty on GitHub first) if the wiki is to be checked out like the other adapters' wikis. To keep
+   the CI's `git submodule update --init --remote --recursive` from touching the two pbinitiative
+   entries once `.gitmodules` is committed, give both `update = none`; a developer initialises them
+   explicitly with `git submodule update --init --checkout zenbpm zenbpm-vanillabp-adapter`, which
+   overrides the setting.
+2. `.gitignore`: NO re-include for `/zenbpm-vanillabp-adapter/` (everything at top level is ignored
+   by `/*`, and that is intended here, as for `/zenbpm/`). Only the `.gitmodules` entry travels.
 3. Root `AGENTS.md`: the paragraph which names `zenbpm` as a deliberately not re-included, locally
-   checked out submodule gains `zenbpm-adapter` (owned by pbinitiative, Java, follows the VanillaBP
-   adapter conventions, builds with `cd zenbpm-adapter && mvn install` after the platform, ITs need
-   Docker for `ghcr.io/pbinitiative/zenbpm`). Root `README.md`: no row in the submodule table, which
-   lists what a recursive clone gets; one sentence under it names the two local-only members.
-4. `dev-containers/devcontainers-config.json`: `repos` gains `zenbpm-adapter` (`main`) and
-   `zenbpm-adapter.wiki` (`master`); `builds` gains `{ "repo": "zenbpm-adapter", "mvn-goal":
-   "compile" }` after the platform. A missing source repository is skipped silently by the tooling, so
-   a workspace without the local checkout is unaffected.
-5. Skills: the skills live in the workspace superproject, which the VanillaBP project maintains. Draft
-   the two changes and propose them (open question 8): in
-   `.claude/skills/vanillabp-bpms-characteristics/SKILL.md` replace the "ZenBPM (future)" section and
-   the cheat-sheet column with the facts of `analysis/01-zenbpm-capabilities.md` (remote, REST + gRPC
-   stream, at-least-once, 30-second lock, no listeners, no signals, no tenant, `use-prefix` default,
-   owned by pbinitiative) and replace "Decided: built on the PEA adapter" with decision 1's outcome;
-   in `vanillabp-adapter-building` add `zenbpm-adapter` to the repository list with its organisation
-   and groupId and mention the raw-XML model type as the third shape next to Camunda's model and PEA's
-   bytes.
-6. Commit the superproject (`chore: add zenbpm-adapter submodule`).
+   checked out submodule gains `zenbpm-vanillabp-adapter` (owned by pbinitiative, Java, follows the
+   VanillaBP adapter conventions, builds with `cd zenbpm-vanillabp-adapter && mvn install` after the
+   platform, ITs need Docker for `ghcr.io/pbinitiative/zenbpm`). Root `README.md`: no row in the
+   submodule table, which lists what a recursive clone gets; one sentence under it names the two
+   local-only members.
+4. `dev-containers/devcontainers-config.json`: `repos` gains `zenbpm-vanillabp-adapter` (`main`) and
+   `zenbpm-vanillabp-adapter.wiki` (`master`); `builds` gains
+   `{ "repo": "zenbpm-vanillabp-adapter", "mvn-goal": "compile" }` after the platform. A missing
+   source repository is skipped silently by the tooling, so a workspace without the local checkout
+   is unaffected.
+5. Skills: the skills live in the workspace superproject, which the VanillaBP project maintains.
+   Draft the two changes and propose them (open question 8): in
+   `.claude/skills/vanillabp-bpms-characteristics/SKILL.md` replace the "ZenBPM (future)" section
+   and the cheat-sheet column with the facts of `analysis/01-zenbpm-capabilities.md` (remote, REST +
+   gRPC stream, at-least-once, job lock per subscription and extendable (E13.1), no listeners, no signals, no tenant, `use-prefix`
+   default, owned by pbinitiative) and replace "Decided: built on the PEA adapter" with decision 1's
+   outcome; in `vanillabp-adapter-building` add `zenbpm-vanillabp-adapter` to the repository list
+   with its organisation and groupId and mention the raw-XML model type as the third shape next to
+   Camunda's model and PEA's bytes.
+6. Commit the superproject (`chore: add zenbpm-vanillabp-adapter submodule`).
 
 **Acceptance criteria**
 
-- [ ] `git submodule update --init --checkout zenbpm-adapter` checks the repository out on `main` in
-  a fresh workspace clone; a plain `--recurse-submodules` clone and the superproject's CI leave it
-  alone.
-- [ ] `git submodule update --remote --merge zenbpm-adapter` advances it locally.
+- [ ] `git submodule update --init --checkout zenbpm-vanillabp-adapter` checks the repository out on
+  `main` in a fresh workspace clone; a plain `--recurse-submodules` clone and the superproject's CI
+  leave it alone.
+- [ ] `git submodule update --remote --merge zenbpm-vanillabp-adapter` advances it locally.
 - [ ] The devcontainer warmup builds it after the platform (verify by reading the config; a spawn is
   optional).
 - [ ] Both skill changes are drafted and handed to the VanillaBP project; where they are accepted,
@@ -205,23 +211,24 @@ appear), E11 (nightly and native), E12 (release) and E13 (a trigger from the eng
 **Instructions**
 
 1. `.github/workflows/publish-snapshots.yaml`, `on: push: {branches: [main]}` and
-   `workflow_dispatch`, `permissions: {contents: read, packages: write, pages: write, id-token:
-   write}`: build as in S1.3.1, then `mvn -B -s .github/workflows/settings.xml deploy
-   -DskipTests` to `https://maven.pkg.github.com/pbinitiative/zenbpm-adapter` (the
-   `distributionManagement` of the root POM names it; the `GITHUB_TOKEN` authenticates through a second
-   `<server id="github">` in the same settings file), then publish
+   `workflow_dispatch`,
+   `permissions: {contents: read, packages: write, pages: write, id-token: write}`: build as in
+   S1.3.1, then `mvn -B -s .github/workflows/settings.xml deploy -DskipTests` to
+   `https://maven.pkg.github.com/pbinitiative/zenbpm-vanillabp-adapter` (the
+   `distributionManagement` of the root POM names it; the `GITHUB_TOKEN` authenticates through a
+   second `<server id="github">` in the same settings file), then publish
    `test-coverage-report/spring-boot/target/site/jacoco-aggregate` and the Quarkus twin to GitHub
    Pages as `spring-boot-report/` and `quarkus-report/` (`actions/upload-pages-artifact` +
    `actions/deploy-pages`, Pages source "GitHub Actions").
-2. The README gets the two coverage badges reading `https://pbinitiative.github.io/zenbpm-adapter/
-   spring-boot-report/index.html` and `.../quarkus-report/index.html` with the regex of the Camunda 8
-   badges.
+2. The README gets the two coverage badges reading
+   `https://pbinitiative.github.io/zenbpm-vanillabp-adapter/spring-boot-report/index.html` and
+   `.../quarkus-report/index.html` with the regex of the Camunda 8 badges.
 3. Consumers of the snapshot need the same kind of token for `pbinitiative`'s packages; the README's
    coordinates section says so and shows the `settings.xml` snippet.
 
 **Acceptance criteria**
 
-- [ ] After a push to `main`, `zenbpm-adapter-parent:2.0.0-SNAPSHOT` is listed under the
+- [ ] After a push to `main`, `zenbpm-vanillabp-adapter-parent:2.0.0-SNAPSHOT` is listed under the
   repository's Packages and both report pages answer.
 - [ ] The badges render on the README.
 
@@ -235,21 +242,23 @@ appear), E11 (nightly and native), E12 (release) and E13 (a trigger from the eng
 
 **Instructions**
 
-1. Decide the pin (open question 9): the newest RELEASED tag whose `openapi/api.yaml` the adapter is
-   written against; today `v1.7.0` is released and `v1.8.0` is the working tree with the
-   `application/octet-stream` deploy contract. Write the pin ONCE as `zenbpm.version` in the root
+1. Decide the pin (open question 9): the first RELEASED tag carrying E13.1 (engine commit
+   `071460cc`, 2026-09-23: lock per subscription, lock extension, `lock_until`), which the adapter
+   requires (decision 15) - the tag after `v1.7.0`, which `VERSION` calls `v1.8.0` and which also
+   brings the `application/octet-stream` deploy contract. Until it is tagged, build the image from
+   `main` for local runs and keep this story's CI on a commit-pinned image; never pin `v1.7.0`. Write the pin ONCE as `zenbpm.version` in the root
    POM and derive `zenbpm.image` = `ghcr.io/pbinitiative/zenbpm:${zenbpm.version}`.
 2. Copy `zenbpm/openapi/api.yaml` of that tag to `core/src/main/zenbpm/api.yaml` and
    `zenbpm/pkg/zenclient/proto/zenbpm.proto` to `core/src/main/proto/zenbpm.proto`, each with a
    header line naming the tag and the commit. These copies ARE the contract the adapter is written
    against (decision 3).
-3. New module `engine-test-support` (artifact `zenbpm-adapter-engine-test-support`, listed in the
-   coverage gate's exceptions as a test-only module) holding `EngineUnderTest`: a Testcontainers
-   `GenericContainer` on the image, env `REST_API_ADDR=:8080`, `GRPC_API_ADDR=:9090`,
+3. New module `engine-test-support` (artifact `zenbpm-vanillabp-adapter-engine-test-support`, listed
+   in the coverage gate's exceptions as a test-only module) holding `EngineUnderTest`: a
+   Testcontainers `GenericContainer` on the image, env `REST_API_ADDR=:8080`, `GRPC_API_ADDR=:9090`,
    `CLUSTER_RAFT_BOOTSTRAP_EXPECT=1`, `POLL_TIMER_DELAY_SECONDS=1`,
    `PERSISTENCE_INSTANCE_HISTORY_TTL=0`, exposed ports 8080 and 9090, wait strategy HTTP
-   `/system/health/ready` = 200, and accessors `restAddress()`, `grpcAddress()`. Read the image
-   from a filtered `zenbpm-engine.properties` (`engine.image=${zenbpm.image}`), never from a literal
+   `/system/health/ready` = 200, and accessors `restAddress()`, `grpcAddress()`. Read the image from
+   a filtered `zenbpm-engine.properties` (`engine.image=${zenbpm.image}`), never from a literal
    (Camunda 8's `camunda8-cluster.properties` pattern). Provide `EngineLog` which attaches a log
    consumer at DEBUG only, so a failing test can print the engine's log through
    `SuppressOutputExtension`.

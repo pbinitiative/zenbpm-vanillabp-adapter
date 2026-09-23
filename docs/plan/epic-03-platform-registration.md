@@ -26,7 +26,7 @@ always from the core properties.
 
 **Instructions**
 
-1. `spring-boot` module (artifact `zenbpm-adapter-spring-boot`), depends on `core` and
+1. `spring-boot` module (artifact `zenbpm-vanillabp-adapter-spring-boot`), depends on `core` and
    `vanillabp-spring-boot-integration`; runs the configuration processor for IDE metadata.
 2. `org.pbinitiative.zenbpmadapter.springboot.ZenBpmAdapterConfiguration extends AdapterConfigurationBase`,
    `@AutoConfiguration(before = SpringBootMigrationAdapterAutoConfiguration.class)`, returns the type.
@@ -85,11 +85,11 @@ always from the core properties.
 
 **Instructions**
 
-1. `quarkus/runtime` (artifact `zenbpm-adapter-quarkus`): `META-INF/quarkus-extension.yaml` with
-   `name: vanillabp-zenbpm`, `dependencies: [vanillabp]`, `capabilities.provides:
-   [io.vanillabp.adapter.zenbpm]`. `VanillaBpZenBpmProperties` as `@StaticInitSafe @ConfigRoot(phase =
-   RUN_TIME) @ConfigMapping(prefix = "vanillabp")` modelling EVERY key (adapter, module, workflow and
-   task levels), never injected; read through
+1. `quarkus/runtime` (artifact `zenbpm-vanillabp-adapter-quarkus`):
+   `META-INF/quarkus-extension.yaml` with `name: vanillabp-zenbpm`, `dependencies: [vanillabp]`,
+   `capabilities.provides: [io.vanillabp.adapter.zenbpm]`. `VanillaBpZenBpmProperties` as
+   `@StaticInitSafe @ConfigRoot(phase = RUN_TIME) @ConfigMapping(prefix = "vanillabp")` modelling
+   EVERY key (adapter, module, workflow and task levels), never injected; read through
    `ConfigProvider.getConfig().unwrap(SmallRyeConfig.class).getConfigMapping(...)`. Producers:
    `ZenBpmClientProducer` (`@Singleton ZenBpmClientRegistry`, same validation as Spring, application
    name from `quarkus.application.name`), `ZenBpmProcessServiceProducer`
@@ -98,12 +98,13 @@ always from the core properties.
    `AdapterCollaboratorsSupport.collaborators(...)`), `ZenBpmStartupObserver` observing
    `StartupEvent` and touching the registry so validation runs before the platform's deployment
    runner.
-2. `quarkus/deployment` (artifact `zenbpm-adapter-quarkus-deployment`): `ZenBpmIntegrationProcessor`
-   with `FeatureBuildItem("vanillabp-zenbpm")`, `VanillaBpMigratableProcessServiceBuildItem` and
-   `VanillaBpAdapterDeploymentServiceBuildItem` naming the two producers,
-   `AdditionalBeanBuildItem(setUnremovable)` for the client producer and the observer; an empty
-   BUILD_TIME `@ConfigRoot ZenBpmProperties` for symmetry; a `ZenBpmNativeImageProcessor` registering
-   the generated gRPC message classes for reflection (the real native test is E11).
+2. `quarkus/deployment` (artifact `zenbpm-vanillabp-adapter-quarkus-deployment`):
+   `ZenBpmIntegrationProcessor` with `FeatureBuildItem("vanillabp-zenbpm")`,
+   `VanillaBpMigratableProcessServiceBuildItem` and `VanillaBpAdapterDeploymentServiceBuildItem`
+   naming the two producers, `AdditionalBeanBuildItem(setUnremovable)` for the client producer and
+   the observer; an empty BUILD_TIME `@ConfigRoot ZenBpmProperties` for symmetry; a
+   `ZenBpmNativeImageProcessor` registering the generated gRPC message classes for reflection (the
+   real native test is E11).
 3. Extension tests in `quarkus/deployment/src/test` with `QuarkusExtensionTest`, a workflow-module
    marker resource and `application.yaml` variants: `ZenBpmAdapterDiscoveryTest` (list beans with one
    entry), `ZenBpmTwoAdapterIdsTest`, `ZenBpmStartupValidationTest` (unconfigured boots with WARN),
