@@ -168,10 +168,11 @@ public final class EngineUnderTest extends GenericContainer<EngineUnderTest> {
         private final String formDescription;
 
         Pin(
-                final String key,
-                final String pomProperty,
-                final String form,
-                final String formDescription) {
+            final String key,
+            final String pomProperty,
+            final String form,
+            final String formDescription
+        ) {
 
             this.key = key;
             this.pomProperty = pomProperty;
@@ -188,7 +189,8 @@ public final class EngineUnderTest extends GenericContainer<EngineUnderTest> {
          * @throws IllegalStateException where the value is missing, unfiltered or of another form
          */
         String checked(
-                final String value) {
+            final String value
+        ) {
 
             if ((value == null) || value.isBlank() || value.contains("${")) {
                 throw new IllegalStateException(

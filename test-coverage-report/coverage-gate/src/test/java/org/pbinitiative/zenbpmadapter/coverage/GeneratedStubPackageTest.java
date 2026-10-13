@@ -60,7 +60,8 @@ class GeneratedStubPackageTest {
      * whichever separator the operating system writes.
      */
     private static boolean isMainSourceOutsideTarget(
-            final Path path) {
+        final Path path
+    ) {
 
         final var names = new ArrayList<String>();
         path.forEach(name -> names.add(name.toString()));

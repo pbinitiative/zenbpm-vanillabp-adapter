@@ -218,10 +218,11 @@ public class ZenBpmAdapterConfiguration {
      * @param notices Lines worth one INFO at startup, which the platform logs whatever the kind
      */
     public record ValidationResult(
-                                   Kind kind,
-                                   String message,
-                                   boolean endsTheBoot,
-                                   List<String> notices) {
+        Kind kind,
+        String message,
+        boolean endsTheBoot,
+        List<String> notices
+    ) {
 
         /**
          * The three outcomes of a validation.
@@ -316,8 +317,9 @@ public class ZenBpmAdapterConfiguration {
      * @return E.g. <code>vanillabp.adapters.zenbpm.rest-address</code>
      */
     public static String propertyKey(
-            final String adapterId,
-            final String key) {
+        final String adapterId,
+        final String key
+    ) {
 
         return "%s.%s.%s".formatted(CONFIGURATION_PREFIX, adapterId, key);
 
@@ -340,7 +342,8 @@ public class ZenBpmAdapterConfiguration {
      * @param restAddress E.g. <code>http://zenbpm:8080</code>, or <code>null</code>
      */
     public void setRestAddress(
-            final String restAddress) {
+        final String restAddress
+    ) {
 
         this.restAddress = restAddress;
 
@@ -364,7 +367,8 @@ public class ZenBpmAdapterConfiguration {
      * @param grpcAddress <code>host:port</code>, or <code>null</code> to derive it
      */
     public void setGrpcAddress(
-            final String grpcAddress) {
+        final String grpcAddress
+    ) {
 
         this.grpcAddress = grpcAddress;
 
@@ -387,7 +391,8 @@ public class ZenBpmAdapterConfiguration {
      * @param grpcPlaintext <code>false</code> for TLS, <code>null</code> for the default
      */
     public void setGrpcPlaintext(
-            final Boolean grpcPlaintext) {
+        final Boolean grpcPlaintext
+    ) {
 
         this.grpcPlaintext = grpcPlaintext == null || grpcPlaintext;
 
@@ -411,7 +416,8 @@ public class ZenBpmAdapterConfiguration {
      * @param clientId An id unique per node, or <code>null</code> to derive it
      */
     public void setClientId(
-            final String clientId) {
+        final String clientId
+    ) {
 
         this.clientId = clientId;
 
@@ -434,7 +440,8 @@ public class ZenBpmAdapterConfiguration {
      * @param requestTimeout The deadline, or <code>null</code> for the default
      */
     public void setRequestTimeout(
-            final Duration requestTimeout) {
+        final Duration requestTimeout
+    ) {
 
         this.requestTimeout = requestTimeout == null ? DEFAULT_REQUEST_TIMEOUT : requestTimeout;
 
@@ -457,7 +464,8 @@ public class ZenBpmAdapterConfiguration {
      * @param startupWait The wait, or <code>null</code> for the default
      */
     public void setStartupWait(
-            final Duration startupWait) {
+        final Duration startupWait
+    ) {
 
         this.startupWait = startupWait == null ? DEFAULT_STARTUP_WAIT : startupWait;
 
@@ -481,7 +489,8 @@ public class ZenBpmAdapterConfiguration {
      *          for the default, as an empty key binds to an empty text
      */
     public void setWorkerThreads(
-            final String workerThreads) {
+        final String workerThreads
+    ) {
 
         this.workerThreads = isBlank(workerThreads) ? DEFAULT_WORKER_THREADS : workerThreads;
 
@@ -522,7 +531,8 @@ public class ZenBpmAdapterConfiguration {
      * @param workerThreadsBound The bound, or <code>null</code> for the default
      */
     public void setWorkerThreadsBound(
-            final Integer workerThreadsBound) {
+        final Integer workerThreadsBound
+    ) {
 
         this.workerThreadsBound = workerThreadsBound;
 
@@ -545,7 +555,8 @@ public class ZenBpmAdapterConfiguration {
      * @param retryBackoff The wait, or <code>null</code> for the default
      */
     public void setRetryBackoff(
-            final Duration retryBackoff) {
+        final Duration retryBackoff
+    ) {
 
         this.retryBackoff = retryBackoff == null ? DEFAULT_RETRY_BACKOFF : retryBackoff;
 
@@ -568,7 +579,8 @@ public class ZenBpmAdapterConfiguration {
      * @param maxRedeliveries The number, or <code>null</code> for the default
      */
     public void setMaxRedeliveries(
-            final Integer maxRedeliveries) {
+        final Integer maxRedeliveries
+    ) {
 
         this.maxRedeliveries = maxRedeliveries == null ? DEFAULT_MAX_REDELIVERIES : maxRedeliveries;
 
@@ -591,7 +603,8 @@ public class ZenBpmAdapterConfiguration {
      * @param shutdownGrace The grace, or <code>null</code> for the default
      */
     public void setShutdownGrace(
-            final Duration shutdownGrace) {
+        final Duration shutdownGrace
+    ) {
 
         this.shutdownGrace = shutdownGrace == null ? DEFAULT_SHUTDOWN_GRACE : shutdownGrace;
 
@@ -614,7 +627,8 @@ public class ZenBpmAdapterConfiguration {
      * @param workflowVisibilityTimeout The timeout, or <code>null</code> for the default
      */
     public void setWorkflowVisibilityTimeout(
-            final Duration workflowVisibilityTimeout) {
+        final Duration workflowVisibilityTimeout
+    ) {
 
         this.workflowVisibilityTimeout = workflowVisibilityTimeout == null
                 ? DEFAULT_WORKFLOW_VISIBILITY_TIMEOUT
@@ -640,7 +654,8 @@ public class ZenBpmAdapterConfiguration {
      *          <code>null</code> for the default
      */
     public void setUserTaskPollInterval(
-            final Duration userTaskPollInterval) {
+        final Duration userTaskPollInterval
+    ) {
 
         this.userTaskPollInterval = userTaskPollInterval == null
                 ? DEFAULT_USER_TASK_POLL_INTERVAL
@@ -665,7 +680,8 @@ public class ZenBpmAdapterConfiguration {
      * @param historyTimeToLive The time, or <code>null</code> for the engine's own default
      */
     public void setHistoryTimeToLive(
-            final Duration historyTimeToLive) {
+        final Duration historyTimeToLive
+    ) {
 
         this.historyTimeToLive = historyTimeToLive;
 
@@ -688,7 +704,8 @@ public class ZenBpmAdapterConfiguration {
      * @param instanceCacheMaxEntries The number of entries, or <code>null</code> for the default
      */
     public void setInstanceCacheMaxEntries(
-            final Integer instanceCacheMaxEntries) {
+        final Integer instanceCacheMaxEntries
+    ) {
 
         this.instanceCacheMaxEntries = instanceCacheMaxEntries == null
                 ? DEFAULT_INSTANCE_CACHE_MAX_ENTRIES
@@ -713,7 +730,8 @@ public class ZenBpmAdapterConfiguration {
      * @param messageStartLookup The choice, or <code>null</code> for the default
      */
     public void setMessageStartLookup(
-            final MessageStartLookup messageStartLookup) {
+        final MessageStartLookup messageStartLookup
+    ) {
 
         this.messageStartLookup = messageStartLookup == null ? MessageStartLookup.REFUSE : messageStartLookup;
 
@@ -743,9 +761,10 @@ public class ZenBpmAdapterConfiguration {
      * @return The outcome and the message the platform logs or ends the boot with
      */
     public ValidationResult validate(
-            final String adapterId,
-            final boolean nowhereFirst,
-            final boolean deploymentFailureWarns) {
+        final String adapterId,
+        final boolean nowhereFirst,
+        final boolean deploymentFailureWarns
+    ) {
 
         final var connectionDefects = new ArrayList<String>();
         final var valueDefects = new ArrayList<String>();
@@ -873,8 +892,9 @@ public class ZenBpmAdapterConfiguration {
      * @return The id
      */
     public String clientIdInUse(
-            final String adapterId,
-            final Supplier<String> applicationName) {
+        final String adapterId,
+        final Supplier<String> applicationName
+    ) {
 
         if (clientId != null) {
             return clientId.trim();
@@ -928,8 +948,9 @@ public class ZenBpmAdapterConfiguration {
     }
 
     private void addRestAddressNotices(
-            final String adapterId,
-            final List<String> notices) {
+        final String adapterId,
+        final List<String> notices
+    ) {
 
         final var address = parsedRestAddress();
         if (normalisedPath(address.getRawPath()).endsWith(API_VERSION_PATH)) {
@@ -996,7 +1017,8 @@ public class ZenBpmAdapterConfiguration {
     }
 
     private static String grpcAddressDefect(
-            final String address) {
+        final String address
+    ) {
 
         final var example = "e.g. localhost:%d or [::1]:%d".formatted(DEFAULT_GRPC_PORT, DEFAULT_GRPC_PORT);
         if (address.isEmpty()) {
@@ -1038,8 +1060,9 @@ public class ZenBpmAdapterConfiguration {
     }
 
     private void addWorkerThreadsDefects(
-            final String adapterId,
-            final List<String> defects) {
+        final String adapterId,
+        final List<String> defects
+    ) {
 
         final var configured = workerThreads.trim();
         final var threads = workerThreadsAsNumber();
@@ -1090,11 +1113,12 @@ public class ZenBpmAdapterConfiguration {
     }
 
     private static void addNegativeDurationDefect(
-            final String adapterId,
-            final String key,
-            final Duration configured,
-            final String defaultIso,
-            final List<String> defects) {
+        final String adapterId,
+        final String key,
+        final Duration configured,
+        final String defaultIso,
+        final List<String> defects
+    ) {
 
         if (configured.isNegative()) {
             defects.add("%s is %s and must not be negative; the default is %s"
@@ -1104,7 +1128,8 @@ public class ZenBpmAdapterConfiguration {
     }
 
     private static String unconfiguredMessage(
-            final String adapterId) {
+        final String adapterId
+    ) {
 
         return """
                 ZenBPM adapter '%s' is not configured: '%s' is missing. The application boots, and the \
@@ -1127,11 +1152,12 @@ public class ZenBpmAdapterConfiguration {
     }
 
     private static String inconsistentMessage(
-            final String adapterId,
-            final List<String> defects,
-            final boolean nowhereFirst,
-            final boolean deploymentFailureWarns,
-            final boolean degrades) {
+        final String adapterId,
+        final List<String> defects,
+        final boolean nowhereFirst,
+        final boolean deploymentFailureWarns,
+        final boolean degrades
+    ) {
 
         final var listed = defects
                 .stream()
@@ -1165,7 +1191,8 @@ public class ZenBpmAdapterConfiguration {
     // the character itself), plus repeated and trailing slashes removed, so the '/v1' check and
     // the identity of two spellings of one address agree
     private static String normalisedPath(
-            final String rawPath) {
+        final String rawPath
+    ) {
 
         final var path = new StringBuilder();
         for (var i = 0; i < rawPath.length(); ++i) {
@@ -1194,7 +1221,8 @@ public class ZenBpmAdapterConfiguration {
     }
 
     private static boolean isUnreserved(
-            final char character) {
+        final char character
+    ) {
 
         // the ASCII letters and digits only: Character.isLetterOrDigit alone accepts every alphabet
         return ((character < 128) && Character.isLetterOrDigit(character)) || ("-._~".indexOf(character) >= 0);
@@ -1202,7 +1230,8 @@ public class ZenBpmAdapterConfiguration {
     }
 
     private static boolean isBlank(
-            final String text) {
+        final String text
+    ) {
 
         return (text == null) || text.isBlank();
 

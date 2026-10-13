@@ -180,10 +180,11 @@ class ZenBpmAdapterConfigurationTest {
     @MethodSource("defects")
     @DisplayName("Each defect ends the boot of a first-priority adapter, names its key and says how to fix it")
     void eachDefectIsNamedWithItsKeyAndItsFix(
-            final String key,
-            final String description,
-            final String fix,
-            final Consumer<ZenBpmAdapterConfiguration> breakIt) {
+        final String key,
+        final String description,
+        final String fix,
+        final Consumer<ZenBpmAdapterConfiguration> breakIt
+    ) {
 
         final var configuration = configured("http://zenbpm:8080");
         breakIt.accept(configuration);
@@ -243,8 +244,9 @@ class ZenBpmAdapterConfigurationTest {
     @MethodSource("keysWithoutADefault")
     @DisplayName("A key without a default, set without a REST address, makes the configuration inconsistent")
     void aStartedConfigurationWithoutAnAddressIsInconsistent(
-            final String key,
-            final Consumer<ZenBpmAdapterConfiguration> configure) {
+        final String key,
+        final Consumer<ZenBpmAdapterConfiguration> configure
+    ) {
 
         final var configuration = new ZenBpmAdapterConfiguration();
         configure.accept(configuration);
@@ -291,8 +293,9 @@ class ZenBpmAdapterConfigurationTest {
     @MethodSource("connectionDefects")
     @DisplayName("An adapter which is nowhere first and warns on deployment failures boots degraded where the engine cannot be reached")
     void aNowhereFirstAdapterWithWarnBootsDegraded(
-            final String description,
-            final Consumer<ZenBpmAdapterConfiguration> breakIt) {
+        final String description,
+        final Consumer<ZenBpmAdapterConfiguration> breakIt
+    ) {
 
         final var configuration = configured("http://zenbpm:8080");
         breakIt.accept(configuration);
@@ -315,7 +318,8 @@ class ZenBpmAdapterConfigurationTest {
     })
     @DisplayName("A number or duration which cannot work ends the boot even where the adapter may boot degraded")
     void aValueWhichCannotWorkAlwaysEndsTheBoot(
-            final String restAddress) {
+        final String restAddress
+    ) {
 
         final var configuration = configured(restAddress);
         configuration.setWorkerThreads("-1");
@@ -382,7 +386,8 @@ class ZenBpmAdapterConfigurationTest {
     })
     @DisplayName("Virtual worker threads are accepted, bounded by four unless a bound is set")
     void virtualWorkerThreadsAreAccepted(
-            final String workerThreads) {
+        final String workerThreads
+    ) {
 
         final var configuration = configured("http://zenbpm:8080");
         configuration.setWorkerThreads(workerThreads);
@@ -407,7 +412,8 @@ class ZenBpmAdapterConfigurationTest {
     })
     @DisplayName("Platform threads are their own bound, so a bound beside them is refused whatever its size")
     void platformThreadsAreTheirOwnBound(
-            final int bound) {
+        final int bound
+    ) {
 
         final var configuration = configured("http://zenbpm:8080");
         configuration.setWorkerThreads("12");
@@ -535,7 +541,8 @@ class ZenBpmAdapterConfigurationTest {
     })
     @DisplayName("An address ending with an escaped or doubled '/v1' gets no second one, and the notice says so")
     void theNoticeAndTheBaseAgreeOnTheApiVersion(
-            final String path) {
+        final String path
+    ) {
 
         final var configuration = configured("http://zenbpm:8080"
                 + path);
@@ -580,7 +587,8 @@ class ZenBpmAdapterConfigurationTest {
     })
     @DisplayName("Blank worker threads are the default, as an empty key binds to an empty text")
     void blankWorkerThreadsAreTheDefault(
-            final String workerThreads) {
+        final String workerThreads
+    ) {
 
         final var configuration = configured("http://zenbpm:8080");
         configuration.setWorkerThreads(workerThreads);
@@ -646,7 +654,8 @@ class ZenBpmAdapterConfigurationTest {
     })
     @DisplayName("Nothing is derived from a missing or malformed REST address")
     void nothingIsDerivedFromAnUnusableAddress(
-            final String restAddress) {
+        final String restAddress
+    ) {
 
         final var configuration = configured(restAddress);
 
@@ -819,7 +828,8 @@ class ZenBpmAdapterConfigurationTest {
     }
 
     private static ZenBpmAdapterConfiguration configured(
-            final String restAddress) {
+        final String restAddress
+    ) {
 
         final var configuration = new ZenBpmAdapterConfiguration();
         configuration.setRestAddress(restAddress);
@@ -828,10 +838,11 @@ class ZenBpmAdapterConfigurationTest {
     }
 
     private static Arguments defect(
-            final String key,
-            final String description,
-            final String fix,
-            final Consumer<ZenBpmAdapterConfiguration> breakIt) {
+        final String key,
+        final String description,
+        final String fix,
+        final Consumer<ZenBpmAdapterConfiguration> breakIt
+    ) {
 
         return Arguments.of(key, description, fix, breakIt);
 

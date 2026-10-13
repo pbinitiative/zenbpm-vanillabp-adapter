@@ -152,9 +152,10 @@ class ProductionModulesTest {
     }
 
     private void module(
-            final String location,
-            final String artifactId,
-            final boolean withProductionSources) throws IOException {
+        final String location,
+        final String artifactId,
+        final boolean withProductionSources
+    ) throws IOException {
 
         final var module = root.resolve(location);
         Files.createDirectories(module);
@@ -174,8 +175,9 @@ class ProductionModulesTest {
     }
 
     private ProductionModules.Report report(
-            final String platform,
-            final String... aggregated) throws IOException {
+        final String platform,
+        final String... aggregated
+    ) throws IOException {
 
         final var dependencies = new StringBuilder();
         for (final var artifactId : aggregated) {
@@ -195,7 +197,8 @@ class ProductionModulesTest {
     }
 
     private Path csv(
-            final String content) throws IOException {
+        final String content
+    ) throws IOException {
 
         return Files.writeString(root.resolve("jacoco.csv"), content);
 

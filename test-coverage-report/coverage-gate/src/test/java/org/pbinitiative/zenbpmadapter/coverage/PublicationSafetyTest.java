@@ -146,8 +146,9 @@ class PublicationSafetyTest {
 
     /** The table footer of a JaCoCo report page: instructions first, branches second. */
     private static String footer(
-            final String instructions,
-            final String instructionCoverage) {
+        final String instructions,
+        final String instructionCoverage
+    ) {
 
         return """
                 <tfoot><tr><td>Total</td><td class="bar">%s</td><td class="ctr2">%s</td>\
@@ -157,8 +158,9 @@ class PublicationSafetyTest {
     }
 
     private static String firstGroup(
-            final Pattern pattern,
-            final String text) {
+        final Pattern pattern,
+        final String text
+    ) {
 
         final var matcher = pattern.matcher(text);
         return matcher.find() ? matcher.group(1) : null;
@@ -188,7 +190,8 @@ class PublicationSafetyTest {
     }
 
     private static String lastModule(
-            final String pom) {
+        final String pom
+    ) {
 
         final var matcher = MODULE.matcher(pom);
         String last = null;
@@ -207,8 +210,9 @@ class PublicationSafetyTest {
 
                 @Override
                 public FileVisitResult preVisitDirectory(
-                        final Path directory,
-                        final BasicFileAttributes attributes) {
+                    final Path directory,
+                    final BasicFileAttributes attributes
+                ) {
 
                     final var name = directory.getFileName() == null
                             ? ""
@@ -235,7 +239,8 @@ class PublicationSafetyTest {
     }
 
     private static String withoutComments(
-            final Path file) {
+        final Path file
+    ) {
 
         try {
             return COMMENT

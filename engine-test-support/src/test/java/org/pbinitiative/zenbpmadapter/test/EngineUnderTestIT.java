@@ -122,7 +122,8 @@ class EngineUnderTestIT {
     }
 
     private static HttpResponse<String> get(
-            final String path) throws IOException, InterruptedException {
+        final String path
+    ) throws IOException, InterruptedException {
 
         return HTTP
                 .send(

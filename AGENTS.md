@@ -59,7 +59,10 @@ A file adapted from a repository `NOTICE` does not name yet adds that repository
 ## Indentation and visibility
 
 Java is indented by four spaces, and a wrapped line continues eight spaces deeper than its start
-(decision 20 in the repository's DECISIONS.md). `mvn spotless:apply` does it; do not format by hand.
+(decision 20 in the repository's DECISIONS.md). A wrapped parameter list of a method, constructor
+or record is the exception: its parameters stand four spaces deeper, and `)` returns to the
+declaration's indentation on a line of its own, followed by `throws` and `{` (decision 22).
+`mvn spotless:apply` does both; do not format by hand.
 Test classes and their test and lifecycle methods have no `public`: JUnit 5 does not need it
 (decision 21). `TestVisibilityTest` in `test-coverage-report/coverage-gate` fails the build on a
 `public` test class or test method.

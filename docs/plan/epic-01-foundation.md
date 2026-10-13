@@ -22,13 +22,14 @@ The repository already exists (`https://github.com/pbinitiative/zenbpm-vanillabp
 branch `main`, `LICENSE` = MIT, a one-line `README.md`, a Java `.gitignore`) and is checked out in
 the workspace; the plan lives in its `docs/` folder. Stories below start from that state.
 
-Conventions for every story of this plan: Java 21, Spotless with the copied `formatting_conventions.xml`
-(import order `java,javax,org,com,at.phactum`, one fluent call per line, `String#formatted`, text
-blocks, four spaces per level since decision 20), every test class starts with
+Conventions for every story of this plan: Java 21, Spotless with the copied
+`formatting_conventions.xml` (import order `java,javax,org,com,at.phactum`, one fluent call per
+line, `String#formatted`, text blocks, four spaces per level since decision 20, wrapped parameters
+closed by `)` on a line of its own since decision 22), every test class starts with
 `@ExtendWith(SuppressOutputExtension.class)` and is package-private like its test methods (decision
-21), methods follow decision 19, names read like
-sentences, no citation but `see decision N in the repository's DECISIONS.md`, and every README or
-wiki sentence promising behaviour names the test which holds it.
+21), methods follow decision 19, names read like sentences, no citation but `see decision N in the
+repository's DECISIONS.md`, and every README or wiki sentence promising behaviour names the test
+which holds it.
 
 ---
 

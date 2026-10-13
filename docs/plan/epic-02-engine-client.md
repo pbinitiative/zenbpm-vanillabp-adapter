@@ -153,6 +153,13 @@ path or query in `grpc-address` accepted, a user in `grpc-address` accepted, a b
   which is what it would have done silently after the reformatting. Seen to fail, each restored
   afterwards: a `public` test class, a `public` test method, a helper above a test, a lifecycle
   method below a test, the parser set back to two spaces.
+- Decision 22 by the user's decision: a wrapped parameter list of a method, constructor or record
+  stands one level (four spaces) deeper and `)` closes it on a line of its own, followed by
+  `throws` and `{`. `formatting_conventions.xml` sets "indent by one" (alignment 49 -> 53) on the
+  three parameter alignments and `separate_lines_if_wrapped` on
+  `parentheses_positions_in_method_delcaration` (Eclipse's own spelling) and
+  `..._in_record_declaration`; Spotless rewrote every declaration. A scratch class proved the
+  constructor case, which the repository does not have yet; `spotless:check` refuses the old form.
 - Not changed: the adapter id stays a parameter of `validate` and `clientIdInUse`, as the story's
   signature and Camunda 8 have it.
 

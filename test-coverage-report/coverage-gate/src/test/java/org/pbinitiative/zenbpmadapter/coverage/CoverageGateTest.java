@@ -143,9 +143,10 @@ class CoverageGateTest {
      * property, and a repository between the two has a gap somebody still owes a test for.
      */
     private void assertAboveThreshold(
-            final String platform,
-            final int report,
-            final String thresholdProperty) {
+        final String platform,
+        final int report,
+        final String thresholdProperty
+    ) {
 
         if (CoverageGate.stopsBeforeTheReportsAreWritten(MAVEN_COMMAND_LINE)) {
             final var reason = CoverageGate.describeRunWithoutReports(MAVEN_COMMAND_LINE);
@@ -190,8 +191,9 @@ class CoverageGateTest {
      * rule while that distance is still small enough to close.
      */
     private void report(
-            final CoverageGate.Coverage coverage,
-            final double threshold) {
+        final CoverageGate.Coverage coverage,
+        final double threshold
+    ) {
 
         final var verdict = coverage.percentage() >= RULE
                 ? "at the rule of %s %%".formatted(plain(RULE))
@@ -204,7 +206,8 @@ class CoverageGateTest {
 
     /** A whole percentage without the '.0' a double would print. */
     private static String plain(
-            final double percentage) {
+        final double percentage
+    ) {
 
         return percentage == Math.rint(percentage)
                 ? String.valueOf((long) percentage)

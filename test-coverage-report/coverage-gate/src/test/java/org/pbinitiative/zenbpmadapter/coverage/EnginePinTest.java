@@ -81,8 +81,9 @@ class EnginePinTest {
      * The comment lines a file starts with, which is where a copy says where it came from.
      */
     private static String header(
-            final String file,
-            final String commentMarker) throws IOException {
+        final String file,
+        final String commentMarker
+    ) throws IOException {
 
         final List<String> lines = Files.readAllLines(ROOT.resolve(file));
         return lines
@@ -97,8 +98,9 @@ class EnginePinTest {
      * be named. So an old value left next to the new one fails as well as a missing one.
      */
     private static void assertNamesThePin(
-            final String place,
-            final String text) {
+        final String place,
+        final String text
+    ) {
 
         final var commits = everyMatch(ANY_COMMIT, text);
         final var images = everyMatch(ANY_IMAGE, text);
@@ -121,8 +123,9 @@ class EnginePinTest {
     }
 
     private static Set<String> everyMatch(
-            final Pattern pattern,
-            final String text) {
+        final Pattern pattern,
+        final String text
+    ) {
 
         return pattern
                 .matcher(text)

@@ -94,7 +94,8 @@ class MethodOrderTest {
     }
 
     private static List<String> outOfOrderInATestClass(
-            final Path source) {
+        final Path source
+    ) {
 
         final var methods = JavaMembers.methodsOf(source);
         final var tests = methods
@@ -122,7 +123,8 @@ class MethodOrderTest {
     }
 
     private static List<String> outOfOrderAfterAPrivateMethod(
-            final Path source) {
+        final Path source
+    ) {
 
         final var methods = JavaMembers.methodsOf(source);
         final var firstPrivate = methods

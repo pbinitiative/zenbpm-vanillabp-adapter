@@ -70,14 +70,16 @@ final class JavaMembers {
      * @param isPublic Whether it is declared {@code public}
      */
     record Member(
-                  Path source,
-                  int line,
-                  String name,
-                  Kind kind,
-                  boolean isPublic) {
+        Path source,
+        int line,
+        String name,
+        Kind kind,
+        boolean isPublic
+    ) {
 
         String describe(
-                final Path root) {
+            final Path root
+        ) {
 
             return "  %s:%d %s()".formatted(root.relativize(source), line, name);
 
@@ -97,8 +99,9 @@ final class JavaMembers {
      * @return The files, sorted
      */
     static Stream<Path> javaSources(
-            final Path root,
-            final String sourceSet) {
+        final Path root,
+        final String sourceSet
+    ) {
 
         try (var paths = Files.walk(root)) {
             return paths
@@ -122,7 +125,8 @@ final class JavaMembers {
      * @return {@code true} for {@code public class}, {@code public final class} and the like
      */
     static boolean declaresAPublicClass(
-            final Path source) {
+        final Path source
+    ) {
 
         return PUBLIC_CLASS
                 .matcher(read(source))
@@ -138,7 +142,8 @@ final class JavaMembers {
      * @return The members
      */
     static List<Member> methodsOf(
-            final Path source) {
+        final Path source
+    ) {
 
         final var className = source
                 .getFileName()
@@ -170,10 +175,11 @@ final class JavaMembers {
     }
 
     private static Kind kindOf(
-            final String annotations,
-            final String declaration,
-            final String name,
-            final String className) {
+        final String annotations,
+        final String declaration,
+        final String name,
+        final String className
+    ) {
 
         if (TEST_ANNOTATION
                 .matcher(annotations)
@@ -197,7 +203,8 @@ final class JavaMembers {
     }
 
     private static String read(
-            final Path source) {
+        final Path source
+    ) {
 
         try {
             return Files.readString(source);
@@ -213,8 +220,9 @@ final class JavaMembers {
      * and are left out.
      */
     private static boolean isInSourceSet(
-            final Path path,
-            final String sourceSet) {
+        final Path path,
+        final String sourceSet
+    ) {
 
         final var names = new ArrayList<String>();
         path.forEach(name -> names.add(name.toString()));

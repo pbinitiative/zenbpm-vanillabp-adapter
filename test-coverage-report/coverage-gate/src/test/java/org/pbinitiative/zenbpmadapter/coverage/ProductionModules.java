@@ -32,8 +32,9 @@ final class ProductionModules {
 
     /** The report of a platform, by name and by the POM listing what it aggregates. */
     record Report(
-                  String platform,
-                  Path pom) {
+        String platform,
+        Path pom
+    ) {
     }
 
     private static final Pattern COMMENT = Pattern.compile("<!--.*?-->", Pattern.DOTALL);
@@ -60,10 +61,11 @@ final class ProductionModules {
      * @return One line per module and report it is missing from, empty if there is none
      */
     static List<String> missingFromTheReportOfTheirPlatform(
-            final Path repositoryRoot,
-            final Report springBoot,
-            final Report quarkus,
-            final Set<String> deliberatelyNotAggregated) {
+        final Path repositoryRoot,
+        final Report springBoot,
+        final Report quarkus,
+        final Set<String> deliberatelyNotAggregated
+    ) {
 
         final var readBySpringBoot = aggregatedArtifactIds(springBoot.pom());
         final var readByQuarkus = aggregatedArtifactIds(quarkus.pom());
@@ -116,9 +118,10 @@ final class ProductionModules {
      * @return The message
      */
     static String describe(
-            final List<String> missing,
-            final Report springBoot,
-            final Report quarkus) {
+        final List<String> missing,
+        final Report springBoot,
+        final Report quarkus
+    ) {
 
         return """
                 %d production module(s) are not read by the report of their platform: %s. Their code \
@@ -136,7 +139,8 @@ final class ProductionModules {
     }
 
     private static List<Path> modulesWithProductionSources(
-            final Path repositoryRoot) {
+        final Path repositoryRoot
+    ) {
 
         final var productionSources = Path.of("src", "main", "java");
         final var modules = new ArrayList<Path>();
@@ -145,8 +149,9 @@ final class ProductionModules {
 
                 @Override
                 public FileVisitResult preVisitDirectory(
-                        final Path directory,
-                        final BasicFileAttributes attributes) {
+                    final Path directory,
+                    final BasicFileAttributes attributes
+                ) {
 
                     final var name = directory.getFileName() == null
                             ? ""
@@ -181,7 +186,8 @@ final class ProductionModules {
     }
 
     private static List<String> aggregatedArtifactIds(
-            final Path pom) {
+        final Path pom
+    ) {
 
         final var dependencies = DEPENDENCIES.matcher(withoutComments(pom));
         final var artifactIds = new ArrayList<String>();
@@ -196,7 +202,8 @@ final class ProductionModules {
     }
 
     private static String artifactIdOf(
-            final Path pom) {
+        final Path pom
+    ) {
 
         final var ownPart = PARENT.matcher(withoutComments(pom)).replaceFirst("");
         final var artifactId = ARTIFACT_ID.matcher(ownPart);
@@ -208,7 +215,8 @@ final class ProductionModules {
     }
 
     private static String withoutComments(
-            final Path pom) {
+        final Path pom
+    ) {
 
         try {
             return COMMENT

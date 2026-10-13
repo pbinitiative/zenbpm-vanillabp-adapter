@@ -86,7 +86,8 @@ class PublishedJarsTest {
     }
 
     private static List<Path> publishedModules(
-            final Path root) {
+        final Path root
+    ) {
 
         final var modules = new ArrayList<Path>();
         try {
@@ -94,8 +95,9 @@ class PublishedJarsTest {
 
                 @Override
                 public FileVisitResult preVisitDirectory(
-                        final Path directory,
-                        final BasicFileAttributes attributes) throws IOException {
+                    final Path directory,
+                    final BasicFileAttributes attributes
+                ) throws IOException {
 
                     final var name = directory.getFileName() == null
                             ? ""
@@ -127,7 +129,8 @@ class PublishedJarsTest {
     }
 
     private static List<Path> jarsOf(
-            final Path module) throws IOException {
+        final Path module
+    ) throws IOException {
 
         final var target = module.resolve("target");
         if (!Files.isDirectory(target)) {

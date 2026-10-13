@@ -71,7 +71,8 @@ class TestVisibilityTest {
     }
 
     private static boolean holdsATest(
-            final Path source) {
+        final Path source
+    ) {
 
         return JavaMembers
                 .methodsOf(source)

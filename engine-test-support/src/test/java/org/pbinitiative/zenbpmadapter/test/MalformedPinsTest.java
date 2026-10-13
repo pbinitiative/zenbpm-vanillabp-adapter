@@ -48,7 +48,8 @@ class MalformedPinsTest {
     })
     @DisplayName("A commit which is not 40 lower-case hexadecimal characters is refused")
     void aCommitOfAnotherFormIsRefused(
-            final String commit) {
+        final String commit
+    ) {
 
         final var refusal = assertThrows(
                 IllegalStateException.class,
@@ -66,7 +67,8 @@ class MalformedPinsTest {
     })
     @DisplayName("An image which is not named by its digest alone is refused")
     void anImageOfAnotherFormIsRefused(
-            final String image) {
+        final String image
+    ) {
 
         final var refusal = assertThrows(
                 IllegalStateException.class,
@@ -84,7 +86,8 @@ class MalformedPinsTest {
     })
     @DisplayName("An image named by its digest is accepted, also from a registry with a port")
     void anImageByDigestIsAccepted(
-            final String image) {
+        final String image
+    ) {
 
         assertEquals(image, EngineUnderTest.Pin.IMAGE.checked(image));
 

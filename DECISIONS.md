@@ -76,8 +76,9 @@ ownership decides: the licence, the coordinates (groupId `org.pbinitiative.zenbp
 `org.pbinitiative.zenbpmadapter`), the CI and where releases are published. The Go conventions of
 the engine repository do not reach into this one.
 
-*"Spotless with the platform's formatting conventions" is superseded in part by decision 20: the
-formatter is the platform's, but it indents by four spaces instead of two.*
+*"Spotless with the platform's formatting conventions" is superseded in part by decisions 20 and
+22: the formatter is the platform's, but it indents by four spaces instead of two, and a wrapped
+parameter list closes on a line of its own.*
 
 ### 17. Code adapted from the Apache-2.0 adapters keeps its licence and its notice
 
@@ -129,3 +130,23 @@ says nothing, and IDEs and static analysis flag it as redundant. Test classes an
 `@ParameterizedTest`, `@BeforeEach`, `@AfterAll` and similar methods are therefore declared without
 a visibility modifier. Classes in test sources which hold no test, such as shared helpers, keep the
 visibility their callers need. `TestVisibilityTest` of the coverage gate checks it on every build.
+
+### 22. A wrapped parameter list closes on a line of its own
+
+Supersedes in part decision 16, like decision 20. Where the parameters of a method, a constructor
+or a record are wrapped, each stands on a line of its own one level (four spaces) deeper than the
+declaration, and the closing parenthesis returns to the declaration's indentation, followed by the
+`throws` clause and the opening brace:
+
+```java
+    private ProductionModules.Report report(
+        final String platform,
+        final String... aggregated
+    ) throws IOException {
+```
+
+The parameters then read as a list of their own, the line with `) {` separates them from the body,
+and adding a parameter changes one line instead of two. `formatting_conventions.xml` says so with
+"indent by one" on the three parameter alignments and `separate_lines_if_wrapped` for the
+parentheses of method and record declarations; Spotless applies and checks it on every build. A
+declaration short enough for one line stays on one line.
