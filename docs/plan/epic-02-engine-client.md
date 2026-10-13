@@ -55,9 +55,50 @@ Reference implementations to read before starting: `Camunda8AdapterConfiguration
 
 **Acceptance criteria**
 
-- [ ] Every key of the architecture table has a field, a default and a validation where one applies.
-- [ ] Messages contain the full property key for every named defect and never a value of `client-id`
-  (treated like a credential, it may carry a hostname somebody considers internal).
+- [x] Every key of the architecture table has a field, a default and a validation where one applies.
+  Read as the sixteen keys instruction 1 lists: each has a field, an accessor pair and a default
+  (`aRestAddressAloneIsComplete` asserts all of them). The table's other keys arrive with the
+  stories which give them a meaning: `job-timeout`, `async-task-lock-renewal` and
+  `async-task-max-age-action` with E6, `shared-engine` with S3.3.1,
+  `message-start-lookup-max-instances` with S7.1.2; `type`, `name-clash-avoidance` and
+  `deployment-failure` are core keys. `accept-unscoped-identifiers` is named by no story yet.
+- [x] Messages contain the full property key for every named defect and never a value of `client-id`
+  (treated like a credential, it may carry a hostname somebody considers internal). Each of 32
+  defect cases asserts its line `  - vanillabp.adapters.orders.<key> ...`;
+  `valuesWhichMayBeSecretAreNeverRepeated` sets a client id, a user and password in `rest-address`
+  and a host in `grpc-address`, and none of them is in the message. Addresses are never repeated
+  either, only numbers and durations.
+
+**Implemented 2026-10-13.** `ZenBpmAdapterConfigurationTest`, 55 cases, green; the full
+`mvn install` builds green and the coverage gate measures 99.83 % of 1,176 instructions on both
+platforms. Seen to fail, each with the source changed back afterwards: a user in `rest-address`
+accepted, a blank `client-id` accepted, `/v1` appended to an address carrying it, a scheme in
+`grpc-address` accepted, and degrading regardless of the policy. The first run caught a real bug:
+the missing address was listed as a defect, so no configuration was ever unconfigured.
+
+Where the code differs from the instructions:
+
+- `validate(adapterId, nowhereFirst, deploymentFailureWarns)` takes a boolean, not the policy:
+  `DeploymentFailurePolicy` lives in the platform's runtime module, which `core` does not depend on
+  (Camunda 8's `Camunda8StartupValidation` does the same).
+- `ValidationResult(kind, message, endsTheBoot, notices)`: `endsTheBoot` is false for UNCONFIGURED,
+  and for INCONSISTENT only where the id is nowhere first with `deployment-failure: warn`, so E3
+  reads the decision instead of repeating it. The INFO about an address ending with `/v1` is a
+  notice in the result, logged once by the platform at startup, not a log line of `restBaseUri()`.
+- A missing `rest-address` next to another defect is INCONSISTENT, listing the missing key first:
+  somebody configured the adapter and has to finish it.
+- Setters take `null` as "restore the default", so the overlays of E3 hand on unset keys without
+  knowing a default.
+- `worker-threads-bound` without a value answers the number of `worker-threads`, or 4 for
+  `virtual`. A bound with platform threads is accepted when it is not below them; Camunda 8's
+  execution model refuses a bound outside the virtual mode, which S2.4.2 has to reconcile.
+- Further checks, all naming their key: `rest-address` with a scheme other than http(s), a user, a
+  query or fragment, no host the JDK accepts (`_`), a port outside 1 to 65535; `grpc-address` with
+  a scheme, without a host or with a port which is no number or out of range; `worker-threads`
+  neither a number nor `virtual`; negative `max-redeliveries` and `instance-cache-max-entries` (0
+  is allowed: incident at the first failure, no cache).
+- `restBaseUri()` and `instanceIdentity()` are the same normalised form, so `http://host:8080` and
+  `http://host:8080/v1` are one engine as well as `HTTP://Host:8080/`.
 
 ---
 
