@@ -38,3 +38,6 @@ target/
 .settings/
 .factorypath
 .vscode/
+
+# review notes handed in for a branch; they stay on the machine of whoever answers them
+/docs/reviews/
