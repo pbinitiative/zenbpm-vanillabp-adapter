@@ -452,6 +452,14 @@ ready after six seconds and reported `"commitId": "bdd795a399b6"` (12 characters
   anonymous limit, while a login there would leave a token which may write packages in
   `~/.docker/config.json`.
 
+**In CI**, run
+[38398478457](https://github.com/pbinitiative/zenbpm-vanillabp-adapter/actions/runs/38398478457)
+of pull request #7 (GitHub keeps run logs for 90 days, so what it showed is written here as well):
+`build` (JDK 25) and `build on Java 21` green; `EngineUnderTestIT` ran 3 tests, none skipped, in
+9.5 s and 8.2 s, so the runner pulled the pinned image and talked to the engine; `MalformedPinsTest`
+12, `EnginePinTest` 3 and `GeneratedStubPackageTest` 1 green; the gate said "the report holds no
+instruction" for both platforms.
+
 **Answers to two reviews, 2026-10-13** (S1.2.1 and S1.2.2 together):
 
 - The pin has to have its form. `EngineUnderTest` refuses an `engine.commit` which is not 40
@@ -521,6 +529,8 @@ proto in the jar, which carries the 58 generated classes and `ZenBpmAdapter`. A 
 resolves the generated classes: a throw-away class there calling `ZenBpmGrpc` and
 `Zenbpm.JobStreamRequest` built green together with `quarkus/deployment` and
 `quarkus/integration-tests`. Both platform modules resolve `protobuf-java` 4.35.0 and gRPC 1.81.0.
+In CI (run 38398478457, see S1.2.1) the stubs were generated on both JDKs without a `protoc` on the
+runner, and `ZenBpmGrpcStubsTest` passed.
 
 **Answers to two reviews, 2026-10-13.** `GeneratedStubPackageTest` (coverage-gate module) fails
 where a module writes a source file of its own into `org.pbinitiative.zenbpmadapter.client.grpc`,
