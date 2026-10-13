@@ -14,6 +14,10 @@ proven before any Java exists.
 snapshots and coverage pages are published from `main`, the local workspace builds it after the
 platform, and one test has talked to a ZenBPM container.
 
+**E1 done 2026-10-13**, with S1.2.1 and S1.2.2 merged to `main` as `6f4094d` (pull request #7). The
+last criterion, a test which talked to a ZenBPM container, holds on GitHub as well: in both the
+check and the publication of that commit, see the two stories below.
+
 The repository already exists (`https://github.com/pbinitiative/zenbpm-vanillabp-adapter`, default
 branch `main`, `LICENSE` = MIT, a one-line `README.md`, a Java `.gitignore`) and is checked out in
 the workspace; the plan lives in its `docs/` folder. Stories below start from that state.
@@ -501,6 +505,22 @@ instruction" for both platforms.
   that includes the README table), `NOTICE`, the root POM's licence comment and the README's
   licence section, which now name the copies and the generated code as the open exception to MIT.
 
+**Done 2026-10-13**, merged to `main` as `6f4094d` (pull request #7, together with S1.2.2, after two
+reviews and CodeRabbit). On that commit (GitHub keeps run logs for 90 days, so what they showed is
+written here as well):
+
+- `Checks`, run
+  [38401854298](https://github.com/pbinitiative/zenbpm-vanillabp-adapter/actions/runs/38401854298):
+  green on both JDKs; `bin/check-engine-copies.sh` reported both copies as the engine's files of
+  `bdd795a3...`.
+- `Publish snapshots`, run
+  [38401854374](https://github.com/pbinitiative/zenbpm-vanillabp-adapter/actions/runs/38401854374):
+  green. `EngineUnderTestIT` ran 3 tests, none skipped, in 7 s, so the publishing job pulled the
+  pinned image without a ghcr.io login (step 5). Maven logged "Skipping artifact deployment" for
+  `engine-test-support` and deferred the five published modules to the end. The organisation's
+  Maven packages are still the five of S1.3.2, with no package for `engine-test-support`. Both
+  report pages answer HTTP 200.
+
 ### S1.2.2 Generate the gRPC stubs from the pinned proto
 
 - [ ] **Depends on:** S1.2.1.
@@ -551,3 +571,9 @@ there in `core/src/main/java`. It compares directory names, not the path as text
 the same on Windows (CodeRabbit on pull request #7). `ZenBpmGrpcStubsTest` now says that it proves the generated code
 against this build's protobuf runtime only; an application bringing an older runtime is S2.3.1's
 startup check.
+
+**Done 2026-10-13**, merged with S1.2.1 as `6f4094d` (pull request #7). The core snapshot that run
+38401854374 published, `2.0.0-20261013.130252-3`, carries `zenbpm.engine=bdd795a3...` in
+`META-INF/vanillabp/adapter-zenbpm.properties`, the 58 generated classes and no `.proto`. Its
+licence is still open question 13 of `docs/open-questions.md`; it was published before that answer,
+as decided when pull request #7 was merged.

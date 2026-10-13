@@ -29,7 +29,7 @@ re-checked file by file rather than re-analysed.
 | 7 | [`plan/00-roadmap.md`](plan/00-roadmap.md) | Epics, milestones, the dependency graph and the global story order. |
 | 8 | `plan/epic-*.md` | One file per epic: features, stories, development instructions, acceptance criteria. |
 | 9 | [`open-questions.md`](open-questions.md) | What could not be settled from the code, who has to answer it, and the recommendation for each. |
-| 10 | `engine-enablement/E13.*.md` | Stories for the engine changes the ZenBPM maintainers picked up: the configurable job lock (E13.1, **implemented** in engine commit `071460cc`, 2026-09-23) and job retries (E13.3, open). |
+| 10 | `engine-enablement/E13.*.md` | Stories for the engine changes the ZenBPM maintainers picked up: the configurable job lock (E13.1, **implemented** in engine commit `071460cc`, 2026-09-23) and job retries (E13.3, **implemented** in engine commit `bc3384b3`, 2026-10-12). |
 
 ## Who owns what
 
