@@ -136,6 +136,14 @@ path or query in `grpc-address` accepted, a user in `grpc-address` accepted, a b
   classes as they were (naming the four methods and their lines), the `@AfterAll` of
   `EngineUnderTestIT` moved below a test, a private method above the public ones of
   `ZenBpmAdapterConfiguration`.
+- `bin/check-deploy-safety.sh` had been broken since the first commit of this story, which the
+  review round found when the script ran after the coverage gate gained `MethodOrderTest`: its red
+  run adds one untested method and expected "0.00 %", which held only while `core` had no code.
+  Beside 1,476 covered instructions that method left the coverage at about 99.7 %, the gate stayed
+  green and the script reported "the build with an untested method passed the coverage gate". The
+  red run now raises both thresholds to 100 % and expects the gate's own "below the 100 %" message;
+  both runs pass again (the README says so too). A check of the red run with `deployAtEnd`
+  switched off was not possible: `PublicationSafetyTest` then fails the green run first.
 - Not changed: the adapter id stays a parameter of `validate` and `clientIdInUse`, as the story's
   signature and Camunda 8 have it.
 
