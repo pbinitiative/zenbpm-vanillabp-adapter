@@ -300,12 +300,16 @@ Scoped keys resolve through the four levels of the configuration model, most spe
 the same resolver shape on both platforms (`PeaFetchVariables` pattern). Every key is modelled in
 the Quarkus overlay, or the startup fails on it.
 
-Startup validation, per configured id of type `zenbpm`: no `rest-address` -> WARN naming
+Startup validation, per configured id of type `zenbpm`: no `rest-address` and no other key without a
+default (`grpc-address`, `client-id`, `history-time-to-live`) -> WARN naming
 `vanillabp.adapters.<id>.rest-address`, the application boots, the adapter refuses work with the same
-message; a malformed address or a `grpc-address` without a port -> the boot ends naming the key, unless
-the id is nowhere first and `deployment-failure: warn`; complete -> the client is built without
-contacting the engine, and one INFO line names address, gRPC address, client id and the engine version
-once the wait answered.
+message; a malformed address, a `grpc-address` which is not `host:port`, a blank `client-id` or a
+started configuration without `rest-address` -> the boot ends naming the key, unless the id is
+nowhere first and `deployment-failure: warn`; a number or duration which cannot work -> the boot
+ends for every id; complete -> the client is built without contacting the engine, and one INFO line
+names address, gRPC address, client id and the engine version once the wait answered. That INFO
+line describes a working configuration; the validation messages never repeat an address or the
+client id.
 
 ## 7. Messages and observability
 

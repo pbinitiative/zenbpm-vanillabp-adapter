@@ -51,8 +51,7 @@ import java.util.stream.Collectors;
  * {@value #DEFAULT_WORKFLOW_VISIBILITY_TIMEOUT_ISO}) - how long a started workflow may stay
  * invisible to a query</li>
  * <li><code>user-task-poll-interval</code> (default
- * {@value #DEFAULT_USER_TASK_POLL_INTERVAL_ISO}) - how often user tasks are looked for;
- * <code>PT0S</code> switches the notifications off</li>
+ * {@value #DEFAULT_USER_TASK_POLL_INTERVAL_ISO}) - how often user tasks are looked for</li>
  * <li><code>history-time-to-live</code> (default: none, the engine's own) - sent with every
  * start</li>
  * <li><code>instance-cache-max-entries</code> (default
@@ -61,14 +60,18 @@ import java.util.stream.Collectors;
  * <li><code>message-start-lookup</code> (default <code>refuse</code>) - <code>scan</code>
  * allows the bounded lookup of workflows a message started</li>
  * </ul>
- * <code>retry-backoff</code>, <code>max-redeliveries</code> and
- * <code>history-time-to-live</code> may also be set per workflow module, workflow or task;
- * this class holds the value of the adapter level only.
+ * <code>retry-backoff</code> and <code>max-redeliveries</code> may also be set per workflow
+ * module, workflow or task, <code>history-time-to-live</code> per workflow module or workflow.
+ * This class holds their values at the adapter level only.
+ * <p>
+ * The platforms copy their own configuration classes into this one; it is not bound directly.
+ * Some getters answer a primitive where the setter takes <code>null</code> for the default, so a
+ * JavaBeans binder would see read-only properties.
  * <p>
  * {@link #validate(String, boolean, boolean)} checks every key at startup. The derivations
  * ({@link #grpcAddressInUse()}, {@link #clientIdInUse(String, Supplier)},
- * {@link #restBaseUri()}, {@link #instanceIdentity()}) are defined for a configuration it
- * found complete.
+ * {@link #restBaseUri()}, {@link #instanceIdentity()}, {@link #workerThreadsBoundInUse()}) are
+ * defined for a configuration it found complete.
  * <p>
  * Each field has an accessor of its own and no Lombok getter on the class, see decision 13 in
  * the repository's DECISIONS.md.
@@ -226,15 +229,15 @@ public class ZenBpmAdapterConfiguration {
     public enum Kind {
 
       /**
-       * No <code>rest-address</code> and nothing else wrong. The application boots with a
-       * warning, and the adapter refuses work with the same message.
+       * No <code>rest-address</code>, no other key without a default, and nothing wrong. The
+       * platform lets the application boot and logs the message as a warning.
        */
       UNCONFIGURED,
 
       /**
-       * At least one key holds a value which cannot work. The boot ends, unless the adapter is
-       * nowhere first priority and its <code>deployment-failure</code> policy is
-       * <code>warn</code>: then the application boots degraded.
+       * At least one key holds a value which cannot work, or the configuration was started
+       * without <code>rest-address</code>. {@link ValidationResult#endsTheBoot()} says whether
+       * the platform ends the boot or boots degraded.
        */
       INCONSISTENT,
 
@@ -474,24 +477,36 @@ public class ZenBpmAdapterConfiguration {
   /**
    * How many platform threads run the handlers, or <code>virtual</code>.
    *
-   * @param workerThreads A positive number or <code>virtual</code>, or <code>null</code> for
-   *          the default
+   * @param workerThreads A positive number or <code>virtual</code>; <code>null</code> or blank
+   *          for the default, as an empty key binds to an empty text
    */
   public void setWorkerThreads(
       final String workerThreads) {
 
-    this.workerThreads = workerThreads == null ? DEFAULT_WORKER_THREADS : workerThreads;
+    this.workerThreads = isBlank(workerThreads) ? DEFAULT_WORKER_THREADS : workerThreads;
+
+  }
+
+  /**
+   * How many handlers may run at the same time on virtual threads, as written. See
+   * {@link #workerThreadsBoundInUse()} for the bound in use.
+   *
+   * @return The bound, or <code>null</code> where the key is not set
+   */
+  public Integer getWorkerThreadsBound() {
+
+    return workerThreadsBound;
 
   }
 
   /**
    * How many handlers may run at the same time. With platform threads it is their number, and
-   * the key may not be set. Virtual threads have no limit of their own, so there it is the key,
-   * or {@value #DEFAULT_WORKER_THREADS} where it is not set.
+   * <code>worker-threads-bound</code> may not be set. Virtual threads have no limit of their
+   * own, so there it is the key, or {@value #DEFAULT_WORKER_THREADS} where it is not set.
    *
    * @return The bound in use
    */
-  public int getWorkerThreadsBound() {
+  public int workerThreadsBoundInUse() {
 
     if (workerThreadsBound != null) {
       return workerThreadsBound;
@@ -708,9 +723,16 @@ public class ZenBpmAdapterConfiguration {
    * Checks every key of this adapter instance. Called once per adapter id at startup (Spring
    * Boot) or build time (Quarkus), before anything contacts the engine.
    * <p>
-   * The messages name keys, and values only where a value cannot carry anything somebody
-   * keeps to themselves: numbers and durations. Addresses and the client id are never
-   * repeated; an address may carry a user and password, a client id a host name somebody
+   * Only a defect in how the engine is reached (<code>rest-address</code>,
+   * <code>grpc-address</code>, <code>client-id</code>) may let the application boot degraded,
+   * and only where the adapter is nowhere first priority and its <code>deployment-failure</code>
+   * policy is <code>warn</code>: that is the old engine of a migration, which may be away for a
+   * while. A number or duration which cannot work is a typo, so it ends the boot for every
+   * adapter id.
+   * <p>
+   * The messages of a validation name keys, and values only where a value cannot carry anything
+   * somebody keeps to themselves: numbers and durations. They never repeat an address or the
+   * client id; an address may carry a user and password, a client id a host name somebody
    * considers internal.
    *
    * @param adapterId The adapter id
@@ -725,38 +747,35 @@ public class ZenBpmAdapterConfiguration {
       final boolean nowhereFirst,
       final boolean deploymentFailureWarns) {
 
-    final var defects = new ArrayList<String>();
+    final var connectionDefects = new ArrayList<String>();
+    final var valueDefects = new ArrayList<String>();
     final var notices = new ArrayList<String>();
 
     final var restAddressMissing = isBlank(restAddress);
     if (!restAddressMissing) {
       final var restAddressDefect = restAddressDefect();
       if (restAddressDefect != null) {
-        defects.add("%s %s".formatted(propertyKey(adapterId, "rest-address"), restAddressDefect));
-      } else if (endsWithApiVersion(parsedRestAddress().getPath())) {
-        notices.add(
-            """
-                ZenBPM adapter '%s': '%s' already ends with '%s'. The adapter appends it itself, so \
-                the key may name the engine's address without it. It is used as written."""
-                .formatted(adapterId, propertyKey(adapterId, "rest-address"), API_VERSION_PATH));
+        connectionDefects.add("%s %s".formatted(propertyKey(adapterId, "rest-address"), restAddressDefect));
+      } else {
+        addRestAddressNotices(adapterId, notices);
       }
     }
 
     if (grpcAddress != null) {
       final var grpcAddressDefect = grpcAddressDefect(grpcAddress.trim());
       if (grpcAddressDefect != null) {
-        defects.add("%s %s".formatted(propertyKey(adapterId, "grpc-address"), grpcAddressDefect));
+        connectionDefects.add("%s %s".formatted(propertyKey(adapterId, "grpc-address"), grpcAddressDefect));
       }
     }
 
     if ((clientId != null) && clientId.isBlank()) {
-      defects.add(
+      connectionDefects.add(
           "%s is blank; remove the key to have the id derived as <application name>-%s-<random>"
               .formatted(propertyKey(adapterId, "client-id"), adapterId));
     }
 
     if (requestTimeout.compareTo(MINIMUM_REQUEST_TIMEOUT) < 0) {
-      defects.add("%s is %s and has to be at least %s; the default is %s"
+      valueDefects.add("%s is %s and has to be at least %s; the default is %s"
           .formatted(
               propertyKey(adapterId, "request-timeout"),
               requestTimeout,
@@ -764,42 +783,63 @@ public class ZenBpmAdapterConfiguration {
               DEFAULT_REQUEST_TIMEOUT_ISO));
     }
 
-    addWorkerThreadsDefects(adapterId, defects);
+    addWorkerThreadsDefects(adapterId, valueDefects);
 
-    addNegativeDurationDefect(adapterId, "startup-wait", startupWait, defects);
-    addNegativeDurationDefect(adapterId, "retry-backoff", retryBackoff, defects);
-    addNegativeDurationDefect(adapterId, "shutdown-grace", shutdownGrace, defects);
-    addNegativeDurationDefect(adapterId, "workflow-visibility-timeout", workflowVisibilityTimeout, defects);
-    addNegativeDurationDefect(adapterId, "user-task-poll-interval", userTaskPollInterval, defects);
-    if (historyTimeToLive != null) {
-      addNegativeDurationDefect(adapterId, "history-time-to-live", historyTimeToLive, defects);
+    addNegativeDurationDefect(adapterId, "startup-wait", startupWait, DEFAULT_STARTUP_WAIT_ISO, valueDefects);
+    addNegativeDurationDefect(adapterId, "retry-backoff", retryBackoff, DEFAULT_RETRY_BACKOFF_ISO, valueDefects);
+    addNegativeDurationDefect(adapterId, "shutdown-grace", shutdownGrace, DEFAULT_SHUTDOWN_GRACE_ISO, valueDefects);
+    addNegativeDurationDefect(
+        adapterId,
+        "workflow-visibility-timeout",
+        workflowVisibilityTimeout,
+        DEFAULT_WORKFLOW_VISIBILITY_TIMEOUT_ISO,
+        valueDefects);
+    addNegativeDurationDefect(
+        adapterId,
+        "user-task-poll-interval",
+        userTaskPollInterval,
+        DEFAULT_USER_TASK_POLL_INTERVAL_ISO,
+        valueDefects);
+    if ((historyTimeToLive != null) && historyTimeToLive.isNegative()) {
+      valueDefects.add("%s is %s and must not be negative; without the key the engine's own default applies"
+          .formatted(propertyKey(adapterId, "history-time-to-live"), historyTimeToLive));
     }
 
     if (maxRedeliveries < 0) {
-      defects.add("%s is %d and must not be negative; 0 turns the first failure into an incident"
-          .formatted(propertyKey(adapterId, "max-redeliveries"), maxRedeliveries));
+      valueDefects
+          .add("%s is %d and must not be negative; 0 turns the first failure into an incident, the default is %d"
+              .formatted(propertyKey(adapterId, "max-redeliveries"), maxRedeliveries, DEFAULT_MAX_REDELIVERIES));
     }
     if (instanceCacheMaxEntries < 0) {
-      defects.add("%s is %d and must not be negative"
-          .formatted(propertyKey(adapterId, "instance-cache-max-entries"), instanceCacheMaxEntries));
+      valueDefects.add("%s is %d and must not be negative; the default is %d"
+          .formatted(
+              propertyKey(adapterId, "instance-cache-max-entries"),
+              instanceCacheMaxEntries,
+              DEFAULT_INSTANCE_CACHE_MAX_ENTRIES));
     }
 
-    if (defects.isEmpty()) {
+    // the keys without a default are set only by somebody who configures this adapter. Beside
+    // them, or beside a value which cannot work, a missing address is no longer "not configured
+    // yet": the configuration was started and has to be finished
+    final var partlyConfigured = (grpcAddress != null) || (clientId != null) || (historyTimeToLive != null);
+    if (restAddressMissing && (partlyConfigured || !valueDefects.isEmpty())) {
+      connectionDefects.addFirst(
+          "%s is missing, but other keys of this adapter are set; it is the address of the engine's REST API, e.g. http://localhost:8080"
+              .formatted(propertyKey(adapterId, "rest-address")));
+    }
+
+    if (connectionDefects.isEmpty() && valueDefects.isEmpty()) {
       return restAddressMissing
           ? new ValidationResult(ValidationResult.Kind.UNCONFIGURED, unconfiguredMessage(adapterId), false, notices)
           : new ValidationResult(ValidationResult.Kind.COMPLETE, "", false, notices);
     }
-    // a missing address beside a value which cannot work is no longer "not configured yet":
-    // somebody configured this adapter and has to finish it
-    if (restAddressMissing) {
-      defects.addFirst("%s is missing; it is the address of the engine's REST API, e.g. http://localhost:8080"
-          .formatted(propertyKey(adapterId, "rest-address")));
-    }
 
-    final var degrades = nowhereFirst && deploymentFailureWarns;
+    final var defects = new ArrayList<String>(connectionDefects);
+    defects.addAll(valueDefects);
+    final var degrades = nowhereFirst && deploymentFailureWarns && valueDefects.isEmpty();
     return new ValidationResult(
         ValidationResult.Kind.INCONSISTENT, inconsistentMessage(adapterId, defects, nowhereFirst,
-            degrades), !degrades, notices);
+            deploymentFailureWarns, degrades), !degrades, notices);
 
   }
 
@@ -842,9 +882,11 @@ public class ZenBpmAdapterConfiguration {
   }
 
   /**
-   * The base of every REST call: <code>rest-address</code> normalised (lower-cased scheme and
-   * host, explicit port, no trailing slash) with <code>/v1</code> appended unless it already
-   * ends with it.
+   * The base of every REST call: <code>rest-address</code> normalised, with <code>/v1</code>
+   * appended unless it already ends with it. Normalised means a lower-cased scheme and host, an
+   * explicit port, a path without repeated or trailing slashes, and an escaped letter, digit or
+   * <code>-._~</code> written as itself (<code>%76%31</code> is <code>v1</code>); every other
+   * escape stays, so <code>%2F</code> never becomes a separator.
    *
    * @return E.g. <code>http://zenbpm:8080/v1</code>
    * @throws IllegalStateException If <code>rest-address</code> is missing or malformed
@@ -858,14 +900,14 @@ public class ZenBpmAdapterConfiguration {
     final var port = address.getPort() != -1
         ? address.getPort()
         : "https".equals(scheme) ? 443 : 80;
-    final var path = withoutTrailingSlashes(address.getRawPath());
+    final var path = normalisedPath(address.getRawPath());
     return URI.create("%s://%s:%d%s".formatted(
         scheme,
         address
             .getHost()
             .toLowerCase(Locale.ROOT),
         port,
-        endsWithApiVersion(path) ? path : path + API_VERSION_PATH));
+        path.endsWith(API_VERSION_PATH) ? path : path + API_VERSION_PATH));
 
   }
 
@@ -879,6 +921,33 @@ public class ZenBpmAdapterConfiguration {
   public String instanceIdentity() {
 
     return restBaseUri().toString();
+
+  }
+
+  private void addRestAddressNotices(
+      final String adapterId,
+      final List<String> notices) {
+
+    final var address = parsedRestAddress();
+    if (normalisedPath(address.getRawPath()).endsWith(API_VERSION_PATH)) {
+      notices.add(
+          """
+              ZenBPM adapter '%s': '%s' already ends with '%s'. The adapter appends it itself, so \
+              the key may name the engine's address without it. No second '%s' is appended."""
+              .formatted(adapterId, propertyKey(adapterId, "rest-address"), API_VERSION_PATH, API_VERSION_PATH));
+    }
+    if ("https".equalsIgnoreCase(address.getScheme()) && (grpcAddress == null) && grpcPlaintext) {
+      notices.add(
+          """
+              ZenBPM adapter '%s': '%s' uses https, but the job stream goes to port %d of the same \
+              host without TLS. Where a proxy terminates TLS for both, set '%s' and '%s: false'."""
+              .formatted(
+                  adapterId,
+                  propertyKey(adapterId, "rest-address"),
+                  DEFAULT_GRPC_PORT,
+                  propertyKey(adapterId, "grpc-address"),
+                  propertyKey(adapterId, "grpc-plaintext")));
+    }
 
   }
 
@@ -907,11 +976,13 @@ public class ZenBpmAdapterConfiguration {
     if (address.getRawUserInfo() != null) {
       return "carries a user before '@', which the adapter never sends; remove it";
     }
+    // java.net.URI answers no host where the authority is not a valid host and port, e.g. an
+    // underscore in the host or a port too large for a number
     if (address.getHost() == null) {
-      return "names no host the JDK's HTTP client accepts (a host name may not contain '_')";
+      return "names no valid host and port; write it as http://host:port (a host name may not contain '_')";
     }
     if ((address.getPort() == 0) || (address.getPort() > 65_535)) {
-      return "names a port outside 1 to 65535";
+      return "names a port outside 1 to 65535; write it as http://host:port, e.g. http://localhost:8080";
     }
     if ((address.getRawQuery() != null) || (address.getRawFragment() != null)) {
       return "carries a query or a fragment; it is the engine's address and nothing else";
@@ -923,24 +994,39 @@ public class ZenBpmAdapterConfiguration {
   private static String grpcAddressDefect(
       final String address) {
 
+    final var example = "e.g. localhost:%d or [::1]:%d".formatted(DEFAULT_GRPC_PORT, DEFAULT_GRPC_PORT);
+    if (address.isEmpty()) {
+      return "is blank; remove the key to have it derived from the host of rest-address and port %d"
+          .formatted(DEFAULT_GRPC_PORT);
+    }
     if (address.contains("://")) {
-      return "is host:port, without a scheme, e.g. localhost:%d".formatted(DEFAULT_GRPC_PORT);
+      return "is host:port without a scheme, %s".formatted(example);
     }
-    final var colon = address.lastIndexOf(':');
-    if ((colon == -1) || address.endsWith("]")) {
-      return "names no port; write it as host:port, e.g. localhost:%d".formatted(DEFAULT_GRPC_PORT);
-    }
-    if (colon == 0) {
-      return "names no host; write it as host:port, e.g. localhost:%d".formatted(DEFAULT_GRPC_PORT);
-    }
-    final int port;
+    // parsed as the authority of a URI, so a host, an IPv6 address in brackets and a port are
+    // checked the way the gRPC channel will read them
+    final URI authority;
     try {
-      port = Integer.parseInt(address.substring(colon + 1));
-    } catch (NumberFormatException e) {
-      return "names no port; write it as host:port, e.g. localhost:%d".formatted(DEFAULT_GRPC_PORT);
+      authority = new URI("grpc://"
+          + address);
+    } catch (URISyntaxException e) {
+      return "is not host:port, %s".formatted(example);
     }
-    if ((port < 1) || (port > 65_535)) {
-      return "names a port outside 1 to 65535";
+    if (authority.getRawUserInfo() != null) {
+      return "carries a user before '@', which the adapter never sends; write it as host:port, %s".formatted(example);
+    }
+    if (!authority
+        .getRawPath()
+        .isEmpty() || (authority.getRawQuery() != null) || (authority.getRawFragment() != null)) {
+      return "carries more than host:port, %s".formatted(example);
+    }
+    if (authority.getHost() == null) {
+      return "names no valid host and port, %s (a host name may not contain '_')".formatted(example);
+    }
+    if (authority.getPort() == -1) {
+      return "names no port; write it as host:port, %s".formatted(example);
+    }
+    if ((authority.getPort() == 0) || (authority.getPort() > 65_535)) {
+      return "names a port outside 1 to 65535, %s".formatted(example);
     }
     return null;
 
@@ -952,7 +1038,10 @@ public class ZenBpmAdapterConfiguration {
 
     final var configured = workerThreads.trim();
     final var threads = workerThreadsAsNumber();
-    if ((threads == null) && !VIRTUAL_WORKER_THREADS.equalsIgnoreCase(configured)) {
+    if ((threads == null) && configured.matches("[+-]?\\d+")) {
+      defects.add("%s is too large a number; size it against the database connection pool, the default is %s"
+          .formatted(propertyKey(adapterId, "worker-threads"), DEFAULT_WORKER_THREADS));
+    } else if ((threads == null) && !VIRTUAL_WORKER_THREADS.equalsIgnoreCase(configured)) {
       defects.add("%s is neither a number nor '%s'; e.g. '%s' platform threads, or '%s' bounded by %s"
           .formatted(
               propertyKey(adapterId, "worker-threads"),
@@ -998,10 +1087,12 @@ public class ZenBpmAdapterConfiguration {
       final String adapterId,
       final String key,
       final Duration configured,
+      final String defaultIso,
       final List<String> defects) {
 
     if (configured.isNegative()) {
-      defects.add("%s is %s and must not be negative".formatted(propertyKey(adapterId, key), configured));
+      defects.add("%s is %s and must not be negative; the default is %s"
+          .formatted(propertyKey(adapterId, key), configured, defaultIso));
     }
 
   }
@@ -1033,6 +1124,7 @@ public class ZenBpmAdapterConfiguration {
       final String adapterId,
       final List<String> defects,
       final boolean nowhereFirst,
+      final boolean deploymentFailureWarns,
       final boolean degrades) {
 
     final var listed = defects
@@ -1045,33 +1137,61 @@ public class ZenBpmAdapterConfiguration {
           The adapter is nowhere first priority and '%s' is 'warn', so the application boots \
           DEGRADED: the adapter refuses work with this message until the keys are corrected."""
           .formatted(propertyKey(adapterId, "deployment-failure"));
-    } else if (nowhereFirst) {
+    } else if (!nowhereFirst) {
+      consequence = "Correct the keys. The adapter is first priority somewhere, so it cannot boot degraded.";
+    } else if (deploymentFailureWarns) {
       consequence = """
-          Correct the keys. An adapter which is nowhere first priority, like the old engine of a \
-          migration, may instead set '%s: warn' to boot degraded."""
+          Correct the keys. A number or a duration which cannot work ends the boot even where '%s' \
+          is 'warn': only an engine which cannot be reached may leave the adapter degraded."""
           .formatted(propertyKey(adapterId, "deployment-failure"));
     } else {
-      consequence = "Correct the keys. The adapter is first priority somewhere, so it cannot boot degraded.";
+      consequence = """
+          Correct the keys. Where only the engine's address or the client id is wrong, an adapter \
+          which is nowhere first priority, like the old engine of a migration, may instead set \
+          '%s: warn' to boot degraded."""
+          .formatted(propertyKey(adapterId, "deployment-failure"));
     }
     return "ZenBPM adapter '%s' is configured inconsistently:\n%s\n%s".formatted(adapterId, listed, consequence);
 
   }
 
-  private static boolean endsWithApiVersion(
-      final String path) {
+  // RFC 3986 normalisation of a raw path (section 6.2.2.2: an escaped unreserved character is
+  // the character itself), plus repeated and trailing slashes removed, so the '/v1' check and
+  // the identity of two spellings of one address agree
+  private static String normalisedPath(
+      final String rawPath) {
 
-    return withoutTrailingSlashes(path).endsWith(API_VERSION_PATH);
+    final var path = new StringBuilder();
+    for (var i = 0; i < rawPath.length(); ++i) {
+      final var character = rawPath.charAt(i);
+      if (character == '%') {
+        // java.net.URI has checked that two hex digits follow
+        final var hex = rawPath.substring(i + 1, i + 3);
+        final var decoded = (char) Integer.parseInt(hex, 16);
+        if (isUnreserved(decoded)) {
+          path.append(decoded);
+        } else {
+          path
+              .append('%')
+              .append(hex.toUpperCase(Locale.ROOT));
+        }
+        i += 2;
+      } else if ((character != '/') || path.isEmpty() || (path.charAt(path.length() - 1) != '/')) {
+        path.append(character);
+      }
+    }
+    if (!path.isEmpty() && (path.charAt(path.length() - 1) == '/')) {
+      path.setLength(path.length() - 1);
+    }
+    return path.toString();
 
   }
 
-  private static String withoutTrailingSlashes(
-      final String path) {
+  private static boolean isUnreserved(
+      final char character) {
 
-    var trimmed = path == null ? "" : path;
-    while (trimmed.endsWith("/")) {
-      trimmed = trimmed.substring(0, trimmed.length() - 1);
-    }
-    return trimmed;
+    // the ASCII letters and digits only: Character.isLetterOrDigit alone accepts every alphabet
+    return ((character < 128) && Character.isLetterOrDigit(character)) || ("-._~".indexOf(character) >= 0);
 
   }
 

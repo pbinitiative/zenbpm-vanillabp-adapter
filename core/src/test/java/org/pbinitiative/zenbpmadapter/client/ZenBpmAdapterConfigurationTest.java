@@ -92,7 +92,8 @@ public class ZenBpmAdapterConfigurationTest {
     assertEquals(Duration.ofSeconds(10), configuration.getRequestTimeout());
     assertEquals(Duration.ofMinutes(10), configuration.getStartupWait());
     assertEquals("4", configuration.getWorkerThreads());
-    assertEquals(4, configuration.getWorkerThreadsBound());
+    assertNull(configuration.getWorkerThreadsBound());
+    assertEquals(4, configuration.workerThreadsBoundInUse());
     assertEquals(Duration.ofSeconds(10), configuration.getRetryBackoff());
     assertEquals(10, configuration.getMaxRedeliveries());
     assertEquals(Duration.ofSeconds(20), configuration.getShutdownGrace());
@@ -135,7 +136,8 @@ public class ZenBpmAdapterConfigurationTest {
     assertEquals(Duration.ofSeconds(3), configuration.getRequestTimeout());
     assertEquals(Duration.ofMinutes(1), configuration.getStartupWait());
     assertEquals("virtual", configuration.getWorkerThreads());
-    assertEquals(16, configuration.getWorkerThreadsBound());
+    assertEquals(Integer.valueOf(16), configuration.getWorkerThreadsBound());
+    assertEquals(16, configuration.workerThreadsBoundInUse());
     assertEquals(Duration.ofSeconds(1), configuration.getRetryBackoff());
     assertEquals(0, configuration.getMaxRedeliveries());
     assertEquals(Duration.ZERO, configuration.getShutdownGrace());
@@ -177,54 +179,127 @@ public class ZenBpmAdapterConfigurationTest {
   static Stream<Arguments> defects() {
 
     return Stream.of(
-        defect("rest-address", "localhost:8080", c -> c.setRestAddress("localhost:8080")),
-        defect("rest-address", "a URL with spaces", c -> c.setRestAddress("http://zen bpm:8080")),
-        defect("rest-address", "another scheme", c -> c.setRestAddress("grpc://zenbpm:9090")),
-        defect("rest-address", "an underscore in the host", c -> c.setRestAddress("http://zen_bpm:8080")),
-        defect("rest-address", "a port of 0", c -> c.setRestAddress("http://zenbpm:0")),
-        defect("rest-address", "a port above 65535", c -> c.setRestAddress("http://zenbpm:65536")),
-        defect("rest-address", "a query", c -> c.setRestAddress("http://zenbpm:8080?tenant=a")),
-        defect("rest-address", "a fragment", c -> c.setRestAddress("http://zenbpm:8080#v1")),
-        defect("grpc-address", "no port", c -> c.setGrpcAddress("zenbpm")),
-        defect("grpc-address", "an empty port", c -> c.setGrpcAddress("zenbpm:")),
-        defect("grpc-address", "an IPv6 host without a port", c -> c.setGrpcAddress("[::1]")),
-        defect("grpc-address", "a scheme", c -> c.setGrpcAddress("http://zenbpm:9090")),
-        defect("grpc-address", "no host", c -> c.setGrpcAddress(":9090")),
-        defect("grpc-address", "a port which is no number", c -> c.setGrpcAddress("zenbpm:grpc")),
-        defect("grpc-address", "a port of 0", c -> c.setGrpcAddress("zenbpm:0")),
-        defect("grpc-address", "a port above 65535", c -> c.setGrpcAddress("zenbpm:65536")),
-        defect("grpc-address", "a blank value", c -> c.setGrpcAddress(" ")),
-        defect("client-id", "a blank value", c -> c.setClientId(" ")),
-        defect("request-timeout", "half a second", c -> c.setRequestTimeout(Duration.ofMillis(500))),
-        defect("request-timeout", "a negative duration", c -> c.setRequestTimeout(Duration.ofSeconds(-1))),
-        defect("worker-threads", "zero", c -> c.setWorkerThreads("0")),
-        defect("worker-threads", "a word", c -> c.setWorkerThreads("many")),
-        defect("worker-threads-bound", "zero beside virtual threads", c -> {
-          c.setWorkerThreads("virtual");
-          c.setWorkerThreadsBound(0);
-        }),
+        defect("rest-address", "localhost:8080", "needs the scheme http or https, as in http://localhost:8080",
+            c -> c.setRestAddress("localhost:8080")),
+        defect("rest-address", "no scheme", "needs the scheme http or https, as in http://localhost:8080",
+            c -> c.setRestAddress("//zenbpm:8080")),
+        defect("rest-address", "a URL with spaces", "is not a URL; write it as http://host:port",
+            c -> c.setRestAddress("http://zen bpm:8080")),
+        defect("rest-address", "another scheme", "needs the scheme http or https",
+            c -> c.setRestAddress("grpc://zenbpm:9090")),
+        defect("rest-address", "an underscore in the host",
+            "names no valid host and port; write it as http://host:port (a host name may not contain '_')",
+            c -> c.setRestAddress("http://zen_bpm:8080")),
+        defect("rest-address", "no authority", "names no valid host and port; write it as http://host:port",
+            c -> c.setRestAddress("http:zenbpm")),
+        defect("rest-address", "an empty host", "names no valid host and port; write it as http://host:port",
+            c -> c.setRestAddress("http:///v1")),
+        defect("rest-address", "a port too large for a number",
+            "names no valid host and port; write it as http://host:port",
+            c -> c.setRestAddress("http://zenbpm:99999999999")),
+        defect("rest-address", "a port of 0", "names a port outside 1 to 65535; write it as http://host:port",
+            c -> c.setRestAddress("http://zenbpm:0")),
+        defect("rest-address", "a port above 65535", "names a port outside 1 to 65535; write it as http://host:port",
+            c -> c.setRestAddress("http://zenbpm:65536")),
+        defect("rest-address", "a user", "carries a user before '@', which the adapter never sends; remove it",
+            c -> c.setRestAddress("http://operator@zenbpm:8080")),
+        defect("rest-address", "a query", "carries a query or a fragment",
+            c -> c.setRestAddress("http://zenbpm:8080?tenant=a")),
+        defect("rest-address", "a fragment", "carries a query or a fragment",
+            c -> c.setRestAddress("http://zenbpm:8080#v1")),
+        defect("grpc-address", "no port", "names no port; write it as host:port, e.g. localhost:9090",
+            c -> c.setGrpcAddress("zenbpm")),
+        defect("grpc-address", "an empty port", "names no port; write it as host:port",
+            c -> c.setGrpcAddress("zenbpm:")),
+        defect("grpc-address", "an IPv6 host without a port", "names no port; write it as host:port",
+            c -> c.setGrpcAddress("[::1]")),
+        defect("grpc-address", "a scheme", "is host:port without a scheme, e.g. localhost:9090",
+            c -> c.setGrpcAddress("http://zenbpm:9090")),
+        defect("grpc-address", "no host", "names no valid host and port, e.g. localhost:9090 or [::1]:9090",
+            c -> c.setGrpcAddress(":9090")),
+        defect("grpc-address", "an underscore in the host", "(a host name may not contain '_')",
+            c -> c.setGrpcAddress("zen_bpm:9090")),
+        defect("grpc-address", "a port which is no number", "names no valid host and port",
+            c -> c.setGrpcAddress("zenbpm:grpc")),
+        defect("grpc-address", "a port with a sign", "names no valid host and port",
+            c -> c.setGrpcAddress("zenbpm:+9090")),
+        defect("grpc-address", "a port of 0", "names a port outside 1 to 65535, e.g. localhost:9090",
+            c -> c.setGrpcAddress("zenbpm:0")),
+        defect("grpc-address", "a port above 65535", "names a port outside 1 to 65535",
+            c -> c.setGrpcAddress("zenbpm:65536")),
+        defect("grpc-address", "an IPv6 address without brackets",
+            "names no valid host and port, e.g. localhost:9090 or [::1]:9090",
+            c -> c.setGrpcAddress("2001:db8::1")),
+        defect("grpc-address", "an IPv6 address and port without brackets", "names no valid host and port",
+            c -> c.setGrpcAddress("::1:9090")),
+        defect("grpc-address", "an unclosed bracket", "is not host:port, e.g. localhost:9090 or [::1]:9090",
+            c -> c.setGrpcAddress("[::1")),
+        defect("grpc-address", "brackets around no IPv6 address", "is not host:port",
+            c -> c.setGrpcAddress("[not-ipv6]:9090")),
+        defect("grpc-address", "a space in the host", "is not host:port",
+            c -> c.setGrpcAddress("zen bpm:9090")),
+        defect("grpc-address", "a path", "carries more than host:port",
+            c -> c.setGrpcAddress("zenbpm/path:9090")),
+        defect("grpc-address", "a query", "carries more than host:port",
+            c -> c.setGrpcAddress("zenbpm?a:9090")),
+        defect("grpc-address", "a fragment", "carries more than host:port",
+            c -> c.setGrpcAddress("zenbpm:9090#a")),
+        defect("grpc-address", "a user", "carries a user before '@', which the adapter never sends",
+            c -> c.setGrpcAddress("operator:s3cret@zenbpm:9090")),
+        defect("grpc-address", "a blank value",
+            "is blank; remove the key to have it derived from the host of rest-address and port 9090",
+            c -> c.setGrpcAddress(" ")),
+        defect("client-id", "a blank value",
+            "is blank; remove the key to have the id derived as <application name>-orders-<random>",
+            c -> c.setClientId(" ")),
+        defect("request-timeout", "half a second", "has to be at least PT1S; the default is PT10S",
+            c -> c.setRequestTimeout(Duration.ofMillis(500))),
+        defect("request-timeout", "a negative duration", "has to be at least PT1S; the default is PT10S",
+            c -> c.setRequestTimeout(Duration.ofSeconds(-1))),
+        defect("worker-threads", "zero", "without a thread the adapter runs no handler, the default is 4",
+            c -> c.setWorkerThreads("0")),
+        defect("worker-threads", "a word",
+            "is neither a number nor 'virtual'; e.g. '4' platform threads, or 'virtual' bounded by vanillabp.adapters.orders.worker-threads-bound",
+            c -> c.setWorkerThreads("many")),
+        defect("worker-threads", "a number too large for an int",
+            "is too large a number; size it against the database connection pool, the default is 4",
+            c -> c.setWorkerThreads("2147483648")),
+        defect("worker-threads-bound", "zero beside virtual threads",
+            "has to be at least 1; every running handler holds a database connection, the default is 4",
+            c -> {
+              c.setWorkerThreads("virtual");
+              c.setWorkerThreadsBound(0);
+            }),
         defect("worker-threads-bound", "a value beside the default platform threads",
+            "set 'virtual' or remove the bound",
             c -> c.setWorkerThreadsBound(16)),
-        defect("startup-wait", "a negative duration", c -> c.setStartupWait(Duration.ofSeconds(-1))),
-        defect("retry-backoff", "a negative duration", c -> c.setRetryBackoff(Duration.ofSeconds(-1))),
-        defect("shutdown-grace", "a negative duration", c -> c.setShutdownGrace(Duration.ofSeconds(-1))),
-        defect("workflow-visibility-timeout", "a negative duration",
+        defect("startup-wait", "a negative duration", "must not be negative; the default is PT10M",
+            c -> c.setStartupWait(Duration.ofSeconds(-1))),
+        defect("retry-backoff", "a negative duration", "must not be negative; the default is PT10S",
+            c -> c.setRetryBackoff(Duration.ofSeconds(-1))),
+        defect("shutdown-grace", "a negative duration", "must not be negative; the default is PT20S",
+            c -> c.setShutdownGrace(Duration.ofSeconds(-1))),
+        defect("workflow-visibility-timeout", "a negative duration", "must not be negative; the default is PT2S",
             c -> c.setWorkflowVisibilityTimeout(Duration.ofSeconds(-1))),
-        defect("user-task-poll-interval", "a negative duration",
+        defect("user-task-poll-interval", "a negative duration", "must not be negative; the default is PT5S",
             c -> c.setUserTaskPollInterval(Duration.ofSeconds(-1))),
         defect("history-time-to-live", "a negative duration",
+            "must not be negative; without the key the engine's own default applies",
             c -> c.setHistoryTimeToLive(Duration.ofDays(-1))),
-        defect("max-redeliveries", "a negative number", c -> c.setMaxRedeliveries(-1)),
-        defect("instance-cache-max-entries", "a negative number", c -> c.setInstanceCacheMaxEntries(-1)));
+        defect("max-redeliveries", "a negative number", "0 turns the first failure into an incident, the default is 10",
+            c -> c.setMaxRedeliveries(-1)),
+        defect("instance-cache-max-entries", "a negative number", "must not be negative; the default is 10000",
+            c -> c.setInstanceCacheMaxEntries(-1)));
 
   }
 
   @ParameterizedTest(name = "{0} with {1}")
   @MethodSource("defects")
-  @DisplayName("Each defect ends the boot and names its key")
-  public void eachDefectIsNamedWithItsKey(
+  @DisplayName("Each defect ends the boot of a first-priority adapter, names its key and says how to fix it")
+  public void eachDefectIsNamedWithItsKeyAndItsFix(
       final String key,
       final String description,
+      final String fix,
       final Consumer<ZenBpmAdapterConfiguration> breakIt) {
 
     final var configuration = configured("http://zenbpm:8080");
@@ -234,9 +309,15 @@ public class ZenBpmAdapterConfigurationTest {
 
     assertEquals(Kind.INCONSISTENT, validation.kind());
     assertTrue(validation.endsTheBoot());
-    assertTrue(validation
+    final var line = validation
         .message()
-        .contains("  - vanillabp.adapters.orders.%s ".formatted(key)), validation.message());
+        .lines()
+        .filter(defect -> defect.startsWith("  - vanillabp.adapters.orders.%s ".formatted(key)))
+        .findFirst();
+    assertTrue(line.isPresent(), validation.message());
+    assertTrue(line
+        .get()
+        .contains(fix), line.get());
 
   }
 
@@ -275,6 +356,42 @@ public class ZenBpmAdapterConfigurationTest {
 
   }
 
+  static Stream<Arguments> keysWithoutADefault() {
+
+    return Stream.of(
+        Arguments.of("grpc-address", (Consumer<ZenBpmAdapterConfiguration>) c -> c.setGrpcAddress("zenbpm:9090")),
+        Arguments.of("client-id", (Consumer<ZenBpmAdapterConfiguration>) c -> c.setClientId("orders-node-1")),
+        Arguments.of("history-time-to-live",
+            (Consumer<ZenBpmAdapterConfiguration>) c -> c.setHistoryTimeToLive(Duration.ofDays(30))));
+
+  }
+
+  @ParameterizedTest(name = "{0}")
+  @MethodSource("keysWithoutADefault")
+  @DisplayName("A key without a default, set without a REST address, makes the configuration inconsistent")
+  public void aStartedConfigurationWithoutAnAddressIsInconsistent(
+      final String key,
+      final Consumer<ZenBpmAdapterConfiguration> configure) {
+
+    final var configuration = new ZenBpmAdapterConfiguration();
+    configure.accept(configuration);
+
+    final var validation = configuration.validate(ADAPTER_ID, false, false);
+
+    assertEquals(Kind.INCONSISTENT, validation.kind());
+    assertTrue(validation.endsTheBoot());
+    assertTrue(validation
+        .message()
+        .contains("  - vanillabp.adapters.orders.rest-address is missing, but other keys of this adapter are set"),
+        validation.message());
+
+  }
+
+  /**
+   * The client id has no defect but a blank one, which has no value to repeat, so the part of
+   * this test about the client id cannot fail today. It is there for a later check of the client
+   * id, whose message must not repeat it either.
+   */
   @Test
   @DisplayName("Neither the client id nor a password in the REST address is ever repeated")
   public void valuesWhichMayBeSecretAreNeverRepeated() {
@@ -296,11 +413,32 @@ public class ZenBpmAdapterConfigurationTest {
 
   }
 
-  @Test
-  @DisplayName("An adapter which is nowhere first and warns on deployment failures boots degraded")
-  public void aNowhereFirstAdapterWithWarnBootsDegraded() {
+  static Stream<Arguments> connectionDefects() {
 
-    final var validation = configured("zenbpm:8080").validate(ADAPTER_ID, true, true);
+    return Stream.of(
+        Arguments.of("a REST address without a scheme",
+            (Consumer<ZenBpmAdapterConfiguration>) c -> c.setRestAddress("zenbpm:8080")),
+        Arguments.of("a gRPC address which is not host:port",
+            (Consumer<ZenBpmAdapterConfiguration>) c -> c.setGrpcAddress("zen bpm:9090")),
+        Arguments.of("a blank client id", (Consumer<ZenBpmAdapterConfiguration>) c -> c.setClientId(" ")),
+        Arguments.of("a gRPC address without a REST address", (Consumer<ZenBpmAdapterConfiguration>) c -> {
+          c.setRestAddress(null);
+          c.setGrpcAddress("zenbpm:9090");
+        }));
+
+  }
+
+  @ParameterizedTest(name = "{0}")
+  @MethodSource("connectionDefects")
+  @DisplayName("An adapter which is nowhere first and warns on deployment failures boots degraded where the engine cannot be reached")
+  public void aNowhereFirstAdapterWithWarnBootsDegraded(
+      final String description,
+      final Consumer<ZenBpmAdapterConfiguration> breakIt) {
+
+    final var configuration = configured("http://zenbpm:8080");
+    breakIt.accept(configuration);
+
+    final var validation = configuration.validate(ADAPTER_ID, true, true);
 
     assertEquals(Kind.INCONSISTENT, validation.kind());
     assertFalse(validation.endsTheBoot());
@@ -308,6 +446,31 @@ public class ZenBpmAdapterConfigurationTest {
         .message()
         .contains("'vanillabp.adapters.orders.deployment-failure' is 'warn', so the application boots DEGRADED"),
         validation.message());
+
+  }
+
+  @ParameterizedTest
+  @ValueSource(strings = {
+      "http://zenbpm:8080", "zenbpm:8080"
+  })
+  @DisplayName("A number or duration which cannot work ends the boot even where the adapter may boot degraded")
+  public void aValueWhichCannotWorkAlwaysEndsTheBoot(
+      final String restAddress) {
+
+    final var configuration = configured(restAddress);
+    configuration.setWorkerThreads("-1");
+
+    final var validation = configuration.validate(ADAPTER_ID, true, true);
+
+    assertEquals(Kind.INCONSISTENT, validation.kind());
+    assertTrue(validation.endsTheBoot());
+    assertTrue(validation
+        .message()
+        .contains("ends the boot even where 'vanillabp.adapters.orders.deployment-failure' is 'warn'"),
+        validation.message());
+    assertFalse(validation
+        .message()
+        .contains("DEGRADED"), validation.message());
 
   }
 
@@ -366,14 +529,14 @@ public class ZenBpmAdapterConfigurationTest {
     assertEquals(Kind.COMPLETE, configuration
         .validate(ADAPTER_ID, false, false)
         .kind());
-    assertEquals(4, configuration.getWorkerThreadsBound());
+    assertEquals(4, configuration.workerThreadsBoundInUse());
 
     configuration.setWorkerThreadsBound(32);
 
     assertEquals(Kind.COMPLETE, configuration
         .validate(ADAPTER_ID, false, false)
         .kind());
-    assertEquals(32, configuration.getWorkerThreadsBound());
+    assertEquals(32, configuration.workerThreadsBoundInUse());
 
   }
 
@@ -388,7 +551,7 @@ public class ZenBpmAdapterConfigurationTest {
     final var configuration = configured("http://zenbpm:8080");
     configuration.setWorkerThreads("12");
 
-    assertEquals(12, configuration.getWorkerThreadsBound());
+    assertEquals(12, configuration.workerThreadsBoundInUse());
 
     configuration.setWorkerThreadsBound(bound);
     final var validation = configuration.validate(ADAPTER_ID, false, false);
@@ -504,6 +667,101 @@ public class ZenBpmAdapterConfigurationTest {
 
   }
 
+  @ParameterizedTest
+  @ValueSource(strings = {
+      "/%76%31", "/v%31", "/v1/", "//v1//", "/proxy/%76%31/"
+  })
+  @DisplayName("An address ending with an escaped or doubled '/v1' gets no second one, and the notice says so")
+  public void theNoticeAndTheBaseAgreeOnTheApiVersion(
+      final String path) {
+
+    final var configuration = configured("http://zenbpm:8080"
+        + path);
+
+    final var validation = configuration.validate(ADAPTER_ID, false, false);
+
+    assertEquals(1, validation
+        .notices()
+        .size(), validation.notices()::toString);
+    assertTrue(configuration
+        .restBaseUri()
+        .getRawPath()
+        .matches("(/proxy)?/v1"), configuration.restBaseUri()::toString);
+
+  }
+
+  @Test
+  @DisplayName("Escaped ASCII letters, digits and '-._~' are written as themselves, every other escape stays")
+  public void onlyUnreservedEscapesAreDecoded() {
+
+    assertEquals(URI.create("http://zenbpm:8080/Az09-._~/%C3%A4%20/v1"),
+        configured("http://zenbpm:8080/%41%7a%30%39%2d%2e%5f%7e/%c3%a4%20").restBaseUri());
+
+  }
+
+  @Test
+  @DisplayName("An escaped slash stays escaped, so it never becomes a separator in front of '/v1'")
+  public void anEscapedSlashStaysEscaped() {
+
+    final var configuration = configured("http://zenbpm:8080/%2fv1");
+
+    assertEquals(URI.create("http://zenbpm:8080/%2Fv1/v1"), configuration.restBaseUri());
+    assertEquals(List.of(), configuration
+        .validate(ADAPTER_ID, false, false)
+        .notices());
+
+  }
+
+  @ParameterizedTest
+  @ValueSource(strings = {
+      "", "  "
+  })
+  @DisplayName("Blank worker threads are the default, as an empty key binds to an empty text")
+  public void blankWorkerThreadsAreTheDefault(
+      final String workerThreads) {
+
+    final var configuration = configured("http://zenbpm:8080");
+    configuration.setWorkerThreads(workerThreads);
+
+    assertEquals("4", configuration.getWorkerThreads());
+    assertEquals(Kind.COMPLETE, configuration
+        .validate(ADAPTER_ID, false, false)
+        .kind());
+
+  }
+
+  @Test
+  @DisplayName("An https REST address with a derived plaintext job stream is noticed, and not where either is set")
+  public void aTlsRestAddressBesideAPlaintextJobStreamIsNoticed() {
+
+    final var configuration = configured("https://zenbpm");
+
+    assertEquals(1, configuration
+        .validate(ADAPTER_ID, false, false)
+        .notices()
+        .size());
+    assertTrue(configuration
+        .validate(ADAPTER_ID, false, false)
+        .notices()
+        .getFirst()
+        .contains(
+            "uses https, but the job stream goes to port 9090 of the same host without TLS. Where a proxy terminates TLS for both, set 'vanillabp.adapters.orders.grpc-address' and 'vanillabp.adapters.orders.grpc-plaintext: false'"));
+
+    configuration.setGrpcPlaintext(false);
+
+    assertEquals(List.of(), configuration
+        .validate(ADAPTER_ID, false, false)
+        .notices());
+
+    configuration.setGrpcPlaintext(true);
+    configuration.setGrpcAddress("zenbpm:9090");
+
+    assertEquals(List.of(), configuration
+        .validate(ADAPTER_ID, false, false)
+        .notices());
+
+  }
+
   @Test
   @DisplayName("Two spellings of one engine's address have one identity, another port another")
   public void theIdentityIsNormalised() {
@@ -512,6 +770,8 @@ public class ZenBpmAdapterConfigurationTest {
 
     assertEquals(identity, configured("HTTP://Host:8080/").instanceIdentity());
     assertEquals(identity, configured(" http://HOST:8080/v1 ").instanceIdentity());
+    assertEquals(identity, configured("http://host:8080/%76%31").instanceIdentity());
+    assertEquals(identity, configured("http://host:8080//v1//").instanceIdentity());
     assertEquals(configured("http://host").instanceIdentity(), configured("http://host:80/").instanceIdentity());
     assertNotEquals(identity, configured("http://host:8081").instanceIdentity());
     assertNotEquals(identity, configured("https://host:8080").instanceIdentity());
@@ -562,9 +822,10 @@ public class ZenBpmAdapterConfigurationTest {
   private static Arguments defect(
       final String key,
       final String description,
+      final String fix,
       final Consumer<ZenBpmAdapterConfiguration> breakIt) {
 
-    return Arguments.of(key, description, breakIt);
+    return Arguments.of(key, description, fix, breakIt);
 
   }
 

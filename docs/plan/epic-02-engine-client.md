@@ -64,19 +64,72 @@ Reference implementations to read before starting: `Camunda8AdapterConfiguration
   `deployment-failure` are core keys. `accept-unscoped-identifiers` was named by no story and is
   now instruction 5 of S4.2.1 (and the module level in S3.1.1's overlay).
 - [x] Messages contain the full property key for every named defect and never a value of `client-id`
-  (treated like a credential, it may carry a hostname somebody considers internal). Each of 32
-  defect cases asserts its line `  - vanillabp.adapters.orders.<key> ...`;
-  `valuesWhichMayBeSecretAreNeverRepeated` sets a client id, a user and password in `rest-address`
-  and a host in `grpc-address`, and none of them is in the message. Addresses are never repeated
-  either, only numbers and durations.
+  (treated like a credential, it may carry a hostname somebody considers internal). Each of 49
+  defect rows asserts its line `  - vanillabp.adapters.orders.<key> ...` and the remedy that line
+  names. `valuesWhichMayBeSecretAreNeverRepeated` sets a user and password in `rest-address` and a
+  host in `grpc-address`, and none of them is in the message. Its client-id half cannot fail today:
+  the only `client-id` defect is a blank one, which has no value to repeat. No validation message
+  repeats an address either, only numbers and durations.
 
 **Implemented 2026-10-13.** `ZenBpmAdapterConfigurationTest`, 58 cases, green; the full
-`mvn install` builds green and the coverage gate measures 99.83 % of 1,169 instructions on both
-platforms. Seen to fail, each with the source changed back afterwards: a user in `rest-address`
-accepted, a blank `client-id` accepted, `/v1` appended to an address carrying it, a scheme in
-`grpc-address` accepted, degrading regardless of the policy, and a bound beside platform threads
-accepted. The first run caught a real bug:
-the missing address was listed as a defect, so no configuration was ever unconfigured.
+`mvn install` builds green and the coverage gate measures 99.83 % on both platforms. Seen to fail,
+each with the source changed back afterwards: a user in `rest-address` accepted, a blank
+`client-id` accepted, `/v1` appended to an address carrying it, a scheme in `grpc-address`
+accepted, degrading regardless of the policy, and a bound beside platform threads accepted. The
+first run caught a real bug: the missing address was listed as a defect, so no configuration was
+ever unconfigured.
+
+**Answers to two reviews, 2026-10-13.** Every finding was reproduced against the built class before
+it was changed. `ZenBpmAdapterConfigurationTest` now has 93 cases; `mvn clean install` builds green
+and the coverage gate measures 100 % of 1,476 instructions on both platforms, no branch missed (the
+first record's 1,169 came from an incremental build; both reviewers measured 1,167 from clean).
+Seen to fail, each restored afterwards: a value defect degrading, a started configuration counted
+as unconfigured, escapes not decoded, every escape decoded, an escaped non-ASCII letter decoded, a
+path or query in `grpc-address` accepted, a user in `grpc-address` accepted, a blank
+`worker-threads` refused, the TLS notice despite a `grpc-address`, doubled slashes kept.
+
+- Degrading (the user's decision): only a defect in how the engine is reached (`rest-address`,
+  `grpc-address`, `client-id`) lets a nowhere-first id with `deployment-failure: warn` boot
+  degraded. A number or duration which cannot work ends the boot for every id, as in Camunda 8's
+  `Camunda8StartupValidation` and as architecture section 6 already said for the addresses.
+- `grpc-address` is parsed as the authority of a URI. `zen bpm:9090`, `[not-ipv6]:9090`, `[::1`,
+  `2001:db8::1`, `::1:9090`, `host:+9090`, `zenbpm/path:9090`, `zenbpm?a:9090` and
+  `user:password@zenbpm:9090` were COMPLETE and are refused now. gRPC 1.81's channel builder,
+  probed with the same inputs, throws "Invalid DNS name" for `zen_bpm:9090`, `host:+9090` and
+  `::1:9090` and builds `10.0.0.1:9090`, `[2001:db8::1]:9090` and `zenbpm-grpc.example:443`; the
+  validation agrees with it on all six.
+- `getWorkerThreadsBound()` answers the key as written (`null` where unset), as decision 13 asks
+  an accessor per field; `workerThreadsBoundInUse()` derives the bound. Before, the getter answered
+  4 for a default configuration, which Camunda 8's `resolve` would refuse. S2.4.2 now says which one
+  to pass.
+- A key without a default (`grpc-address`, `client-id`, `history-time-to-live`) set without
+  `rest-address` is INCONSISTENT: the configuration was started and has to be finished. Keys with a
+  default cannot be told from unset, because the setters map `null` to the default.
+- A blank `worker-threads` is the default, as in Camunda 8's `resolve`; a blank `grpc-address` has
+  its own message ("remove the key to have it derived").
+- Every message names the fix: each negative duration its default (`history-time-to-live`: the
+  engine's own), `max-redeliveries` and `instance-cache-max-entries` their default, both port
+  messages an example. A host `java.net.URI` cannot read (`http:zenbpm`, `http:///v1`, a port too
+  large for a number, an underscore) says "names no valid host and port". A `worker-threads` too
+  large for a number says so, instead of "neither a number nor 'virtual'".
+- The `/v1` check and `restBaseUri()` use one normalised path: an escaped ASCII letter, digit or
+  `-._~` is the character itself (RFC 3986, section 6.2.2.2), repeated and trailing slashes go,
+  every other escape stays upper-cased, so `%2F` never becomes a separator. `/%76%31` and `//v1//`
+  are one engine with `/v1`.
+- A new notice: an `https` `rest-address` beside a derived, plaintext job stream.
+- Javadoc: `history-time-to-live` resolves per module or workflow, not per task (architecture
+  table); the class says it is not a binding target; a validation message, not the startup INFO line
+  of a working configuration, is what never repeats an address or the client id (architecture
+  section 6 now says both); behaviour of later stories is no longer described as present.
+- Plan: S3.1.1 instruction 4 reads `endsTheBoot()` and logs `notices()` instead of repeating the
+  rule (S3.2.1 says "same validation as Spring"), its boot test covers a value defect which still
+  ends the boot and a use of an unconfigured adapter; S5.1.1 converts `history-time-to-live` to the
+  engine's text form (`types.ParseTTL`, whole seconds) and decides what a value below one second
+  and `PT0S` mean; S6.2.1 warns at startup about a `retry-backoff` above the 5-minute cap; S8.1.1
+  warns about a poll interval below one second and tests `PT0S`.
+- Not changed: the adapter id stays a parameter of `validate` and `clientIdInUse`, as the story's
+  signature and Camunda 8 have it. `defects()` stays above the test which uses it: the rule of
+  helpers at the bottom is the engine's Go rule (`zenbpm-e2e-tests`), not one of this repository.
 
 Where the code differs from the instructions:
 
@@ -84,11 +137,12 @@ Where the code differs from the instructions:
   `DeploymentFailurePolicy` lives in the platform's runtime module, which `core` does not depend on
   (Camunda 8's `Camunda8StartupValidation` does the same).
 - `ValidationResult(kind, message, endsTheBoot, notices)`: `endsTheBoot` is false for UNCONFIGURED,
-  and for INCONSISTENT only where the id is nowhere first with `deployment-failure: warn`, so E3
-  reads the decision instead of repeating it. The INFO about an address ending with `/v1` is a
-  notice in the result, logged once by the platform at startup, not a log line of `restBaseUri()`.
-- A missing `rest-address` next to another defect is INCONSISTENT, listing the missing key first:
-  somebody configured the adapter and has to finish it.
+  and for INCONSISTENT only where every defect is one of how the engine is reached and the id is
+  nowhere first with `deployment-failure: warn`, so E3 reads the decision instead of repeating it.
+  The INFO lines (an address ending with `/v1`, an `https` address beside a plaintext job stream)
+  are notices in the result, logged once by the platform at startup.
+- A missing `rest-address` next to another defect, or next to a key without a default, is
+  INCONSISTENT, listing the missing key first.
 - Setters take `null` as "restore the default", so the overlays of E3 hand on unset keys without
   knowing a default.
 - `worker-threads-bound` is Camunda 8's rule, so S2.4.2 copies `Camunda8ExecutionModel` without
@@ -96,15 +150,12 @@ Where the code differs from the instructions:
   at least 1). With platform threads their number is the bound, so a bound beside them is refused
   whatever its size, instead of being ignored. That replaces the instruction's "`worker-threads`
   above `worker-threads-bound`", which could only happen with platform threads.
-  `getWorkerThreadsBound()` answers the bound in use: the number of platform threads, or the key or
-  4 for `virtual`.
-- Further checks, all naming their key: `rest-address` with a scheme other than http(s), a user, a
-  query or fragment, no host the JDK accepts (`_`), a port outside 1 to 65535; `grpc-address` with
-  a scheme, without a host or with a port which is no number or out of range; `worker-threads`
-  neither a number nor `virtual`; negative `max-redeliveries` and `instance-cache-max-entries` (0
-  is allowed: incident at the first failure, no cache).
-- `restBaseUri()` and `instanceIdentity()` are the same normalised form, so `http://host:8080` and
-  `http://host:8080/v1` are one engine as well as `HTTP://Host:8080/`.
+- Further checks, all naming their key and the fix: `rest-address` with a scheme other than
+  http(s), a user, a query or fragment, no valid host and port, a port outside 1 to 65535;
+  `grpc-address` which is not a URI authority of host and port; `worker-threads` neither a number
+  nor `virtual`; negative `max-redeliveries` and `instance-cache-max-entries` (0 is allowed).
+- `restBaseUri()` and `instanceIdentity()` are the same normalised form, so `http://host:8080`,
+  `http://host:8080/v1`, `HTTP://Host:8080/` and `http://host:8080/%76%31` are one engine.
 
 ---
 
@@ -321,6 +372,10 @@ their contract: `worker-threads` platform threads or `virtual` bounded by `worke
 platform timing threads (`zenbpm-<id>-timing-N`) which no handler may occupy; `tryAcquireSlot()` /
 `releaseSlot()` for the dispatcher (E6) to accept a job only while a slot is free; gauges for busy and
 free slots. Drop what is Camunda-specific (the client's own executor hand-over).
+`ZenBpmAdapterConfiguration.validate` already reports both keys with the same rule (a bound only
+beside `virtual`), so call `ZenBpmExecutionModel.resolve` with `getWorkerThreads()` and the raw
+`getWorkerThreadsBound()` (null where unset), never with `workerThreadsBoundInUse()`; its checks
+stay as the backstop for a caller which skipped the validation.
 
 **Tests**: copies of `Camunda8ExecutorTest`, `Camunda8VirtualThreadExecutorTest`,
 `Camunda8PlatformThreadExecutorTest` and `Camunda8ExecutionModelTest` adjusted to the new names,
