@@ -81,6 +81,13 @@
       <plugin>
         <groupId>org.apache.maven.plugins</groupId>
         <artifactId>maven-failsafe-plugin</artifactId>
+        <configuration>
+          <!-- what EngineUnderTestIT compares the running container with, straight from the
+               root POM rather than from the filtered resource it checks -->
+          <systemPropertyVariables>
+            <zenbpm.image>${zenbpm.image}</zenbpm.image>
+          </systemPropertyVariables>
+        </configuration>
       </plugin>
     </plugins>
   </build>

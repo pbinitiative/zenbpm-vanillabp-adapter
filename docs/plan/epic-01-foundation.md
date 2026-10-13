@@ -416,7 +416,8 @@ one commit. When the engine tags a release containing the pinned commit, the pin
   '0123...'") and `-Dzenbpm.image=ghcr.io/pbinitiative/zenbpm:dev` ("is not pinned by its
   digest"); the replay of the failing class carried "Creating container for image:
   ghcr.io/pbinitiative/zenbpm@sha256:d7808e30..." and 110 lines of the engine's own log. No Java
-  file holds a commit, a digest or a version.
+  file holds the pinned commit, the pinned digest or an engine version; `MalformedPinsTest` holds
+  made-up ones, which it expects to be refused.
 - [x] `api.yaml` and `zenbpm.proto` are present with their provenance header, taken from
   `zenbpm.commit`. `api.yaml` below its header is byte for byte `git show <commit>:openapi/api.yaml`
   (`cmp`), the proto differs from `pkg/zenclient/proto/zenbpm.proto` by its header and the
@@ -439,8 +440,9 @@ ready after six seconds and reported `"commitId": "bdd795a399b6"` (12 characters
   back in a green run and replays them for a failing class.
 - The template does NOT set `org.testcontainers`, `tc` and `com.github.dockerjava` to WARN. Root
   INFO does the quieting (docker-java's DEBUG wire log is the noise), as in `camunda8-adapter` and
-  `adapter-platform-integration`, which both went from WARN to INFO: a record dropped by its level
-  reaches no appender, so the replay of a failing class would lose which image was started. What a
+  `adapter-platform-integration`, which both went from WARN to INFO. Logback discards a record
+  below its logger's level before any appender sees it, so the replay of a failing class would lose
+  which image was started. What a
   green build still shows is the dozen Testcontainers lines written before the first extension
   callback (Docker detection, Ryuk), which no extension reaches.
 - `engine-test-support` is installed but not deployed (`maven.deploy.skip`): only this repository's
@@ -449,6 +451,35 @@ ready after six seconds and reported `"commitId": "bdd795a399b6"` (12 characters
   pull of the pinned digest answered HTTP 200, and one run per push to `main` stays far below the
   anonymous limit, while a login there would leave a token which may write packages in
   `~/.docker/config.json`.
+
+**Answers to two reviews, 2026-10-13** (S1.2.1 and S1.2.2 together):
+
+- The pin has to have its form. `EngineUnderTest` refuses an `engine.commit` which is not 40
+  lower-case hexadecimal characters and an `engine.image` which is not `name@sha256:<64 hex>`
+  without a tag, naming the root POM's property to correct (`MalformedPinsTest`, 12 tests, no
+  Docker). Seen to fail: `-Dzenbpm.commit=bdd795a399b6` had passed all three ITs before and now
+  fails with "... is 'bdd795a399b6', but has to be the full commit, 40 hexadecimal characters in
+  lower case. Correct 'zenbpm.commit' of the root pom."; `-Dzenbpm.image=...:dev` fails the same
+  way before any container starts.
+- `EngineUnderTestIT` compares the container's image with `zenbpm.image` handed in by failsafe,
+  not with what `EngineUnderTest` read. Seen to fail: `zenbpm-engine.properties` pointed at the
+  amd64 manifest of the same image (`sha256:49cd7251...`, same commit, so the commit assertion
+  alone passed) fails with "expected: <...@sha256:d7808e30...> but was: <...@sha256:49cd7251...>".
+- The reported commit has to be at least 7 characters long (git's shortest form); seen to fail
+  with the limit raised to 13. Both requests have a 10 s timeout and the client a 10 s connect
+  timeout, so an engine which stops answering fails the test instead of stalling it.
+- `EnginePinTest` (coverage-gate module) holds the headers of both copies and the README's table
+  to `zenbpm.commit` and `zenbpm.image` of the root POM. Seen to fail: one changed character in the
+  commit of the `api.yaml` header, in the image of the proto header, and in the README table.
+  It checks what the copies say they are, not their content: the build has no engine checkout,
+  and the engine does not serve its OpenAPI document (`public.GetSpec()` feeds the request
+  validator only), so the "test diffs them against the image" of decision 3 cannot be built as
+  written. The question is the maintainers'; the decision is unchanged.
+- `CLUSTER_RAFT_BOOTSTRAP_EXPECT=1` is the engine's default as well (`env-default:"1"`); its
+  comment now says so, like the TTL's.
+- Wording: the logback template, the README's pin section (moving the pin is now a numbered list
+  that includes the README table), `NOTICE`, the root POM's licence comment and the README's
+  licence section, which now name the copies and the generated code as the open exception to MIT.
 
 ### S1.2.2 Generate the gRPC stubs from the pinned proto
 
@@ -486,7 +517,14 @@ ready after six seconds and reported `"commitId": "bdd795a399b6"` (12 characters
 
 **Implemented 2026-10-13.** Beyond the instructions: the javadoc check of `core` excludes the stub
 package (the generated comments broke its fail-on-warnings), and the plugin does not embed the
-proto in the jar, which carries the 59 generated classes only. A Quarkus build of `quarkus/runtime`
+proto in the jar, which carries the 58 generated classes and `ZenBpmAdapter`. A Quarkus build of `quarkus/runtime`
 resolves the generated classes: a throw-away class there calling `ZenBpmGrpc` and
 `Zenbpm.JobStreamRequest` built green together with `quarkus/deployment` and
 `quarkus/integration-tests`. Both platform modules resolve `protobuf-java` 4.35.0 and gRPC 1.81.0.
+
+**Answers to two reviews, 2026-10-13.** `GeneratedStubPackageTest` (coverage-gate module) fails
+where a module writes a source file of its own into `org.pbinitiative.zenbpmadapter.client.grpc`,
+the package the JaCoCo exclusion drops from every report. Seen to fail with a `Helper.java` placed
+there in `core/src/main/java`. `ZenBpmGrpcStubsTest` now says that it proves the generated code
+against this build's protobuf runtime only; an application bringing an older runtime is S2.3.1's
+startup check.

@@ -22,8 +22,9 @@ public class ZenBpmGrpcStubsTest {
 
   /**
    * Reading the method descriptor loads the request and response messages, whose generated
-   * code checks the protobuf runtime it finds: a protoc newer than that runtime fails here,
-   * and not in an application.
+   * code checks the protobuf runtime it finds. So a protoc newer than the runtime of this
+   * repository's build fails here, and not first in an application. An application whose own
+   * dependencies bring an older runtime than this build's still fails there.
    */
   @Test
   @DisplayName("The stubs offer the engine's job stream as a bidirectional stream")

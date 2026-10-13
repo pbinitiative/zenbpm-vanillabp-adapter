@@ -52,14 +52,26 @@ becomes a release tag once the engine tags a release containing that commit.
 | commit | `bdd795a399b6484d062d52ac90c0d0725cb0ad91` (2026-10-13)                                               |
 | image  | `ghcr.io/pbinitiative/zenbpm@sha256:d7808e30821a7349e0f42476d8aaa21ff92fc752c0ccc432771764d307b87ed0` |
 
-Both are written once, as `zenbpm.commit` and `zenbpm.image` in the root `pom.xml`. The integration
+The build reads both from `zenbpm.commit` and `zenbpm.image` in the root `pom.xml`. The integration
 tests start that image, and `EngineUnderTestIT` fails when the running container is not that image
-or the engine reports another commit. The REST contract the adapter is written against is the copy
-`core/src/main/zenbpm/api.yaml`, the job stream's the copy `core/src/main/proto/zenbpm.proto`, both
-taken from that commit and naming it in their first line. Moving the pin changes all four in one
-commit: pull `ghcr.io/pbinitiative/zenbpm:dev`, read its digest and its
-`org.opencontainers.image.revision` label, check that the revision is the head of the engine's
-`main` (or the newest commit which got an image), and copy the two files of exactly that commit.
+or the engine reports another commit.
+
+The REST contract the adapter is written against is the copy `core/src/main/zenbpm/api.yaml`. The
+job stream's contract is the copy `core/src/main/proto/zenbpm.proto`. Both come from the pinned
+commit and name it, with the image, in their first lines. The table above repeats the pin as well.
+`EnginePinTest` fails when one of these three names another pin than the POM.
+
+Moving the pin is one commit with these steps:
+
+1. Pull `ghcr.io/pbinitiative/zenbpm:dev` and read its digest and its
+   `org.opencontainers.image.revision` label.
+2. Check that the revision is the head of the engine's `main`, or the newest commit which got an
+   image.
+3. Write the commit and the digest into `zenbpm.commit` and `zenbpm.image` of the root `pom.xml`.
+4. Copy `openapi/api.yaml` and `pkg/zenclient/proto/zenbpm.proto` of exactly that commit over the
+   two copies (`git show <commit>:<path>`). Keep the header of each, with the new commit, date and
+   image, and keep the `java_package` line of the proto.
+5. Update the table above.
 
 ## Building
 
@@ -240,4 +252,11 @@ Parts of it are copied and adapted from the VanillaBP adapters
 licensed under the Apache License, Version 2.0. Those files keep that licence: each carries a header
 naming its origin and `SPDX-License-Identifier: Apache-2.0`, the licence text is in
 [`LICENSE-APACHE-2.0`](./LICENSE-APACHE-2.0), and [`NOTICE`](./NOTICE) names both origins. Every
-other file is MIT. Decision 17 in [`DECISIONS.md`](./DECISIONS.md) says why.
+other file is MIT, with one exception that is still open. Decision 17 in
+[`DECISIONS.md`](./DECISIONS.md) says why.
+
+The exception: `core/src/main/zenbpm/api.yaml` and `core/src/main/proto/zenbpm.proto` are copies of
+files of the ZenBPM engine, which is licensed under the AGPL-3.0-or-later and an enterprise licence.
+The core jar ships classes generated from the proto, and its sources jar their Java sources. Under
+which licence these copies and the generated code travel is not settled yet; [`NOTICE`](./NOTICE)
+says so, and the ZenBPM maintainers decide it.

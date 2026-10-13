@@ -9,6 +9,7 @@ import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.time.Duration;
 import java.util.Properties;
+import java.util.regex.Pattern;
 
 import org.testcontainers.containers.GenericContainer;
 import org.testcontainers.containers.wait.strategy.Wait;
@@ -34,9 +35,9 @@ public final class EngineUnderTest extends GenericContainer<EngineUnderTest> {
 
   private static final Properties PROPERTIES = read();
 
-  private static final String IMAGE = property("engine.image");
+  private static final String IMAGE = Pin.IMAGE.checked(PROPERTIES.getProperty(Pin.IMAGE.key));
 
-  private static final String COMMIT = property("engine.commit");
+  private static final String COMMIT = Pin.COMMIT.checked(PROPERTIES.getProperty(Pin.COMMIT.key));
 
   private static final int REST_PORT = 8080;
 
@@ -57,7 +58,8 @@ public final class EngineUnderTest extends GenericContainer<EngineUnderTest> {
     withExposedPorts(REST_PORT, GRPC_PORT);
     withEnv("REST_API_ADDR", ":%d".formatted(REST_PORT));
     withEnv("GRPC_API_ADDR", ":%d".formatted(GRPC_PORT));
-    // one node which elects itself leader instead of waiting for others to join
+    // one node which elects itself leader. 1 is today's default of the engine, written here so
+    // that a new default does not make a test wait for nodes which never come
     withEnv("CLUSTER_RAFT_BOOTSTRAP_EXPECT", "1");
     // the engine looks for due timers every ten seconds by default, which a test waiting for
     // a timer event would spend waiting
@@ -143,17 +145,66 @@ public final class EngineUnderTest extends GenericContainer<EngineUnderTest> {
 
   }
 
-  private static String property(
-      final String name) {
+  /**
+   * The two values of the pin, and the form each must have. A value of another form may still
+   * start an engine, but not reliably the pinned one: a tag moves to newer images, and a
+   * shortened commit can stand for more than one commit as the engine's history grows.
+   */
+  enum Pin {
 
-    final var value = PROPERTIES.getProperty(name);
-    if ((value == null) || value.isBlank() || value.contains("${")) {
-      throw new IllegalStateException(
-          ("'%s' of '%s' is '%s' instead of a value. The resources of 'engine-test-support' have "
-              + "to be filtered: check its pom.xml and the properties 'zenbpm.image' and "
-              + "'zenbpm.commit' of the root pom.").formatted(name, RESOURCE, value));
+    IMAGE(
+        "engine.image", "zenbpm.image", "([^\\s@/]+/)*[^\\s@/:]+@sha256:[0-9a-f]{64}", "an image name without a tag, followed by '@sha256:' and the 64 hexadecimal characters of its digest"),
+
+    COMMIT(
+        "engine.commit", "zenbpm.commit", "[0-9a-f]{40}", "the full commit, 40 hexadecimal characters in lower case");
+
+    private final String key;
+
+    private final String pomProperty;
+
+    private final Pattern form;
+
+    private final String formDescription;
+
+    Pin(
+        final String key,
+        final String pomProperty,
+        final String form,
+        final String formDescription) {
+
+      this.key = key;
+      this.pomProperty = pomProperty;
+      this.form = Pattern.compile(form);
+      this.formDescription = formDescription;
+
     }
-    return value;
+
+    /**
+     * Checks a value read from {@code zenbpm-engine.properties}.
+     *
+     * @param value The value of the property, {@code null} where it is missing
+     * @return The value, which has the form of this part of the pin
+     * @throws IllegalStateException where the value is missing, unfiltered or of another form
+     */
+    String checked(
+        final String value) {
+
+      if ((value == null) || value.isBlank() || value.contains("${")) {
+        throw new IllegalStateException(
+            ("'%s' of '%s' is '%s' instead of a value. The resources of 'engine-test-support' have "
+                + "to be filtered: check its pom.xml and the properties 'zenbpm.image' and "
+                + "'zenbpm.commit' of the root pom.").formatted(key, RESOURCE, value));
+      }
+      if (!form
+          .matcher(value)
+          .matches()) {
+        throw new IllegalStateException(
+            ("'%s' of '%s' is '%s', but has to be %s. Correct '%s' of the root pom.")
+                .formatted(key, RESOURCE, value, formDescription, pomProperty));
+      }
+      return value;
+
+    }
 
   }
 

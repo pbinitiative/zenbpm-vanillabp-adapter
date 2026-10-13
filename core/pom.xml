@@ -86,11 +86,11 @@
     </resources>
     <plugins>
       <!-- The job stream's Java and gRPC stubs, generated from the copy of the engine's proto
-           this repository pins, see decision 3 in the repository's DECISIONS.md. protoc and
-           its gRPC plugin are taken from Maven Central for the machine building, so no build
-           needs one installed. protoc has the version of the protobuf runtime the adapter is
-           compiled against: generated code refuses a runtime older than the protoc which
-           wrote it. -->
+           this repository pins, see decision 3 in the repository's DECISIONS.md. The build
+           downloads protoc and its gRPC plugin from Maven Central, in the variant for the
+           machine it runs on, so no machine needs them installed. protoc has the version of
+           the protobuf runtime the adapter is compiled against: generated code refuses a
+           runtime older than the protoc which wrote it. -->
       <plugin>
         <groupId>io.github.ascopes</groupId>
         <artifactId>protobuf-maven-plugin</artifactId>

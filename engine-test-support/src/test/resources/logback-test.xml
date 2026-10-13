@@ -4,13 +4,15 @@
 
          The root level does the quieting. Logback defaults to DEBUG, and docker-java then
          debug-logs every request to the Docker daemon. org.testcontainers, tc and
-         com.github.dockerjava stay at INFO and are not raised to WARN. A record which its
-         level drops reaches no appender, so SuppressOutputExtension could not replay it for a
-         FAILING class either. And that replay should say which image was started, and when.
-         What INFO costs in a green build is the handful of lines written before the first
-         extension callback (Docker detection runs in the ExecutionCondition of
-         '@Testcontainers(disabledWithoutDocker = true)'), which no extension reaches. The
-         VanillaBP repositories settled on the same root level for the same reason. -->
+         com.github.dockerjava stay at INFO and are not raised to WARN. Logback discards a
+         record below its logger's level before any appender sees it, so
+         SuppressOutputExtension could not replay it for a FAILING class either. And that
+         replay should say which image was started, and when.
+         In a green build, INFO still shows a handful of lines. Testcontainers writes them
+         while it looks for Docker, in the ExecutionCondition of
+         '@Testcontainers(disabledWithoutDocker = true)'. That runs before any extension
+         callback, so no extension can hold these lines back. The VanillaBP repositories
+         settled on the same root level for the same reason. -->
     <appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
         <encoder>
             <pattern>%d{HH:mm:ss.SSS} %-5level %logger{36} - %msg%n</pattern>
