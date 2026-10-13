@@ -139,10 +139,10 @@ declaration, and the closing parenthesis returns to the declaration's indentatio
 `throws` clause and the opening brace:
 
 ```java
-    private ProductionModules.Report report(
-        final String platform,
-        final String... aggregated
-    ) throws IOException {
+private ProductionModules.Report report(
+    final String platform,
+    final String... aggregated
+) throws IOException {
 ```
 
 The parameters then read as a list of their own, the line with `) {` separates them from the body,
