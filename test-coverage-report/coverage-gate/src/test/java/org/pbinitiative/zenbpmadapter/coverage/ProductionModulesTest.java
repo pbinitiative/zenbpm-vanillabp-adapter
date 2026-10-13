@@ -28,177 +28,177 @@ import io.vanillabp.integration.test.utils.SuppressOutputExtension;
  * without these the cases it exists for would never run.
  */
 @ExtendWith(SuppressOutputExtension.class)
-public class ProductionModulesTest {
+class ProductionModulesTest {
 
-  private static final String CSV_HEADER = """
-      GROUP,PACKAGE,CLASS,INSTRUCTION_MISSED,INSTRUCTION_COVERED,BRANCH_MISSED,BRANCH_COVERED,\
-      LINE_MISSED,LINE_COVERED,COMPLEXITY_MISSED,COMPLEXITY_COVERED,METHOD_MISSED,METHOD_COVERED
-      """;
+    private static final String CSV_HEADER = """
+            GROUP,PACKAGE,CLASS,INSTRUCTION_MISSED,INSTRUCTION_COVERED,BRANCH_MISSED,BRANCH_COVERED,\
+            LINE_MISSED,LINE_COVERED,COMPLEXITY_MISSED,COMPLEXITY_COVERED,METHOD_MISSED,METHOD_COVERED
+            """;
 
-  @TempDir
-  Path root;
+    @TempDir
+    Path root;
 
-  @Test
-  @DisplayName("A repository whose reports read every production module passes")
-  public void aCompleteRepositoryPasses() throws IOException {
+    @Test
+    @DisplayName("A repository whose reports read every production module passes")
+    void aCompleteRepositoryPasses() throws IOException {
 
-    module("core", "zenbpm-vanillabp-adapter", true);
-    module("spring-boot", "zenbpm-vanillabp-adapter-spring-boot", true);
-    module("quarkus/runtime", "zenbpm-vanillabp-adapter-quarkus", true);
-    final var springBoot = report(
-        "spring-boot",
-        "zenbpm-vanillabp-adapter",
-        "zenbpm-vanillabp-adapter-spring-boot");
-    final var quarkus = report("quarkus", "zenbpm-vanillabp-adapter", "zenbpm-vanillabp-adapter-quarkus");
+        module("core", "zenbpm-vanillabp-adapter", true);
+        module("spring-boot", "zenbpm-vanillabp-adapter-spring-boot", true);
+        module("quarkus/runtime", "zenbpm-vanillabp-adapter-quarkus", true);
+        final var springBoot = report(
+                "spring-boot",
+                "zenbpm-vanillabp-adapter",
+                "zenbpm-vanillabp-adapter-spring-boot");
+        final var quarkus = report("quarkus", "zenbpm-vanillabp-adapter", "zenbpm-vanillabp-adapter-quarkus");
 
-    assertEquals(
-        List.of(),
-        ProductionModules.missingFromTheReportOfTheirPlatform(root, springBoot, quarkus, Set.of()));
+        assertEquals(
+                List.of(),
+                ProductionModules.missingFromTheReportOfTheirPlatform(root, springBoot, quarkus, Set.of()));
 
-  }
-
-  @Test
-  @DisplayName("A core left out of one report is named with that report, whether it has tests or not")
-  public void aCoreLeftOutOfOneReportIsNamed() throws IOException {
-
-    module("core", "zenbpm-vanillabp-adapter", true);
-    final var springBoot = report("spring-boot");
-    final var quarkus = report("quarkus", "zenbpm-vanillabp-adapter");
-
-    assertEquals(
-        List.of("zenbpm-vanillabp-adapter (in 'core'): not read by the Spring Boot report"),
-        ProductionModules.missingFromTheReportOfTheirPlatform(root, springBoot, quarkus, Set.of()));
-
-  }
-
-  @Test
-  @DisplayName("A module the layout gives no platform fails until it is a named exception")
-  public void aModuleWithoutAPlatformNeedsADecision() throws IOException {
-
-    module("engine-test-support", "zenbpm-vanillabp-adapter-engine-test-support", true);
-    final var springBoot = report("spring-boot");
-    final var quarkus = report("quarkus");
-
-    assertEquals(
-        List
-            .of(
-                "zenbpm-vanillabp-adapter-engine-test-support (in 'engine-test-support'): no rule "
-                    + "says which platform runs it"),
-        ProductionModules.missingFromTheReportOfTheirPlatform(root, springBoot, quarkus, Set.of()));
-    assertEquals(
-        List.of(),
-        ProductionModules
-            .missingFromTheReportOfTheirPlatform(
-                root,
-                springBoot,
-                quarkus,
-                Set.of("zenbpm-vanillabp-adapter-engine-test-support")));
-
-  }
-
-  @Test
-  @DisplayName("Modules without production sources and anything under target are not asked for")
-  public void testOnlyModulesAndBuildOutputAreNotAskedFor() throws IOException {
-
-    module("smoke-test", "zenbpm-vanillabp-adapter-smoke-test", false);
-    module("core/target/copy", "a-copy-in-the-build-output", true);
-    final var springBoot = report("spring-boot");
-    final var quarkus = report("quarkus");
-
-    assertEquals(
-        List.of(),
-        ProductionModules.missingFromTheReportOfTheirPlatform(root, springBoot, quarkus, Set.of()));
-
-  }
-
-  @Test
-  @DisplayName("A report holding only its header has no instruction to measure")
-  public void aHeaderOnlyReportHoldsNoInstruction() throws IOException {
-
-    final var coverage = CoverageGate.read(csv(CSV_HEADER), "Spring Boot", CoverageGate.Metric.INSTRUCTIONS);
-
-    assertEquals(0, coverage.missed() + coverage.covered());
-
-  }
-
-  @Test
-  @DisplayName("Untested code is measured as missed and lands below any threshold")
-  public void untestedCodeIsMissed() throws IOException {
-
-    final var coverage = CoverageGate
-        .read(
-            csv(CSV_HEADER
-                + "core,org.pbinitiative.zenbpmadapter,Probe,2,0,0,0,1,0,1,0,1,0\n"),
-            "Spring Boot",
-            CoverageGate.Metric.INSTRUCTIONS);
-
-    assertEquals(2, coverage.missed());
-    assertTrue(coverage.percentage() < 85);
-
-  }
-
-  @Test
-  @DisplayName("A report which was never written fails the gate instead of passing it")
-  public void aMissingReportFails() {
-
-    final var thrown = assertThrows(
-        IllegalStateException.class,
-        () -> CoverageGate.read(root.resolve("jacoco.csv"), "Quarkus", CoverageGate.Metric.INSTRUCTIONS));
-
-    assertTrue(thrown
-        .getMessage()
-        .contains("mvn install"));
-
-  }
-
-  private void module(
-      final String location,
-      final String artifactId,
-      final boolean withProductionSources) throws IOException {
-
-    final var module = root.resolve(location);
-    Files.createDirectories(module);
-    Files.writeString(module.resolve("pom.xml"), """
-        <project>
-          <parent>
-            <artifactId>zenbpm-vanillabp-adapter-parent</artifactId>
-          </parent>
-          <!-- <artifactId>not-this-one</artifactId> -->
-          <artifactId>%s</artifactId>
-        </project>
-        """.formatted(artifactId));
-    if (withProductionSources) {
-      Files.createDirectories(module.resolve("src/main/java"));
     }
 
-  }
+    @Test
+    @DisplayName("A core left out of one report is named with that report, whether it has tests or not")
+    void aCoreLeftOutOfOneReportIsNamed() throws IOException {
 
-  private ProductionModules.Report report(
-      final String platform,
-      final String... aggregated) throws IOException {
+        module("core", "zenbpm-vanillabp-adapter", true);
+        final var springBoot = report("spring-boot");
+        final var quarkus = report("quarkus", "zenbpm-vanillabp-adapter");
 
-    final var dependencies = new StringBuilder();
-    for (final var artifactId : aggregated) {
-      dependencies.append("<dependency><artifactId>%s</artifactId></dependency>".formatted(artifactId));
+        assertEquals(
+                List.of("zenbpm-vanillabp-adapter (in 'core'): not read by the Spring Boot report"),
+                ProductionModules.missingFromTheReportOfTheirPlatform(root, springBoot, quarkus, Set.of()));
+
     }
-    final var pom = root.resolve("test-coverage-report/%s/pom.xml".formatted(platform));
-    Files.createDirectories(pom.getParent());
-    Files.writeString(pom, """
-        <project>
-          <artifactId>%s-report</artifactId>
-          <dependencies>%s</dependencies>
-          <build><plugins><plugin><artifactId>jacoco-maven-plugin</artifactId></plugin></plugins></build>
-        </project>
-        """.formatted(platform, dependencies));
-    return new ProductionModules.Report(platform.equals("quarkus") ? "Quarkus" : "Spring Boot", pom);
 
-  }
+    @Test
+    @DisplayName("A module the layout gives no platform fails until it is a named exception")
+    void aModuleWithoutAPlatformNeedsADecision() throws IOException {
 
-  private Path csv(
-      final String content) throws IOException {
+        module("engine-test-support", "zenbpm-vanillabp-adapter-engine-test-support", true);
+        final var springBoot = report("spring-boot");
+        final var quarkus = report("quarkus");
 
-    return Files.writeString(root.resolve("jacoco.csv"), content);
+        assertEquals(
+                List
+                        .of(
+                                "zenbpm-vanillabp-adapter-engine-test-support (in 'engine-test-support'): no rule "
+                                        + "says which platform runs it"),
+                ProductionModules.missingFromTheReportOfTheirPlatform(root, springBoot, quarkus, Set.of()));
+        assertEquals(
+                List.of(),
+                ProductionModules
+                        .missingFromTheReportOfTheirPlatform(
+                                root,
+                                springBoot,
+                                quarkus,
+                                Set.of("zenbpm-vanillabp-adapter-engine-test-support")));
 
-  }
+    }
+
+    @Test
+    @DisplayName("Modules without production sources and anything under target are not asked for")
+    void testOnlyModulesAndBuildOutputAreNotAskedFor() throws IOException {
+
+        module("smoke-test", "zenbpm-vanillabp-adapter-smoke-test", false);
+        module("core/target/copy", "a-copy-in-the-build-output", true);
+        final var springBoot = report("spring-boot");
+        final var quarkus = report("quarkus");
+
+        assertEquals(
+                List.of(),
+                ProductionModules.missingFromTheReportOfTheirPlatform(root, springBoot, quarkus, Set.of()));
+
+    }
+
+    @Test
+    @DisplayName("A report holding only its header has no instruction to measure")
+    void aHeaderOnlyReportHoldsNoInstruction() throws IOException {
+
+        final var coverage = CoverageGate.read(csv(CSV_HEADER), "Spring Boot", CoverageGate.Metric.INSTRUCTIONS);
+
+        assertEquals(0, coverage.missed() + coverage.covered());
+
+    }
+
+    @Test
+    @DisplayName("Untested code is measured as missed and lands below any threshold")
+    void untestedCodeIsMissed() throws IOException {
+
+        final var coverage = CoverageGate
+                .read(
+                        csv(CSV_HEADER
+                                + "core,org.pbinitiative.zenbpmadapter,Probe,2,0,0,0,1,0,1,0,1,0\n"),
+                        "Spring Boot",
+                        CoverageGate.Metric.INSTRUCTIONS);
+
+        assertEquals(2, coverage.missed());
+        assertTrue(coverage.percentage() < 85);
+
+    }
+
+    @Test
+    @DisplayName("A report which was never written fails the gate instead of passing it")
+    void aMissingReportFails() {
+
+        final var thrown = assertThrows(
+                IllegalStateException.class,
+                () -> CoverageGate.read(root.resolve("jacoco.csv"), "Quarkus", CoverageGate.Metric.INSTRUCTIONS));
+
+        assertTrue(thrown
+                .getMessage()
+                .contains("mvn install"));
+
+    }
+
+    private void module(
+            final String location,
+            final String artifactId,
+            final boolean withProductionSources) throws IOException {
+
+        final var module = root.resolve(location);
+        Files.createDirectories(module);
+        Files.writeString(module.resolve("pom.xml"), """
+                <project>
+                  <parent>
+                    <artifactId>zenbpm-vanillabp-adapter-parent</artifactId>
+                  </parent>
+                  <!-- <artifactId>not-this-one</artifactId> -->
+                  <artifactId>%s</artifactId>
+                </project>
+                """.formatted(artifactId));
+        if (withProductionSources) {
+            Files.createDirectories(module.resolve("src/main/java"));
+        }
+
+    }
+
+    private ProductionModules.Report report(
+            final String platform,
+            final String... aggregated) throws IOException {
+
+        final var dependencies = new StringBuilder();
+        for (final var artifactId : aggregated) {
+            dependencies.append("<dependency><artifactId>%s</artifactId></dependency>".formatted(artifactId));
+        }
+        final var pom = root.resolve("test-coverage-report/%s/pom.xml".formatted(platform));
+        Files.createDirectories(pom.getParent());
+        Files.writeString(pom, """
+                <project>
+                  <artifactId>%s-report</artifactId>
+                  <dependencies>%s</dependencies>
+                  <build><plugins><plugin><artifactId>jacoco-maven-plugin</artifactId></plugin></plugins></build>
+                </project>
+                """.formatted(platform, dependencies));
+        return new ProductionModules.Report(platform.equals("quarkus") ? "Quarkus" : "Spring Boot", pom);
+
+    }
+
+    private Path csv(
+            final String content) throws IOException {
+
+        return Files.writeString(root.resolve("jacoco.csv"), content);
+
+    }
 
 }

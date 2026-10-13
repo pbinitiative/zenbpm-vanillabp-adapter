@@ -24,7 +24,9 @@ the workspace; the plan lives in its `docs/` folder. Stories below start from th
 
 Conventions for every story of this plan: Java 21, Spotless with the copied `formatting_conventions.xml`
 (import order `java,javax,org,com,at.phactum`, one fluent call per line, `String#formatted`, text
-blocks), every test class starts with `@ExtendWith(SuppressOutputExtension.class)`, names read like
+blocks, four spaces per level since decision 20), every test class starts with
+`@ExtendWith(SuppressOutputExtension.class)` and is package-private like its test methods (decision
+21), methods follow decision 19, names read like
 sentences, no citation but `see decision N in the repository's DECISIONS.md`, and every README or
 wiki sentence promising behaviour names the test which holds it.
 

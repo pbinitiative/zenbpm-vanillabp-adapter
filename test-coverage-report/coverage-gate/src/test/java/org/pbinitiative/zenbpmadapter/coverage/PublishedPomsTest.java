@@ -53,40 +53,40 @@ import io.vanillabp.integration.test.utils.SuppressOutputExtension;
  * then.
  */
 @ExtendWith(SuppressOutputExtension.class)
-public class PublishedPomsTest {
+class PublishedPomsTest {
 
-  /**
-   * The tools of this build, each as {@code groupId:artifactId}. A tool this repository
-   * starts using belongs in this list, because nothing else knows that it is one. The
-   * list names more than the build uses today so that the usual next one is covered as
-   * well.
-   */
-  private static final Set<String> TOOLS_OF_THIS_BUILD = Set
-      .of(
-          "org.projectlombok:lombok",
-          "io.quarkus:quarkus-extension-processor",
-          "org.springframework.boot:spring-boot-autoconfigure-processor",
-          "org.mapstruct:mapstruct-processor",
-          "io.vanillabp:vanillabp-mapstruct-fluent-accessors");
+    /**
+     * The tools of this build, each as {@code groupId:artifactId}. A tool this repository
+     * starts using belongs in this list, because nothing else knows that it is one. The
+     * list names more than the build uses today so that the usual next one is covered as
+     * well.
+     */
+    private static final Set<String> TOOLS_OF_THIS_BUILD = Set
+            .of(
+                    "org.projectlombok:lombok",
+                    "io.quarkus:quarkus-extension-processor",
+                    "org.springframework.boot:spring-boot-autoconfigure-processor",
+                    "org.mapstruct:mapstruct-processor",
+                    "io.vanillabp:vanillabp-mapstruct-fluent-accessors");
 
-  @Test
-  @DisplayName("no POM of this repository hands an application a tool of the build")
-  public void noPomHandsAnApplicationAToolOfTheBuild() {
+    @Test
+    @DisplayName("no POM of this repository hands an application a tool of the build")
+    void noPomHandsAnApplicationAToolOfTheBuild() {
 
-    PublishedPoms
-        .ofTheRepositoryUnderTest(PublishedPoms.THE_FLATTENED_POM)
-        .handAnApplicationNoToolOfTheBuild(TOOLS_OF_THIS_BUILD);
+        PublishedPoms
+                .ofTheRepositoryUnderTest(PublishedPoms.THE_FLATTENED_POM)
+                .handAnApplicationNoToolOfTheBuild(TOOLS_OF_THIS_BUILD);
 
-  }
+    }
 
-  @Test
-  @DisplayName("no POM of this repository hands an application a property instead of a value")
-  public void noPomHandsAnApplicationAPropertyInsteadOfAValue() {
+    @Test
+    @DisplayName("no POM of this repository hands an application a property instead of a value")
+    void noPomHandsAnApplicationAPropertyInsteadOfAValue() {
 
-    PublishedPoms
-        .ofTheRepositoryUnderTest(PublishedPoms.THE_FLATTENED_POM)
-        .handAnApplicationNoPropertyInsteadOfAValue();
+        PublishedPoms
+                .ofTheRepositoryUnderTest(PublishedPoms.THE_FLATTENED_POM)
+                .handAnApplicationNoPropertyInsteadOfAValue();
 
-  }
+    }
 
 }

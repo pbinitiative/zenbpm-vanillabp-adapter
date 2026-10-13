@@ -93,17 +93,17 @@ package org.pbinitiative.zenbpmadapter;
  */
 public final class UntestedProbe {
 
-  private UntestedProbe() {
-  }
+    private UntestedProbe() {
+    }
 
-  /**
-   * Never called by a test.
-   *
-   * @return always true
-   */
-  public static boolean isNeverTested() {
-    return true;
-  }
+    /**
+     * Never called by a test.
+     *
+     * @return always true
+     */
+    public static boolean isNeverTested() {
+        return true;
+    }
 
 }
 JAVA

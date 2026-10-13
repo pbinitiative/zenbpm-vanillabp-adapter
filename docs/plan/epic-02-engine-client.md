@@ -144,6 +144,15 @@ path or query in `grpc-address` accepted, a user in `grpc-address` accepted, a b
   red run now raises both thresholds to 100 % and expects the gate's own "below the 100 %" message;
   both runs pass again (the README says so too). A check of the red run with `deployAtEnd`
   switched off was not possible: `PublicationSafetyTest` then fails the green run first.
+- Two more rules by the user's decision: decision 20 indents Java by four spaces (superseding the
+  formatting part of decision 16; every Java file reformatted by Spotless, the probe class of
+  `bin/check-deploy-safety.sh` too), decision 21 drops `public` from test classes and their test
+  and lifecycle methods (twelve test classes; the configuration test already had it from the
+  IDE). `TestVisibilityTest` checks decision 21; `MethodOrderTest` reads members at the new
+  indentation through `JavaMembers` and fails when it finds no test or private method at all,
+  which is what it would have done silently after the reformatting. Seen to fail, each restored
+  afterwards: a `public` test class, a `public` test method, a helper above a test, a lifecycle
+  method below a test, the parser set back to two spaces.
 - Not changed: the adapter id stays a parameter of `validate` and `clientIdInUse`, as the story's
   signature and Camunda 8 have it.
 

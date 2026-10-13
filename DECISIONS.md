@@ -76,6 +76,9 @@ ownership decides: the licence, the coordinates (groupId `org.pbinitiative.zenbp
 `org.pbinitiative.zenbpmadapter`), the CI and where releases are published. The Go conventions of
 the engine repository do not reach into this one.
 
+*"Spotless with the platform's formatting conventions" is superseded in part by decision 20: the
+formatter is the platform's, but it indents by four spaces instead of two.*
+
 ### 17. Code adapted from the Apache-2.0 adapters keeps its licence and its notice
 
 The repository is MIT-licensed, and a good part of its first version is copied and adapted from
@@ -107,3 +110,22 @@ helpers and private methods alike. In every class, main or test, the private met
 non-private ones. Constructors are not methods for this rule; they stay next to the fields. The rule
 covers the members of a top-level class. `MethodOrderTest` of the coverage gate checks it on every
 build, because a rule that is only written down drifts. Nested classes are reviewed by eye.
+
+### 20. Java is indented by four spaces
+
+Supersedes in part decision 16, which kept the formatting conventions of the VanillaBP platform. The
+owners of this repository chose four spaces per indentation level for every Java file, main and
+test, because that is how most Java is written outside the VanillaBP repositories, and so how most
+of this repository's readers read it. `formatting_conventions.xml` stays the platform's file with
+`indentation.size` and `tabulation.size` raised from 2 to 4. A wrapped line still continues two
+levels deeper than its start, now 8 spaces, so it stays apart from the body of a block. Spotless
+applies and checks it on every build, like the rest of the file. Everything else of decision 16
+stands.
+
+### 21. Test classes and their test methods are package-private
+
+JUnit 5 runs test classes and test and lifecycle methods which are not `public`, so `public` on them
+says nothing, and IDEs and static analysis flag it as redundant. Test classes and their `@Test`,
+`@ParameterizedTest`, `@BeforeEach`, `@AfterAll` and similar methods are therefore declared without
+a visibility modifier. Classes in test sources which hold no test, such as shared helpers, keep the
+visibility their callers need. `TestVisibilityTest` of the coverage gate checks it on every build.

@@ -21,10 +21,11 @@
   original header, `NOTICE` names both origins with a pointer to the Apache licence text kept as
   `LICENSE-APACHE-2.0`, and the README's licence section says so (draft decision 17).
 - Conventions: the repository follows the VanillaBP adapter conventions (module split, Spotless with
-  the platform's `formatting_conventions.xml`, per-platform coverage with the 85/90 gate, `test-utils`,
-  `DECISIONS.md` as the only citation target, wiki user-facing and README contributor-facing), so the
-  four VanillaBP adapters read alike although this one has other owners (draft decision 16). The Go
-  conventions of `zenbpm/AGENTS.md` do not apply here.
+  the platform's `formatting_conventions.xml` indenting by four spaces (decision 20), per-platform
+  coverage with the 85/90 gate, `test-utils`, `DECISIONS.md` as the only citation target, wiki
+  user-facing and README contributor-facing), so the four VanillaBP adapters read alike although
+  this one has other owners (draft decision 16). The Go conventions of `zenbpm/AGENTS.md` do not
+  apply here.
 - Adapter type constant `zenbpm` (`ZenBpmAdapter.ADAPTER_TYPE`), Quarkus capability
   `io.vanillabp.adapter.zenbpm`, extension name `vanillabp-zenbpm`.
 - Engine pin: the newest engine `main` commit when S1.2.1 runs (it must carry E13.1, commit
@@ -43,7 +44,7 @@
 ```
 zenbpm-vanillabp-adapter/
   pom.xml                         parent: modules, BOM imports, Spotless, JaCoCo, flatten, engine pin
-  formatting_conventions.xml      copied from adapter-platform-integration
+  formatting_conventions.xml      copied from adapter-platform-integration, indentation 4 (decision 20)
   AGENTS.md  DECISIONS.md  GAPS.md  UPGRADE.md  README.md  LICENSE  NOTICE  readme/
   core/                           plain Java: SPI implementations, REST client, job stream, model handling
   spring-boot/                    auto-configuration, BeanRegistrar, overlay properties, Spring ITs (Docker)

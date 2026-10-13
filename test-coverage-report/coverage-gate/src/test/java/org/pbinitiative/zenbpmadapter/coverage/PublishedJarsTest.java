@@ -40,109 +40,109 @@ import io.vanillabp.integration.test.utils.SuppressOutputExtension;
  * other module has written its jars when this runs.
  */
 @ExtendWith(SuppressOutputExtension.class)
-public class PublishedJarsTest {
+class PublishedJarsTest {
 
-  private static final List<String> LICENCE_FILES = List
-      .of("META-INF/LICENSE", "META-INF/LICENSE-APACHE-2.0", "META-INF/NOTICE");
+    private static final List<String> LICENCE_FILES = List
+            .of("META-INF/LICENSE", "META-INF/LICENSE-APACHE-2.0", "META-INF/NOTICE");
 
-  @Test
-  @DisplayName("Every published jar carries both licence texts and the NOTICE")
-  public void everyPublishedJarCarriesTheLicences() throws IOException {
+    @Test
+    @DisplayName("Every published jar carries both licence texts and the NOTICE")
+    void everyPublishedJarCarriesTheLicences() throws IOException {
 
-    final var commandLine = System.getProperty("coverage.maven.command", "");
-    if (CoverageGate.stopsBeforeTheReportsAreWritten(commandLine)) {
-      final var reason = CoverageGate.describeRunWithoutReports(commandLine);
-      Assumptions.abort(reason);
-    }
-
-    final var root = CoverageGate.repositoryRoot("coverage.repository.root");
-    final var offenders = new ArrayList<String>();
-    var jarsRead = 0;
-    for (final var module : publishedModules(root)) {
-      final var jars = jarsOf(module);
-      if (jars.isEmpty()) {
-        offenders.add("%s: no jar in target/".formatted(root.relativize(module)));
-      }
-      for (final var jar : jars) {
-        jarsRead++;
-        try (var archive = new JarFile(jar.toFile())) {
-          for (final var entry : LICENCE_FILES) {
-            if (archive.getEntry(entry) == null) {
-              offenders.add("%s lacks %s".formatted(root.relativize(jar), entry));
-            }
-          }
-        }
-      }
-    }
-
-    assertTrue(jarsRead > 0, "no published jar was found below %s".formatted(root));
-    assertTrue(offenders.isEmpty(), () -> """
-        Published archives without the licence texts or the NOTICE: %s. The root POM declares \
-        LICENSE, LICENSE-APACHE-2.0 and NOTICE as a resource with targetPath META-INF; a module \
-        which declares <resources> of its own replaces that list and has to repeat the entry, as \
-        core/pom.xml does."""
-        .formatted(String.join("; ", offenders)));
-
-  }
-
-  private static List<Path> publishedModules(
-      final Path root) {
-
-    final var modules = new ArrayList<Path>();
-    try {
-      Files.walkFileTree(root, new SimpleFileVisitor<>() {
-
-        @Override
-        public FileVisitResult preVisitDirectory(
-            final Path directory,
-            final BasicFileAttributes attributes) throws IOException {
-
-          final var name = directory.getFileName() == null
-              ? ""
-              : directory
-                  .getFileName()
-                  .toString();
-          if (name.equals("target") || name.startsWith(".")) {
-            return FileVisitResult.SKIP_SUBTREE;
-          }
-          final var pom = directory.resolve("pom.xml");
-          if (Files.isRegularFile(pom)) {
-            final var content = Files.readString(pom, StandardCharsets.UTF_8);
-            final var noJar = content.contains("<packaging>pom</packaging>");
-            final var notPublished = content.contains("<maven.deploy.skip>true</maven.deploy.skip>");
-            if (!noJar && !notPublished) {
-              modules.add(directory);
-            }
-          }
-          return FileVisitResult.CONTINUE;
-
+        final var commandLine = System.getProperty("coverage.maven.command", "");
+        if (CoverageGate.stopsBeforeTheReportsAreWritten(commandLine)) {
+            final var reason = CoverageGate.describeRunWithoutReports(commandLine);
+            Assumptions.abort(reason);
         }
 
-      });
-    } catch (final IOException e) {
-      throw new UncheckedIOException(e);
+        final var root = CoverageGate.repositoryRoot("coverage.repository.root");
+        final var offenders = new ArrayList<String>();
+        var jarsRead = 0;
+        for (final var module : publishedModules(root)) {
+            final var jars = jarsOf(module);
+            if (jars.isEmpty()) {
+                offenders.add("%s: no jar in target/".formatted(root.relativize(module)));
+            }
+            for (final var jar : jars) {
+                jarsRead++;
+                try (var archive = new JarFile(jar.toFile())) {
+                    for (final var entry : LICENCE_FILES) {
+                        if (archive.getEntry(entry) == null) {
+                            offenders.add("%s lacks %s".formatted(root.relativize(jar), entry));
+                        }
+                    }
+                }
+            }
+        }
+
+        assertTrue(jarsRead > 0, "no published jar was found below %s".formatted(root));
+        assertTrue(offenders.isEmpty(), () -> """
+                Published archives without the licence texts or the NOTICE: %s. The root POM declares \
+                LICENSE, LICENSE-APACHE-2.0 and NOTICE as a resource with targetPath META-INF; a module \
+                which declares <resources> of its own replaces that list and has to repeat the entry, as \
+                core/pom.xml does."""
+                .formatted(String.join("; ", offenders)));
+
     }
-    return modules;
 
-  }
+    private static List<Path> publishedModules(
+            final Path root) {
 
-  private static List<Path> jarsOf(
-      final Path module) throws IOException {
+        final var modules = new ArrayList<Path>();
+        try {
+            Files.walkFileTree(root, new SimpleFileVisitor<>() {
 
-    final var target = module.resolve("target");
-    if (!Files.isDirectory(target)) {
-      return List.of();
+                @Override
+                public FileVisitResult preVisitDirectory(
+                        final Path directory,
+                        final BasicFileAttributes attributes) throws IOException {
+
+                    final var name = directory.getFileName() == null
+                            ? ""
+                            : directory
+                                    .getFileName()
+                                    .toString();
+                    if (name.equals("target") || name.startsWith(".")) {
+                        return FileVisitResult.SKIP_SUBTREE;
+                    }
+                    final var pom = directory.resolve("pom.xml");
+                    if (Files.isRegularFile(pom)) {
+                        final var content = Files.readString(pom, StandardCharsets.UTF_8);
+                        final var noJar = content.contains("<packaging>pom</packaging>");
+                        final var notPublished = content.contains("<maven.deploy.skip>true</maven.deploy.skip>");
+                        if (!noJar && !notPublished) {
+                            modules.add(directory);
+                        }
+                    }
+                    return FileVisitResult.CONTINUE;
+
+                }
+
+            });
+        } catch (final IOException e) {
+            throw new UncheckedIOException(e);
+        }
+        return modules;
+
     }
-    try (Stream<Path> files = Files.list(target)) {
-      return files
-          .filter(file -> file
-              .getFileName()
-              .toString()
-              .endsWith(".jar"))
-          .sorted()
-          .toList();
-    }
 
-  }
+    private static List<Path> jarsOf(
+            final Path module) throws IOException {
+
+        final var target = module.resolve("target");
+        if (!Files.isDirectory(target)) {
+            return List.of();
+        }
+        try (Stream<Path> files = Files.list(target)) {
+            return files
+                    .filter(file -> file
+                            .getFileName()
+                            .toString()
+                            .endsWith(".jar"))
+                    .sorted()
+                    .toList();
+        }
+
+    }
 
 }

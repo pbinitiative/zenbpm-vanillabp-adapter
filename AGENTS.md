@@ -56,6 +56,14 @@ from, so the second line reads either `from vanillabp/camunda8-adapter` or
 
 A file adapted from a repository `NOTICE` does not name yet adds that repository to `NOTICE`.
 
+## Indentation and visibility
+
+Java is indented by four spaces, and a wrapped line continues eight spaces deeper than its start
+(decision 20 in the repository's DECISIONS.md). `mvn spotless:apply` does it; do not format by hand.
+Test classes and their test and lifecycle methods have no `public`: JUnit 5 does not need it
+(decision 21). `TestVisibilityTest` in `test-coverage-report/coverage-gate` fails the build on a
+`public` test class or test method.
+
 ## Where methods go
 
 In a test class the tests come first: lifecycle methods (`@BeforeEach`, `@AfterAll`, ...) above the

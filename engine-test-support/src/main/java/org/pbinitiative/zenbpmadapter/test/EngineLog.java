@@ -22,32 +22,32 @@ import org.testcontainers.containers.output.OutputFrame;
  */
 public final class EngineLog {
 
-  /**
-   * The logger the engine's lines are written to. Standard output and standard error of the
-   * container both end up here, because the engine writes its own levels into each line.
-   */
-  public static final String LOGGER_NAME = "zenbpm-engine";
+    /**
+     * The logger the engine's lines are written to. Standard output and standard error of the
+     * container both end up here, because the engine writes its own levels into each line.
+     */
+    public static final String LOGGER_NAME = "zenbpm-engine";
 
-  private static final Logger LOGGER = LoggerFactory.getLogger(LOGGER_NAME);
+    private static final Logger LOGGER = LoggerFactory.getLogger(LOGGER_NAME);
 
-  private EngineLog() {
-    // static helper
-  }
+    private EngineLog() {
+        // static helper
+    }
 
-  /**
-   * A log consumer for one engine container.
-   *
-   * @return What {@code withLogConsumer(...)} of the container takes
-   */
-  public static Consumer<OutputFrame> consumer() {
+    /**
+     * A log consumer for one engine container.
+     *
+     * @return What {@code withLogConsumer(...)} of the container takes
+     */
+    public static Consumer<OutputFrame> consumer() {
 
-    return frame -> {
-      final var line = frame.getUtf8StringWithoutLineEnding();
-      if (!line.isEmpty()) {
-        LOGGER.debug(line);
-      }
-    };
+        return frame -> {
+            final var line = frame.getUtf8StringWithoutLineEnding();
+            if (!line.isEmpty()) {
+                LOGGER.debug(line);
+            }
+        };
 
-  }
+    }
 
 }
