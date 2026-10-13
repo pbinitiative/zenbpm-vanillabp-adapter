@@ -491,7 +491,10 @@ instruction" for both platforms.
   `build` check of `checks.yaml` runs it before the Maven build. Seen to fail: `openapi: 3.0.1` in
   the body of `api.yaml`, a changed field number in the proto, the `java_package` line removed
   ("has to carry the line ... exactly once"), and a `zenbpm.commit` the engine does not have
-  ("cannot read openapi/api.yaml of commit ... from GitHub").
+  ("cannot read openapi/api.yaml of commit ... from GitHub"). In CI, run
+  [38401289107](https://github.com/pbinitiative/zenbpm-vanillabp-adapter/actions/runs/38401289107)
+  of pull request #7: "ok: core/src/main/zenbpm/api.yaml is openapi/api.yaml of commit bdd795a3..."
+  and the same for the proto, in the job `build` only.
 - `CLUSTER_RAFT_BOOTSTRAP_EXPECT=1` is the engine's default as well (`env-default:"1"`); its
   comment now says so, like the TTL's.
 - Wording: the logback template, the README's pin section (moving the pin is now a numbered list
