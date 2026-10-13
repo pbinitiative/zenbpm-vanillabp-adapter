@@ -36,8 +36,9 @@
   `zenbpm-engine.properties` (`engine.image=${zenbpm.image}`). Before the first release the pin
   becomes an engine release tag (S12.4.1). The API contract the adapter is written against is the
   copy `core/src/main/zenbpm/api.yaml` and `core/src/main/proto/zenbpm.proto` taken from the pinned
-  commit; a test diffs the shipped copies against the pinned image's
-  `/v1/openapi` where the engine serves it, otherwise the copy is the contract.
+  commit. The pull-request check compares the copies with the engine's files of that commit, and an
+  integration test proves that the pinned image reports that commit (decision 18, which replaced a
+  diff against `/v1/openapi`: the engine does not serve that document).
 
 ```
 zenbpm-vanillabp-adapter/

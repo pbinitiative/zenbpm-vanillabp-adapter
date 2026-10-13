@@ -53,6 +53,16 @@
       <artifactId>lombok</artifactId>
       <scope>provided</scope>
     </dependency>
+    <dependency>
+      <groupId>io.vanillabp</groupId>
+      <artifactId>test-utils</artifactId>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.junit.jupiter</groupId>
+      <artifactId>junit-jupiter</artifactId>
+      <scope>test</scope>
+    </dependency>
   </dependencies>
 
   <build>
@@ -74,5 +84,51 @@
         </includes>
       </resource>
     </resources>
+    <plugins>
+      <!-- The job stream's Java and gRPC stubs, generated from the copy of the engine's proto
+           this repository pins, see decision 3 in the repository's DECISIONS.md. The build
+           downloads protoc and its gRPC plugin from Maven Central, in the variant for the
+           machine it runs on, so no machine needs them installed. protoc has the version of
+           the protobuf runtime the adapter is compiled against: generated code refuses a
+           runtime older than the protoc which wrote it. -->
+      <plugin>
+        <groupId>io.github.ascopes</groupId>
+        <artifactId>protobuf-maven-plugin</artifactId>
+        <version>5.1.11</version>
+        <configuration>
+          <protoc>${protobuf.version}</protoc>
+          <sourceDirectories>
+            <sourceDirectory>src/main/proto</sourceDirectory>
+          </sourceDirectories>
+          <!-- the classes are what the adapter runs; the engine's proto stays out of the jar -->
+          <embedSourcesInClassOutputs>false</embedSourcesInClassOutputs>
+          <plugins>
+            <plugin kind="binary-maven">
+              <groupId>io.grpc</groupId>
+              <artifactId>protoc-gen-grpc-java</artifactId>
+              <version>${grpc.version}</version>
+              <!-- no @javax.annotation.Generated, whose jar is not on the classpath -->
+              <options>@generated=omit</options>
+            </plugin>
+          </plugins>
+        </configuration>
+        <executions>
+          <execution>
+            <goals>
+              <goal>generate</goal>
+            </goals>
+          </execution>
+        </executions>
+      </plugin>
+      <!-- the generated stubs carry the proto's comments, not javadoc this repository wrote,
+           and would break the check on warnings it cannot fix -->
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-javadoc-plugin</artifactId>
+        <configuration>
+          <excludePackageNames>org.pbinitiative.zenbpmadapter.client.grpc</excludePackageNames>
+        </configuration>
+      </plugin>
+    </plugins>
   </build>
 </project>

@@ -58,6 +58,9 @@
             <coverage.threshold.spring-boot>${coverage.threshold.spring-boot}</coverage.threshold.spring-boot>
             <coverage.threshold.quarkus>${coverage.threshold.quarkus}</coverage.threshold.quarkus>
             <coverage.rule>${coverage.rule}</coverage.rule>
+            <!-- what EnginePinTest holds the copies of the pin to -->
+            <zenbpm.commit>${zenbpm.commit}</zenbpm.commit>
+            <zenbpm.image>${zenbpm.image}</zenbpm.image>
           </systemPropertyVariables>
         </configuration>
       </plugin>

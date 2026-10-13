@@ -187,6 +187,11 @@ wrapped in `CompletionException` and `RuntimeException`.
 4. The client id must be unique per node: a second stream with the same id is rejected by the
    engine; log that rejection with the property key `vanillabp.adapters.<id>.client-id` and the
    default derivation.
+5. The generated stubs need a `protobuf-java` runtime at least as new as the `protoc` which
+   generated them (`protobuf.version` of the root POM). An application whose dependencies resolve
+   an older one fails with protobuf's own error at the first stream class it touches. Check it at
+   startup (Spring) / build time (Quarkus): compare `com.google.protobuf.RuntimeVersion` with the
+   gencode version and name the dependency to raise and the version needed.
 
 **Tests**
 
@@ -197,6 +202,8 @@ wrapped in `CompletionException` and `RuntimeException`.
 - `ZenBpmJobStreamTest` with an in-process `io.grpc.inprocess` server implementing `ZenBpm`:
   reference counting, resubscription after reconnect (settings included), an error frame failing a
   subscription, `close()` ending the call, conflicting settings of one type refused.
+- `ProtobufRuntimeCheckTest`: a runtime older than the gencode version is refused with the guiding
+  message; the build's own runtime passes.
 - `ZenBpmJobLockIT` (Docker): a subscription with a 2 s lock redelivers an unfinished job to a second
   client after about 2 s and not before; `extendJobLock` by 5 s keeps it away; `409` after the lock
   lapsed; closing the first stream hands its locked job to the second client at once.

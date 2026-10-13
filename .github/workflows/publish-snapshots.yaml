@@ -44,9 +44,10 @@ jobs:
           distribution: temurin
           cache: maven
       # No login to ghcr.io here, unlike checks.yaml: in this job the GITHUB_TOKEN may write
-      # packages, and a login would leave it in ~/.docker/config.json for every later step. No
-      # test pulls the engine image yet; when the integration tests do, a pull without login
-      # only meets the anonymous rate limit.
+      # packages, and a login would leave it in ~/.docker/config.json for every later step. The
+      # engine image the integration tests start is public, so it is pulled without a login,
+      # under the anonymous rate limit; this workflow runs once per push to main, which stays
+      # far below it.
       #
       # This workflow only runs on main, never for a fork, so the token reading the VanillaBP
       # snapshots has to be there. Without it the build below would fail on the first VanillaBP

@@ -71,8 +71,13 @@ public class CoverageGateTest {
    * Modules whose execution data or production code belongs to no coverage report. Each
    * entry is a decision - a module missing here and missing from the aggregate of its
    * platform is the defect this test exists for.
+   * <p>
+   * {@code engine-test-support} starts the engine for the integration tests. Its classes
+   * live in {@code src/main/java} only because a test classpath cannot read another
+   * module's test classes; no application runs them, on either platform.
    */
-  private static final Set<String> DELIBERATELY_NOT_AGGREGATED = Set.of();
+  private static final Set<String> DELIBERATELY_NOT_AGGREGATED = Set
+      .of("zenbpm-vanillabp-adapter-engine-test-support");
 
   @Test
   @DisplayName("Every module producing coverage data is read by an aggregated report")

@@ -119,6 +119,9 @@ deduplication, as Camunda 8 offers. E13.8.
   released, so `/system/status` cannot tell a `main` build from the release - a bump right after
   each release (`v1.9.0-dev`) would; (c) does the engine serve its OpenAPI document at runtime
   (`/v1/openapi` or similar), so the adapter can diff its pinned copy against the running engine?
+  At the pinned commit `bdd795a3` it does not: the generated `public.GetSpec()` only feeds the
+  request validator. Until it does, decision 18 checks the copies against the engine's files of
+  the pinned commit instead.
 - Is an API stability statement planned (which endpoints are stable, which are tooling)? The adapter
   pins one engine version per release (decision 15) until there is one.
 - Is authentication or TLS on the public ports planned? The wiki will say "put a proxy in front" until
@@ -195,6 +198,13 @@ protocol only, so the engine's AGPL does not reach it), and the code adapted fro
 VanillaBP adapters may live in an MIT project as long as the Apache licence text and the attributions
 travel with it - draft decision 17 and the `NOTICE` / `LICENSE-APACHE-2.0` files of S1.1.1. Worth a
 quick legal check by whoever signs off licences at pbinitiative.
+Since S1.2.1 the repository also holds copies of two engine files, `openapi/api.yaml` and
+`zenbpm.proto`, and since S1.2.2 the core jar ships classes generated from the proto. Those are
+copies of AGPL-licensed engine files, not just protocol use, so the check has to say under which
+licence they travel with the adapter; `NOTICE` leaves it open until then. The engine already has a
+place for such an answer: its `LICENSING.md` lists files under another licence than the default
+(the rqlite files under MIT). Listing `openapi/api.yaml` and `pkg/zenclient/proto/zenbpm.proto`
+there, under MIT or Apache 2.0, would settle it for the copies and for the code generated from them.
 
 ### 14. New adapter keys
 

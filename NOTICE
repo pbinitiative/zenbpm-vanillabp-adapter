@@ -15,5 +15,13 @@ Softwareentwicklung GmbH (https://www.phactum.at/).
 Every Java file adapted from them carries a header naming its origin and the identifier
 "SPDX-License-Identifier: Apache-2.0", and stays under the Apache License, Version 2.0, whose text
 is in LICENSE-APACHE-2.0. Every other Java file carries "SPDX-License-Identifier: MIT". Files
-without such a header (build files, documents, configuration) are under the MIT License. Why it is
-done this way is decision 17 in DECISIONS.md.
+without such a header (build files, documents, configuration) are under the MIT License, except
+the two files of the next paragraph. Why it is done this way is decision 17 in DECISIONS.md.
+
+Two files are copies of interface descriptions of the ZenBPM engine (pbinitiative/zenbpm,
+https://github.com/pbinitiative/zenbpm, dual-licensed under the AGPL-3.0-or-later and an
+enterprise licence): core/src/main/zenbpm/api.yaml and core/src/main/proto/zenbpm.proto. Their
+first lines name the engine commit they were copied from. From the proto, the build generates the
+gRPC classes of the core jar and the Java sources of its sources jar. It is not settled yet under
+which licence this repository distributes these copies and the generated code. The ZenBPM
+maintainers decide it, and their answer replaces this paragraph.

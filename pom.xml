@@ -23,9 +23,11 @@
     </license>
   </licenses>
   <!-- One entry on purpose: Maven reads several <license> entries as alternatives a user may
-       choose between, and "MIT or Apache 2.0" would be wrong for an adapted file. While no
-       adapted file ships in a published jar (today only test classes are adapted), MIT is
-       also the whole truth. The first story which copies production code from a VanillaBP
+       choose between, and "MIT or Apache 2.0" would be wrong for an adapted file. No
+       adapted file ships in a published jar yet (today only test classes are adapted). The
+       core jar does ship the gRPC classes generated from a copy of the engine's proto, and
+       under which licence those travel is still open, see NOTICE. Apart from them, MIT is the
+       whole truth today. The first story which copies production code from a VanillaBP
        adapter decides how the published POMs say "MIT and Apache 2.0"; the jars already
        carry both licence texts and the NOTICE, see <resources> below. -->
 
@@ -38,6 +40,7 @@
   </developers>
 
   <modules>
+    <module>engine-test-support</module>
     <module>core</module>
     <module>spring-boot</module>
     <module>smoke-test</module>
@@ -100,6 +103,16 @@
     <grpc.version>1.81.0</grpc.version>
     <protobuf.version>4.35.0</protobuf.version>
     <testcontainers.version>2.0.5</testcontainers.version>
+    <!-- The ZenBPM engine this adapter is written and tested against, see decision 15 in the
+         repository's DECISIONS.md: a commit of the engine's main and the digest of the image
+         its CI built from it. Supported means tested, so this build and nothing newer. Both
+         move together, in one commit with the copies of api.yaml and zenbpm.proto in core,
+         whose headers name the same two values, and with the README's table. These are the
+         values the build reads; EnginePinTest fails where a header or the table names
+         others. The image is written without a tag in front
+         of the '@', because Testcontainers refuses 'name:tag@digest'. -->
+    <zenbpm.commit>bdd795a399b6484d062d52ac90c0d0725cb0ad91</zenbpm.commit>
+    <zenbpm.image>ghcr.io/pbinitiative/zenbpm@sha256:d7808e30821a7349e0f42476d8aaa21ff92fc752c0ccc432771764d307b87ed0</zenbpm.image>
   </properties>
 
   <dependencyManagement>
@@ -362,6 +375,12 @@
           <excludes>
             <exclude>**/it/**</exclude>
             <exclude>**/test/**</exclude>
+            <!-- the gRPC stubs generated from the engine's proto: every message brings
+                 builders and parsers the adapter never calls, and counted they would
+                 outweigh the adapter's own code. The package holds generated code only, and
+                 GeneratedStubPackageTest fails where a module writes a class of its own
+                 into it -->
+            <exclude>org/pbinitiative/zenbpmadapter/client/grpc/**</exclude>
           </excludes>
         </configuration>
         <executions>

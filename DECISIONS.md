@@ -34,6 +34,9 @@ status code. The job stream is generated from the pinned `zenbpm.proto`, because
 protobuf is for. The pinned copies name the engine commit they came from, and a test diffs them
 against the image the integration tests run.
 
+*The last sentence is superseded by decision 18: the engine does not serve its OpenAPI document, so
+the copies are checked against the engine's files of the pinned commit instead.*
+
 ### 13. A class opens its fields one by one, not as a whole
 
 The deployment service, the process service and the engine client of this adapter hold many
@@ -84,3 +87,13 @@ Java file gets one naming its origin, that it was adapted, and
 `SPDX-License-Identifier: Apache-2.0`. A file written from scratch carries the MIT header with
 `SPDX-License-Identifier: MIT`. Which is which is decided when the file is created and never
 changed afterwards, because the origin of a file is a fact and not a preference.
+
+### 18. The pinned copies are checked against the engine's files of the pinned commit
+
+Supersedes the last sentence of decision 3. The copies of `api.yaml` and `zenbpm.proto` name the
+engine commit and image they came from. `bin/check-engine-copies.sh`, run by the pull-request check,
+compares them with the engine's files at that commit; the proto may differ by its header and its
+`java_package` line only. `EngineUnderTestIT` proves that the pinned image reports that commit, so
+the copies are the contract of the image the tests run. A diff against the running engine needs the
+engine to serve its OpenAPI document, which it does not; the generated `GetSpec()` only feeds its
+request validator. Once it serves the document, that diff replaces the check against the commit.
