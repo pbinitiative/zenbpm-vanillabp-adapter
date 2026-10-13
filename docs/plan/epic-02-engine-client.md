@@ -202,6 +202,21 @@ Where the code differs from the instructions:
 - `restBaseUri()` and `instanceIdentity()` are the same normalised form, so `http://host:8080`,
   `http://host:8080/v1`, `HTTP://Host:8080/` and `http://host:8080/%76%31` are one engine.
 
+**Done 2026-10-13**, merged to `main` as `f61ee24` (pull request #10, together with decisions 19 to
+22). On that commit (GitHub keeps run logs for 90 days, so what they showed is written here as well):
+
+- `Checks`, run
+  [38440149514](https://github.com/pbinitiative/zenbpm-vanillabp-adapter/actions/runs/38440149514):
+  green on both JDKs. `bin/check-engine-copies.sh` reported both copies as the engine's files of
+  `bdd795a3...`. `ZenBpmAdapterConfigurationTest` ran 93 tests, `MethodOrderTest` 3 and
+  `TestVisibilityTest` 2. The gate measured 100 % on both platforms, of 1,478 instructions on JDK
+  25 and 1,476 on JDK 21.
+- `Publish snapshots`, run
+  [38440149861](https://github.com/pbinitiative/zenbpm-vanillabp-adapter/actions/runs/38440149861):
+  green. `EngineUnderTestIT` ran 3 tests, none skipped. The core snapshot it published,
+  `2.0.0-20261013.173739-6`, contains `ZenBpmAdapterConfiguration` with its nested
+  `ValidationResult` and `MessageStartLookup`. Both report pages answer HTTP 200.
+
 ---
 
 ## F2.2 REST client
