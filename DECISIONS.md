@@ -97,3 +97,13 @@ compares them with the engine's files at that commit; the proto may differ by it
 the copies are the contract of the image the tests run. A diff against the running engine needs the
 engine to serve its OpenAPI document, which it does not; the generated `GetSpec()` only feeds its
 request validator. Once it serves the document, that diff replaces the check against the commit.
+
+### 19. Tests come first, helpers last, private methods after the others
+
+A reader opens a test class to learn what is tested, and any other class to learn what it offers.
+So in a test class the lifecycle methods (`@BeforeEach` and the like) come before the first test,
+and every other method follows the last test: argument sources of parameterized tests, assertion
+helpers and private methods alike. In every class, main or test, the private methods follow the
+non-private ones. Constructors are not methods for this rule; they stay next to the fields. The rule
+covers the members of a top-level class. `MethodOrderTest` of the coverage gate checks it on every
+build, because a rule that is only written down drifts. Nested classes are reviewed by eye.

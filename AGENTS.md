@@ -56,6 +56,15 @@ from, so the second line reads either `from vanillabp/camunda8-adapter` or
 
 A file adapted from a repository `NOTICE` does not name yet adds that repository to `NOTICE`.
 
+## Where methods go
+
+In a test class the tests come first: lifecycle methods (`@BeforeEach`, `@AfterAll`, ...) above the
+first test, every other method below the last one. That includes the argument sources of
+parameterized tests. In every class the private methods come after the non-private ones.
+Constructors stay next to the fields. `MethodOrderTest` in `test-coverage-report/coverage-gate`
+fails the build on a method out of place and names it. The reason is decision 19 in the
+repository's DECISIONS.md.
+
 ## What belongs in `UPGRADE.md`
 
 [`UPGRADE.md`](./UPGRADE.md) holds what a released version of this adapter asks an upgrading

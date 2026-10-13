@@ -35,13 +35,13 @@ import io.vanillabp.integration.test.utils.SuppressOutputExtension;
  * derives from a complete one.
  */
 @ExtendWith(SuppressOutputExtension.class)
-public class ZenBpmAdapterConfigurationTest {
+class ZenBpmAdapterConfigurationTest {
 
   private static final String ADAPTER_ID = "orders";
 
   @Test
   @DisplayName("A configuration without a REST address is unconfigured and tells which YAML to add")
-  public void anUnconfiguredAdapterIsToldWhatToAdd() {
+  void anUnconfiguredAdapterIsToldWhatToAdd() {
 
     final var validation = new ZenBpmAdapterConfiguration().validate(ADAPTER_ID, false, false);
 
@@ -63,7 +63,7 @@ public class ZenBpmAdapterConfigurationTest {
 
   @Test
   @DisplayName("A blank REST address counts as none")
-  public void aBlankRestAddressIsUnconfigured() {
+  void aBlankRestAddressIsUnconfigured() {
 
     final var configuration = new ZenBpmAdapterConfiguration();
     configuration.setRestAddress("  ");
@@ -76,7 +76,7 @@ public class ZenBpmAdapterConfigurationTest {
 
   @Test
   @DisplayName("A REST address and nothing else is a complete configuration with every default")
-  public void aRestAddressAloneIsComplete() {
+  void aRestAddressAloneIsComplete() {
 
     final var configuration = configured("http://zenbpm:8080");
 
@@ -107,7 +107,7 @@ public class ZenBpmAdapterConfigurationTest {
 
   @Test
   @DisplayName("Every key holds what was set, and null restores its default")
-  public void everySetterTakesAValueAndNullRestoresTheDefault() {
+  void everySetterTakesAValueAndNullRestoresTheDefault() {
 
     final var configuration = configured("https://zenbpm");
     configuration.setGrpcAddress("zenbpm-grpc:443");
@@ -173,6 +173,498 @@ public class ZenBpmAdapterConfigurationTest {
     assertEquals(defaults.getUserTaskPollInterval(), configuration.getUserTaskPollInterval());
     assertEquals(defaults.getInstanceCacheMaxEntries(), configuration.getInstanceCacheMaxEntries());
     assertEquals(defaults.getMessageStartLookup(), configuration.getMessageStartLookup());
+
+  }
+
+  @ParameterizedTest(name = "{0} with {1}")
+  @MethodSource("defects")
+  @DisplayName("Each defect ends the boot of a first-priority adapter, names its key and says how to fix it")
+  void eachDefectIsNamedWithItsKeyAndItsFix(
+      final String key,
+      final String description,
+      final String fix,
+      final Consumer<ZenBpmAdapterConfiguration> breakIt) {
+
+    final var configuration = configured("http://zenbpm:8080");
+    breakIt.accept(configuration);
+
+    final var validation = configuration.validate(ADAPTER_ID, false, false);
+
+    assertEquals(Kind.INCONSISTENT, validation.kind());
+    assertTrue(validation.endsTheBoot());
+    final var line = validation
+        .message()
+        .lines()
+        .filter(defect -> defect.startsWith("  - vanillabp.adapters.orders.%s ".formatted(key)))
+        .findFirst();
+    assertTrue(line.isPresent(), validation.message());
+    assertTrue(line
+        .get()
+        .contains(fix), line.get());
+
+  }
+
+  @Test
+  @DisplayName("Two defects are reported in one message")
+  void twoDefectsAreReportedTogether() {
+
+    final var configuration = configured("zenbpm:8080");
+    configuration.setRequestTimeout(Duration.ZERO);
+
+    final var message = configuration
+        .validate(ADAPTER_ID, false, false)
+        .message();
+
+    assertTrue(message.contains("  - vanillabp.adapters.orders.rest-address "), message);
+    assertTrue(message.contains("  - vanillabp.adapters.orders.request-timeout "), message);
+
+  }
+
+  @Test
+  @DisplayName("A defect beside a missing REST address is inconsistent and names both keys")
+  void aDefectBesideAMissingAddressIsInconsistent() {
+
+    final var configuration = new ZenBpmAdapterConfiguration();
+    configuration.setWorkerThreads("0");
+
+    final var validation = configuration.validate(ADAPTER_ID, false, false);
+
+    assertEquals(Kind.INCONSISTENT, validation.kind());
+    assertTrue(validation
+        .message()
+        .contains("  - vanillabp.adapters.orders.rest-address is missing"), validation.message());
+    assertTrue(validation
+        .message()
+        .contains("  - vanillabp.adapters.orders.worker-threads "), validation.message());
+
+  }
+
+  @ParameterizedTest(name = "{0}")
+  @MethodSource("keysWithoutADefault")
+  @DisplayName("A key without a default, set without a REST address, makes the configuration inconsistent")
+  void aStartedConfigurationWithoutAnAddressIsInconsistent(
+      final String key,
+      final Consumer<ZenBpmAdapterConfiguration> configure) {
+
+    final var configuration = new ZenBpmAdapterConfiguration();
+    configure.accept(configuration);
+
+    final var validation = configuration.validate(ADAPTER_ID, false, false);
+
+    assertEquals(Kind.INCONSISTENT, validation.kind());
+    assertTrue(validation.endsTheBoot());
+    assertTrue(validation
+        .message()
+        .contains("  - vanillabp.adapters.orders.rest-address is missing, but other keys of this adapter are set"),
+        validation.message());
+
+  }
+
+  /**
+   * The client id has no defect but a blank one, which has no value to repeat, so the part of
+   * this test about the client id cannot fail today. It is there for a later check of the client
+   * id, whose message must not repeat it either.
+   */
+  @Test
+  @DisplayName("Neither the client id nor a password in the REST address is ever repeated")
+  void valuesWhichMayBeSecretAreNeverRepeated() {
+
+    final var configuration = configured("http://operator:s3cret@zenbpm.internal:8080");
+    configuration.setClientId("billing-host-17.internal");
+    configuration.setGrpcAddress("zenbpm.internal");
+
+    final var message = configuration
+        .validate(ADAPTER_ID, false, false)
+        .message();
+
+    assertTrue(message.contains("vanillabp.adapters.orders.rest-address "), message);
+    assertTrue(message.contains("vanillabp.adapters.orders.grpc-address "), message);
+    assertFalse(message.contains("s3cret"), message);
+    assertFalse(message.contains("operator"), message);
+    assertFalse(message.contains("zenbpm.internal"), message);
+    assertFalse(message.contains("billing-host-17"), message);
+
+  }
+
+  @ParameterizedTest(name = "{0}")
+  @MethodSource("connectionDefects")
+  @DisplayName("An adapter which is nowhere first and warns on deployment failures boots degraded where the engine cannot be reached")
+  void aNowhereFirstAdapterWithWarnBootsDegraded(
+      final String description,
+      final Consumer<ZenBpmAdapterConfiguration> breakIt) {
+
+    final var configuration = configured("http://zenbpm:8080");
+    breakIt.accept(configuration);
+
+    final var validation = configuration.validate(ADAPTER_ID, true, true);
+
+    assertEquals(Kind.INCONSISTENT, validation.kind());
+    assertFalse(validation.endsTheBoot());
+    assertTrue(validation
+        .message()
+        .contains("'vanillabp.adapters.orders.deployment-failure' is 'warn', so the application boots DEGRADED"),
+        validation.message());
+
+  }
+
+  @ParameterizedTest
+  @ValueSource(strings = {
+      "http://zenbpm:8080", "zenbpm:8080"
+  })
+  @DisplayName("A number or duration which cannot work ends the boot even where the adapter may boot degraded")
+  void aValueWhichCannotWorkAlwaysEndsTheBoot(
+      final String restAddress) {
+
+    final var configuration = configured(restAddress);
+    configuration.setWorkerThreads("-1");
+
+    final var validation = configuration.validate(ADAPTER_ID, true, true);
+
+    assertEquals(Kind.INCONSISTENT, validation.kind());
+    assertTrue(validation.endsTheBoot());
+    assertTrue(validation
+        .message()
+        .contains("ends the boot even where 'vanillabp.adapters.orders.deployment-failure' is 'warn'"),
+        validation.message());
+    assertFalse(validation
+        .message()
+        .contains("DEGRADED"), validation.message());
+
+  }
+
+  @Test
+  @DisplayName("An adapter which is nowhere first but fails on deployment failures is shown the way to degrade")
+  void aNowhereFirstAdapterWithFailIsShownTheWarnPolicy() {
+
+    final var validation = configured("zenbpm:8080").validate(ADAPTER_ID, true, false);
+
+    assertTrue(validation.endsTheBoot());
+    assertTrue(validation
+        .message()
+        .contains("may instead set 'vanillabp.adapters.orders.deployment-failure: warn'"), validation.message());
+
+  }
+
+  @Test
+  @DisplayName("An adapter which is first priority somewhere cannot boot degraded, whatever its policy")
+  void aFirstPriorityAdapterNeverDegrades() {
+
+    final var validation = configured("zenbpm:8080").validate(ADAPTER_ID, false, true);
+
+    assertTrue(validation.endsTheBoot());
+    assertTrue(validation
+        .message()
+        .contains("first priority somewhere, so it cannot boot degraded"), validation.message());
+
+  }
+
+  @Test
+  @DisplayName("An unconfigured adapter never ends the boot, whatever its priority and policy")
+  void anUnconfiguredAdapterNeverEndsTheBoot() {
+
+    final var configuration = new ZenBpmAdapterConfiguration();
+
+    assertFalse(configuration
+        .validate(ADAPTER_ID, false, false)
+        .endsTheBoot());
+    assertFalse(configuration
+        .validate(ADAPTER_ID, true, true)
+        .endsTheBoot());
+
+  }
+
+  @ParameterizedTest
+  @ValueSource(strings = {
+      "virtual", "VIRTUAL", " virtual "
+  })
+  @DisplayName("Virtual worker threads are accepted, bounded by four unless a bound is set")
+  void virtualWorkerThreadsAreAccepted(
+      final String workerThreads) {
+
+    final var configuration = configured("http://zenbpm:8080");
+    configuration.setWorkerThreads(workerThreads);
+
+    assertEquals(Kind.COMPLETE, configuration
+        .validate(ADAPTER_ID, false, false)
+        .kind());
+    assertEquals(4, configuration.workerThreadsBoundInUse());
+
+    configuration.setWorkerThreadsBound(32);
+
+    assertEquals(Kind.COMPLETE, configuration
+        .validate(ADAPTER_ID, false, false)
+        .kind());
+    assertEquals(32, configuration.workerThreadsBoundInUse());
+
+  }
+
+  @ParameterizedTest
+  @ValueSource(ints = {
+      4, 12, 20
+  })
+  @DisplayName("Platform threads are their own bound, so a bound beside them is refused whatever its size")
+  void platformThreadsAreTheirOwnBound(
+      final int bound) {
+
+    final var configuration = configured("http://zenbpm:8080");
+    configuration.setWorkerThreads("12");
+
+    assertEquals(12, configuration.workerThreadsBoundInUse());
+
+    configuration.setWorkerThreadsBound(bound);
+    final var validation = configuration.validate(ADAPTER_ID, false, false);
+
+    assertEquals(Kind.INCONSISTENT, validation.kind());
+    assertTrue(validation
+        .message()
+        .contains(
+            "  - vanillabp.adapters.orders.worker-threads-bound is set, but vanillabp.adapters.orders.worker-threads is a number of platform threads"),
+        validation.message());
+    assertTrue(validation
+        .message()
+        .contains("set 'virtual' or remove the bound"), validation.message());
+
+  }
+
+  @Test
+  @DisplayName("A misspelt 'virtual' beside a bound is reported once, as the worker threads it is")
+  void aMisspeltVirtualIsReportedOnce() {
+
+    final var configuration = configured("http://zenbpm:8080");
+    configuration.setWorkerThreads("virtul");
+    configuration.setWorkerThreadsBound(16);
+
+    final var message = configuration
+        .validate(ADAPTER_ID, false, false)
+        .message();
+
+    assertTrue(message.contains("  - vanillabp.adapters.orders.worker-threads is neither a number nor 'virtual'"),
+        message);
+    assertFalse(message.contains("  - vanillabp.adapters.orders.worker-threads-bound "), message);
+
+  }
+
+  @Test
+  @DisplayName("The gRPC address defaults to the REST host and port 9090, and a configured one is used as written")
+  void theGrpcAddressIsDerivedFromTheRestHost() {
+
+    final var configuration = configured("https://ZenBPM.example:8443/");
+
+    assertEquals("ZenBPM.example:9090", configuration.grpcAddressInUse());
+
+    configuration.setGrpcAddress(" zenbpm-grpc.example:443 ");
+
+    assertEquals("zenbpm-grpc.example:443", configuration.grpcAddressInUse());
+    assertEquals(Kind.COMPLETE, configuration
+        .validate(ADAPTER_ID, false, false)
+        .kind());
+
+  }
+
+  @Test
+  @DisplayName("An IPv6 REST host gives an IPv6 gRPC address, which validates")
+  void anIpv6HostIsDerivedInBrackets() {
+
+    final var configuration = configured("http://[::1]:8080");
+
+    assertEquals("[::1]:9090", configuration.grpcAddressInUse());
+
+    configuration.setGrpcAddress(configuration.grpcAddressInUse());
+
+    assertEquals(Kind.COMPLETE, configuration
+        .validate(ADAPTER_ID, false, false)
+        .kind());
+
+  }
+
+  @Test
+  @DisplayName("The client id is derived from application name, adapter id and a random part drawn once")
+  void theClientIdIsDerived() {
+
+    final var configuration = configured("http://zenbpm:8080");
+
+    final var clientId = configuration.clientIdInUse(ADAPTER_ID, () -> "billing");
+
+    assertTrue(clientId.matches("billing-orders-[0-9a-f]{8}"), clientId);
+    assertEquals(clientId, configuration.clientIdInUse(ADAPTER_ID, () -> "billing"));
+    assertNotEquals(clientId, configured("http://zenbpm:8080").clientIdInUse(ADAPTER_ID, () -> "billing"));
+    assertTrue(configuration
+        .clientIdInUse(ADAPTER_ID, () -> null)
+        .matches("application-orders-[0-9a-f]{8}"));
+    assertTrue(configuration
+        .clientIdInUse(ADAPTER_ID, () -> " ")
+        .matches("application-orders-[0-9a-f]{8}"));
+
+    configuration.setClientId(" billing-node-1 ");
+
+    assertEquals("billing-node-1", configuration.clientIdInUse(ADAPTER_ID, () -> "billing"));
+
+  }
+
+  @Test
+  @DisplayName("'/v1' is appended to the REST address once, and an address carrying it already is noticed")
+  void theApiVersionIsAppendedOnce() {
+
+    assertEquals(URI.create("http://zenbpm:8080/v1"), configured("http://zenbpm:8080").restBaseUri());
+    assertEquals(URI.create("http://zenbpm:8080/v1"), configured("http://zenbpm:8080/").restBaseUri());
+    assertEquals(URI.create("http://zenbpm:80/engine/v1"), configured("http://zenbpm/engine/").restBaseUri());
+    assertEquals(URI.create("https://zenbpm:443/v1"), configured("https://zenbpm").restBaseUri());
+
+    final var configuration = configured("http://zenbpm:8080/v1/");
+
+    assertEquals(URI.create("http://zenbpm:8080/v1"), configuration.restBaseUri());
+    final var validation = configuration.validate(ADAPTER_ID, false, false);
+    assertEquals(Kind.COMPLETE, validation.kind());
+    assertEquals(1, validation
+        .notices()
+        .size());
+    assertTrue(validation
+        .notices()
+        .getFirst()
+        .contains("'vanillabp.adapters.orders.rest-address' already ends with '/v1'"), validation.notices().getFirst());
+
+  }
+
+  @ParameterizedTest
+  @ValueSource(strings = {
+      "/%76%31", "/v%31", "/v1/", "//v1//", "/proxy/%76%31/"
+  })
+  @DisplayName("An address ending with an escaped or doubled '/v1' gets no second one, and the notice says so")
+  void theNoticeAndTheBaseAgreeOnTheApiVersion(
+      final String path) {
+
+    final var configuration = configured("http://zenbpm:8080"
+        + path);
+
+    final var validation = configuration.validate(ADAPTER_ID, false, false);
+
+    assertEquals(1, validation
+        .notices()
+        .size(), validation.notices()::toString);
+    assertTrue(configuration
+        .restBaseUri()
+        .getRawPath()
+        .matches("(/proxy)?/v1"), configuration.restBaseUri()::toString);
+
+  }
+
+  @Test
+  @DisplayName("Escaped ASCII letters, digits and '-._~' are written as themselves, every other escape stays")
+  void onlyUnreservedEscapesAreDecoded() {
+
+    assertEquals(URI.create("http://zenbpm:8080/Az09-._~/%C3%A4%20/v1"),
+        configured("http://zenbpm:8080/%41%7a%30%39%2d%2e%5f%7e/%c3%a4%20").restBaseUri());
+
+  }
+
+  @Test
+  @DisplayName("An escaped slash stays escaped, so it never becomes a separator in front of '/v1'")
+  void anEscapedSlashStaysEscaped() {
+
+    final var configuration = configured("http://zenbpm:8080/%2fv1");
+
+    assertEquals(URI.create("http://zenbpm:8080/%2Fv1/v1"), configuration.restBaseUri());
+    assertEquals(List.of(), configuration
+        .validate(ADAPTER_ID, false, false)
+        .notices());
+
+  }
+
+  @ParameterizedTest
+  @ValueSource(strings = {
+      "", "  "
+  })
+  @DisplayName("Blank worker threads are the default, as an empty key binds to an empty text")
+  void blankWorkerThreadsAreTheDefault(
+      final String workerThreads) {
+
+    final var configuration = configured("http://zenbpm:8080");
+    configuration.setWorkerThreads(workerThreads);
+
+    assertEquals("4", configuration.getWorkerThreads());
+    assertEquals(Kind.COMPLETE, configuration
+        .validate(ADAPTER_ID, false, false)
+        .kind());
+
+  }
+
+  @Test
+  @DisplayName("An https REST address with a derived plaintext job stream is noticed, and not where either is set")
+  void aTlsRestAddressBesideAPlaintextJobStreamIsNoticed() {
+
+    final var configuration = configured("https://zenbpm");
+
+    assertEquals(1, configuration
+        .validate(ADAPTER_ID, false, false)
+        .notices()
+        .size());
+    assertTrue(configuration
+        .validate(ADAPTER_ID, false, false)
+        .notices()
+        .getFirst()
+        .contains(
+            "uses https, but the job stream goes to port 9090 of the same host without TLS. Where a proxy terminates TLS for both, set 'vanillabp.adapters.orders.grpc-address' and 'vanillabp.adapters.orders.grpc-plaintext: false'"));
+
+    configuration.setGrpcPlaintext(false);
+
+    assertEquals(List.of(), configuration
+        .validate(ADAPTER_ID, false, false)
+        .notices());
+
+    configuration.setGrpcPlaintext(true);
+    configuration.setGrpcAddress("zenbpm:9090");
+
+    assertEquals(List.of(), configuration
+        .validate(ADAPTER_ID, false, false)
+        .notices());
+
+  }
+
+  @Test
+  @DisplayName("Two spellings of one engine's address have one identity, another port another")
+  void theIdentityIsNormalised() {
+
+    final var identity = configured("http://host:8080").instanceIdentity();
+
+    assertEquals(identity, configured("HTTP://Host:8080/").instanceIdentity());
+    assertEquals(identity, configured(" http://HOST:8080/v1 ").instanceIdentity());
+    assertEquals(identity, configured("http://host:8080/%76%31").instanceIdentity());
+    assertEquals(identity, configured("http://host:8080//v1//").instanceIdentity());
+    assertEquals(configured("http://host").instanceIdentity(), configured("http://host:80/").instanceIdentity());
+    assertNotEquals(identity, configured("http://host:8081").instanceIdentity());
+    assertNotEquals(identity, configured("https://host:8080").instanceIdentity());
+
+  }
+
+  @ParameterizedTest
+  @ValueSource(strings = {
+      "", "zenbpm:8080"
+  })
+  @DisplayName("Nothing is derived from a missing or malformed REST address")
+  void nothingIsDerivedFromAnUnusableAddress(
+      final String restAddress) {
+
+    final var configuration = configured(restAddress);
+
+    assertThrows(IllegalStateException.class, configuration::restBaseUri);
+    assertThrows(IllegalStateException.class, configuration::instanceIdentity);
+    assertThrows(IllegalStateException.class, configuration::grpcAddressInUse);
+
+  }
+
+  @Test
+  @DisplayName("The notices of a validation cannot be changed afterwards")
+  void theNoticesAreACopy() {
+
+    final var notices = new ArrayList<String>();
+    notices.add("one");
+    final var validation = new ZenBpmAdapterConfiguration.ValidationResult(Kind.COMPLETE, "", false, notices);
+    notices.add("two");
+
+    assertEquals(List.of("one"), validation.notices());
+    assertThrows(UnsupportedOperationException.class, () -> validation
+        .notices()
+        .add("three"));
 
   }
 
@@ -293,69 +785,6 @@ public class ZenBpmAdapterConfigurationTest {
 
   }
 
-  @ParameterizedTest(name = "{0} with {1}")
-  @MethodSource("defects")
-  @DisplayName("Each defect ends the boot of a first-priority adapter, names its key and says how to fix it")
-  public void eachDefectIsNamedWithItsKeyAndItsFix(
-      final String key,
-      final String description,
-      final String fix,
-      final Consumer<ZenBpmAdapterConfiguration> breakIt) {
-
-    final var configuration = configured("http://zenbpm:8080");
-    breakIt.accept(configuration);
-
-    final var validation = configuration.validate(ADAPTER_ID, false, false);
-
-    assertEquals(Kind.INCONSISTENT, validation.kind());
-    assertTrue(validation.endsTheBoot());
-    final var line = validation
-        .message()
-        .lines()
-        .filter(defect -> defect.startsWith("  - vanillabp.adapters.orders.%s ".formatted(key)))
-        .findFirst();
-    assertTrue(line.isPresent(), validation.message());
-    assertTrue(line
-        .get()
-        .contains(fix), line.get());
-
-  }
-
-  @Test
-  @DisplayName("Two defects are reported in one message")
-  public void twoDefectsAreReportedTogether() {
-
-    final var configuration = configured("zenbpm:8080");
-    configuration.setRequestTimeout(Duration.ZERO);
-
-    final var message = configuration
-        .validate(ADAPTER_ID, false, false)
-        .message();
-
-    assertTrue(message.contains("  - vanillabp.adapters.orders.rest-address "), message);
-    assertTrue(message.contains("  - vanillabp.adapters.orders.request-timeout "), message);
-
-  }
-
-  @Test
-  @DisplayName("A defect beside a missing REST address is inconsistent and names both keys")
-  public void aDefectBesideAMissingAddressIsInconsistent() {
-
-    final var configuration = new ZenBpmAdapterConfiguration();
-    configuration.setWorkerThreads("0");
-
-    final var validation = configuration.validate(ADAPTER_ID, false, false);
-
-    assertEquals(Kind.INCONSISTENT, validation.kind());
-    assertTrue(validation
-        .message()
-        .contains("  - vanillabp.adapters.orders.rest-address is missing"), validation.message());
-    assertTrue(validation
-        .message()
-        .contains("  - vanillabp.adapters.orders.worker-threads "), validation.message());
-
-  }
-
   static Stream<Arguments> keysWithoutADefault() {
 
     return Stream.of(
@@ -363,53 +792,6 @@ public class ZenBpmAdapterConfigurationTest {
         Arguments.of("client-id", (Consumer<ZenBpmAdapterConfiguration>) c -> c.setClientId("orders-node-1")),
         Arguments.of("history-time-to-live",
             (Consumer<ZenBpmAdapterConfiguration>) c -> c.setHistoryTimeToLive(Duration.ofDays(30))));
-
-  }
-
-  @ParameterizedTest(name = "{0}")
-  @MethodSource("keysWithoutADefault")
-  @DisplayName("A key without a default, set without a REST address, makes the configuration inconsistent")
-  public void aStartedConfigurationWithoutAnAddressIsInconsistent(
-      final String key,
-      final Consumer<ZenBpmAdapterConfiguration> configure) {
-
-    final var configuration = new ZenBpmAdapterConfiguration();
-    configure.accept(configuration);
-
-    final var validation = configuration.validate(ADAPTER_ID, false, false);
-
-    assertEquals(Kind.INCONSISTENT, validation.kind());
-    assertTrue(validation.endsTheBoot());
-    assertTrue(validation
-        .message()
-        .contains("  - vanillabp.adapters.orders.rest-address is missing, but other keys of this adapter are set"),
-        validation.message());
-
-  }
-
-  /**
-   * The client id has no defect but a blank one, which has no value to repeat, so the part of
-   * this test about the client id cannot fail today. It is there for a later check of the client
-   * id, whose message must not repeat it either.
-   */
-  @Test
-  @DisplayName("Neither the client id nor a password in the REST address is ever repeated")
-  public void valuesWhichMayBeSecretAreNeverRepeated() {
-
-    final var configuration = configured("http://operator:s3cret@zenbpm.internal:8080");
-    configuration.setClientId("billing-host-17.internal");
-    configuration.setGrpcAddress("zenbpm.internal");
-
-    final var message = configuration
-        .validate(ADAPTER_ID, false, false)
-        .message();
-
-    assertTrue(message.contains("vanillabp.adapters.orders.rest-address "), message);
-    assertTrue(message.contains("vanillabp.adapters.orders.grpc-address "), message);
-    assertFalse(message.contains("s3cret"), message);
-    assertFalse(message.contains("operator"), message);
-    assertFalse(message.contains("zenbpm.internal"), message);
-    assertFalse(message.contains("billing-host-17"), message);
 
   }
 
@@ -425,388 +807,6 @@ public class ZenBpmAdapterConfigurationTest {
           c.setRestAddress(null);
           c.setGrpcAddress("zenbpm:9090");
         }));
-
-  }
-
-  @ParameterizedTest(name = "{0}")
-  @MethodSource("connectionDefects")
-  @DisplayName("An adapter which is nowhere first and warns on deployment failures boots degraded where the engine cannot be reached")
-  public void aNowhereFirstAdapterWithWarnBootsDegraded(
-      final String description,
-      final Consumer<ZenBpmAdapterConfiguration> breakIt) {
-
-    final var configuration = configured("http://zenbpm:8080");
-    breakIt.accept(configuration);
-
-    final var validation = configuration.validate(ADAPTER_ID, true, true);
-
-    assertEquals(Kind.INCONSISTENT, validation.kind());
-    assertFalse(validation.endsTheBoot());
-    assertTrue(validation
-        .message()
-        .contains("'vanillabp.adapters.orders.deployment-failure' is 'warn', so the application boots DEGRADED"),
-        validation.message());
-
-  }
-
-  @ParameterizedTest
-  @ValueSource(strings = {
-      "http://zenbpm:8080", "zenbpm:8080"
-  })
-  @DisplayName("A number or duration which cannot work ends the boot even where the adapter may boot degraded")
-  public void aValueWhichCannotWorkAlwaysEndsTheBoot(
-      final String restAddress) {
-
-    final var configuration = configured(restAddress);
-    configuration.setWorkerThreads("-1");
-
-    final var validation = configuration.validate(ADAPTER_ID, true, true);
-
-    assertEquals(Kind.INCONSISTENT, validation.kind());
-    assertTrue(validation.endsTheBoot());
-    assertTrue(validation
-        .message()
-        .contains("ends the boot even where 'vanillabp.adapters.orders.deployment-failure' is 'warn'"),
-        validation.message());
-    assertFalse(validation
-        .message()
-        .contains("DEGRADED"), validation.message());
-
-  }
-
-  @Test
-  @DisplayName("An adapter which is nowhere first but fails on deployment failures is shown the way to degrade")
-  public void aNowhereFirstAdapterWithFailIsShownTheWarnPolicy() {
-
-    final var validation = configured("zenbpm:8080").validate(ADAPTER_ID, true, false);
-
-    assertTrue(validation.endsTheBoot());
-    assertTrue(validation
-        .message()
-        .contains("may instead set 'vanillabp.adapters.orders.deployment-failure: warn'"), validation.message());
-
-  }
-
-  @Test
-  @DisplayName("An adapter which is first priority somewhere cannot boot degraded, whatever its policy")
-  public void aFirstPriorityAdapterNeverDegrades() {
-
-    final var validation = configured("zenbpm:8080").validate(ADAPTER_ID, false, true);
-
-    assertTrue(validation.endsTheBoot());
-    assertTrue(validation
-        .message()
-        .contains("first priority somewhere, so it cannot boot degraded"), validation.message());
-
-  }
-
-  @Test
-  @DisplayName("An unconfigured adapter never ends the boot, whatever its priority and policy")
-  public void anUnconfiguredAdapterNeverEndsTheBoot() {
-
-    final var configuration = new ZenBpmAdapterConfiguration();
-
-    assertFalse(configuration
-        .validate(ADAPTER_ID, false, false)
-        .endsTheBoot());
-    assertFalse(configuration
-        .validate(ADAPTER_ID, true, true)
-        .endsTheBoot());
-
-  }
-
-  @ParameterizedTest
-  @ValueSource(strings = {
-      "virtual", "VIRTUAL", " virtual "
-  })
-  @DisplayName("Virtual worker threads are accepted, bounded by four unless a bound is set")
-  public void virtualWorkerThreadsAreAccepted(
-      final String workerThreads) {
-
-    final var configuration = configured("http://zenbpm:8080");
-    configuration.setWorkerThreads(workerThreads);
-
-    assertEquals(Kind.COMPLETE, configuration
-        .validate(ADAPTER_ID, false, false)
-        .kind());
-    assertEquals(4, configuration.workerThreadsBoundInUse());
-
-    configuration.setWorkerThreadsBound(32);
-
-    assertEquals(Kind.COMPLETE, configuration
-        .validate(ADAPTER_ID, false, false)
-        .kind());
-    assertEquals(32, configuration.workerThreadsBoundInUse());
-
-  }
-
-  @ParameterizedTest
-  @ValueSource(ints = {
-      4, 12, 20
-  })
-  @DisplayName("Platform threads are their own bound, so a bound beside them is refused whatever its size")
-  public void platformThreadsAreTheirOwnBound(
-      final int bound) {
-
-    final var configuration = configured("http://zenbpm:8080");
-    configuration.setWorkerThreads("12");
-
-    assertEquals(12, configuration.workerThreadsBoundInUse());
-
-    configuration.setWorkerThreadsBound(bound);
-    final var validation = configuration.validate(ADAPTER_ID, false, false);
-
-    assertEquals(Kind.INCONSISTENT, validation.kind());
-    assertTrue(validation
-        .message()
-        .contains(
-            "  - vanillabp.adapters.orders.worker-threads-bound is set, but vanillabp.adapters.orders.worker-threads is a number of platform threads"),
-        validation.message());
-    assertTrue(validation
-        .message()
-        .contains("set 'virtual' or remove the bound"), validation.message());
-
-  }
-
-  @Test
-  @DisplayName("A misspelt 'virtual' beside a bound is reported once, as the worker threads it is")
-  public void aMisspeltVirtualIsReportedOnce() {
-
-    final var configuration = configured("http://zenbpm:8080");
-    configuration.setWorkerThreads("virtul");
-    configuration.setWorkerThreadsBound(16);
-
-    final var message = configuration
-        .validate(ADAPTER_ID, false, false)
-        .message();
-
-    assertTrue(message.contains("  - vanillabp.adapters.orders.worker-threads is neither a number nor 'virtual'"),
-        message);
-    assertFalse(message.contains("  - vanillabp.adapters.orders.worker-threads-bound "), message);
-
-  }
-
-  @Test
-  @DisplayName("The gRPC address defaults to the REST host and port 9090, and a configured one is used as written")
-  public void theGrpcAddressIsDerivedFromTheRestHost() {
-
-    final var configuration = configured("https://ZenBPM.example:8443/");
-
-    assertEquals("ZenBPM.example:9090", configuration.grpcAddressInUse());
-
-    configuration.setGrpcAddress(" zenbpm-grpc.example:443 ");
-
-    assertEquals("zenbpm-grpc.example:443", configuration.grpcAddressInUse());
-    assertEquals(Kind.COMPLETE, configuration
-        .validate(ADAPTER_ID, false, false)
-        .kind());
-
-  }
-
-  @Test
-  @DisplayName("An IPv6 REST host gives an IPv6 gRPC address, which validates")
-  public void anIpv6HostIsDerivedInBrackets() {
-
-    final var configuration = configured("http://[::1]:8080");
-
-    assertEquals("[::1]:9090", configuration.grpcAddressInUse());
-
-    configuration.setGrpcAddress(configuration.grpcAddressInUse());
-
-    assertEquals(Kind.COMPLETE, configuration
-        .validate(ADAPTER_ID, false, false)
-        .kind());
-
-  }
-
-  @Test
-  @DisplayName("The client id is derived from application name, adapter id and a random part drawn once")
-  public void theClientIdIsDerived() {
-
-    final var configuration = configured("http://zenbpm:8080");
-
-    final var clientId = configuration.clientIdInUse(ADAPTER_ID, () -> "billing");
-
-    assertTrue(clientId.matches("billing-orders-[0-9a-f]{8}"), clientId);
-    assertEquals(clientId, configuration.clientIdInUse(ADAPTER_ID, () -> "billing"));
-    assertNotEquals(clientId, configured("http://zenbpm:8080").clientIdInUse(ADAPTER_ID, () -> "billing"));
-    assertTrue(configuration
-        .clientIdInUse(ADAPTER_ID, () -> null)
-        .matches("application-orders-[0-9a-f]{8}"));
-    assertTrue(configuration
-        .clientIdInUse(ADAPTER_ID, () -> " ")
-        .matches("application-orders-[0-9a-f]{8}"));
-
-    configuration.setClientId(" billing-node-1 ");
-
-    assertEquals("billing-node-1", configuration.clientIdInUse(ADAPTER_ID, () -> "billing"));
-
-  }
-
-  @Test
-  @DisplayName("'/v1' is appended to the REST address once, and an address carrying it already is noticed")
-  public void theApiVersionIsAppendedOnce() {
-
-    assertEquals(URI.create("http://zenbpm:8080/v1"), configured("http://zenbpm:8080").restBaseUri());
-    assertEquals(URI.create("http://zenbpm:8080/v1"), configured("http://zenbpm:8080/").restBaseUri());
-    assertEquals(URI.create("http://zenbpm:80/engine/v1"), configured("http://zenbpm/engine/").restBaseUri());
-    assertEquals(URI.create("https://zenbpm:443/v1"), configured("https://zenbpm").restBaseUri());
-
-    final var configuration = configured("http://zenbpm:8080/v1/");
-
-    assertEquals(URI.create("http://zenbpm:8080/v1"), configuration.restBaseUri());
-    final var validation = configuration.validate(ADAPTER_ID, false, false);
-    assertEquals(Kind.COMPLETE, validation.kind());
-    assertEquals(1, validation
-        .notices()
-        .size());
-    assertTrue(validation
-        .notices()
-        .getFirst()
-        .contains("'vanillabp.adapters.orders.rest-address' already ends with '/v1'"), validation.notices().getFirst());
-
-  }
-
-  @ParameterizedTest
-  @ValueSource(strings = {
-      "/%76%31", "/v%31", "/v1/", "//v1//", "/proxy/%76%31/"
-  })
-  @DisplayName("An address ending with an escaped or doubled '/v1' gets no second one, and the notice says so")
-  public void theNoticeAndTheBaseAgreeOnTheApiVersion(
-      final String path) {
-
-    final var configuration = configured("http://zenbpm:8080"
-        + path);
-
-    final var validation = configuration.validate(ADAPTER_ID, false, false);
-
-    assertEquals(1, validation
-        .notices()
-        .size(), validation.notices()::toString);
-    assertTrue(configuration
-        .restBaseUri()
-        .getRawPath()
-        .matches("(/proxy)?/v1"), configuration.restBaseUri()::toString);
-
-  }
-
-  @Test
-  @DisplayName("Escaped ASCII letters, digits and '-._~' are written as themselves, every other escape stays")
-  public void onlyUnreservedEscapesAreDecoded() {
-
-    assertEquals(URI.create("http://zenbpm:8080/Az09-._~/%C3%A4%20/v1"),
-        configured("http://zenbpm:8080/%41%7a%30%39%2d%2e%5f%7e/%c3%a4%20").restBaseUri());
-
-  }
-
-  @Test
-  @DisplayName("An escaped slash stays escaped, so it never becomes a separator in front of '/v1'")
-  public void anEscapedSlashStaysEscaped() {
-
-    final var configuration = configured("http://zenbpm:8080/%2fv1");
-
-    assertEquals(URI.create("http://zenbpm:8080/%2Fv1/v1"), configuration.restBaseUri());
-    assertEquals(List.of(), configuration
-        .validate(ADAPTER_ID, false, false)
-        .notices());
-
-  }
-
-  @ParameterizedTest
-  @ValueSource(strings = {
-      "", "  "
-  })
-  @DisplayName("Blank worker threads are the default, as an empty key binds to an empty text")
-  public void blankWorkerThreadsAreTheDefault(
-      final String workerThreads) {
-
-    final var configuration = configured("http://zenbpm:8080");
-    configuration.setWorkerThreads(workerThreads);
-
-    assertEquals("4", configuration.getWorkerThreads());
-    assertEquals(Kind.COMPLETE, configuration
-        .validate(ADAPTER_ID, false, false)
-        .kind());
-
-  }
-
-  @Test
-  @DisplayName("An https REST address with a derived plaintext job stream is noticed, and not where either is set")
-  public void aTlsRestAddressBesideAPlaintextJobStreamIsNoticed() {
-
-    final var configuration = configured("https://zenbpm");
-
-    assertEquals(1, configuration
-        .validate(ADAPTER_ID, false, false)
-        .notices()
-        .size());
-    assertTrue(configuration
-        .validate(ADAPTER_ID, false, false)
-        .notices()
-        .getFirst()
-        .contains(
-            "uses https, but the job stream goes to port 9090 of the same host without TLS. Where a proxy terminates TLS for both, set 'vanillabp.adapters.orders.grpc-address' and 'vanillabp.adapters.orders.grpc-plaintext: false'"));
-
-    configuration.setGrpcPlaintext(false);
-
-    assertEquals(List.of(), configuration
-        .validate(ADAPTER_ID, false, false)
-        .notices());
-
-    configuration.setGrpcPlaintext(true);
-    configuration.setGrpcAddress("zenbpm:9090");
-
-    assertEquals(List.of(), configuration
-        .validate(ADAPTER_ID, false, false)
-        .notices());
-
-  }
-
-  @Test
-  @DisplayName("Two spellings of one engine's address have one identity, another port another")
-  public void theIdentityIsNormalised() {
-
-    final var identity = configured("http://host:8080").instanceIdentity();
-
-    assertEquals(identity, configured("HTTP://Host:8080/").instanceIdentity());
-    assertEquals(identity, configured(" http://HOST:8080/v1 ").instanceIdentity());
-    assertEquals(identity, configured("http://host:8080/%76%31").instanceIdentity());
-    assertEquals(identity, configured("http://host:8080//v1//").instanceIdentity());
-    assertEquals(configured("http://host").instanceIdentity(), configured("http://host:80/").instanceIdentity());
-    assertNotEquals(identity, configured("http://host:8081").instanceIdentity());
-    assertNotEquals(identity, configured("https://host:8080").instanceIdentity());
-
-  }
-
-  @ParameterizedTest
-  @ValueSource(strings = {
-      "", "zenbpm:8080"
-  })
-  @DisplayName("Nothing is derived from a missing or malformed REST address")
-  public void nothingIsDerivedFromAnUnusableAddress(
-      final String restAddress) {
-
-    final var configuration = configured(restAddress);
-
-    assertThrows(IllegalStateException.class, configuration::restBaseUri);
-    assertThrows(IllegalStateException.class, configuration::instanceIdentity);
-    assertThrows(IllegalStateException.class, configuration::grpcAddressInUse);
-
-  }
-
-  @Test
-  @DisplayName("The notices of a validation cannot be changed afterwards")
-  public void theNoticesAreACopy() {
-
-    final var notices = new ArrayList<String>();
-    notices.add("one");
-    final var validation = new ZenBpmAdapterConfiguration.ValidationResult(Kind.COMPLETE, "", false, notices);
-    notices.add("two");
-
-    assertEquals(List.of("one"), validation.notices());
-    assertThrows(UnsupportedOperationException.class, () -> validation
-        .notices()
-        .add("three"));
 
   }
 

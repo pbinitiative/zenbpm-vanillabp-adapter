@@ -33,20 +33,6 @@ public class GeneratedStubPackageTest {
 
   private static final Path STUB_PACKAGE = Path.of("org", "pbinitiative", "zenbpmadapter", "client", "grpc");
 
-  /**
-   * Compares the names of the directories, not the path as text, so the check reads the same
-   * whichever separator the operating system writes.
-   */
-  private static boolean isMainSourceOutsideTarget(
-      final Path path) {
-
-    final var names = new ArrayList<String>();
-    path.forEach(name -> names.add(name.toString()));
-    final var src = names.indexOf("src");
-    return !names.contains("target") && (src >= 0) && (src + 1 < names.size()) && "main".equals(names.get(src + 1));
-
-  }
-
   @Test
   @DisplayName("No module writes sources into the package of the generated stubs")
   public void noModuleWritesSourcesIntoTheStubPackage() throws IOException {
@@ -66,6 +52,20 @@ public class GeneratedStubPackageTest {
               + "gRPC stubs only and is left out of every coverage report. Move them to "
               + "'org.pbinitiative.zenbpmadapter.client'.").formatted(offenders));
     }
+
+  }
+
+  /**
+   * Compares the names of the directories, not the path as text, so the check reads the same
+   * whichever separator the operating system writes.
+   */
+  private static boolean isMainSourceOutsideTarget(
+      final Path path) {
+
+    final var names = new ArrayList<String>();
+    path.forEach(name -> names.add(name.toString()));
+    final var src = names.indexOf("src");
+    return !names.contains("target") && (src >= 0) && (src + 1 < names.size()) && "main".equals(names.get(src + 1));
 
   }
 

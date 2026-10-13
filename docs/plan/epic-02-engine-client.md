@@ -127,9 +127,17 @@ path or query in `grpc-address` accepted, a user in `grpc-address` accepted, a b
   engine's text form (`types.ParseTTL`, whole seconds) and decides what a value below one second
   and `PT0S` mean; S6.2.1 warns at startup about a `retry-backoff` above the 5-minute cap; S8.1.1
   warns about a poll interval below one second and tests `PT0S`.
+- Method order (Copilot's suggestion 3): first answered as "the engine's Go rule only", then
+  adopted by the user's decision as decision 19 (tests first, helpers after the last test, private
+  methods after the others), described in `AGENTS.md` under "Where methods go". The three argument
+  sources of `ZenBpmAdapterConfigurationTest` and the private helper of `GeneratedStubPackageTest`,
+  the one other class which broke the rule, moved below their tests. `MethodOrderTest` (coverage
+  gate) checks every top-level class on each build. Seen to fail, each restored afterwards: both
+  classes as they were (naming the four methods and their lines), the `@AfterAll` of
+  `EngineUnderTestIT` moved below a test, a private method above the public ones of
+  `ZenBpmAdapterConfiguration`.
 - Not changed: the adapter id stays a parameter of `validate` and `clientIdInUse`, as the story's
-  signature and Camunda 8 have it. `defects()` stays above the test which uses it: the rule of
-  helpers at the bottom is the engine's Go rule (`zenbpm-e2e-tests`), not one of this repository.
+  signature and Camunda 8 have it.
 
 Where the code differs from the instructions:
 
