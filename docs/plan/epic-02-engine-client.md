@@ -163,6 +163,15 @@ path or query in `grpc-address` accepted, a user in `grpc-address` accepted, a b
 - Not changed: the adapter id stays a parameter of `validate` and `clientIdInUse`, as the story's
   signature and Camunda 8 have it.
 
+**Pull request #10, 2026-10-13.** The first check run, 38429186986, failed in Spotless: the code
+example of decision 22 in `DECISIONS.md` was indented, which the Markdown formatter refuses, and the
+last full build had run before the example was written. Run 38429430229 on `7af9c74` is green on
+both JDKs: the engine copies match commit `bdd795a3`, `EngineUnderTestIT` ran against Docker (3
+tests), `ZenBpmAdapterConfigurationTest` 93 tests, `MethodOrderTest` and `TestVisibilityTest`
+pass, and the gate measures 100 % on both platforms, of 1,478 instructions on JDK 25 and 1,476 on
+JDK 21 (the two compilers emit different bytecode). CodeRabbit skipped the review ("manual review
+required for this OSS repository").
+
 Where the code differs from the instructions:
 
 - `validate(adapterId, nowhereFirst, deploymentFailureWarns)` takes a boolean, not the policy:
