@@ -38,6 +38,7 @@
   </developers>
 
   <modules>
+    <module>engine-test-support</module>
     <module>core</module>
     <module>spring-boot</module>
     <module>smoke-test</module>
@@ -100,6 +101,14 @@
     <grpc.version>1.81.0</grpc.version>
     <protobuf.version>4.35.0</protobuf.version>
     <testcontainers.version>2.0.5</testcontainers.version>
+    <!-- The ZenBPM engine this adapter is written and tested against, see decision 15 in the
+         repository's DECISIONS.md: a commit of the engine's main and the digest of the image
+         its CI built from it. Supported means tested, so this build and nothing newer. Both
+         move together, in one commit with the copies of api.yaml and zenbpm.proto in core,
+         whose headers name the same two values. The image is written without a tag in front
+         of the '@', because Testcontainers refuses 'name:tag@digest'. -->
+    <zenbpm.commit>bdd795a399b6484d062d52ac90c0d0725cb0ad91</zenbpm.commit>
+    <zenbpm.image>ghcr.io/pbinitiative/zenbpm@sha256:d7808e30821a7349e0f42476d8aaa21ff92fc752c0ccc432771764d307b87ed0</zenbpm.image>
   </properties>
 
   <dependencyManagement>
@@ -362,6 +371,10 @@
           <excludes>
             <exclude>**/it/**</exclude>
             <exclude>**/test/**</exclude>
+            <!-- the gRPC stubs generated from the engine's proto: every message brings
+                 builders and parsers the adapter never calls, and counted they would
+                 outweigh the adapter's own code -->
+            <exclude>org/pbinitiative/zenbpmadapter/client/grpc/**</exclude>
           </excludes>
         </configuration>
         <executions>

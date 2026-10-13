@@ -26,6 +26,7 @@ adapter does nothing yet. What is built next, and in which order, is the impleme
 
 |                Module                |                   Artifact                    |                                    Purpose                                    |
 |--------------------------------------|-----------------------------------------------|-------------------------------------------------------------------------------|
+| `engine-test-support`                | (not published)                               | the pinned ZenBPM engine as a Testcontainers container, for integration tests |
 | `core`                               | `zenbpm-vanillabp-adapter`                    | the platform-neutral adapter: deployment, task delivery, REST and gRPC client |
 | `spring-boot`                        | `zenbpm-vanillabp-adapter-spring-boot`        | Spring Boot auto-configuration                                                |
 | `smoke-test`                         | (not published)                               | discovery, health and startup validation on Spring Boot without an engine     |
@@ -41,8 +42,24 @@ All artifacts have the groupId `org.pbinitiative.zenbpm`, the Java packages star
 
 ## Supported engine version
 
-Not pinned yet. The adapter is tested against exactly one ZenBPM engine build and supports that
-one, nothing newer; this section names it once the engine test infrastructure exists.
+The adapter is tested against exactly one ZenBPM engine build, and supports that one: tested, not
+newer. Today it is a build of the engine's `main`, because no engine release carries the job lock the
+adapter's task delivery is built on (decision 15 in [`DECISIONS.md`](./DECISIONS.md)). The pin
+becomes a release tag once the engine tags a release containing that commit.
+
+| Pinned |                                                 Value                                                 |
+|--------|-------------------------------------------------------------------------------------------------------|
+| commit | `bdd795a399b6484d062d52ac90c0d0725cb0ad91` (2026-10-13)                                               |
+| image  | `ghcr.io/pbinitiative/zenbpm@sha256:d7808e30821a7349e0f42476d8aaa21ff92fc752c0ccc432771764d307b87ed0` |
+
+Both are written once, as `zenbpm.commit` and `zenbpm.image` in the root `pom.xml`. The integration
+tests start that image, and `EngineUnderTestIT` fails when the running container is not that image
+or the engine reports another commit. The REST contract the adapter is written against is the copy
+`core/src/main/zenbpm/api.yaml`, the job stream's the copy `core/src/main/proto/zenbpm.proto`, both
+taken from that commit and naming it in their first line. Moving the pin changes all four in one
+commit: pull `ghcr.io/pbinitiative/zenbpm:dev`, read its digest and its
+`org.opencontainers.image.revision` label, check that the revision is the head of the engine's
+`main` (or the newest commit which got an image), and copy the two files of exactly that commit.
 
 ## Building
 
@@ -62,6 +79,13 @@ mvn install
 
 `install` and not `install verify`: install runs every phase verify has, so naming both walks the
 lifecycle twice. Spotless checks the formatting in every build; `mvn spotless:apply` fixes it.
+
+The integration tests start the engine in Docker, with the image of the section above. Without a
+Docker environment they are skipped, and the build stays green. The job stream's gRPC stubs are
+generated from `core/src/main/proto/zenbpm.proto` in every build, into
+`core/target/generated-sources/protobuf`; `protoc` and its gRPC plugin are downloaded from Maven
+Central, so nothing has to be installed for it. A new module with integration tests copies
+`engine-test-support/src/test/resources/logback-test.xml`, which says why it looks the way it does.
 
 Working rules for this repository, for people and coding agents alike, are in
 [`AGENTS.md`](./AGENTS.md). The decisions the code relies on are in

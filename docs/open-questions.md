@@ -195,6 +195,10 @@ protocol only, so the engine's AGPL does not reach it), and the code adapted fro
 VanillaBP adapters may live in an MIT project as long as the Apache licence text and the attributions
 travel with it - draft decision 17 and the `NOTICE` / `LICENSE-APACHE-2.0` files of S1.1.1. Worth a
 quick legal check by whoever signs off licences at pbinitiative.
+Since S1.2.1 the repository also holds copies of two engine files, `openapi/api.yaml` and
+`zenbpm.proto`, and since S1.2.2 the core jar ships classes generated from the proto. Those are
+copies of AGPL-licensed engine files, not just protocol use, so the check has to say under which
+licence they travel with the adapter; `NOTICE` leaves it open until then.
 
 ### 14. New adapter keys
 

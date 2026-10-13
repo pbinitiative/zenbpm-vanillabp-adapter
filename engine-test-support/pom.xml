@@ -1,0 +1,87 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+  <parent>
+    <groupId>org.pbinitiative.zenbpm</groupId>
+    <artifactId>zenbpm-vanillabp-adapter-parent</artifactId>
+    <version>${revision}</version>
+  </parent>
+
+  <artifactId>zenbpm-vanillabp-adapter-engine-test-support</artifactId>
+  <name>VanillaBP adapter for ZenBPM - Engine test support</name>
+  <description>The ZenBPM engine an integration test of this adapter runs against.</description>
+
+  <properties>
+    <!-- Not published: only the tests of this repository start the engine. It is installed,
+         unlike the other test modules, because the integration tests of later modules take
+         it as a dependency, and a build of one of them with '-pl' reads it from the local
+         repository. -->
+    <maven.deploy.skip>true</maven.deploy.skip>
+    <maven.javadoc.skip>true</maven.javadoc.skip>
+  </properties>
+
+  <dependencies>
+    <!-- These classes start a container and hand on what it printed. No JUnit, no client
+         of the engine, no VanillaBP: what a test does WITH the engine belongs to the test. -->
+    <dependency>
+      <groupId>org.testcontainers</groupId>
+      <artifactId>testcontainers</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>org.slf4j</groupId>
+      <artifactId>slf4j-api</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>io.vanillabp</groupId>
+      <artifactId>test-utils</artifactId>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.junit.jupiter</groupId>
+      <artifactId>junit-jupiter</artifactId>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.testcontainers</groupId>
+      <artifactId>testcontainers-junit-jupiter</artifactId>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
+      <groupId>com.fasterxml.jackson.core</groupId>
+      <artifactId>jackson-databind</artifactId>
+      <scope>test</scope>
+    </dependency>
+  </dependencies>
+
+  <!-- The classes live in src/main/java although only tests call them: a test classpath
+       cannot read the test classes of another module, so every module with integration tests
+       would otherwise carry a copy of its own. -->
+
+  <build>
+    <resources>
+      <!-- 'zenbpm-engine.properties' carries the pinned image to whoever asks for an engine,
+           see EngineUnderTest. Filtered here, once, rather than in every module running
+           integration tests -->
+      <resource>
+        <filtering>true</filtering>
+        <directory>src/main/resources</directory>
+      </resource>
+      <!-- repeated from the root POM, which this <resources> replaces -->
+      <resource>
+        <targetPath>META-INF</targetPath>
+        <directory>${maven.multiModuleProjectDirectory}</directory>
+        <includes>
+          <include>LICENSE</include>
+          <include>LICENSE-APACHE-2.0</include>
+          <include>NOTICE</include>
+        </includes>
+      </resource>
+    </resources>
+    <plugins>
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-failsafe-plugin</artifactId>
+      </plugin>
+    </plugins>
+  </build>
+</project>

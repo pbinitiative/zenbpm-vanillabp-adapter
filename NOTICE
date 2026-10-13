@@ -17,3 +17,11 @@ Every Java file adapted from them carries a header naming its origin and the ide
 is in LICENSE-APACHE-2.0. Every other Java file carries "SPDX-License-Identifier: MIT". Files
 without such a header (build files, documents, configuration) are under the MIT License. Why it is
 done this way is decision 17 in DECISIONS.md.
+
+Two files are copies of the ZenBPM engine's interface descriptions, taken from
+pbinitiative/zenbpm (https://github.com/pbinitiative/zenbpm), which is dual-licensed under the
+AGPL-3.0-or-later and an enterprise licence: core/src/main/zenbpm/api.yaml and
+core/src/main/proto/zenbpm.proto, from which the build generates the gRPC classes of the core jar.
+Their first lines name the engine commit they were copied from. It is not settled yet under which
+licence this repository distributes these copies and the generated classes. The ZenBPM maintainers
+decide it, and their answer replaces this paragraph.

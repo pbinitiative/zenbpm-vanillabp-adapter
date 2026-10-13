@@ -404,13 +404,51 @@ one commit. When the engine tags a release containing the pinned commit, the pin
 
 **Acceptance criteria**
 
-- [ ] `mvn install` with Docker runs the IT green; without Docker it is skipped, not failed.
-- [ ] The image in the log of the IT is `zenbpm.image`, the commit the engine reports is
-  `zenbpm.commit`; no test file contains a commit, digest or version.
-- [ ] `api.yaml` and `zenbpm.proto` are present with their provenance header, taken from
-  `zenbpm.commit`.
-- [ ] README section "Supported engine version" names the commit and the digest, says "tested, not
+- [x] `mvn install` with Docker runs the IT green; without Docker it is skipped, not failed. Green:
+  3 tests in about 5 s, alone and within the whole `mvn install`. Without Docker (the build run in a mount
+  namespace with an empty `/run`, so `/var/run/docker.sock` does not exist): Testcontainers logs
+  "Could not find a valid Docker environment", the IT reports 3 skipped, `BUILD SUCCESS`.
+- [x] The image in the log of the IT is `zenbpm.image`, the commit the engine reports is
+  `zenbpm.commit`; no test file contains a commit, digest or version. The IT asserts both instead
+  of leaving them to a log: the image the container was created from equals `zenbpm.image` and is
+  pinned by digest, and `git.commitId` of `/system/status` is a prefix of `zenbpm.commit`. Seen to
+  fail: `-Dzenbpm.commit=0123...` ("The engine reports commit 'bdd795a399b6', the pin is
+  '0123...'") and `-Dzenbpm.image=ghcr.io/pbinitiative/zenbpm:dev` ("is not pinned by its
+  digest"); the replay of the failing class carried "Creating container for image:
+  ghcr.io/pbinitiative/zenbpm@sha256:d7808e30..." and 110 lines of the engine's own log. No Java
+  file holds a commit, a digest or a version.
+- [x] `api.yaml` and `zenbpm.proto` are present with their provenance header, taken from
+  `zenbpm.commit`. `api.yaml` below its header is byte for byte `git show <commit>:openapi/api.yaml`
+  (`cmp`), the proto differs from `pkg/zenclient/proto/zenbpm.proto` by its header and the
+  `java_package` line only (`diff`).
+- [x] README section "Supported engine version" names the commit and the digest, says "tested, not
   newer", and says that the pin is a `main` build until the engine tags a release containing it.
+
+**Implemented 2026-10-13.** The pin: engine `main` head `bdd795a399b6484d062d52ac90c0d0725cb0ad91`
+(2026-10-13, after E13.3 was merged as `bc3384b3`), the `dev` image built from it
+`sha256:d7808e30821a7349e0f42476d8aaa21ff92fc752c0ccc432771764d307b87ed0` (revision label =
+that commit, created 2026-10-13T04:59:27Z). Booted by hand with the environment above, it answered
+ready after six seconds and reported `"commitId": "bdd795a399b6"` (12 characters) and `"version":
+"v1.8.0"`. Where the result differs from the instructions above:
+
+- `PERSISTENCE_INSTANCE_HISTORY_TTL=0` is the engine's default and means NO time to live: the engine
+  only sets a TTL where the value is not 0, so finished instances stay readable. It is kept, with a
+  comment saying that, so that a new engine default does not change what a test finds.
+- `EngineLog` hands every line of the container to the logger `zenbpm-engine` at DEBUG; the
+  `logback-test.xml` template switches that logger on, so `SuppressOutputExtension` holds the lines
+  back in a green run and replays them for a failing class.
+- The template does NOT set `org.testcontainers`, `tc` and `com.github.dockerjava` to WARN. Root
+  INFO does the quieting (docker-java's DEBUG wire log is the noise), as in `camunda8-adapter` and
+  `adapter-platform-integration`, which both went from WARN to INFO: a record dropped by its level
+  reaches no appender, so the replay of a failing class would lose which image was started. What a
+  green build still shows is the dozen Testcontainers lines written before the first extension
+  callback (Docker detection, Ryuk), which no extension reaches.
+- `engine-test-support` is installed but not deployed (`maven.deploy.skip`): only this repository's
+  tests use it. `bin/check-deploy-safety.sh` still finds exactly the 13 published files.
+- Step 5: `publish-snapshots.yaml` stays without a ghcr.io login. The image is public; an anonymous
+  pull of the pinned digest answered HTTP 200, and one run per push to `main` stays far below the
+  anonymous limit, while a login there would leave a token which may write packages in
+  `~/.docker/config.json`.
 
 ### S1.2.2 Generate the gRPC stubs from the pinned proto
 
@@ -432,6 +470,23 @@ one commit. When the engine tags a release containing the pinned commit, the pin
 
 **Acceptance criteria**
 
-- [ ] `mvn install` compiles the stubs without a locally installed `protoc`.
-- [ ] `mvn spotless:check` ignores the generated code.
-- [ ] The coverage gate does not count stub classes.
+- [x] `mvn install` compiles the stubs without a locally installed `protoc`. The plugin is
+  `io.github.ascopes:protobuf-maven-plugin` 5.1.11, `protoc` 4.35.0 (= `protobuf.version`) and
+  `protoc-gen-grpc-java` 1.81.0 (= `grpc.version`) come from Maven Central; the machine has no
+  `protoc`. The generated code says "Protobuf Java Version: 4.35.0". Seen to fail: with `protoc`
+  4.35.1 `ZenBpmGrpcStubsTest` fails with "gencode 4.35.1, runtime 4.35.0. Runtime version cannot be
+  older than the linked gencode version"; with the RPC renamed in the proto the test no longer
+  compiles.
+- [x] `mvn spotless:check` ignores the generated code. Spotless reads `src/main/java` and
+  `src/test/java` only and excludes `**/generated-sources/**`; the build ran it over the stubs'
+  module green.
+- [x] The coverage gate does not count stub classes. The full build's gate says "the report holds
+  no instruction" for both platforms. Seen to fail: without the JaCoCo exclusion both reports count
+  12,729 instructions, 0.55 % covered, and the gate breaks the build.
+
+**Implemented 2026-10-13.** Beyond the instructions: the javadoc check of `core` excludes the stub
+package (the generated comments broke its fail-on-warnings), and the plugin does not embed the
+proto in the jar, which carries the 59 generated classes only. A Quarkus build of `quarkus/runtime`
+resolves the generated classes: a throw-away class there calling `ZenBpmGrpc` and
+`Zenbpm.JobStreamRequest` built green together with `quarkus/deployment` and
+`quarkus/integration-tests`. Both platform modules resolve `protobuf-java` 4.35.0 and gRPC 1.81.0.
