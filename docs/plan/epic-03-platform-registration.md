@@ -34,15 +34,19 @@ always from the core properties.
 3. `client.VanillaBpZenBpmProperties` = `@ConfigurationProperties("vanillabp")` overlay with
    `adapters: Map<String, ZenBpmAdapterKeys>` (all keys of the architecture table) and the module and
    workflow levels for the scoped keys (`retry-backoff`, `max-redeliveries`, `history-time-to-live`,
-   `name-clash-avoidance` is the core's) with a resolver `retryBackoffFor(module, process, task, id)`
+   the module level of `accept-unscoped-identifiers`; `name-clash-avoidance` is the core's) with a
+   resolver `retryBackoffFor(module, process, task, id)`
    etc. (four levels, most specific wins - copy `PeaFetchVariables`' resolver shape).
 4. `client.ZenBpmClientAutoConfiguration` (`after = SpringBootMigrationAdapterAutoConfiguration`):
    `@EnableConfigurationProperties`, a `ZenBpmClientRegistry` bean built by iterating
    `MigrationAdapterProperties.adapterTypes()` for `zenbpm` ids (never the overlay's keys), running
    `ZenBpmAdapterConfiguration.validate` per id with `isNowhereFirst` and the deployment-failure
-   policy from the core properties, logging the UNCONFIGURED warning, throwing on INCONSISTENT unless
-   nowhere-first-with-warn (then WARN and mark the factory unconfigured), and building the factory on
-   COMPLETE; a `ZenBpmExecutor` per id inside the factory. Application name from
+   policy from the core properties. The result decides, the registry does not repeat the rule:
+   every `notices()` line at INFO; UNCONFIGURED logs the message at WARN; INCONSISTENT throws the
+   message where `endsTheBoot()`, else logs it at WARN and marks the factory unconfigured (only an
+   address or client id defect of a nowhere-first id with `warn` degrades; a number or duration
+   which cannot work always ends the boot); COMPLETE builds the factory. A `ZenBpmExecutor` per id
+   inside the factory. Application name from
    `spring.application.name`, default `application`.
 5. `processservice.ZenBpmAdapterProcessServiceConfiguration` importing `ZenBpmAdapterBeanRegistrar`
    (a `BeanRegistrar`) which, with `AdapterBeanRegistrarSupport.forEachConfiguredAdapterId(environment,
@@ -63,8 +67,10 @@ always from the core properties.
    - `ZenBpmAdapterDiscoveryTest`: id = type, both element beans present, registry knows the id;
    - `ZenBpmTwoAdapterIdsDiscoveryTest`: two ids, two of each bean, named after the ids;
    - `ZenBpmStartupValidationBootTest`: unconfigured boots with the WARN naming
-     `vanillabp.adapters.<id>.rest-address` (CapturedOutput); inconsistent first-priority ends the
-     boot naming the keys; inconsistent nowhere-first with `deployment-failure: warn` boots degraded;
+     `vanillabp.adapters.<id>.rest-address` (CapturedOutput), and a use of the adapter fails with
+     the same message; inconsistent first-priority ends the boot naming the keys; an address
+     defect of a nowhere-first id with `deployment-failure: warn` boots degraded,
+     `worker-threads: 0` on the same id still ends the boot; a notice is logged once at INFO;
      complete boots without a warning and logs the INFO line;
    - `ZenBpmHealthBootTest`: actuator health shows the adapter UNKNOWN when unconfigured, DOWN
      against a closed port (bounded time).

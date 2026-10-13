@@ -21,10 +21,11 @@
   original header, `NOTICE` names both origins with a pointer to the Apache licence text kept as
   `LICENSE-APACHE-2.0`, and the README's licence section says so (draft decision 17).
 - Conventions: the repository follows the VanillaBP adapter conventions (module split, Spotless with
-  the platform's `formatting_conventions.xml`, per-platform coverage with the 85/90 gate, `test-utils`,
-  `DECISIONS.md` as the only citation target, wiki user-facing and README contributor-facing), so the
-  four VanillaBP adapters read alike although this one has other owners (draft decision 16). The Go
-  conventions of `zenbpm/AGENTS.md` do not apply here.
+  the platform's `formatting_conventions.xml` indenting by four spaces (decisions 20 and 22),
+  per-platform coverage with the 85/90 gate, `test-utils`, `DECISIONS.md` as the only citation
+  target, wiki user-facing and README contributor-facing), so the four VanillaBP adapters read alike
+  although this one has other owners (draft decision 16). The Go conventions of `zenbpm/AGENTS.md`
+  do not apply here.
 - Adapter type constant `zenbpm` (`ZenBpmAdapter.ADAPTER_TYPE`), Quarkus capability
   `io.vanillabp.adapter.zenbpm`, extension name `vanillabp-zenbpm`.
 - Engine pin: the newest engine `main` commit when S1.2.1 runs (it must carry E13.1, commit
@@ -43,7 +44,7 @@
 ```
 zenbpm-vanillabp-adapter/
   pom.xml                         parent: modules, BOM imports, Spotless, JaCoCo, flatten, engine pin
-  formatting_conventions.xml      copied from adapter-platform-integration
+  formatting_conventions.xml      copied from adapter-platform-integration, indentation 4 (decisions 20, 22)
   AGENTS.md  DECISIONS.md  GAPS.md  UPGRADE.md  README.md  LICENSE  NOTICE  readme/
   core/                           plain Java: SPI implementations, REST client, job stream, model handling
   spring-boot/                    auto-configuration, BeanRegistrar, overlay properties, Spring ITs (Docker)
@@ -300,12 +301,16 @@ Scoped keys resolve through the four levels of the configuration model, most spe
 the same resolver shape on both platforms (`PeaFetchVariables` pattern). Every key is modelled in
 the Quarkus overlay, or the startup fails on it.
 
-Startup validation, per configured id of type `zenbpm`: no `rest-address` -> WARN naming
+Startup validation, per configured id of type `zenbpm`: no `rest-address` and no other key without a
+default (`grpc-address`, `client-id`, `history-time-to-live`) -> WARN naming
 `vanillabp.adapters.<id>.rest-address`, the application boots, the adapter refuses work with the same
-message; a malformed address or a `grpc-address` without a port -> the boot ends naming the key, unless
-the id is nowhere first and `deployment-failure: warn`; complete -> the client is built without
-contacting the engine, and one INFO line names address, gRPC address, client id and the engine version
-once the wait answered.
+message; a malformed address, a `grpc-address` which is not `host:port`, a blank `client-id` or a
+started configuration without `rest-address` -> the boot ends naming the key, unless the id is
+nowhere first and `deployment-failure: warn`; a number or duration which cannot work -> the boot
+ends for every id; complete -> the client is built without contacting the engine, and one INFO line
+names address, gRPC address, client id and the engine version once the wait answered. That INFO
+line describes a working configuration; the validation messages never repeat an address or the
+client id.
 
 ## 7. Messages and observability
 

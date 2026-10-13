@@ -9,17 +9,17 @@ package org.pbinitiative.zenbpmadapter;
  */
 public final class ZenBpmAdapter {
 
-  /**
-   * The adapter type of this adapter, announced to the VanillaBP platform integrations. An
-   * adapter id is configured under {@code vanillabp.adapters.<id>.*}; its type is set by
-   * {@code vanillabp.adapters.<id>.type=zenbpm}, and where an application configures no
-   * type, the id itself is read as the type. So an application with one ZenBPM engine can
-   * name its adapter id {@code zenbpm} and set nothing else.
-   */
-  public static final String ADAPTER_TYPE = "zenbpm";
+    /**
+     * The adapter type of this adapter, announced to the VanillaBP platform integrations. An
+     * adapter id is configured under {@code vanillabp.adapters.<id>.*}; its type is set by
+     * {@code vanillabp.adapters.<id>.type=zenbpm}, and where an application configures no
+     * type, the id itself is read as the type. So an application with one ZenBPM engine can
+     * name its adapter id {@code zenbpm} and set nothing else.
+     */
+    public static final String ADAPTER_TYPE = "zenbpm";
 
-  private ZenBpmAdapter() {
-    // constants holder
-  }
+    private ZenBpmAdapter() {
+        // constants holder
+    }
 
 }

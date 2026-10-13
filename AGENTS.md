@@ -56,6 +56,26 @@ from, so the second line reads either `from vanillabp/camunda8-adapter` or
 
 A file adapted from a repository `NOTICE` does not name yet adds that repository to `NOTICE`.
 
+## Indentation and visibility
+
+Java is indented by four spaces, and a wrapped line continues eight spaces deeper than its start
+(decision 20 in the repository's DECISIONS.md). A wrapped parameter list of a method, constructor
+or record is the exception: its parameters stand four spaces deeper, and `)` returns to the
+declaration's indentation on a line of its own, followed by `throws` and `{` (decision 22).
+`mvn spotless:apply` does both; do not format by hand.
+Test classes and their test and lifecycle methods have no `public`: JUnit 5 does not need it
+(decision 21). `TestVisibilityTest` in `test-coverage-report/coverage-gate` fails the build on a
+`public` test class or test method.
+
+## Where methods go
+
+In a test class the tests come first: lifecycle methods (`@BeforeEach`, `@AfterAll`, ...) above the
+first test, every other method below the last one. That includes the argument sources of
+parameterized tests. In every class the private methods come after the non-private ones.
+Constructors stay next to the fields. `MethodOrderTest` in `test-coverage-report/coverage-gate`
+fails the build on a method out of place and names it. The reason is decision 19 in the
+repository's DECISIONS.md.
+
 ## What belongs in `UPGRADE.md`
 
 [`UPGRADE.md`](./UPGRADE.md) holds what a released version of this adapter asks an upgrading

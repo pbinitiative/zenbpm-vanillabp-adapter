@@ -229,8 +229,9 @@ report this build wrote.
 `bin/check-deploy-safety.sh` proves the deferred deploy itself, without GitHub: it deploys a copy of
 the working tree into a local directory (exactly the jar, sources jar and POM of the core,
 `spring-boot`, `quarkus` and `quarkus-deployment` and the parent's POM have to arrive, no file
-missing and none more), then adds an untested method to the copy and checks that the
-red gate leaves the directory empty. It installs nothing into the local Maven repository. Run it
+missing and none more), then adds an untested method to the copy, raises both coverage thresholds
+to 100 % so that this method alone turns the gate red, and checks that the red gate leaves the
+directory empty. It installs nothing into the local Maven repository. Run it
 after changing anything about deploying, the module order or the gate.
 
 The gate reports what it measured on every run, green ones included. The angle brackets stand for

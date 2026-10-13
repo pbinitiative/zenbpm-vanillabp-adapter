@@ -37,8 +37,12 @@ Contract: `TaskInvocationContext.getTaskEvent`, `WorkflowTaskInvoker.workflowTas
 3. The poller's cost is one request per type per state per interval; the startup line names the types
    and the interval.
 
+An interval above zero but below one second polls the engine almost without pause: WARN at startup
+naming the key, as the configuration refuses only negative values.
+
 **Tests**: `ZenBpmUserTaskPollerTest` (fake server: created once, canceled once, an exception retried,
-the bound); Spring `ZenBpmUserTaskIT#userTaskCreatedIsNotifiedOnce`,
+the bound, `PT0S` polls nothing and WARNs once, `PT0.5S` WARNs);
+Spring `ZenBpmUserTaskIT#userTaskCreatedIsNotifiedOnce`,
 `#userTaskCanceledOnInstanceCancellation` (cancel the instance over REST, the CANCELED arrives).
 
 **Acceptance criteria**

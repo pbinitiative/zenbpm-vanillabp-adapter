@@ -27,46 +27,47 @@ import io.vanillabp.integration.test.utils.SuppressOutputExtension;
  * {@code target}.
  */
 @ExtendWith(SuppressOutputExtension.class)
-public class GeneratedStubPackageTest {
+class GeneratedStubPackageTest {
 
-  private static final Path ROOT = CoverageGate.repositoryRoot("coverage.repository.root");
+    private static final Path ROOT = CoverageGate.repositoryRoot("coverage.repository.root");
 
-  private static final Path STUB_PACKAGE = Path.of("org", "pbinitiative", "zenbpmadapter", "client", "grpc");
+    private static final Path STUB_PACKAGE = Path.of("org", "pbinitiative", "zenbpmadapter", "client", "grpc");
 
-  /**
-   * Compares the names of the directories, not the path as text, so the check reads the same
-   * whichever separator the operating system writes.
-   */
-  private static boolean isMainSourceOutsideTarget(
-      final Path path) {
+    @Test
+    @DisplayName("No module writes sources into the package of the generated stubs")
+    void noModuleWritesSourcesIntoTheStubPackage() throws IOException {
 
-    final var names = new ArrayList<String>();
-    path.forEach(name -> names.add(name.toString()));
-    final var src = names.indexOf("src");
-    return !names.contains("target") && (src >= 0) && (src + 1 < names.size()) && "main".equals(names.get(src + 1));
+        try (Stream<Path> files = Files.walk(ROOT)) {
+            final var offenders = files
+                    .map(ROOT::relativize)
+                    .filter(path -> (path.getParent() != null) && path
+                            .getParent()
+                            .endsWith(STUB_PACKAGE))
+                    .filter(GeneratedStubPackageTest::isMainSourceOutsideTarget)
+                    .toList();
 
-  }
+            assertTrue(
+                    offenders.isEmpty(),
+                    () -> ("%s sit in 'org.pbinitiative.zenbpmadapter.client.grpc', which holds the generated "
+                            + "gRPC stubs only and is left out of every coverage report. Move them to "
+                            + "'org.pbinitiative.zenbpmadapter.client'.").formatted(offenders));
+        }
 
-  @Test
-  @DisplayName("No module writes sources into the package of the generated stubs")
-  public void noModuleWritesSourcesIntoTheStubPackage() throws IOException {
-
-    try (Stream<Path> files = Files.walk(ROOT)) {
-      final var offenders = files
-          .map(ROOT::relativize)
-          .filter(path -> (path.getParent() != null) && path
-              .getParent()
-              .endsWith(STUB_PACKAGE))
-          .filter(GeneratedStubPackageTest::isMainSourceOutsideTarget)
-          .toList();
-
-      assertTrue(
-          offenders.isEmpty(),
-          () -> ("%s sit in 'org.pbinitiative.zenbpmadapter.client.grpc', which holds the generated "
-              + "gRPC stubs only and is left out of every coverage report. Move them to "
-              + "'org.pbinitiative.zenbpmadapter.client'.").formatted(offenders));
     }
 
-  }
+    /**
+     * Compares the names of the directories, not the path as text, so the check reads the same
+     * whichever separator the operating system writes.
+     */
+    private static boolean isMainSourceOutsideTarget(
+        final Path path
+    ) {
+
+        final var names = new ArrayList<String>();
+        path.forEach(name -> names.add(name.toString()));
+        final var src = names.indexOf("src");
+        return !names.contains("target") && (src >= 0) && (src + 1 < names.size()) && "main".equals(names.get(src + 1));
+
+    }
 
 }

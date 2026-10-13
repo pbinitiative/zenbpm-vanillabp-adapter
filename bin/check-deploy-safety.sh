@@ -30,9 +30,11 @@ copy_working_tree() {
 
 deploy() {
   local source="$1" destination="$2" log="$3"
+  shift 3
   (cd "$source" && mvn --batch-mode --no-transfer-progress \
     -Dmaven.install.skip=true \
     -DaltDeploymentRepository="github::file://$destination" \
+    "$@" \
     deploy) > "$log" 2>&1
 }
 
@@ -91,25 +93,29 @@ package org.pbinitiative.zenbpmadapter;
  */
 public final class UntestedProbe {
 
-  private UntestedProbe() {
-  }
+    private UntestedProbe() {
+    }
 
-  /**
-   * Never called by a test.
-   *
-   * @return always true
-   */
-  public static boolean isNeverTested() {
-    return true;
-  }
+    /**
+     * Never called by a test.
+     *
+     * @return always true
+     */
+    public static boolean isNeverTested() {
+        return true;
+    }
 
 }
 JAVA
-if deploy "$work/red-source" "$work/red" "$work/red.log"; then
+# One untested method is a few instructions among all the covered ones, so it cannot pull the
+# coverage below the real thresholds. The red run asks for 100 % instead: then that method alone
+# turns the gate red, however much of the adapter is tested.
+if deploy "$work/red-source" "$work/red" "$work/red.log" \
+  -Dcoverage.threshold.spring-boot=100 -Dcoverage.threshold.quarkus=100; then
   echo "FAILED: the build with an untested method passed the coverage gate" >&2
   exit 1
 fi
-if ! grep -q "coverage gate | Spring Boot: 0.00 %" "$work/red.log"; then
+if ! grep -q "below the 100 % at which every VanillaBP build stops" "$work/red.log"; then
   tail -40 "$work/red.log"
   echo "FAILED: the build failed, but not at the coverage gate, see the log above" >&2
   exit 1

@@ -31,62 +31,62 @@ import io.vanillabp.integration.test.utils.TestClassConventions;
  * of it covers every module.
  */
 @ExtendWith(SuppressOutputExtension.class)
-public class TestClassConventionsTest {
+class TestClassConventionsTest {
 
-  @Test
-  @DisplayName("Every test class of this repository suppresses its output")
-  public void everyTestClassSuppressesItsOutput() {
+    @Test
+    @DisplayName("Every test class of this repository suppresses its output")
+    void everyTestClassSuppressesItsOutput() {
 
-    final var root = CoverageGate.repositoryRoot("coverage.repository.root");
+        final var root = CoverageGate.repositoryRoot("coverage.repository.root");
 
-    final var offenders = TestClassConventions.testClassesWithoutOutputSuppression(root);
+        final var offenders = TestClassConventions.testClassesWithoutOutputSuppression(root);
 
-    assertTrue(
-        offenders.isEmpty(),
-        () -> TestClassConventions.describeTestClassesWithoutOutputSuppression(offenders));
+        assertTrue(
+                offenders.isEmpty(),
+                () -> TestClassConventions.describeTestClassesWithoutOutputSuppression(offenders));
 
-  }
+    }
 
-  @Test
-  @DisplayName("No test class registers the suppression after '@Testcontainers'")
-  public void noTestClassSuppressesTooLate() {
+    @Test
+    @DisplayName("No test class registers the suppression after '@Testcontainers'")
+    void noTestClassSuppressesTooLate() {
 
-    final var root = CoverageGate.repositoryRoot("coverage.repository.root");
+        final var root = CoverageGate.repositoryRoot("coverage.repository.root");
 
-    final var offenders = TestClassConventions.testClassesSuppressingTooLate(root);
+        final var offenders = TestClassConventions.testClassesSuppressingTooLate(root);
 
-    assertTrue(
-        offenders.isEmpty(),
-        () -> TestClassConventions.describeTestClassesSuppressingTooLate(offenders));
+        assertTrue(
+                offenders.isEmpty(),
+                () -> TestClassConventions.describeTestClassesSuppressingTooLate(offenders));
 
-  }
+    }
 
-  @Test
-  @DisplayName("No message of this repository carries a run of spaces between two words")
-  public void noMessageFellApart() {
+    @Test
+    @DisplayName("No message of this repository carries a run of spaces between two words")
+    void noMessageFellApart() {
 
-    final var root = CoverageGate.repositoryRoot("coverage.repository.root");
+        final var root = CoverageGate.repositoryRoot("coverage.repository.root");
 
-    final var offenders = MessageConventions.messagesPulledApart(root);
+        final var offenders = MessageConventions.messagesPulledApart(root);
 
-    assertTrue(
-        offenders.isEmpty(),
-        () -> MessageConventions.describeMessagesPulledApart(offenders));
+        assertTrue(
+                offenders.isEmpty(),
+                () -> MessageConventions.describeMessagesPulledApart(offenders));
 
-  }
+    }
 
-  @Test
-  @DisplayName("No message of this repository glues two words into one")
-  public void noMessageIsGluedTogether() {
+    @Test
+    @DisplayName("No message of this repository glues two words into one")
+    void noMessageIsGluedTogether() {
 
-    final var root = CoverageGate.repositoryRoot("coverage.repository.root");
+        final var root = CoverageGate.repositoryRoot("coverage.repository.root");
 
-    final var offenders = MessageConventions.messagesGluedTogether(root);
+        final var offenders = MessageConventions.messagesGluedTogether(root);
 
-    assertTrue(
-        offenders.isEmpty(),
-        () -> MessageConventions.describeMessagesGluedTogether(offenders));
+        assertTrue(
+                offenders.isEmpty(),
+                () -> MessageConventions.describeMessagesGluedTogether(offenders));
 
-  }
+    }
 
 }

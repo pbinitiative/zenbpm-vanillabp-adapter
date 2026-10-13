@@ -124,7 +124,8 @@ node has a slot. Nothing else is sent. Log at WARN with the exception type and m
 means the lock was already lost; the attempt is counted anyway. At `count >= max-redeliveries`:
 `rest.failJob(job.key, null, {})` so the engine raises an incident, message naming module, process,
 aggregate, task and the attempts; remove the entry. A successful run removes the entry. Entries older
-than one hour are swept by a timing thread.
+than one hour are swept by a timing thread. A resolved `retry-backoff` above the 5-minute cap is
+never applied as written: say so at startup with a WARN naming the key and the cap.
 
 **Tests**: `ZenBpmLocalRetryTest` (backoff arithmetic, cap, the extension sent per attempt, sweep);
 `ZenBpmTaskProcessingIT#aThrowingHandlerEndsInAnIncidentAfterMaxRedeliveries` with
