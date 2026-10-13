@@ -120,8 +120,8 @@ deduplication, as Camunda 8 offers. E13.8.
   each release (`v1.9.0-dev`) would; (c) does the engine serve its OpenAPI document at runtime
   (`/v1/openapi` or similar), so the adapter can diff its pinned copy against the running engine?
   At the pinned commit `bdd795a3` it does not: the generated `public.GetSpec()` only feeds the
-  request validator. Until it does, decision 3's test that diffs the copies against the image
-  cannot be built; `EnginePinTest` holds the copies' headers to the pin instead.
+  request validator. Until it does, decision 18 checks the copies against the engine's files of
+  the pinned commit instead.
 - Is an API stability statement planned (which endpoints are stable, which are tooling)? The adapter
   pins one engine version per release (decision 15) until there is one.
 - Is authentication or TLS on the public ports planned? The wiki will say "put a proxy in front" until

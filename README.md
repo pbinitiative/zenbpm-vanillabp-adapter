@@ -60,6 +60,10 @@ The REST contract the adapter is written against is the copy `core/src/main/zenb
 job stream's contract is the copy `core/src/main/proto/zenbpm.proto`. Both come from the pinned
 commit and name it, with the image, in their first lines. The table above repeats the pin as well.
 `EnginePinTest` fails when one of these three names another pin than the POM.
+`bin/check-engine-copies.sh` compares the two copies with the engine's files of the pinned commit,
+which it reads from GitHub. Only the header and the proto's `java_package` line may differ. The
+pull-request check runs it, and it fails on any other difference (decision 18 in
+[`DECISIONS.md`](./DECISIONS.md)).
 
 Moving the pin is one commit with these steps:
 
@@ -72,6 +76,7 @@ Moving the pin is one commit with these steps:
    two copies (`git show <commit>:<path>`). Keep the header of each, with the new commit, date and
    image, and keep the `java_package` line of the proto.
 5. Update the table above.
+6. Run `bin/check-engine-copies.sh` and `mvn install`.
 
 ## Building
 

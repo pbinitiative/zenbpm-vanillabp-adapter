@@ -48,6 +48,13 @@ jobs:
         with:
           # no later step pushes or fetches, so the token does not stay in .git/config
           persist-credentials: false
+      # The copies of the engine's api.yaml and zenbpm.proto have to be the engine's files of
+      # the pinned commit, see decision 18 in the repository's DECISIONS.md. The script reads
+      # them from GitHub, which the Maven build cannot do offline. It runs in the required
+      # check only, because the copies do not depend on the JDK.
+      - name: Check the engine copies against the pinned commit
+        if: ${{ matrix.check == 'build' }}
+        run: bin/check-engine-copies.sh
       - uses: actions/setup-java@v6
         with:
           java-version: ${{ matrix.java }}

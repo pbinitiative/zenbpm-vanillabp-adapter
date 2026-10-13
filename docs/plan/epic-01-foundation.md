@@ -485,7 +485,13 @@ instruction" for both platforms.
   It checks what the copies say they are, not their content: the build has no engine checkout,
   and the engine does not serve its OpenAPI document (`public.GetSpec()` feeds the request
   validator only), so the "test diffs them against the image" of decision 3 cannot be built as
-  written. The question is the maintainers'; the decision is unchanged.
+  written. With the maintainer's agreement, decision 18 supersedes that sentence:
+  `bin/check-engine-copies.sh` compares both copies with the engine's files of `zenbpm.commit`,
+  read from GitHub, allowing only the header and the proto's `java_package` line. The required
+  `build` check of `checks.yaml` runs it before the Maven build. Seen to fail: `openapi: 3.0.1` in
+  the body of `api.yaml`, a changed field number in the proto, the `java_package` line removed
+  ("has to carry the line ... exactly once"), and a `zenbpm.commit` the engine does not have
+  ("cannot read openapi/api.yaml of commit ... from GitHub").
 - `CLUSTER_RAFT_BOOTSTRAP_EXPECT=1` is the engine's default as well (`env-default:"1"`); its
   comment now says so, like the TTL's.
 - Wording: the logback template, the README's pin section (moving the pin is now a numbered list

@@ -29,9 +29,10 @@ import io.vanillabp.integration.test.utils.SuppressOutputExtension;
  * and the table of the README. This test holds each of them to the POM, so moving the pin
  * cannot leave one of them naming an engine the tests no longer run.
  * <p>
- * It checks what the copies say they are, not their content. Whether the content matches the
- * engine's files of that commit is checked by hand whenever the pin moves, as the README
- * describes, because this build has no engine checkout to compare with.
+ * It checks what the copies say they are, not their content. The content is checked by
+ * {@code bin/check-engine-copies.sh} in the pull-request check, see decision 18 in the
+ * repository's DECISIONS.md, because it needs the engine's files, which this build cannot
+ * read offline.
  */
 @ExtendWith(SuppressOutputExtension.class)
 public class EnginePinTest {
