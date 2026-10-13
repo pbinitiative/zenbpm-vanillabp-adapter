@@ -104,15 +104,25 @@ naming GAPS 13/14/19 and saying the engine rejects them (`400`) or would run the
    (the core's half), kept in the context per filename.
 4. `deployResources` calls `scoping.validateNoCollidingProcessIds(adapterId, deployedProcesses)`
    before the first POST.
+5. `accept-unscoped-identifiers` (adapter and module level, default `false`) is the application
+   saying that its identifiers are unique across all its workflow modules. Add the adapter level as
+   a field of `ZenBpmAdapterConfiguration`; the module level comes from the E3 overlay, and it wins
+   where both are set. Where it resolves to `true`, `warnAboutUnscopedIdentifiers` writes a DEBUG
+   line naming the key which accepted `none` instead of the WARN, like
+   `Camunda8DeploymentService.warnAboutUnscopedIdentifiers`.
 
 **Tests**: `ZenBpmScopingTest` with a fixture carrying every rewritable attribute, asserting the
 XML under `use-prefix` and its identity under `none`; `ZenBpmDeploymentServiceTest#byAdapterIsRefused`
-naming both ways out; `#noneWarnsNamingTheAlternatives` (CapturedOutput).
+naming both ways out; `#noneWarnsNamingTheAlternatives` (CapturedOutput);
+`#acceptedUnscopedIdentifiersAreNotWarnedAbout`, once with the key at the adapter level and once at
+the module level, and once with `false` on the module overriding `true` on the adapter.
 
 **Acceptance criteria**
 
 - [ ] The rewritten XML deploys to the container (asserted in S4.3.2's IT under `use-prefix`).
 - [ ] Nothing configured -> `use-prefix` applies and no warning is written.
+- [ ] `accept-unscoped-identifiers: true` turns the `none` warning into a DEBUG line naming the key;
+  the module level wins over the adapter level.
 
 ### S4.2.2 Correlation keys and the start/catch collision
 

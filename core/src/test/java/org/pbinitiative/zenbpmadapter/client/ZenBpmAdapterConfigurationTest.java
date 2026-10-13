@@ -199,11 +199,12 @@ public class ZenBpmAdapterConfigurationTest {
         defect("request-timeout", "a negative duration", c -> c.setRequestTimeout(Duration.ofSeconds(-1))),
         defect("worker-threads", "zero", c -> c.setWorkerThreads("0")),
         defect("worker-threads", "a word", c -> c.setWorkerThreads("many")),
-        defect("worker-threads-bound", "zero", c -> c.setWorkerThreadsBound(0)),
-        defect("worker-threads", "more threads than the bound", c -> {
-          c.setWorkerThreads("8");
-          c.setWorkerThreadsBound(4);
+        defect("worker-threads-bound", "zero beside virtual threads", c -> {
+          c.setWorkerThreads("virtual");
+          c.setWorkerThreadsBound(0);
         }),
+        defect("worker-threads-bound", "a value beside the default platform threads",
+            c -> c.setWorkerThreadsBound(16)),
         defect("startup-wait", "a negative duration", c -> c.setStartupWait(Duration.ofSeconds(-1))),
         defect("retry-backoff", "a negative duration", c -> c.setRetryBackoff(Duration.ofSeconds(-1))),
         defect("shutdown-grace", "a negative duration", c -> c.setShutdownGrace(Duration.ofSeconds(-1))),
@@ -376,20 +377,49 @@ public class ZenBpmAdapterConfigurationTest {
 
   }
 
-  @Test
-  @DisplayName("Without a bound, the bound is the number of worker threads, and a larger bound is accepted")
-  public void theBoundFollowsTheWorkerThreads() {
+  @ParameterizedTest
+  @ValueSource(ints = {
+      4, 12, 20
+  })
+  @DisplayName("Platform threads are their own bound, so a bound beside them is refused whatever its size")
+  public void platformThreadsAreTheirOwnBound(
+      final int bound) {
 
     final var configuration = configured("http://zenbpm:8080");
     configuration.setWorkerThreads("12");
 
     assertEquals(12, configuration.getWorkerThreadsBound());
 
-    configuration.setWorkerThreadsBound(20);
+    configuration.setWorkerThreadsBound(bound);
+    final var validation = configuration.validate(ADAPTER_ID, false, false);
 
-    assertEquals(Kind.COMPLETE, configuration
+    assertEquals(Kind.INCONSISTENT, validation.kind());
+    assertTrue(validation
+        .message()
+        .contains(
+            "  - vanillabp.adapters.orders.worker-threads-bound is set, but vanillabp.adapters.orders.worker-threads is a number of platform threads"),
+        validation.message());
+    assertTrue(validation
+        .message()
+        .contains("set 'virtual' or remove the bound"), validation.message());
+
+  }
+
+  @Test
+  @DisplayName("A misspelt 'virtual' beside a bound is reported once, as the worker threads it is")
+  public void aMisspeltVirtualIsReportedOnce() {
+
+    final var configuration = configured("http://zenbpm:8080");
+    configuration.setWorkerThreads("virtul");
+    configuration.setWorkerThreadsBound(16);
+
+    final var message = configuration
         .validate(ADAPTER_ID, false, false)
-        .kind());
+        .message();
+
+    assertTrue(message.contains("  - vanillabp.adapters.orders.worker-threads is neither a number nor 'virtual'"),
+        message);
+    assertFalse(message.contains("  - vanillabp.adapters.orders.worker-threads-bound "), message);
 
   }
 

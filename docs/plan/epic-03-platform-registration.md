@@ -34,7 +34,8 @@ always from the core properties.
 3. `client.VanillaBpZenBpmProperties` = `@ConfigurationProperties("vanillabp")` overlay with
    `adapters: Map<String, ZenBpmAdapterKeys>` (all keys of the architecture table) and the module and
    workflow levels for the scoped keys (`retry-backoff`, `max-redeliveries`, `history-time-to-live`,
-   `name-clash-avoidance` is the core's) with a resolver `retryBackoffFor(module, process, task, id)`
+   the module level of `accept-unscoped-identifiers`; `name-clash-avoidance` is the core's) with a
+   resolver `retryBackoffFor(module, process, task, id)`
    etc. (four levels, most specific wins - copy `PeaFetchVariables`' resolver shape).
 4. `client.ZenBpmClientAutoConfiguration` (`after = SpringBootMigrationAdapterAutoConfiguration`):
    `@EnableConfigurationProperties`, a `ZenBpmClientRegistry` bean built by iterating

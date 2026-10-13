@@ -61,7 +61,8 @@ Reference implementations to read before starting: `Camunda8AdapterConfiguration
   stories which give them a meaning: `job-timeout`, `async-task-lock-renewal` and
   `async-task-max-age-action` with E6, `shared-engine` with S3.3.1,
   `message-start-lookup-max-instances` with S7.1.2; `type`, `name-clash-avoidance` and
-  `deployment-failure` are core keys. `accept-unscoped-identifiers` is named by no story yet.
+  `deployment-failure` are core keys. `accept-unscoped-identifiers` was named by no story and is
+  now instruction 5 of S4.2.1 (and the module level in S3.1.1's overlay).
 - [x] Messages contain the full property key for every named defect and never a value of `client-id`
   (treated like a credential, it may carry a hostname somebody considers internal). Each of 32
   defect cases asserts its line `  - vanillabp.adapters.orders.<key> ...`;
@@ -69,11 +70,12 @@ Reference implementations to read before starting: `Camunda8AdapterConfiguration
   and a host in `grpc-address`, and none of them is in the message. Addresses are never repeated
   either, only numbers and durations.
 
-**Implemented 2026-10-13.** `ZenBpmAdapterConfigurationTest`, 55 cases, green; the full
-`mvn install` builds green and the coverage gate measures 99.83 % of 1,176 instructions on both
+**Implemented 2026-10-13.** `ZenBpmAdapterConfigurationTest`, 58 cases, green; the full
+`mvn install` builds green and the coverage gate measures 99.83 % of 1,169 instructions on both
 platforms. Seen to fail, each with the source changed back afterwards: a user in `rest-address`
 accepted, a blank `client-id` accepted, `/v1` appended to an address carrying it, a scheme in
-`grpc-address` accepted, and degrading regardless of the policy. The first run caught a real bug:
+`grpc-address` accepted, degrading regardless of the policy, and a bound beside platform threads
+accepted. The first run caught a real bug:
 the missing address was listed as a defect, so no configuration was ever unconfigured.
 
 Where the code differs from the instructions:
@@ -89,9 +91,13 @@ Where the code differs from the instructions:
   somebody configured the adapter and has to finish it.
 - Setters take `null` as "restore the default", so the overlays of E3 hand on unset keys without
   knowing a default.
-- `worker-threads-bound` without a value answers the number of `worker-threads`, or 4 for
-  `virtual`. A bound with platform threads is accepted when it is not below them; Camunda 8's
-  execution model refuses a bound outside the virtual mode, which S2.4.2 has to reconcile.
+- `worker-threads-bound` is Camunda 8's rule, so S2.4.2 copies `Camunda8ExecutionModel` without
+  a change of contract: the bound may be set only beside `worker-threads: virtual` (default 4,
+  at least 1). With platform threads their number is the bound, so a bound beside them is refused
+  whatever its size, instead of being ignored. That replaces the instruction's "`worker-threads`
+  above `worker-threads-bound`", which could only happen with platform threads.
+  `getWorkerThreadsBound()` answers the bound in use: the number of platform threads, or the key or
+  4 for `virtual`.
 - Further checks, all naming their key: `rest-address` with a scheme other than http(s), a user, a
   query or fragment, no host the JDK accepts (`_`), a port outside 1 to 65535; `grpc-address` with
   a scheme, without a host or with a port which is no number or out of range; `worker-threads`

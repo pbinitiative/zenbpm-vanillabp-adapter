@@ -37,9 +37,10 @@ import java.util.stream.Collectors;
  * deadline of every REST call</li>
  * <li><code>startup-wait</code> (default {@value #DEFAULT_STARTUP_WAIT_ISO}) - how long the
  * first deployment waits for the engine to report ready</li>
- * <li><code>worker-threads</code> (default {@value #DEFAULT_WORKER_THREADS}) and
- * <code>worker-threads-bound</code> (default: the same number) - how many handlers run at the
- * same time, <code>virtual</code> allowed</li>
+ * <li><code>worker-threads</code> (default {@value #DEFAULT_WORKER_THREADS}) - how many platform
+ * threads run the handlers, or <code>virtual</code> for a virtual thread per handler</li>
+ * <li><code>worker-threads-bound</code> (default {@value #DEFAULT_WORKER_THREADS}, only with
+ * <code>virtual</code>) - how many handlers run at the same time on virtual threads</li>
  * <li><code>retry-backoff</code> (default {@value #DEFAULT_RETRY_BACKOFF_ISO}) - the first wait
  * after a failed handler</li>
  * <li><code>max-redeliveries</code> (default {@value #DEFAULT_MAX_REDELIVERIES}) - after which
@@ -484,9 +485,9 @@ public class ZenBpmAdapterConfiguration {
   }
 
   /**
-   * How many handlers may run at the same time. Where it is not set, it is the number of
-   * <code>worker-threads</code>, and {@value #DEFAULT_WORKER_THREADS} for virtual threads, which
-   * have no limit of their own.
+   * How many handlers may run at the same time. With platform threads it is their number, and
+   * the key may not be set. Virtual threads have no limit of their own, so there it is the key,
+   * or {@value #DEFAULT_WORKER_THREADS} where it is not set.
    *
    * @return The bound in use
    */
@@ -501,7 +502,7 @@ public class ZenBpmAdapterConfiguration {
   }
 
   /**
-   * How many handlers may run at the same time.
+   * How many handlers may run at the same time on virtual threads.
    *
    * @param workerThreadsBound The bound, or <code>null</code> for the default
    */
@@ -966,16 +967,19 @@ public class ZenBpmAdapterConfiguration {
     if (workerThreadsBound == null) {
       return;
     }
-    if (workerThreadsBound < 1) {
-      defects.add("%s is %d and has to be at least 1"
-          .formatted(propertyKey(adapterId, "worker-threads-bound"), workerThreadsBound));
-    } else if ((threads != null) && (threads > workerThreadsBound)) {
-      defects.add("%s is %d, above %s of %d, which caps how many handlers run at the same time"
-          .formatted(
-              propertyKey(adapterId, "worker-threads"),
-              threads,
-              propertyKey(adapterId, "worker-threads-bound"),
-              workerThreadsBound));
+    // with platform threads the number of threads is the bound, so a second number would either
+    // repeat it or be ignored. A key which changes nothing is refused rather than ignored
+    if (threads != null) {
+      defects.add(
+          "%s is set, but %s is a number of platform threads, which is the bound itself; set '%s' or remove the bound"
+              .formatted(
+                  propertyKey(adapterId, "worker-threads-bound"),
+                  propertyKey(adapterId, "worker-threads"),
+                  VIRTUAL_WORKER_THREADS));
+    } else if (workerThreadsBound < 1) {
+      defects
+          .add("%s is %d and has to be at least 1; every running handler holds a database connection, the default is %s"
+              .formatted(propertyKey(adapterId, "worker-threads-bound"), workerThreadsBound, DEFAULT_WORKER_THREADS));
     }
 
   }
