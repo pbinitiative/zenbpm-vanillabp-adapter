@@ -9,6 +9,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.stream.Stream;
 
 import org.junit.jupiter.api.DisplayName;
@@ -32,28 +33,38 @@ public class GeneratedStubPackageTest {
 
   private static final Path STUB_PACKAGE = Path.of("org", "pbinitiative", "zenbpmadapter", "client", "grpc");
 
+  /**
+   * Compares the names of the directories, not the path as text, so the check reads the same
+   * whichever separator the operating system writes.
+   */
+  private static boolean isMainSourceOutsideTarget(
+      final Path path) {
+
+    final var names = new ArrayList<String>();
+    path.forEach(name -> names.add(name.toString()));
+    final var src = names.indexOf("src");
+    return !names.contains("target") && (src >= 0) && (src + 1 < names.size()) && "main".equals(names.get(src + 1));
+
+  }
+
   @Test
   @DisplayName("No module writes sources into the package of the generated stubs")
   public void noModuleWritesSourcesIntoTheStubPackage() throws IOException {
 
     try (Stream<Path> files = Files.walk(ROOT)) {
       final var offenders = files
-          .filter(path -> !path.toString().contains("/target/"))
-          .filter(path -> path
+          .map(ROOT::relativize)
+          .filter(path -> (path.getParent() != null) && path
               .getParent()
               .endsWith(STUB_PACKAGE))
-          .filter(path -> path
-              .getParent()
-              .toString()
-              .contains("/src/main/"))
-          .map(ROOT::relativize)
+          .filter(GeneratedStubPackageTest::isMainSourceOutsideTarget)
           .toList();
 
       assertTrue(
           offenders.isEmpty(),
-          () -> ("%s sit in '%s', which holds the generated gRPC stubs only and is left out of "
-              + "every coverage report. Move them to 'org.pbinitiative.zenbpmadapter.client'.")
-              .formatted(offenders, STUB_PACKAGE.toString().replace('/', '.')));
+          () -> ("%s sit in 'org.pbinitiative.zenbpmadapter.client.grpc', which holds the generated "
+              + "gRPC stubs only and is left out of every coverage report. Move them to "
+              + "'org.pbinitiative.zenbpmadapter.client'.").formatted(offenders));
     }
 
   }

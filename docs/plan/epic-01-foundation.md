@@ -479,6 +479,9 @@ instruction" for both platforms.
 - `EnginePinTest` (coverage-gate module) holds the headers of both copies and the README's table
   to `zenbpm.commit` and `zenbpm.image` of the root POM. Seen to fail: one changed character in the
   commit of the `api.yaml` header, in the image of the proto header, and in the README table.
+  After CodeRabbit on pull request #7 it compares every commit and every image by digest the place
+  names with the pin, so a stale value left next to the new one fails too. Seen to fail: README
+  table stale with the right commit added to the prose, and an old image added to the proto header.
   It checks what the copies say they are, not their content: the build has no engine checkout,
   and the engine does not serve its OpenAPI document (`public.GetSpec()` feeds the request
   validator only), so the "test diffs them against the image" of decision 3 cannot be built as
@@ -535,6 +538,7 @@ runner, and `ZenBpmGrpcStubsTest` passed.
 **Answers to two reviews, 2026-10-13.** `GeneratedStubPackageTest` (coverage-gate module) fails
 where a module writes a source file of its own into `org.pbinitiative.zenbpmadapter.client.grpc`,
 the package the JaCoCo exclusion drops from every report. Seen to fail with a `Helper.java` placed
-there in `core/src/main/java`. `ZenBpmGrpcStubsTest` now says that it proves the generated code
+there in `core/src/main/java`. It compares directory names, not the path as text, so it reads
+the same on Windows (CodeRabbit on pull request #7). `ZenBpmGrpcStubsTest` now says that it proves the generated code
 against this build's protobuf runtime only; an application bringing an older runtime is S2.3.1's
 startup check.

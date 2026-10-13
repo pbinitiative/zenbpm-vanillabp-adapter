@@ -4,12 +4,16 @@
  */
 package org.pbinitiative.zenbpmadapter.coverage;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
+import java.util.Set;
+import java.util.regex.MatchResult;
+import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
 import org.junit.jupiter.api.DisplayName;
@@ -37,6 +41,10 @@ public class EnginePinTest {
   private static final String COMMIT = System.getProperty("zenbpm.commit");
 
   private static final String IMAGE = System.getProperty("zenbpm.image");
+
+  private static final Pattern ANY_COMMIT = Pattern.compile("\\b[0-9a-f]{40}\\b");
+
+  private static final Pattern ANY_IMAGE = Pattern.compile("[^\\s`|(]+@sha256:[0-9a-f]{64}");
 
   @Test
   @DisplayName("The header of the copied REST contract names the pinned commit and image")
@@ -83,16 +91,41 @@ public class EnginePinTest {
 
   }
 
+  /**
+   * Every commit and every image by digest the text names has to be the pin, and both have to
+   * be named. So an old value left next to the new one fails as well as a missing one.
+   */
   private static void assertNamesThePin(
       final String place,
       final String text) {
 
-    assertTrue(
-        text.contains(COMMIT) && text.contains(IMAGE),
-        () -> ("%s does not name the pin of the root POM, commit '%s' and image '%s'. Moving the pin "
+    final var commits = everyMatch(ANY_COMMIT, text);
+    final var images = everyMatch(ANY_IMAGE, text);
+
+    assertEquals(
+        Set.of(COMMIT),
+        commits,
+        () -> ("%s names the commits %s, but the pin of the root POM is '%s' alone. Moving the pin "
             + "updates the README's table and the headers of both engine copies in the same "
-            + "commit, see the README, section 'Supported engine version'.")
-            .formatted(place, COMMIT, IMAGE));
+            + "commit, see the README, section 'Supported engine version'.").formatted(place, commits, COMMIT));
+    assertEquals(
+        Set.of(IMAGE),
+        images,
+        () -> ("%s names the images %s, but the pin of the root POM is '%s' alone. Moving the pin "
+            + "updates the README's table and the headers of both engine copies in the same "
+            + "commit, see the README, section 'Supported engine version'.").formatted(place, images, IMAGE));
+
+  }
+
+  private static Set<String> everyMatch(
+      final Pattern pattern,
+      final String text) {
+
+    return pattern
+        .matcher(text)
+        .results()
+        .map(MatchResult::group)
+        .collect(Collectors.toSet());
 
   }
 
