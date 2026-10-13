@@ -30,11 +30,12 @@ final class JavaMembers {
 
     private static final String MEMBER_INDENT = " ".repeat(MEMBER_INDENT_WIDTH);
 
+    // the simple name, or the name qualified by its package, e.g. @org.junit.jupiter.api.Test
     private static final Pattern TEST_ANNOTATION = Pattern
-            .compile("(?m)^\\s*@(Test|ParameterizedTest|RepeatedTest|TestFactory|TestTemplate)\\b");
+            .compile("(?m)^\\s*@(?:[\\w$]+\\.)*(Test|ParameterizedTest|RepeatedTest|TestFactory|TestTemplate)\\b");
 
     private static final Pattern LIFECYCLE_ANNOTATION = Pattern
-            .compile("(?m)^\\s*@(BeforeEach|AfterEach|BeforeAll|AfterAll)\\b");
+            .compile("(?m)^\\s*@(?:[\\w$]+\\.)*(BeforeEach|AfterEach|BeforeAll|AfterAll)\\b");
 
     // a method or constructor: the member indentation, then neither an annotation, a comment nor
     // a closing brace, no type declaration, and the name followed by '(' before any '='

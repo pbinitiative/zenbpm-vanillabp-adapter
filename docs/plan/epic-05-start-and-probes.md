@@ -39,8 +39,11 @@ variable search). Contract: `MigratableProcessService` type javadoc, `ADAPTER-AU
 5. `getAdapterId()`, and the rest of the required handlers still throwing "later story" so the boot
    accepts the map.
 
-The engine takes `historyTimeToLive` as a Go-style text (`30d`, `1M5d8h`, see `types.ParseTTL`)
-and keeps whole seconds; convert the resolved `Duration` to that form, and decide at startup what a
+The engine takes `historyTimeToLive` as a Go-style text (`30d`, `1M5d8h`): `ParseTTL` in
+`internal/cluster/types/ttl.go`, described in `openapi/api.yaml`. It keeps whole seconds, cut off
+by `int64(historyTTL.Seconds())` in `internal/cluster/partition/partition_persistence.go` into the
+column `history_ttl_sec` of `internal/sql/migrations/0001_schema.up.sql` (all at the pinned commit
+`bdd795a3`). Convert the resolved `Duration` to that form, and decide at startup what a
 value below one second and `PT0S` mean (the configuration accepts both, it refuses only negative
 values), checking against the engine what an explicit `0` does.
 

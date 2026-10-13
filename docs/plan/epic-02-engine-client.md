@@ -169,8 +169,12 @@ last full build had run before the example was written. Run 38429430229 on `7af9
 both JDKs: the engine copies match commit `bdd795a3`, `EngineUnderTestIT` ran against Docker (3
 tests), `ZenBpmAdapterConfigurationTest` 93 tests, `MethodOrderTest` and `TestVisibilityTest`
 pass, and the gate measures 100 % on both platforms, of 1,478 instructions on JDK 25 and 1,476 on
-JDK 21 (the two compilers emit different bytecode). CodeRabbit skipped the review ("manual review
-required for this OSS repository").
+JDK 21 (the two compilers emit different bytecode). CodeRabbit first skipped the review ("manual
+review required for this OSS repository"), then reviewed `ab06ceb` with two minor findings, both
+valid and fixed: the S5.1.1 note now names the engine files behind the TTL claims, and
+`JavaMembers` reads `@org.junit.jupiter.api.Test` and the other annotations by their full name too
+(a probe test, `public` and written with the full name, passed both checks before and failed them
+after).
 
 Where the code differs from the instructions:
 
