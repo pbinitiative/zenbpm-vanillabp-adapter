@@ -46,6 +46,25 @@ on the class is refused even where an IDE offers it: it would publish the curren
 then keep publishing whatever field a later change adds.
 `@SuppressWarnings("LombokGetterMayBeUsed")` on such a class keeps that offer from coming back.
 
+### 14. A start asks the engine for numbers, and asks as many on the last day as on the first
+
+While an application boots, the adapter answers questions which read what the engine has stored,
+and that grows for as long as the application is in production: how many workflows still run on an
+old version, how many tasks are open for a process. A start of ten seconds must not become one of
+two minutes because the application did its job for two years. The platform states this rule for
+every adapter as decision 19 of its own DECISIONS.md, the Camunda 8 adapter as its decision 13.
+
+For ZenBPM a quantity is read from what the engine counts: the `totalCount` of a search which asked
+for a small page, or a statistics endpoint. The items of the page which came back are never counted.
+Counting them would grow with the data and would be capped by the page size. On ZenBPM it would also
+be wrong. A search over the engine's partitions applies the page size to every partition, so one
+page holds up to that many items per partition. `Page.totalCount()` of the REST client is where such
+a number comes from.
+
+What does grow is the number of versions of a process the engine holds, one per deployment which
+changed a model, and the questions about older versions grow with it. That is on purpose: those
+questions are what the check is for.
+
 ### 15. One pinned engine version, no release lines
 
 The adapter needs at least the engine's job lock per subscription with its extension (engine commit

@@ -91,6 +91,11 @@ eviction and the uncached miss.
 - [ ] A workflow of another module of the same engine with the same aggregate id is UNKNOWN.
 - [ ] No probe makes more than `scope.processIds().size() + 1` requests.
 
+*Note from S2.2.1, 2026-10-13:* an instance key of a partition the engine does not have is answered
+502, not 404 (see the note under S2.2.2), so "the instance-key lookup where `id` parses as a long"
+meets a 502 for a long which belongs to no partition of this engine. Decide here whether that is
+UNKNOWN, and test it.
+
 ### S5.2.2 Task probes, `openTaskCount`
 
 - [ ] **Depends on:** S5.2.1.

@@ -162,6 +162,15 @@ modeller. Rationale: a job's input variables are EMPTY without input mappings, a
 nothing else (the aggregate comes from the application's database). The marker tasks of E9 add their
 own mappings there.
 
+*Note from S2.2.1, 2026-10-13:* at the pinned engine the rationale does not hold. A job is created
+with a copy of its scope's variables and the targets of its input mappings set on top
+(`pkg/bpmn/jobs.go` and `runtime.NewVariableHolder` at `bdd795a3`);
+`ZenBpmRestClientContractIT#aStartedInstanceIsFoundAndItsJobIsActive` sees the instance variable
+`orderId` on a job of a task without mappings. So the mappings decide the names a job carries on
+top, not which ones it carries at all, and the second half of the acceptance criterion below ("a
+name nobody reads does not") cannot be met by mappings. Decide before implementing whether the story
+is still needed and what it promises.
+
 **Tests**: mapping added, existing mapping kept, idempotent on a second `prepareBpmn` of the same
 document (the context guard), and `ZenBpmRestClientContractIT`-style check in S4.3.2 that a job of
 such a task carries the variable.
