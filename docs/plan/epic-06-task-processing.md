@@ -58,6 +58,12 @@ sections 3.3 and 5, `TaskInvocationContext` javadoc.
    (5 attempts, 50 ms doubling, bounded by the remaining lock read from `lock_until`), stop at once
    while the module shuts down.
 
+*Found by S2.2.2, 2026-10-14.* `isGoneJob` reads calls under `/v1/jobs/{key}` only, so it does not
+catch the `PATCH` of instruction 3. Read in the engine's code at `bdd795a3` (not measured):
+`UpdateProcessInstanceVariables` answers `409` for an instance which is neither active nor failed,
+and `404` for one the engine does not hold. Decide what the handler does with either before it
+completes the job; by the README's table both are merely repeatable.
+
 **Tests**
 
 - `ZenBpmJobHandlerTest` (fake server + a `TestCollaborators` invoker): the context's fields, the

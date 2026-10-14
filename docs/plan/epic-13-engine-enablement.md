@@ -121,5 +121,12 @@ Full story with analysis, design, tests and acceptance criteria:
 
 - [ ] **Engine:** map "job already completed/terminated" and "instance not active" engine errors to
   `409 Conflict` instead of `500` in the REST handlers (`internal/rest/server.go`).
-- [ ] **Adapter twin (refines S2.2.2):** `ZenBpmErrors` treats 409 on a job as "gone" (final) instead
+- [x] **Adapter twin (refines S2.2.2):** `ZenBpmErrors` treats 409 on a job as "gone" (final) instead
   of repeating a 500.
+
+*Found by S2.2.2, 2026-10-14.* At the pinned commit `bdd795a3` the engine already answers `409` to
+a completion and a failure of a job which is completed, terminated or failed (`ErrJobInTerminalState`;
+a completion of a completed job is answered `201`), and to a variable update of an instance which is
+neither active nor failed. `ZenBpmErrorsIT` measures the first for a job which failed with an
+incident. So `ZenBpmErrors` reads a `409` of a job's completion or failure as a gone job from the
+start, and nothing waits for the engine half of this item for those calls.

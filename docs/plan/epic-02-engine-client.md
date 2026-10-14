@@ -444,9 +444,72 @@ wrapped in `CompletionException` and `RuntimeException`.
 
 **Acceptance criteria**
 
-- [ ] The table in the README section "Which phase-two failures are repeated" and this test agree line
-  by line.
-- [ ] No predicate inspects a message string.
+- [x] The table in the README section "Which phase-two failures are repeated" and this test agree line
+  by line. `ZenBpmErrorsTest#theReadmeAndThisTestNameTheSameRows` reads the table out of
+  `README.md` and compares its first two cells, row and "Read as", with the rows the table test
+  holds; a row renamed or relabelled in the README fails it.
+- [x] No predicate inspects a message string. `ZenBpmErrors` reads `getStatus()`, `getMethod()`
+  and `getPath()` of `ZenBpmApiException` and the types of the other exceptions, nothing else.
+  `nothingIsReadFromAMessage` gives a `500` the engine code `NOT_FOUND` and the message "job 42
+  not found", and a plain exception the words of a `404` on a message: both stay merely
+  repeatable.
+
+**Implemented 2026-10-14.** `ZenBpmErrorsTest` (36 cases, every case plain, in a
+`CompletionException`, in a `RuntimeException` and wrapped twice) and `ZenBpmErrorsIT` (8 cases
+against the pinned engine) are green; `mvn clean install` builds green, the coverage gate measures
+100 % of 4,760 instructions on both platforms, and `bin/check-deploy-safety.sh` passes both runs.
+Seen to fail, each restored afterwards: a `409` of a
+completion or failure not read as a gone job (the unit table and the IT), no guard against a ring of
+causes (the test fails after ten seconds instead of hanging), a cause below the client's exception
+answering instead of it, `413` not permanent, `502` not unavailable, the method not checked, a
+`null` path not guarded, every `404` read as a gone job, a job path matched loosely, a
+`NumberFormatException` ignored, an `HttpTimeoutException` ignored, a
+`ZenBpmUnavailableException` answering only through its cause, a README row relabelled and a
+README row renamed.
+
+What the IT found the pinned engine answers (`bdd795a3`):
+
+- A completion and a failure of a job the engine does not hold are `404`, and so is a lock
+  extension of one (`jobIsUnknown` in `internal/cluster/server/server.go`).
+- A completion and a failure of a job which failed with an incident are `409` (the engine's
+  `ErrJobInTerminalState`, raised for a completed, terminated or failed job, see
+  `ensureJobStillWaits` in `pkg/bpmn/jobs_api.go`). A completion of a completed job is answered
+  `201` again (S2.2.1's contract test). The engine already does what E13.10 asks of it for these two
+  calls, so a `409` of either is a gone job here, as E13.10's adapter twin says.
+- A lock extension of a job which waits but was never delivered over the job stream is `409`, the
+  same answer as a lapsed lock or a lock of another client.
+- A `historyTimeToLive` the engine cannot parse is `400`; a body one byte above the engine's
+  default `MaxRequestBodyBytes` (10 MiB) is `413`; a start of a process the engine does not hold is
+  `404`, not `400` (S5.1.1 has a note).
+- `415` could not be produced through the client, which always sends the content type the call
+  needs; the table test holds it.
+
+Where the code differs from the instructions:
+
+- `isGoneJob` also reads a `409` of `POST /v1/jobs/{key}/complete` and `.../fail` (above), and a
+  `404` of every call under `/v1/jobs/{key}`, the lock extension included. `lockLost` is the `409`
+  of the lock extension alone; a `404` there is a gone job, not a lost lock.
+- The first `ZenBpmApiException` or `ZenBpmUnavailableException` in the chain of causes answers
+  alone. A status the call did not expect whose body stalled carries the HTTP client's timeout as
+  its cause, and the user's decision of S2.2.1 says the status is the answer; without the rule,
+  `isUnavailable` would find the timeout beneath it. The JDK's `SocketTimeoutException`,
+  `HttpTimeoutException` and `ConnectException` answer only where no exception of the client is in
+  the chain.
+- Settling the note on unreadable `2xx` answers: a `ZenBpmUnavailableException` is unavailable and
+  repeatable whatever status it names. Another attempt does no harm: a read is answered again, a
+  completion of a completed job is answered `201`, and the core asks the adapter's redispatch probe
+  whether a workflow is there before it repeats a start (`ADAPTER-AUTHORS.md`, "The redispatch
+  probe must never be optimistic"). Making it permanent would block an outbox entry whose
+  operation the engine carried out. `ADAPTER-AUTHORS.md` asks the permanent list to hold only what
+  the BPMS answers the same way every time.
+- An expected `404` (of `instance()`, `job()`, `openApi()`) whose body stalled stays a
+  `ZenBpmUnavailableException` naming `404`, as S2.2.1 decided, so it is unavailable and not a gone
+  job.
+- The note on `502` for a key of a partition the engine does not have stands: it reads as
+  unavailable, `ZenBpmErrorsIT` pins that, and the README says so. S5.2.1 and S5.2.2 still decide
+  what such a key means.
+- Decision 10 is now in `DECISIONS.md`, adapted from the plan's draft to the pinned engine: a
+  `409` on a job's completion or failure, not a `500`, is how the engine says a job no longer waits.
 
 ---
 

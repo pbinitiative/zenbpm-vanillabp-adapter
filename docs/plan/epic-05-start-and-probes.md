@@ -47,6 +47,14 @@ column `history_ttl_sec` of `internal/sql/migrations/0001_schema.up.sql` (all at
 value below one second and `PT0S` mean (the configuration accepts both, it refuses only negative
 values), checking against the engine what an explicit `0` does.
 
+*Found by S2.2.2's `ZenBpmErrorsIT`, 2026-10-14.* A start of a process the engine does not hold is
+answered `404`, not `400` as instruction 2 says, so the rethrow has to look for a `404` of
+`POST /v1/process-instances`. `ZenBpmErrors` reads that `404` as repeatable, as any `404` which is
+not a job's or a message's, so the outbox repeats such a start until it is blocked. Camunda 8 makes
+it permanent with `Camunda8RefusedStart`; whether this adapter does the same is this story's
+decision, and a new row of the README's table "Which phase-two failures are repeated" and of
+decision 10.
+
 **Tests**: `ZenBpmProcessServiceTest` (fake server): phase one contacts nothing (zero requests), phase
 two sends business key, id variable and shared values, the 400 message; `ZenBpmSharedValuesTest` for
 the id winning and `@NoSyncWithBPMS` still carrying the id.
