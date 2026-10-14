@@ -785,6 +785,28 @@ Not changed: one engine claim of a review is not right. It said Netty does not s
 grpc-java's `NettyClientTransport` does. The finding stands, because Linux sends the first probe
 after two hours.
 
+Before the merge, CodeRabbit found that the notes on variables above 4 MiB under S5.1.1 and E13.13
+named no engine file, which `docs/README.md` requires. They now cite the inter-node gRPC server and
+client, the `ZenNode` methods which turn the failed call into a technical error, and the REST body
+limit, all at the pinned commit `bdd795a3`.
+
+**Done 2026-10-14**, merged to `main` as `92fb7f2` (pull request #16). On that commit (GitHub keeps
+run logs for 90 days, so what they showed is written here as well):
+
+- `Checks`, run
+  [38632291025](https://github.com/pbinitiative/zenbpm-vanillabp-adapter/actions/runs/38632291025):
+  green on both JDKs. `bin/check-engine-copies.sh` reported both copies as the engine's files of
+  `bdd795a3...`. `ZenBpmJobStreamTest` ran 38 tests, `ProtobufRuntimeCheckTest` 5,
+  `ZenBpmJobStreamIT` 2 and `ZenBpmJobLockIT` 3, none skipped. The gate measured 100 % on both
+  platforms, of 6,186 instructions on JDK 25 and 6,182 on JDK 21.
+- `Publish snapshots`, run
+  [38632291055](https://github.com/pbinitiative/zenbpm-vanillabp-adapter/actions/runs/38632291055):
+  green. `ZenBpmJobStreamIT` ran 2 tests and `ZenBpmJobLockIT` 3 against the pinned engine, none
+  skipped. The core snapshot it published, `2.0.0-20261014.202810-12`, contains `ZenBpmJobStream`,
+  `ReceivedJob` and `ProtobufRuntimeCheck`, its `adapter-zenbpm.properties` carries
+  `protobuf.gencode=4.35.0`, and it holds no test class. Both report pages answer HTTP 200 and show
+  0 of 6,186 instructions missed.
+
 ---
 
 ## F2.4 Client lifecycle, engine wait, health, executor
