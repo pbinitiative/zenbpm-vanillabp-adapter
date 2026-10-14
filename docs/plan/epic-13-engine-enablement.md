@@ -179,6 +179,12 @@ cannot tell which subscription an error frame answers, because nothing reads the
 
 *Found by a review of S2.3.1, 2026-10-14.* At the pinned commit `bdd795a3` a start with a 5 MiB
 variable and a variable update which brings an instance to 6 MiB are both answered `500` with
-"grpc: received message larger than max (... vs. 4194304)". So no instance gets more than 4 MiB of
-variables through the API, and no job above that size reaches the job stream today. The stream
-takes jobs of any size all the same (S2.3.1).
+"grpc: received message larger than max (... vs. 4194304)". The gRPC between the nodes keeps its
+default limit of 4 MiB, since neither `Server.Open` in `internal/cluster/server/server.go` nor
+`ClientManager.newClient` in `internal/cluster/client/client_manager.go` sets another.
+`ZenNode.CreateInstance` and `ZenNode.ModifyProcessInstance` in `internal/cluster/node.go` turn the
+failed call into `zenerr.TechnicalError`. REST takes bodies up to 10 MiB
+(`HttpServer.MaxRequestBodyBytes` in `internal/config/config.go`) and answers a larger one with `413`
+(`internal/rest/middleware/openapi.go`). So no instance gets more than 4 MiB of variables through
+the API, and no job above that size reaches the job stream today. The stream takes jobs of any size
+all the same (S2.3.1).
