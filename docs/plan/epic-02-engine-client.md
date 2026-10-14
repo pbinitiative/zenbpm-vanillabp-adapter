@@ -549,6 +549,22 @@ a JDK failure ending the walk again, the last instead of the first such failure 
 `ZenBpmRestClientContractIT` 18), the coverage gate measures 100 % of 4,764 instructions on both
 platforms, and `bin/check-deploy-safety.sh` passes both runs.
 
+**Done 2026-10-14**, merged to `main` as `4d49033` (pull request #14). On that commit (GitHub keeps
+run logs for 90 days, so what they showed is written here as well):
+
+- `Checks`, run
+  [38572248054](https://github.com/pbinitiative/zenbpm-vanillabp-adapter/actions/runs/38572248054):
+  green on both JDKs. `bin/check-engine-copies.sh` reported both copies as the engine's files of
+  `bdd795a3...`. `ZenBpmErrorsTest` ran 37 tests, `ZenBpmErrorsIT` 8, `ZenBpmRestClientTest` 96 and
+  `ZenBpmRestClientContractIT` 18, none skipped. The gate measured 100 % on both platforms, of 4,764
+  instructions on JDK 25 and 4,762 on JDK 21.
+- `Publish snapshots`, run
+  [38572248272](https://github.com/pbinitiative/zenbpm-vanillabp-adapter/actions/runs/38572248272):
+  green. `ZenBpmErrorsIT` ran 8 tests and `ZenBpmRestClientContractIT` 18 against the pinned engine,
+  none skipped. The core snapshot it published, `2.0.0-20261014.132959-10`, contains `ZenBpmErrors`
+  next to the REST client and its exceptions, and no test class. Both report pages answer HTTP 200
+  and show 0 of 4,764 instructions missed.
+
 ---
 
 ## F2.3 Job stream
