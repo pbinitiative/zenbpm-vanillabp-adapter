@@ -24,13 +24,11 @@ import java.util.Optional;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.CountDownLatch;
-import java.util.concurrent.Executors;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.ScheduledThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicInteger;
 import java.util.regex.Pattern;
 
 import org.junit.jupiter.api.AfterEach;
@@ -80,6 +78,11 @@ class ZenBpmJobStreamTest {
 
     private FakeJobStreamEngine engine;
 
+    /**
+     * The adapter id's own threads, so the jobs arrive on the timing threads the adapter runs.
+     */
+    private ZenBpmExecutor executor;
+
     private ScheduledExecutorService timing;
 
     private ZenBpmJobStream stream;
@@ -87,9 +90,8 @@ class ZenBpmJobStreamTest {
     @BeforeEach
     void startTheEngine() {
         engine = new FakeJobStreamEngine().start();
-        final var threads = new AtomicInteger();
-        timing = Executors.newScheduledThreadPool(2, task -> new Thread(task, TIMING_THREAD_PREFIX + threads
-                .incrementAndGet()));
+        executor = ZenBpmExecutor.of(ADAPTER_ID, ZenBpmExecutionModel.DEFAULT);
+        timing = executor.timing();
         stream = new ZenBpmJobStream(ADAPTER_ID, CLIENT_ID, "fake-engine:9090", engine
                 .channel(), timing, QUICK, ZenBpmJobStream.CLOSE_TIMEOUT);
     }
@@ -98,8 +100,8 @@ class ZenBpmJobStreamTest {
     void stopEverything() throws InterruptedException {
         stream.close();
         engine.close();
-        timing.shutdownNow();
-        timing.awaitTermination(5, TimeUnit.SECONDS);
+        executor.shutdownNow();
+        executor.awaitTermination(Duration.ofSeconds(5));
     }
 
     @Test

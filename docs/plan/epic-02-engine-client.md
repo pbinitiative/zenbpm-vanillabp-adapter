@@ -846,6 +846,12 @@ offer; the stream hands every job over on them and schedules its reconnects ther
 constructor runs `ProtobufRuntimeCheck` (S2.3.1), so building a factory refuses a protobuf runtime
 which cannot run the stream, before anything is contacted.
 
+*Note from S2.4.2, 2026-10-14.* The factory builds the executor with
+`ZenBpmExecutor.of(adapterId, ZenBpmExecutionModel.resolve(adapterId, configuration))` and hands
+the stream `executor.timing()`. Building it starts no thread: both halves start theirs on first
+use. `close()` closes the stream before it shuts the executor down, since the stream hands its jobs
+over on the timing threads; how long it waits for the handlers in flight is `shutdown-grace` (S6.2.2).
+
 **Tests**
 
 - `ZenBpmEngineWaitIT` (Docker): start the container 3 s AFTER the wait began (a `CompletableFuture`
@@ -889,6 +895,67 @@ including the values which end the boot (`worker-threads: 0`, `virtual` with a b
 
 **Acceptance criteria**
 
-- [ ] More submissions than slots block the submitter rather than queuing (the dispatcher will not
+- [x] More submissions than slots block the submitter rather than queuing (the dispatcher will not
   submit without a slot, but the executor itself must not grow a queue either).
-- [ ] The timing threads are never used for a handler (assert by thread name in the test).
+  `ZenBpmExecutorTest#moreSubmissionsThanTheBoundBlockTheSubmitter`, for both models: with a bound
+  of two and both handlers inside, the third `execute` has not returned, its thread waits, and the
+  handler runs once a thread is back; never more than two ran at once.
+- [x] The timing threads are never used for a handler (assert by thread name in the test).
+  `#theTimingIsNotStarvedByBusyHandlers` runs timing tasks on `zenbpm-orders-timing-0` and `-1`
+  while every handler is inside on `zenbpm-orders-handler-N`;
+  `#aDispatcherWithSlotsRunsEveryJob` runs twenty jobs through one slot and finds every one on a
+  handler thread. `ZenBpmJobStreamTest` and `ZenBpmJobStreamIT` now take the executor's own timing
+  threads, so their thread-name assertions hold for the adapter's threads, not for ones the tests
+  name.
+
+**Implemented 2026-10-14.** `ZenBpmExecutionModel`, `ZenBpmExecutor`,
+`ZenBpmPlatformThreadExecutor` and `ZenBpmVirtualThreadExecutor` in `client`, adapted from Camunda
+8's four classes and under its licence (decision 17). `ZenBpmExecutionModelTest` (25 cases),
+`ZenBpmExecutorTest` (30), `ZenBpmPlatformThreadExecutorTest` (3) and
+`ZenBpmVirtualThreadExecutorTest` (3) are green; `mvn clean install` builds green, the coverage gate
+measures 100 % of 6,925 instructions on both platforms, and `bin/check-deploy-safety.sh` passes both
+runs. Seen to fail, each restored afterwards: no wait for a handler thread, handlers run on the
+timing threads, slots beyond the bound, a slot given back which nobody took, no guard against a
+handler submitting a handler, cancelled timing tasks kept, a handler's exception not caught, no look
+for a shutdown while waiting, a thread permit lost on a refusal, the interrupt flag dropped, a
+thread permit kept after the handler (the build hangs), a bound of zero accepted, other thread
+names, the virtual model building platform threads, a pool of one thread, and in the model a bound
+beside platform threads accepted, the bound in use handed on instead of the bound as written, zero
+threads and a zero bound accepted.
+
+Where the code differs from the instructions:
+
+- **No `ScheduledExecutorService` of its own.** Camunda 8's executor is one, because the Camunda
+  client takes a single executor for its polls and its handlers. Nothing here takes one: the timing
+  threads are `timing()`, a `ScheduledThreadPoolExecutor` of two daemon threads behind an
+  unconfigurable view (a cancelled task leaves its queue), and the handlers go to
+  `execute(Runnable)`. So the gate which held a poll back while every slot was busy is gone with the
+  hand-over: `max_active_jobs` takes its place (decision 9, and the executor row of
+  `docs/analysis/03-template-assessment.md`).
+- **The submitter waits, in both models.** The criterion above asks for it. The executor counts the
+  handlers handed over and not yet returned in a semaphore of `bound` permits, taken in `execute`
+  before the handler is handed on and given back when it returned. Camunda 8's virtual model takes
+  its permit inside the virtual thread, because the thread which submits there belongs to the
+  client; here it is the dispatcher's. The platform pool keeps a queue of `bound` places, the most
+  that can wait for a thread on its way back. A wait looks for a shutdown every 100 ms and is then
+  refused, as is a submitter which is interrupted (its interrupt kept).
+- **Slots and the bound are two counts.** `tryAcquireSlot()` / `releaseSlot()` count what the
+  dispatcher took (`getBusySlots()`, `getFreeSlots()`); `releaseSlot()` without a slot taken throws,
+  since it would raise the bound for good. The bound of `execute` holds for a caller without a slot
+  as well. The handler gives the slot back in its `finally`, while its thread is still on the way
+  back, so a submission with a slot in hand waits at most for that thread.
+- **A handler cannot submit a handler.** With every thread busy it would wait for the thread it
+  runs on, so `execute` on one of the executor's own handler threads throws
+  `IllegalStateException`. The dispatcher asks for the next job on a timing thread; note under
+  S6.1.1.
+- **An exception which escapes a handler is logged at ERROR** with the adapter id, and the thread
+  serves the next handler. Camunda 8 left it to the thread's default handler.
+- `getWaiting()` is gone: what waits for a slot is the dispatcher's queue, and nothing waits in the
+  executor. `ZenBpmExecutor.of(adapterId, model)` builds the executor a model names, and
+  `ZenBpmExecutionModel.resolve(adapterId, configuration)` hands on `getWorkerThreads()` and the raw
+  `getWorkerThreadsBound()`, as the instruction asks. Its default is
+  `ZenBpmAdapterConfiguration.DEFAULT_WORKER_THREADS`, so the two cannot drift apart, and
+  `#theModelRefusesWhatTheValidationRefuses` checks thirteen pairs of values: the model refuses
+  exactly what the validation refuses. A number too large for an `int` is called too large, not a
+  word. The thread names are `zenbpm-<id>-timing-N` and `zenbpm-<id>-handler-N`, counted from 0;
+  no thread starts before the first use. Notes added under S2.4.1, S6.1.1 and S11.1.1.

@@ -26,6 +26,9 @@ exist only with Micrometer.
 call again since the stream was built; `vanillabp.zenbpm.stream.reconnects` is a function counter on
 it rather than a callback the stream would need to know about.
 
+*Note from S2.4.2, 2026-10-14.* The two slot gauges read `ZenBpmExecutor.getBusySlots()` and
+`getFreeSlots()`, the slots the dispatcher took with `tryAcquireSlot()` and has not given back.
+
 ## S11.2.1 Startup-message review
 
 - [ ] **Depends on:** E10.

@@ -14,10 +14,7 @@ import static org.pbinitiative.zenbpmadapter.client.ContractFixtures.uniqueBusin
 import java.time.Duration;
 import java.util.Map;
 import java.util.UUID;
-import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
-import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicInteger;
 
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
@@ -62,19 +59,23 @@ class ZenBpmJobStreamIT {
     @Container
     private static final EngineUnderTest ENGINE = new EngineUnderTest();
 
+    /**
+     * The adapter id's own threads, so the jobs arrive on the timing threads the adapter runs.
+     */
+    private static ZenBpmExecutor executor;
+
     private static ScheduledExecutorService timing;
 
     @BeforeAll
     static void startTheTimingThreads() {
-        final var threads = new AtomicInteger();
-        timing = Executors.newScheduledThreadPool(2, task -> new Thread(task, TIMING_THREAD_PREFIX + threads
-                .incrementAndGet()));
+        executor = ZenBpmExecutor.of(ADAPTER_ID, ZenBpmExecutionModel.DEFAULT);
+        timing = executor.timing();
     }
 
     @AfterAll
     static void stopTheTimingThreads() throws InterruptedException {
-        timing.shutdownNow();
-        timing.awaitTermination(5, TimeUnit.SECONDS);
+        executor.shutdownNow();
+        executor.awaitTermination(Duration.ofSeconds(5));
     }
 
     @Test

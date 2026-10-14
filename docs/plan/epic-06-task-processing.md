@@ -58,6 +58,16 @@ sections 3.3 and 5, `TaskInvocationContext` javadoc.
    (5 attempts, 50 ms doubling, bounded by the remaining lock read from `lock_until`), stop at once
    while the module shuts down.
 
+*Note from S2.4.2, 2026-10-14.* `ZenBpmExecutor` keeps no queue: a submission while every handler
+thread is busy waits in the submitting thread, so the jobs which wait for a slot are the
+dispatcher's alone. With a slot in hand the submission waits at most for a handler thread which
+just gave its slot back. `execute` refuses a call on one of the executor's own handler threads
+(`IllegalStateException`), because with every thread busy it would wait for itself. So the
+handler's `finally` gives the slot back and asks for the next job on a timing thread
+(`executor.timing().execute(...)`), as `ZenBpmExecutorTest#aDispatcherWithSlotsRunsEveryJob` does.
+An exception which escapes a handler is logged at ERROR by the executor, and its thread serves the
+next one.
+
 *Found by S2.2.2, 2026-10-14.* `isGoneJob` reads calls under `/v1/jobs/{key}` only, so it does not
 catch the `PATCH` of instruction 3. Read in the engine's code at `bdd795a3` (not measured):
 `UpdateProcessInstanceVariables` answers `409` for an instance which is neither active nor failed,
