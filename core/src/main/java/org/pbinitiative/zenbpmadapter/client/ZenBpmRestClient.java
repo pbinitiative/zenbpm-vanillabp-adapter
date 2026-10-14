@@ -420,12 +420,18 @@ public class ZenBpmRestClient implements AutoCloseable {
      * @param key The process instance key
      * @param page The page, counted from 1
      * @return The page
+     * @throws IllegalArgumentException Where the page is below 1, before anything is sent
      */
     public Page<HistoryEntry> history(
         final long key,
         final int page
     ) {
 
+        // the engine answers such a page with 400, a permanent failure of whatever the adapter was
+        // doing; refused here, the mistake shows up in the code which made it
+        if (page < 1) {
+            throw new IllegalArgumentException("A page is counted from 1, but %d was asked for".formatted(page));
+        }
         final var query = new LinkedHashMap<String, Object>();
         query.put("page", page);
         query.put("size", PAGE_SIZE);

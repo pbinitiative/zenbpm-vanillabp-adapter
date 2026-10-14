@@ -384,6 +384,10 @@ of an unreadable answer dropped.
 - Not changed: the BPMN fixtures carry no `BPMNDiagram`. That rule belongs to the engine's Go
   tests; neither this repository nor the VanillaBP adapters ask it of their test fixtures.
 
+**CodeRabbit on the pull request, 2026-10-14.** `history(key, page)` sent a page below 1, which the
+pinned engine answers with 400 (probed); it is refused before sending now, as the filters do.
+`ZenBpmRestClientTest` has 96 cases; seen to fail with the check switched off.
+
 ### S2.2.2 `ZenBpmErrors` - the one classification
 
 - [ ] **Depends on:** S2.2.1.

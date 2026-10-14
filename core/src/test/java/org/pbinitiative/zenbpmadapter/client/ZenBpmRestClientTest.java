@@ -623,6 +623,22 @@ class ZenBpmRestClientTest {
 
     }
 
+    @ParameterizedTest(name = "page {0}")
+    @ValueSource(ints = {
+            0, -1
+    })
+    @DisplayName("A page of the history below 1 is refused before anything is sent")
+    void aHistoryPageBelowOneIsRefused(
+        final int page
+    ) {
+
+        final var failure = assertThrows(IllegalArgumentException.class, () -> client.history(1, page));
+
+        assertEquals("A page is counted from 1, but %d was asked for".formatted(page), failure.getMessage());
+        assertEquals(List.of(), engine.requests());
+
+    }
+
     @Test
     @DisplayName("A job is read with every field the adapter uses")
     void aJobIsRead() {
