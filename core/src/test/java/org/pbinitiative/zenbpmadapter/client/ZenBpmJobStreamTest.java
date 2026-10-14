@@ -8,18 +8,22 @@ import static org.junit.jupiter.api.Assertions.assertAll;
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTimeout;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.pbinitiative.zenbpmadapter.client.ContractFixtures.eventually;
 
 import java.io.IOException;
+import java.lang.reflect.InvocationTargetException;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.ScheduledExecutorService;
@@ -34,7 +38,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
-import org.pbinitiative.zenbpmadapter.client.ZenBpmJobStream.Backoff;
+import org.pbinitiative.zenbpmadapter.client.ZenBpmJobStream.Pacing;
 import org.pbinitiative.zenbpmadapter.client.ZenBpmJobStream.Settings;
 import org.pbinitiative.zenbpmadapter.client.grpc.ZenBpmGrpc;
 import org.pbinitiative.zenbpmadapter.client.grpc.Zenbpm.ErrorResult;
@@ -43,6 +47,8 @@ import org.pbinitiative.zenbpmadapter.client.grpc.Zenbpm.JobStreamResponse;
 import org.pbinitiative.zenbpmadapter.client.grpc.Zenbpm.LockExtended;
 import org.pbinitiative.zenbpmadapter.client.grpc.Zenbpm.StreamSubscriptionRequest;
 import org.pbinitiative.zenbpmadapter.client.grpc.Zenbpm.WaitingJob;
+
+import com.google.protobuf.ByteString;
 
 import io.grpc.Grpc;
 import io.grpc.InsecureServerCredentials;
@@ -69,8 +75,8 @@ class ZenBpmJobStreamTest {
     /**
      * Short pauses, so a test of a reconnect does not wait for the real ones.
      */
-    private static final Backoff QUICK = new Backoff(Duration.ofMillis(10), Duration.ofMillis(40), Duration.ofMillis(
-            100));
+    private static final Pacing QUICK = new Pacing(Duration.ofMillis(10), Duration.ofMillis(40), Duration
+            .ofMillis(100), Duration.ofSeconds(1));
 
     private FakeJobStreamEngine engine;
 
@@ -250,8 +256,9 @@ class ZenBpmJobStreamTest {
     @DisplayName("A frame from the engine ends an outage at once")
     void aFrameEndsAnOutage(final CapturedOutput output) {
         // a call would count as back only after a minute without a frame
-        stream = new ZenBpmJobStream(ADAPTER_ID, CLIENT_ID, "fake-engine:9090", engine.channel(), timing, new Backoff(
-                Duration.ofMillis(10), Duration.ofMillis(40), Duration.ofMinutes(1)), ZenBpmJobStream.CLOSE_TIMEOUT);
+        stream = new ZenBpmJobStream(ADAPTER_ID, CLIENT_ID, "fake-engine:9090", engine.channel(), timing, new Pacing(
+                Duration.ofMillis(10), Duration.ofMillis(40), Duration.ofMinutes(1), Duration
+                        .ofSeconds(1)), ZenBpmJobStream.CLOSE_TIMEOUT);
         stream.subscribe("module-a", "t1", Duration.ofMinutes(5), 4);
         engine
                 .call(0)
@@ -370,13 +377,13 @@ class ZenBpmJobStreamTest {
                 () -> assertTrue(output
                         .getAllOfThisTest()
                         .contains("ERROR o.p.z.client.ZenBpmJobStream - ZenBPM[orders]: the engine at "
-                                + "fake-engine:9090 refused a subscription of the job stream: code 0, 'Failed to "
-                                + "subscribe to job type t2'. The engine does not say which job type it refused, so "
-                                + "the job stream opens its call again and subscribes every job type again: [t1, "
-                                + "t2]")),
+                                + "fake-engine:9090 refused a subscription or an unsubscription of the job stream: "
+                                + "code 0, 'Failed to subscribe to job type t2'. The engine does not say which job "
+                                + "type it refused, so the job stream opens its call again and subscribes every job "
+                                + "type again: [t1, t2]")),
                 () -> assertTrue(output
                         .getAllOfThisTest()
-                        .contains("is down (CANCELLED: the engine refused a subscription)")));
+                        .contains("is down (CANCELLED: the engine refused a subscription or an unsubscription)")));
     }
 
     @Test
@@ -536,7 +543,7 @@ class ZenBpmJobStreamTest {
     @Test
     @DisplayName("Closing while the stream waits to reconnect cancels the attempt, and an attempt already due opens nothing")
     void closingStopsAPendingReconnect() {
-        final var heldBack = new HeldBackReconnects();
+        final var heldBack = new HeldBackReconnects(QUICK.max());
         try {
             final var waiting = new ZenBpmJobStream(ADAPTER_ID, CLIENT_ID, "fake-engine:9090", engine
                     .channel(), heldBack, QUICK, ZenBpmJobStream.CLOSE_TIMEOUT);
@@ -569,7 +576,7 @@ class ZenBpmJobStreamTest {
     @Test
     @DisplayName("A type subscribed while the stream waits to reconnect is sent once, when it is back")
     void aTypeSubscribedWhileDownIsSentWhenBack() {
-        final var heldBack = new HeldBackReconnects();
+        final var heldBack = new HeldBackReconnects(QUICK.max());
         try (var waiting = new ZenBpmJobStream(ADAPTER_ID, CLIENT_ID, "fake-engine:9090", engine
                 .channel(), heldBack, QUICK, ZenBpmJobStream.CLOSE_TIMEOUT)) {
             waiting.subscribe("module-a", "t1", Duration.ofMinutes(5), 4);
@@ -682,6 +689,275 @@ class ZenBpmJobStreamTest {
     }
 
     @Test
+    @DisplayName("A job waiting for a timing thread when the stream closes is not handed on")
+    void aQueuedJobIsDroppedWhenTheStreamCloses() throws Exception {
+        final var received = new LinkedBlockingQueue<ReceivedJob>();
+        final var busy = new CountDownLatch(1);
+        final var single = new ScheduledThreadPoolExecutor(1);
+        try {
+            single.execute(() -> awaitQuietly(busy));
+            final var closing = new ZenBpmJobStream(ADAPTER_ID, CLIENT_ID, "fake-engine:9090", engine
+                    .channel(), single, QUICK, ZenBpmJobStream.CLOSE_TIMEOUT);
+            closing.onJob(received::add);
+            closing.subscribe("module-a", "t1", Duration.ZERO, 0);
+            final var call = engine.call(0);
+            call.subscriptions(1);
+            call.send(job(99, "t1"));
+            eventually(() -> single
+                    .getQueue()
+                    .isEmpty() ? Optional.empty() : Optional.of(true));
+
+            closing.close();
+            busy.countDown();
+
+            single
+                    .submit(() -> {
+                    })
+                    .get(5, TimeUnit.SECONDS);
+            assertTrue(received.isEmpty());
+        } finally {
+            busy.countDown();
+            single.shutdownNow();
+        }
+    }
+
+    @Test
+    @DisplayName("A job waiting for a timing thread when its call is lost is not handed on")
+    void aQueuedJobIsDroppedWhenItsCallIsLost(final CapturedOutput output) throws Exception {
+        final var received = new LinkedBlockingQueue<ReceivedJob>();
+        final var busy = new CountDownLatch(1);
+        final var single = new ScheduledThreadPoolExecutor(1);
+        try (var losing = new ZenBpmJobStream(ADAPTER_ID, CLIENT_ID, "fake-engine:9090", engine
+                .channel(), single, QUICK, ZenBpmJobStream.CLOSE_TIMEOUT)) {
+            single.execute(() -> awaitQuietly(busy));
+            losing.onJob(received::add);
+            losing.subscribe("module-a", "t1", Duration.ZERO, 0);
+            final var call = engine.call(0);
+            call.subscriptions(1);
+            call.send(job(98, "t1"));
+            eventually(() -> single
+                    .getQueue()
+                    .isEmpty() ? Optional.empty() : Optional.of(true));
+
+            call.fail(Status.UNAVAILABLE);
+            eventually(() -> Optional
+                    .of(output.getAllOfThisTest())
+                    .filter(printed -> printed.contains("is down (UNAVAILABLE)")));
+            busy.countDown();
+
+            engine
+                    .call(1)
+                    .subscriptions(1);
+            single
+                    .submit(() -> {
+                    })
+                    .get(5, TimeUnit.SECONDS);
+            assertTrue(received.isEmpty());
+        } finally {
+            busy.countDown();
+            single.shutdownNow();
+        }
+    }
+
+    @Test
+    @DisplayName("An engine which refuses every subscription is tried again with growing pauses, and is not reported back")
+    void refusalsKeepTheOutage(final CapturedOutput output) {
+        engine.refuseSubscriptions(true);
+        stream = new ZenBpmJobStream(ADAPTER_ID, CLIENT_ID, "fake-engine:9090", engine.channel(), timing, new Pacing(
+                Duration.ofMillis(20), Duration.ofSeconds(1), Duration.ofMillis(300), Duration
+                        .ofSeconds(1)), ZenBpmJobStream.CLOSE_TIMEOUT);
+
+        final var started = System.nanoTime();
+        stream.subscribe("module-a", "t1", Duration.ZERO, 0);
+        engine
+                .call(4)
+                .subscriptions(1);
+        final var tookForFourAttempts = Duration.ofNanos(System.nanoTime() - started);
+        engine.refuseSubscriptions(false);
+        engine
+                .call(5)
+                .subscriptions(1);
+        eventually(() -> Optional
+                .of(output.getAllOfThisTest())
+                .filter(printed -> printed.contains("is back after")));
+
+        final var printed = output.getAllOfThisTest();
+        assertAll(
+                () -> assertEquals(1, occurrences(printed, "is down ("), printed),
+                () -> assertEquals(1, occurrences(printed, "is back after"), printed),
+                // 16 + 32 + 64 + 128 ms at the least; were every pause the first, 80
+                () -> assertTrue(tookForFourAttempts.compareTo(Duration.ofMillis(240)) >= 0, tookForFourAttempts
+                        .toString()));
+    }
+
+    @Test
+    @DisplayName("Subscribing and unsubscribing while the engine refuses subscriptions never meets a cancelled call")
+    void noSendMeetsACancelledCall() {
+        engine.refuseSubscriptions(true);
+        stream = new ZenBpmJobStream(ADAPTER_ID, CLIENT_ID, "fake-engine:9090", engine.channel(), timing, new Pacing(
+                Duration.ofMillis(1), Duration.ofMillis(1), Duration.ofSeconds(1), Duration
+                        .ofSeconds(1)), ZenBpmJobStream.CLOSE_TIMEOUT);
+        final var failures = new ArrayList<RuntimeException>();
+        final var until = System.nanoTime() + Duration
+                .ofSeconds(1)
+                .toNanos();
+
+        for (var type = 0; System.nanoTime() < until; type++) {
+            try {
+                stream.subscribe("module-a", "t%d".formatted(type), Duration.ZERO, 0);
+                stream.unsubscribe("module-a", "t%d".formatted(type));
+            } catch (RuntimeException e) {
+                failures.add(e);
+            }
+        }
+
+        assertAll(
+                () -> assertEquals(List.of(), failures),
+                () -> assertTrue(engine.callCount() > 10),
+                () -> assertDoesNotThrow(stream::close));
+    }
+
+    @Test
+    @DisplayName("A call which ends with UNKNOWN after it stayed open quietly is no refused client id")
+    void aLateUnknownOnAQuietCallIsAnOrdinaryOutage(final CapturedOutput output) throws InterruptedException {
+        stream.subscribe("module-a", "t1", Duration.ZERO, 0);
+        final var first = engine.call(0);
+        first.subscriptions(1);
+        Thread.sleep(3 * QUICK
+                .stableAfter()
+                .toMillis());
+
+        first.fail(Status.UNKNOWN.withDescription("handler failed later"));
+
+        engine
+                .call(1)
+                .subscriptions(1);
+        assertAll(
+                () -> assertTrue(output
+                        .getAllOfThisTest()
+                        .contains("is down (UNKNOWN: handler failed later)")),
+                () -> assertFalse(output
+                        .getAllOfThisTest()
+                        .contains("as soon as it was opened")));
+    }
+
+    @Test
+    @DisplayName("A call whose connection is accepted but never answered is not reported back, and is given up on")
+    void aConnectionNobodyAnswersIsNoReturn(final CapturedOutput output) throws InterruptedException {
+        final var tcpEngine = new FakeJobStreamEngine().startOverTcp();
+        try (tcpEngine; var relay = TcpRelay.to(tcpEngine.address())) {
+            stream = new ZenBpmJobStream(ADAPTER_ID, CLIENT_ID, relay.address(), ZenBpmJobStream.channel(relay
+                    .address(), true, ZenBpmJobStream.KEEPALIVE_TIME,
+                    ZenBpmJobStream.KEEPALIVE_TIMEOUT), timing, new Pacing(Duration.ofMillis(10), Duration
+                            .ofMillis(40), Duration.ofMillis(100), Duration.ofMillis(
+                                    300)), ZenBpmJobStream.CLOSE_TIMEOUT);
+            stream.subscribe("module-a", "t1", Duration.ZERO, 0);
+            tcpEngine
+                    .call(0)
+                    .subscriptions(1);
+
+            // the next connection is accepted at once and never answered
+            relay.swallow(true);
+            relay.cut();
+            relay.restoreTo(tcpEngine.address());
+            Thread.sleep(1_500);
+            final var whileSwallowed = output.getAllOfThisTest();
+            final var attemptsWhileSwallowed = stream.reconnects();
+            relay.cut();
+            relay.swallow(false);
+            relay.restoreTo(tcpEngine.address());
+
+            eventually(() -> Optional
+                    .of(output.getAllOfThisTest())
+                    .filter(printed -> printed.contains("is back after")));
+            assertAll(
+                    () -> assertFalse(whileSwallowed.contains("is back after"), whileSwallowed),
+                    // the first attempt waits for its connection until it is given up on
+                    () -> assertTrue(attemptsWhileSwallowed >= 3, Long.toString(attemptsWhileSwallowed)),
+                    () -> assertEquals(1, occurrences(output.getAllOfThisTest(), "is down (")),
+                    () -> assertEquals(1, occurrences(output.getAllOfThisTest(), "is back after")));
+        }
+    }
+
+    @Test
+    @DisplayName("A connection which stops answering is noticed by a ping which stays unanswered")
+    void aSilentlyDroppedConnectionIsNoticed(final CapturedOutput output) {
+        final var tcpEngine = new FakeJobStreamEngine().startOverTcp();
+        try (tcpEngine; var relay = TcpRelay.to(tcpEngine.address())) {
+            // the shortest ping interval gRPC allows
+            stream = new ZenBpmJobStream(ADAPTER_ID, CLIENT_ID, relay.address(), ZenBpmJobStream.channel(relay
+                    .address(), true, Duration.ofSeconds(10),
+                    Duration.ofMillis(500)), timing, QUICK, ZenBpmJobStream.CLOSE_TIMEOUT);
+            stream.subscribe("module-a", "t1", Duration.ZERO, 0);
+            tcpEngine
+                    .call(0)
+                    .subscriptions(1);
+
+            relay.swallow(true);
+
+            awaitPrinted(output, "is down (UNAVAILABLE: Keepalive failed", Duration.ofSeconds(20));
+        }
+    }
+
+    @Test
+    @DisplayName("The connection is pinged less often than the engine allows, and no limit refuses a large job")
+    void thePingsAndTheJobSizeSuitTheEngine() throws InterruptedException {
+        final var tcpEngine = new FakeJobStreamEngine().startOverTcp();
+        final var received = new LinkedBlockingQueue<ReceivedJob>();
+        try (tcpEngine; var large = new ZenBpmJobStream(ADAPTER_ID, CLIENT_ID, tcpEngine.address(), ZenBpmJobStream
+                .channel(
+                        tcpEngine.address(), true, ZenBpmJobStream.KEEPALIVE_TIME,
+                        ZenBpmJobStream.KEEPALIVE_TIMEOUT), timing, QUICK, ZenBpmJobStream.CLOSE_TIMEOUT)) {
+            large.onJob(received::add);
+            large.subscribe("module-a", "t1", Duration.ZERO, 0);
+            final var call = tcpEngine.call(0);
+            call.subscriptions(1);
+            // above gRPC's default limit of 4 MiB
+            final var variables = ByteString.copyFrom(new byte[5 * 1024 * 1024]);
+
+            call.send(job(7, "t1")
+                    .toBuilder()
+                    .setJob(job(7, "t1")
+                            .getJob()
+                            .toBuilder()
+                            .setInputVariables(variables))
+                    .build());
+
+            assertAll(
+                    () -> assertEquals(variables, take(received)
+                            .job()
+                            .getInputVariables()),
+                    // the engine ends a connection pinged more often than every five minutes
+                    () -> assertTrue(ZenBpmJobStream.KEEPALIVE_TIME.compareTo(Duration.ofMinutes(5)) > 0));
+        }
+    }
+
+    @Test
+    @DisplayName("Building a stream on a protobuf runtime it cannot run on is refused with the guiding message")
+    void buildingOnAnOldProtobufRuntimeIsRefused() throws ReflectiveOperationException {
+        final var withoutRuntimeVersion = new WithoutRuntimeVersion(getClass().getClassLoader());
+        final var configurationType = withoutRuntimeVersion.loadClass(ZenBpmAdapterConfiguration.class.getName());
+        final var configuration = configurationType
+                .getConstructor()
+                .newInstance();
+        configurationType
+                .getMethod("setRestAddress", String.class)
+                .invoke(configuration, "http://localhost:8080");
+        final var streamType = withoutRuntimeVersion.loadClass(ZenBpmJobStream.class.getName());
+        final var constructor = streamType.getConstructor(String.class, configurationType, String.class,
+                ScheduledExecutorService.class);
+
+        final var refusal = assertThrows(InvocationTargetException.class, () -> constructor.newInstance(ADAPTER_ID,
+                configuration, CLIENT_ID, timing));
+
+        final var cause = assertInstanceOf(IllegalStateException.class, refusal.getCause());
+        assertTrue(cause
+                .getMessage()
+                .startsWith("The protobuf runtime of the application has no 'com.google.protobuf.RuntimeVersion'"),
+                cause.getMessage());
+    }
+
+    @Test
     @DisplayName("Negative settings are refused before anything is sent, an endless lock is sent as the longest")
     void settingsAreChecked() {
         assertAll(
@@ -694,6 +970,11 @@ class ZenBpmJobStreamTest {
                 () -> assertEquals(Long.MAX_VALUE, Settings
                         .of(Duration.ofSeconds(Long.MAX_VALUE), 0)
                         .lockDurationMs()),
+                () -> assertEquals(Long.MAX_VALUE, Settings
+                        .of(Duration
+                                .ofMillis(Long.MAX_VALUE)
+                                .plusNanos(1), 0)
+                        .lockDurationMs()),
                 () -> assertEquals("a lock of the engine's default and the engine's default cap of active jobs",
                         Settings
                                 .of(Duration.ZERO, 0)
@@ -704,11 +985,13 @@ class ZenBpmJobStreamTest {
     @Test
     @DisplayName("The pause before a reconnect doubles from the first up to the longest, cut short by up to a fifth")
     void theBackoffDoublesUpToItsLongest() {
-        final var backoff = ZenBpmJobStream.BACKOFF;
+        final var backoff = ZenBpmJobStream.PACING;
 
         assertAll(
                 () -> assertEquals(Duration.ofSeconds(1), backoff.first()),
                 () -> assertEquals(Duration.ofSeconds(30), backoff.max()),
+                () -> assertEquals(Duration.ofSeconds(2), backoff.stableAfter()),
+                () -> assertEquals(Duration.ofSeconds(20), backoff.readyWithin()),
                 () -> assertBetween(Duration.ofMillis(800), Duration.ofSeconds(1), backoff.delay(0)),
                 () -> assertBetween(Duration.ofMillis(1_600), Duration.ofSeconds(2), backoff.delay(1)),
                 () -> assertBetween(Duration.ofMillis(12_800), Duration.ofSeconds(16), backoff.delay(4)),
@@ -895,9 +1178,43 @@ class ZenBpmJobStreamTest {
 
     }
 
+    private static void awaitPrinted(
+        final CapturedOutput output,
+        final String text,
+        final Duration within
+    ) {
+        final var deadline = System.nanoTime() + within.toNanos();
+        while (!output
+                .getAllOfThisTest()
+                .contains(text)) {
+            if (System.nanoTime() > deadline) {
+                throw new AssertionError("'%s' was not printed within %s".formatted(text, within));
+            }
+            awaitQuietly(new CountDownLatch(1), Duration.ofMillis(100));
+        }
+    }
+
+    private static void awaitQuietly(final CountDownLatch latch) {
+        awaitQuietly(latch, Duration.ofSeconds(10));
+    }
+
+    private static void awaitQuietly(
+        final CountDownLatch latch,
+        final Duration within
+    ) {
+        try {
+            latch.await(within.toMillis(), TimeUnit.MILLISECONDS);
+        } catch (InterruptedException e) {
+            Thread
+                    .currentThread()
+                    .interrupt();
+        }
+    }
+
     /**
      * Timing threads which hold every reconnect back until the test runs it, and remember the
-     * futures they answered for them.
+     * futures they answered for them. A reconnect is told by its pause, which is no longer than
+     * the longest of its pacing; the stream's other timers wait longer and run as usual.
      */
     private static final class HeldBackReconnects extends ScheduledThreadPoolExecutor {
 
@@ -905,8 +1222,11 @@ class ZenBpmJobStreamTest {
 
         private final List<ScheduledFuture<?>> futures = new CopyOnWriteArrayList<>();
 
-        private HeldBackReconnects() {
+        private final Duration longestPause;
+
+        private HeldBackReconnects(final Duration longestPause) {
             super(1);
+            this.longestPause = longestPause;
         }
 
         @Override
@@ -915,6 +1235,9 @@ class ZenBpmJobStreamTest {
             final long delay,
             final TimeUnit unit
         ) {
+            if (unit.toNanos(delay) > longestPause.toNanos()) {
+                return super.schedule(task, delay, unit);
+            }
             tasks.add(task);
             final var never = super.schedule(() -> {
             }, 1, TimeUnit.DAYS);

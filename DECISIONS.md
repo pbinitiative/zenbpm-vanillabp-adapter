@@ -49,10 +49,10 @@ REST, the lock extensions included with the stream's client id, so that the one 
 decision 10 reads a status code for each of them, and a completion does not depend on the stream
 being up.
 
-So the stream sends nothing but subscriptions, and an error frame which names no job answers one of
-them. The engine takes a subscription without an answer and refuses one with an error which names
-its job type only in prose, so the stream cannot tell which one was refused. It logs the error and
-opens its call again, which subscribes every job type again. What the lock cannot cover is a change
+So the stream sends nothing but subscriptions and unsubscriptions, and an error frame which names
+no job answers one of them. The engine takes either without an answer and refuses one with an error
+which names its job type only in prose, so the stream cannot tell which one was refused. It logs the
+error and opens its call again, which subscribes every job type it still holds again. What the lock cannot cover is a change
 of the partition leader, which forgets every lock; the second delivery which follows is the
 at-least-once residual.
 

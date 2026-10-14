@@ -10,7 +10,6 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-import java.io.IOException;
 import java.util.Optional;
 
 import org.junit.jupiter.api.DisplayName;
@@ -101,47 +100,6 @@ class ProtobufRuntimeCheckTest {
         assertEquals("'protobuf.gencode' of 'META-INF/vanillabp/adapter-zenbpm.properties' is '${protobuf.version}' "
                 + "instead of a protobuf version, so the adapter's jar is broken. The resource is filtered from "
                 + "'protobuf.version' of the adapter's root POM.", broken.getMessage());
-    }
-
-    /**
-     * A class loader which loads {@link ProtobufRuntimeCheck} itself and knows no
-     * <code>com.google.protobuf.RuntimeVersion</code>, like an application whose protobuf
-     * runtime is older than 4.26.0.
-     */
-    private static final class WithoutRuntimeVersion extends ClassLoader {
-
-        private WithoutRuntimeVersion(final ClassLoader parent) {
-            super(parent);
-        }
-
-        @Override
-        protected Class<?> loadClass(
-            final String name,
-            final boolean resolve
-        ) throws ClassNotFoundException {
-            synchronized (getClassLoadingLock(name)) {
-                if (name.startsWith(RuntimeVersion.class.getName())) {
-                    throw new ClassNotFoundException(name);
-                }
-                if (!name.equals(ProtobufRuntimeCheck.class.getName())) {
-                    return super.loadClass(name, resolve);
-                }
-                final var loaded = findLoadedClass(name);
-                if (loaded != null) {
-                    return loaded;
-                }
-                try (var bytes = getParent().getResourceAsStream(name.replace('.', '/')
-                        + ".class")) {
-                    final var code = bytes.readAllBytes();
-                    // with the code source of the original, which the coverage agent needs to
-                    // count what runs in this copy
-                    return defineClass(name, code, 0, code.length, ProtobufRuntimeCheck.class.getProtectionDomain());
-                } catch (IOException e) {
-                    throw new ClassNotFoundException(name, e);
-                }
-            }
-        }
-
     }
 
 }

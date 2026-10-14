@@ -8,6 +8,7 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
+import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
@@ -20,6 +21,7 @@ import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Consumer;
 
 import org.pbinitiative.zenbpmadapter.client.grpc.ZenBpmGrpc;
+import org.pbinitiative.zenbpmadapter.client.grpc.Zenbpm.ErrorResult;
 import org.pbinitiative.zenbpmadapter.client.grpc.Zenbpm.JobStreamRequest;
 import org.pbinitiative.zenbpmadapter.client.grpc.Zenbpm.JobStreamResponse;
 import org.pbinitiative.zenbpmadapter.client.grpc.Zenbpm.StreamSubscriptionRequest;
@@ -46,12 +48,19 @@ import lombok.extern.slf4j.Slf4j;
  * open until {@link #close()}. Where it fails, it is opened again after a pause. The pause starts
  * at one second and doubles up to thirty seconds, and each one is cut short by a random part of up
  * to a fifth: nodes which lost the engine at the same moment then do not all come back at the same
- * moment. Every job type somebody still subscribes is then sent again, with its settings. A job created while
- * the call was down is handed out once it is back: the engine keeps a job until a subscribed
- * client takes it.
+ * moment. Every job type somebody still subscribes is then sent again, with its settings. A job
+ * created while the call was down is handed out once it is back: the engine keeps a job until a
+ * subscribed client takes it.
+ * <p>
+ * The engine says nothing on a call it took, so a call counts as back once a job arrived on it,
+ * or once it stayed open for two seconds after its connection was ready. A call whose connection
+ * is not ready within twenty seconds counts as failed. While nothing arrives, the connection is
+ * pinged every five and a half minutes, and it counts as lost where a ping stays unanswered for
+ * twenty seconds: a path a network dropped silently would otherwise go unnoticed for hours.
  * <p>
  * A job goes to the consumer of {@link #onJob(Consumer)} on one of the timing threads the stream
- * was given, never on a thread of gRPC, and handing it over never waits.
+ * was given, never on a thread of gRPC, and handing it over never waits. A job whose call ended
+ * before a timing thread took it up is not handed on: the engine hands it out again.
  * <p>
  * The engine answers a subscription with nothing where it takes it, and with an error naming no
  * job where it refuses it. That error carries no code and names its job type only in prose, which
@@ -72,9 +81,23 @@ public class ZenBpmJobStream implements AutoCloseable {
     static final Metadata.Key<String> CLIENT_ID = Metadata.Key.of("client_id", Metadata.ASCII_STRING_MARSHALLER);
 
     /**
-     * How the call is opened again after a failure, as the class comment describes it.
+     * How the call is opened again after a failure, and when it counts as back, as the class
+     * comment describes it.
      */
-    static final Backoff BACKOFF = new Backoff(Duration.ofSeconds(1), Duration.ofSeconds(30), Duration.ofSeconds(2));
+    static final Pacing PACING = new Pacing(Duration.ofSeconds(1), Duration.ofSeconds(30), Duration
+            .ofSeconds(2), Duration.ofSeconds(20));
+
+    /**
+     * How long the connection may stay quiet before it is pinged. The engine ends a connection
+     * whose client pings more often than every five minutes, the default of the gRPC library it
+     * is built on, so the pings come a little less often than that.
+     */
+    static final Duration KEEPALIVE_TIME = Duration.ofSeconds(330);
+
+    /**
+     * How long a ping may stay unanswered before the connection counts as lost.
+     */
+    static final Duration KEEPALIVE_TIMEOUT = Duration.ofSeconds(20);
 
     /**
      * How long {@link #close()} waits for the engine to end the call before it cuts the
@@ -94,7 +117,7 @@ public class ZenBpmJobStream implements AutoCloseable {
 
     private final ScheduledExecutorService timing;
 
-    private final Backoff backoff;
+    private final Pacing pacing;
 
     private final Duration closeTimeout;
 
@@ -110,7 +133,8 @@ public class ZenBpmJobStream implements AutoCloseable {
 
     /**
      * The call open now; <code>null</code> before the first subscription, while the stream waits
-     * to open it again, and after {@link #close()}.
+     * to open it again, and after {@link #close()}. A call the stream gives up on is cancelled and
+     * forgotten in one step, so nothing is sent on a cancelled call.
      */
     private Call call;
 
@@ -143,7 +167,7 @@ public class ZenBpmJobStream implements AutoCloseable {
         final ScheduledExecutorService timing
     ) {
         this(adapterId, clientId, configuration
-                .grpcAddressInUse(), channel(configuration), timing, BACKOFF, CLOSE_TIMEOUT);
+                .grpcAddressInUse(), channel(configuration), timing, PACING, CLOSE_TIMEOUT);
     }
 
     ZenBpmJobStream(
@@ -152,7 +176,7 @@ public class ZenBpmJobStream implements AutoCloseable {
         final String address,
         final ManagedChannel channel,
         final ScheduledExecutorService timing,
-        final Backoff backoff,
+        final Pacing pacing,
         final Duration closeTimeout
     ) {
         this.adapterId = adapterId;
@@ -160,7 +184,7 @@ public class ZenBpmJobStream implements AutoCloseable {
         this.address = address;
         this.channel = channel;
         this.timing = timing;
-        this.backoff = backoff;
+        this.pacing = pacing;
         this.closeTimeout = closeTimeout;
         final var metadata = new Metadata();
         metadata.put(CLIENT_ID, clientId);
@@ -274,8 +298,9 @@ public class ZenBpmJobStream implements AutoCloseable {
 
     /**
      * Ends the call and closes the connection. The engine hands the jobs locked to this stream to
-     * other clients at once instead of after their locks lapse. Waits up to five seconds for the
-     * engine to end the call, then cuts the connection; a subscription afterwards throws {@link IllegalStateException}.
+     * other clients at once instead of after their locks lapse. A job still waiting for a timing
+     * thread is not handed on. Waits up to five seconds for the engine to end the call, then cuts
+     * the connection; a subscription afterwards throws {@link IllegalStateException}.
      */
     @Override
     public void close() {
@@ -306,14 +331,39 @@ public class ZenBpmJobStream implements AutoCloseable {
         }
     }
 
-    private static ManagedChannel channel(final ZenBpmAdapterConfiguration configuration) {
-        ProtobufRuntimeCheck.requireCompatibleRuntime();
-        final var credentials = configuration.isGrpcPlaintext()
+    /**
+     * The channel to the engine's job stream.
+     *
+     * @param address <code>host:port</code>
+     * @param plaintext <code>false</code> for TLS
+     * @param keepAliveTime How long the connection may stay quiet before it is pinged
+     * @param keepAliveTimeout How long a ping may stay unanswered
+     * @return A channel which has not connected yet
+     */
+    static ManagedChannel channel(
+        final String address,
+        final boolean plaintext,
+        final Duration keepAliveTime,
+        final Duration keepAliveTimeout
+    ) {
+        final var credentials = plaintext
                 ? InsecureChannelCredentials.create()
                 : TlsChannelCredentials.create();
         return Grpc
-                .newChannelBuilder(configuration.grpcAddressInUse(), credentials)
+                .newChannelBuilder(address, credentials)
+                .keepAliveTime(keepAliveTime.toMillis(), TimeUnit.MILLISECONDS)
+                .keepAliveTimeout(keepAliveTimeout.toMillis(), TimeUnit.MILLISECONDS)
+                // a job carries a copy of the variables of its scope, which nothing bounds. A job
+                // above a limit would end the call, and the engine would hand it to the next node,
+                // whose call it would end as well
+                .maxInboundMessageSize(Integer.MAX_VALUE)
                 .build();
+    }
+
+    private static ManagedChannel channel(final ZenBpmAdapterConfiguration configuration) {
+        ProtobufRuntimeCheck.requireCompatibleRuntime();
+        return channel(configuration.grpcAddressInUse(), configuration.isGrpcPlaintext(), KEEPALIVE_TIME,
+                KEEPALIVE_TIMEOUT);
     }
 
     private static JobStreamRequest subscribeRequest(
@@ -331,15 +381,33 @@ public class ZenBpmJobStream implements AutoCloseable {
                 .build();
     }
 
+    /**
+     * Whether a frame answers a subscription or an unsubscription: an error naming neither a job
+     * nor a lock.
+     */
+    private static boolean answersASubscription(final JobStreamResponse response) {
+        return response.hasError() && !response.hasJob() && !response.hasLockExtended();
+    }
+
+    private static String describe(final Status status) {
+        return status.getDescription() == null
+                ? status
+                        .getCode()
+                        .toString()
+                : "%s: %s".formatted(status.getCode(), status.getDescription());
+    }
+
     private String conflict(
         final String jobType,
         final Subscription subscribed,
         final String subscriber,
         final Settings settings
     ) {
-        return ("ZenBPM[%s]: job type '%s' is subscribed by %s with %s, and '%s' asks for %s. The engine keeps one "
-                + "lock duration and one cap of active jobs per client and job type, so every subscriber of a job type "
-                + "has to ask for the same.").formatted(adapterId, jobType, subscribed.subscribers
+        return """
+                ZenBPM[%s]: job type '%s' is subscribed by %s with %s, and '%s' asks for %s. The engine keeps one \
+                lock duration and one cap of active jobs per client and job type, so every subscriber of a job type \
+                has to ask for the same."""
+                .formatted(adapterId, jobType, subscribed.subscribers
                         .stream()
                         .map("'%s'"::formatted)
                         .toList(), subscribed.settings, subscriber, settings);
@@ -356,9 +424,7 @@ public class ZenBpmJobStream implements AutoCloseable {
             jobType,
             subscription) -> opened.send(subscribeRequest(jobType,
                     subscription.settings)));
-        if (outage != null) {
-            schedule(() -> stayedOpen(opened), backoff.stableAfter());
-        }
+        schedule(() -> notReadyInTime(opened), pacing.readyWithin());
     }
 
     private synchronized void reopen() {
@@ -373,10 +439,31 @@ public class ZenBpmJobStream implements AutoCloseable {
         open();
     }
 
+    private synchronized void becameReady(final Call opened) {
+        if ((opened != call) || opened.ready) {
+            return;
+        }
+        opened.ready = true;
+        schedule(() -> stayedOpen(opened), pacing.stableAfter());
+    }
+
     private synchronized void stayedOpen(final Call opened) {
-        if ((opened == call) && (outage != null)) {
+        if (opened != call) {
+            return;
+        }
+        opened.established = true;
+        if (outage != null) {
             back();
         }
+    }
+
+    private synchronized void notReadyInTime(final Call opened) {
+        if ((opened != call) || opened.ready) {
+            return;
+        }
+        final var reason = "no connection within %s".formatted(pacing.readyWithin());
+        opened.requests.cancel(reason, null);
+        lost(Status.UNAVAILABLE.withDescription(reason), false);
     }
 
     /**
@@ -384,8 +471,8 @@ public class ZenBpmJobStream implements AutoCloseable {
      */
     private void back() {
         log.info("ZenBPM[{}]: the job stream to {} is back after {} and {} attempt(s), job types subscribed: {}",
-                adapterId, address, Duration.between(outage.since, Instant.now()), outage.attempts,
-                subscriptions.keySet());
+                adapterId, address, Duration.between(outage.since, Instant.now()), outage.attempts, List.copyOf(
+                        subscriptions.keySet()));
         outage = null;
     }
 
@@ -397,26 +484,70 @@ public class ZenBpmJobStream implements AutoCloseable {
             if (from != call) {
                 return;
             }
-            from.answered = true;
+            if (answersASubscription(response)) {
+                refused(from, response.getError());
+                return;
+            }
+            from.established = true;
             if (outage != null) {
                 back();
             }
         }
         if (response.hasError()) {
-            refused(from, response);
+            log.warn("""
+                    ZenBPM[{}]: the job stream received an error answering a request it never sends, for job {}: \
+                    code {}, '{}'""", adapterId, response.hasJob()
+                    ? response
+                            .getJob()
+                            .getKey()
+                    : response
+                            .getLockExtended()
+                            .getKey(),
+                    response
+                            .getError()
+                            .getCode(),
+                    response
+                            .getError()
+                            .getMessage());
         } else if (response.hasJob()) {
-            handOver(new ReceivedJob(response.getJob(), Instant.now()));
+            handOver(from, new ReceivedJob(response.getJob(), Instant.now()));
         } else {
             log.debug("ZenBPM[{}]: the job stream received a frame it never asked for: {}", adapterId, response);
         }
     }
 
-    private void handOver(final ReceivedJob job) {
+    /**
+     * Logs a refused subscription or unsubscription and opens the call again. Called holding
+     * <code>this</code>, so that no subscription is sent on the call between its cancel and its
+     * end.
+     */
+    private void refused(
+        final Call from,
+        final ErrorResult error
+    ) {
+        log.error("""
+                ZenBPM[{}]: the engine at {} refused a subscription or an unsubscription of the job stream: code {}, \
+                '{}'. The engine does not say which job type it refused, so the job stream opens its call again and \
+                subscribes every job type again: {}""", adapterId, address, error.getCode(), error.getMessage(),
+                List.copyOf(subscriptions.keySet()));
+        final var reason = "the engine refused a subscription or an unsubscription";
+        from.requests.cancel(reason, null);
+        // keeps an outage which is under way, so the pauses go on growing
+        lost(Status.CANCELLED.withDescription(reason), false);
+    }
+
+    private void handOver(
+        final Call from,
+        final ReceivedJob job
+    ) {
         try {
-            timing.execute(() -> deliver(job));
+            timing.execute(() -> deliver(from, job));
         } catch (final RejectedExecutionException e) {
-            log.warn("ZenBPM[{}]: job {} of type '{}' arrived while the adapter shuts down, so nobody runs it; "
-                    + "the engine hands it out again once its lock lapses", adapterId,
+            log.warn(
+                    """
+                            ZenBPM[{}]: job {} of type '{}' arrived while the adapter shuts down, so nobody runs it; the engine \
+                            hands it out again once its lock lapses""",
+                    adapterId,
                     job
                             .job()
                             .getKey(),
@@ -426,11 +557,25 @@ public class ZenBpmJobStream implements AutoCloseable {
         }
     }
 
-    private void deliver(final ReceivedJob job) {
+    private void deliver(
+        final Call from,
+        final ReceivedJob job
+    ) {
+        synchronized (this) {
+            // the end of the call gave the job back to the engine, which hands it out again
+            if (from != call) {
+                log.debug("ZenBPM[{}]: job {} is not handed on, its call ended before a timing thread took it up",
+                        adapterId, job
+                                .job()
+                                .getKey());
+                return;
+            }
+        }
         final var receiver = consumer;
         if (receiver == null) {
-            log.warn("ZenBPM[{}]: job {} of type '{}' arrived, but nothing in the adapter takes jobs yet; the engine "
-                    + "hands it out again once its lock lapses", adapterId,
+            log.warn("""
+                    ZenBPM[{}]: job {} of type '{}' arrived, but nothing in the adapter takes jobs yet; the engine \
+                    hands it out again once its lock lapses""", adapterId,
                     job
                             .job()
                             .getKey(),
@@ -442,8 +587,9 @@ public class ZenBpmJobStream implements AutoCloseable {
         try {
             receiver.accept(job);
         } catch (final RuntimeException e) {
-            log.error("ZenBPM[{}]: job {} of type '{}' could not be handed on; the engine hands it out again once "
-                    + "its lock lapses", adapterId,
+            log.error("""
+                    ZenBPM[{}]: job {} of type '{}' could not be handed on; the engine hands it out again once its \
+                    lock lapses""", adapterId,
                     job
                             .job()
                             .getKey(),
@@ -454,49 +600,17 @@ public class ZenBpmJobStream implements AutoCloseable {
         }
     }
 
-    /**
-     * Logs an error frame. One naming a job or a lock answers a request this stream never sends,
-     * and changes nothing. One naming neither answers a subscription: the call is opened again.
-     */
-    private void refused(
-        final Call from,
-        final JobStreamResponse response
-    ) {
-        final var error = response.getError();
-        if (response.hasJob() || response.hasLockExtended()) {
-            log.warn("ZenBPM[{}]: the job stream received an error answering a request it never sends, for job {}: "
-                    + "code {}, '{}'", adapterId,
-                    response.hasJob()
-                            ? response
-                                    .getJob()
-                                    .getKey()
-                            : response
-                                    .getLockExtended()
-                                    .getKey(),
-                    error.getCode(), error.getMessage());
-            return;
-        }
-        synchronized (this) {
-            log.error("ZenBPM[{}]: the engine at {} refused a subscription of the job stream: code {}, '{}'. The "
-                    + "engine does not say which job type it refused, so the job stream opens its call again and "
-                    + "subscribes every job type again: {}", adapterId, address, error.getCode(), error.getMessage(),
-                    subscriptions.keySet());
-        }
-        // ends the call like a failure, which opens it again
-        from.requests.cancel("the engine refused a subscription", null);
-    }
-
     private synchronized void failed(
         final Call from,
         final Status status
     ) {
-        // a call ends once, and only the open one can end before close(): lost() replaces it
-        if (closed) {
+        // a call the stream gave up on and forgot, or one close() ended
+        if (from != call) {
             return;
         }
-        // the engine answers a client id it already serves by ending the call before anything
-        // else, with UNKNOWN, the status of every error its handler returns
-        lost(status, (status.getCode() == Status.Code.UNKNOWN) && !from.answered);
+        // the engine answers a client id it already serves by ending the call at once, with
+        // UNKNOWN, the status of every error its handler returns
+        lost(status, (status.getCode() == Status.Code.UNKNOWN) && !from.established);
     }
 
     /**
@@ -513,25 +627,36 @@ public class ZenBpmJobStream implements AutoCloseable {
         }
         if (clientIdRefused && !outage.clientIdReported) {
             outage.clientIdReported = true;
-            log.warn("ZenBPM[{}]: the engine at {} ended the job stream as soon as it was opened ({}). It does that "
-                    + "where another job stream of the same client id '{}' is still open: another node of the "
-                    + "application, another adapter id on the same engine, or the stream this node lost a moment "
-                    + "ago, which the engine has not noticed yet. Where '{}' is set, give every node and adapter id "
-                    + "its own, or remove it to derive one: <application name>-<adapter id>-<8 random hex digits>. "
-                    + "The job stream tries again with a backoff.", adapterId, address, describe(status), clientId,
+            log.warn("""
+                    ZenBPM[{}]: the engine at {} ended the job stream as soon as it was opened ({}). It does that \
+                    where another job stream of the same client id '{}' is still open: another node of the \
+                    application, another adapter id on the same engine, or the stream this node lost a moment ago, \
+                    which the engine has not noticed yet. Where '{}' is set, give every node and adapter id its own, \
+                    or remove it to derive one: <application name>-<adapter id>-<8 random hex digits>. The job \
+                    stream tries again with a backoff.""", adapterId, address, describe(status), clientId,
                     ZenBpmAdapterConfiguration.propertyKey(adapterId, "client-id"));
         } else if (first) {
-            log.warn("ZenBPM[{}]: the job stream to {} is down ({}); no job arrives until it is back. It is opened "
-                    + "again after {}, then after twice as long each time, up to {}.", adapterId, address,
-                    describe(status), backoff.first(), backoff.max());
+            log.warn("""
+                    ZenBPM[{}]: the job stream to {} is down ({}); no job arrives until it is back. It is opened \
+                    again after {}, then after twice as long each time, up to {}.""", adapterId, address,
+                    describe(status), pacing.first(), pacing.max());
         } else {
             log.debug("ZenBPM[{}]: the job stream to {} is still down ({})", adapterId, address, describe(status));
         }
-        final var delay = backoff.delay(outage.attempts);
+        final var delay = pacing.delay(outage.attempts);
         outage.attempts++;
         reopening = schedule(this::reopen, delay);
+        if (reopening == null) {
+            log.warn("ZenBPM[{}]: the job stream to {} is not opened again, because the adapter shuts down",
+                    adapterId, address);
+        }
     }
 
+    /**
+     * Runs a task on a timing thread later.
+     *
+     * @return The task's future, <code>null</code> where the timing threads shut down
+     */
     private Future<?> schedule(
         final Runnable task,
         final Duration delay
@@ -539,33 +664,26 @@ public class ZenBpmJobStream implements AutoCloseable {
         try {
             return timing.schedule(task, delay.toMillis(), TimeUnit.MILLISECONDS);
         } catch (final RejectedExecutionException e) {
-            log.warn("ZenBPM[{}]: the job stream to {} is not opened again, because the adapter shuts down",
-                    adapterId, address);
             return null;
         }
     }
 
-    private static String describe(final Status status) {
-        return status.getDescription() == null
-                ? status
-                        .getCode()
-                        .toString()
-                : "%s: %s".formatted(status.getCode(), status.getDescription());
-    }
-
     /**
-     * How the call is opened again after a failure.
+     * How the call is opened again after a failure, and when a call counts as back.
      *
      * @param first The pause before the first attempt
      * @param max The longest pause
-     * @param stableAfter How long a call opened again has to stay open to count as back, where no
-     *            frame arrived before. The engine sends nothing on a call which it took, and ends
-     *            one it refuses at once.
+     * @param stableAfter How long a call has to stay open after its connection was ready to count
+     *            as back, where no job arrived before. The engine sends nothing on a call which it
+     *            took, and ends one it refuses at once.
+     * @param readyWithin How long a call may wait for its connection before it counts as failed.
+     *            A proxy can accept a connection and never answer on it.
      */
-    record Backoff(
+    record Pacing(
         Duration first,
         Duration max,
-        Duration stableAfter
+        Duration stableAfter,
+        Duration readyWithin
     ) {
 
         /**
@@ -620,7 +738,7 @@ public class ZenBpmJobStream implements AutoCloseable {
             }
             if (Duration
                     .ofMillis(millis)
-                    .equals(lockDuration)) {
+                    .equals(lockDuration) || (millis == Long.MAX_VALUE)) {
                 return new Settings(millis, maxActiveJobs);
             }
             return new Settings(millis + 1, maxActiveJobs);
@@ -672,13 +790,20 @@ public class ZenBpmJobStream implements AutoCloseable {
         private ClientCallStreamObserver<JobStreamRequest> requests;
 
         /**
-         * Whether the engine sent anything on this call. Guarded by the stream.
+         * Whether the connection under the call was ready. Guarded by the stream.
          */
-        private boolean answered;
+        private boolean ready;
+
+        /**
+         * Whether the call counts as taken by the engine: a job arrived on it, or it stayed open
+         * after its connection was ready. Guarded by the stream.
+         */
+        private boolean established;
 
         @Override
         public void beforeStart(final ClientCallStreamObserver<JobStreamRequest> requests) {
             this.requests = requests;
+            requests.setOnReadyHandler(() -> becameReady(this));
         }
 
         @Override

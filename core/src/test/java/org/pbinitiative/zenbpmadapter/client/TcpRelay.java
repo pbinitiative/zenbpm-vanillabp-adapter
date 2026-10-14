@@ -20,7 +20,8 @@ import java.util.concurrent.Executors;
 /**
  * A TCP relay between the job stream and an engine: what the network between them would be. A
  * test cuts it to take the engine out of reach without stopping it, and restores it on the same
- * port, pointing at the same engine or at another one.
+ * port, pointing at the same engine or at another one. It can also swallow everything without
+ * closing anything, like a path a NAT or a load balancer dropped silently.
  */
 final class TcpRelay implements AutoCloseable {
 
@@ -33,6 +34,8 @@ final class TcpRelay implements AutoCloseable {
     private volatile ServerSocket listener;
 
     private volatile InetSocketAddress target;
+
+    private volatile boolean swallowing;
 
     private TcpRelay(final InetSocketAddress target) {
         this.target = target;
@@ -67,6 +70,16 @@ final class TcpRelay implements AutoCloseable {
         close(listener);
         sockets.forEach(TcpRelay::close);
         sockets.clear();
+    }
+
+    /**
+     * Keeps every connection open, the ones to come included, and passes nothing on, or passes
+     * everything on again.
+     *
+     * @param swallow <code>true</code> to pass nothing on
+     */
+    void swallow(final boolean swallow) {
+        swallowing = swallow;
     }
 
     /**
@@ -120,6 +133,11 @@ final class TcpRelay implements AutoCloseable {
                     // the relay was cut
                     continue;
                 }
+                if (swallowing) {
+                    // held open, never answered
+                    sockets.add(client);
+                    continue;
+                }
                 try {
                     final var engine = new Socket(target.getHostString(), target.getPort());
                     sockets.add(client);
@@ -138,8 +156,15 @@ final class TcpRelay implements AutoCloseable {
         final Socket from,
         final Socket to
     ) {
+        final var buffer = new byte[8192];
         try (InputStream in = from.getInputStream(); OutputStream out = to.getOutputStream()) {
-            in.transferTo(out);
+            int read;
+            while ((read = in.read(buffer)) >= 0) {
+                if (!swallowing) {
+                    out.write(buffer, 0, read);
+                    out.flush();
+                }
+            }
         } catch (IOException e) {
             // one side went away
         } finally {

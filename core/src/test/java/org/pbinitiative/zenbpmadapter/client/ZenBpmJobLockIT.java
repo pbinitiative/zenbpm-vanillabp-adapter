@@ -6,7 +6,6 @@ package org.pbinitiative.zenbpmadapter.client;
 
 import static org.junit.jupiter.api.Assertions.assertAll;
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.pbinitiative.zenbpmadapter.client.ContractFixtures.oneServiceTask;
@@ -45,6 +44,12 @@ class ZenBpmJobLockIT {
     private static final Duration LOCK = Duration.ofSeconds(2);
 
     /**
+     * How much earlier than the lock a job may appear to be handed on, measured on the
+     * application's clock: the time between the engine's send and the stream's receipt.
+     */
+    private static final Duration CLOCK_TOLERANCE = Duration.ofMillis(100);
+
+    /**
      * How long a job may take from the start of its instance, or from the lapse of its lock, to a
      * stream: the engine looks for jobs to hand out about once a second.
      */
@@ -80,25 +85,25 @@ class ZenBpmJobLockIT {
             first.subscribe("module-a", jobType, LOCK, 0);
             final var instance = start(jobType);
             final var held = firstInbox.next(instance, DELIVERY);
-            // the first stream takes nothing more, so the engine has only the second to hand the job to
+            // the first stream takes nothing more, so the engine can hand the job only to the
+            // second
             first.unsubscribe("module-a", jobType);
             second.subscribe("module-a", jobType, LOCK, 0);
 
             final var handedOn = secondInbox.next(instance, LOCK.plus(DELIVERY));
 
-            final var lapsed = Instant.ofEpochMilli(held
+            // on the application's clock alone: the engine counts the lock from the end of its
+            // send, which came before the first stream received the job
+            final var heldFor = Duration.between(held
                     .received()
-                    .job()
-                    .getLockUntil());
+                    .receivedAt(),
+                    handedOn
+                            .received()
+                            .receivedAt());
             assertAll(
                     () -> assertEquals(held.key(), handedOn.key()),
-                    () -> assertFalse(handedOn
-                            .received()
-                            .receivedAt()
-                            .isBefore(lapsed),
-                            "handed on at %s, before the lock lapsed at %s".formatted(handedOn
-                                    .received()
-                                    .receivedAt(), lapsed)),
+                    () -> assertTrue(heldFor.compareTo(LOCK.minus(CLOCK_TOLERANCE)) >= 0,
+                            "handed on after %s, before the lock of %s lapsed".formatted(heldFor, LOCK)),
                     () -> assertTrue(handedOn
                             .received()
                             .job()
@@ -122,7 +127,8 @@ class ZenBpmJobLockIT {
             final var held = firstInbox.next(instance, DELIVERY);
             first.unsubscribe("module-a", jobType);
 
-            final var extendedUntil = rest.extendJobLock(held.key(), firstClientId, Duration.ofSeconds(5));
+            final var extendedAt = Instant.now();
+            rest.extendJobLock(held.key(), firstClientId, Duration.ofSeconds(5));
             second.subscribe("module-a", jobType, LOCK, 0);
             final var handedOn = secondInbox.next(instance, Duration
                     .ofSeconds(5)
@@ -130,15 +136,16 @@ class ZenBpmJobLockIT {
 
             final var lost = assertThrows(ZenBpmApiException.class, () -> rest.extendJobLock(held.key(), firstClientId,
                     Duration.ofSeconds(5)));
+            // on the application's clock alone: the engine extends from the moment the request
+            // reached it, which came after extendedAt
+            final var keptAwayFor = Duration.between(extendedAt, handedOn
+                    .received()
+                    .receivedAt());
             assertAll(
-                    () -> assertFalse(handedOn
-                            .received()
-                            .receivedAt()
-                            .isBefore(extendedUntil),
-                            "handed on at %s, before the extended lock lapsed at %s"
-                                    .formatted(handedOn
-                                            .received()
-                                            .receivedAt(), extendedUntil)),
+                    () -> assertTrue(keptAwayFor.compareTo(Duration
+                            .ofSeconds(5)
+                            .minus(CLOCK_TOLERANCE)) >= 0, "handed on %s after the extension by 5 s".formatted(
+                                    keptAwayFor)),
                     () -> assertEquals(409, lost.getStatus()),
                     () -> assertTrue(ZenBpmErrors.lockLost(lost)));
         }

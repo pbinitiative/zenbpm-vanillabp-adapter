@@ -115,9 +115,10 @@ public final class ProtobufRuntimeCheck {
         final String gencodeVersion,
         final String reason
     ) {
-        return ("%s The job stream of the ZenBPM adapter was generated for protobuf %s and needs '%s' in version %s or a later "
-                + "version of the same major version. Raise '%s' to %s or later in the dependency management of the "
-                + "application; a framework's BOM may pin an older one.")
+        return """
+                %s The job stream of the ZenBPM adapter was generated for protobuf %s and needs '%s' in version %s or \
+                a later version of the same major version. Raise '%s' to %s or later in the dependency management of \
+                the application; a framework's BOM may pin an older one."""
                 .formatted(reason, gencodeVersion, DEPENDENCY, gencodeVersion, DEPENDENCY, gencodeVersion);
     }
 

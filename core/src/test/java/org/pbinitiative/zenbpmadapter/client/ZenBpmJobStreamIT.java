@@ -55,7 +55,7 @@ class ZenBpmJobStreamIT {
      * How long the stream may take to come back once the engine is in reach again: the longest
      * pause between two attempts, and a delivery.
      */
-    private static final Duration RECONNECT = ZenBpmJobStream.BACKOFF
+    private static final Duration RECONNECT = ZenBpmJobStream.PACING
             .max()
             .plus(DELIVERY);
 

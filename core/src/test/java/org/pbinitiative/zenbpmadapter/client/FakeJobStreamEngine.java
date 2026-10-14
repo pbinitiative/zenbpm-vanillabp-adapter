@@ -14,12 +14,15 @@ import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.TimeUnit;
 
 import org.pbinitiative.zenbpmadapter.client.grpc.ZenBpmGrpc;
+import org.pbinitiative.zenbpmadapter.client.grpc.Zenbpm.ErrorResult;
 import org.pbinitiative.zenbpmadapter.client.grpc.Zenbpm.JobStreamRequest;
 import org.pbinitiative.zenbpmadapter.client.grpc.Zenbpm.JobStreamResponse;
 import org.pbinitiative.zenbpmadapter.client.grpc.Zenbpm.StreamSubscriptionRequest;
 
 import io.grpc.Context;
 import io.grpc.Contexts;
+import io.grpc.Grpc;
+import io.grpc.InsecureServerCredentials;
 import io.grpc.ManagedChannel;
 import io.grpc.Metadata;
 import io.grpc.Server;
@@ -51,6 +54,8 @@ final class FakeJobStreamEngine implements AutoCloseable {
 
     private volatile boolean ignoringHalfClose;
 
+    private volatile boolean refusingSubscriptions;
+
     private Server server;
 
     /**
@@ -59,31 +64,45 @@ final class FakeJobStreamEngine implements AutoCloseable {
      * @return This engine
      */
     FakeJobStreamEngine start() {
-        final ServerInterceptor clientId = new ServerInterceptor() {
-
-            @Override
-            public <Q, R> ServerCall.Listener<Q> interceptCall(
-                final ServerCall<Q, R> call,
-                final Metadata headers,
-                final ServerCallHandler<Q, R> next
-            ) {
-                final var id = headers.get(ZenBpmJobStream.CLIENT_ID);
-                return Contexts.interceptCall(Context
-                        .current()
-                        .withValue(CLIENT_ID, id), call, headers, next);
-            }
-
-        };
         try {
             server = InProcessServerBuilder
                     .forName(name)
-                    .addService(ServerInterceptors.intercept(new JobStream(), clientId))
+                    .addService(ServerInterceptors.intercept(new JobStream(), new ClientIdInterceptor()))
                     .build()
                     .start();
         } catch (IOException e) {
             throw new UncheckedIOException(e);
         }
         return this;
+    }
+
+    /**
+     * Starts the engine over TCP, as a real engine listens, on a port the operating system picks.
+     * It takes a keepalive ping as often as a client sends one.
+     *
+     * @return This engine
+     */
+    FakeJobStreamEngine startOverTcp() {
+        try {
+            server = Grpc
+                    .newServerBuilderForPort(0, InsecureServerCredentials.create())
+                    .permitKeepAliveTime(1, TimeUnit.MILLISECONDS)
+                    .addService(ServerInterceptors.intercept(new JobStream(), new ClientIdInterceptor()))
+                    .build()
+                    .start();
+        } catch (IOException e) {
+            throw new UncheckedIOException(e);
+        }
+        return this;
+    }
+
+    /**
+     * Where an engine started by {@link #startOverTcp()} listens.
+     *
+     * @return <code>localhost:port</code>
+     */
+    String address() {
+        return "localhost:%d".formatted(server.getPort());
     }
 
     /**
@@ -95,6 +114,16 @@ final class FakeJobStreamEngine implements AutoCloseable {
     FakeJobStreamEngine ignoreHalfClose() {
         ignoringHalfClose = true;
         return this;
+    }
+
+    /**
+     * Answers every subscription with the error the engine sends where it refuses one: no code, no
+     * job, no lock, the job type only in the message.
+     *
+     * @param refusing <code>false</code> to take subscriptions again
+     */
+    void refuseSubscriptions(final boolean refusing) {
+        refusingSubscriptions = refusing;
     }
 
     /**
@@ -257,6 +286,25 @@ final class FakeJobStreamEngine implements AutoCloseable {
 
     }
 
+    /**
+     * Hands the client id of a call's metadata to the service.
+     */
+    private static final class ClientIdInterceptor implements ServerInterceptor {
+
+        @Override
+        public <Q, R> ServerCall.Listener<Q> interceptCall(
+            final ServerCall<Q, R> call,
+            final Metadata headers,
+            final ServerCallHandler<Q, R> next
+        ) {
+            final var id = headers.get(ZenBpmJobStream.CLIENT_ID);
+            return Contexts.interceptCall(Context
+                    .current()
+                    .withValue(CLIENT_ID, id), call, headers, next);
+        }
+
+    }
+
     private final class JobStream extends ZenBpmGrpc.ZenBpmImplBase {
 
         @Override
@@ -275,6 +323,16 @@ final class FakeJobStreamEngine implements AutoCloseable {
                 @Override
                 public void onNext(final JobStreamRequest request) {
                     call.requests.add(request);
+                    if (refusingSubscriptions) {
+                        responses.onNext(JobStreamResponse
+                                .newBuilder()
+                                .setError(ErrorResult
+                                        .newBuilder()
+                                        .setMessage("Failed to subscribe to job type %s".formatted(request
+                                                .getSubscription()
+                                                .getJobType())))
+                                .build());
+                    }
                 }
 
                 @Override

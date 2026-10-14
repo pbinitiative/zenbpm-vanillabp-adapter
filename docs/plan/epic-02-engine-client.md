@@ -636,7 +636,8 @@ run logs for 90 days, so what they showed is written here as well):
   `ZenBpmJobLockIT` shows the engine keeping a 2 s lock.
 - [x] The consumer runs on an adapter thread, proven by asserting the thread name prefix.
   `ZenBpmJobStreamTest#aJobReachesTheConsumerOnATimingThread` and the first IT assert
-  `zenbpm-<id>-timing-`.
+  `zenbpm-<id>-timing-`. The tests name those threads themselves; the adapter's own get their names
+  from S2.4.2, whose note asks for the same prefix.
 
 **Implemented 2026-10-14.** `ZenBpmJobStream`, `ReceivedJob` and `ProtobufRuntimeCheck` in
 `client`. `ZenBpmJobStreamTest` (29 cases, against an engine played in the same JVM with
@@ -682,14 +683,14 @@ Where the code differs from the instructions:
   type again. One naming a job or a lock answers a request the stream never sends and is logged at
   WARN. Decision 9 is now in `DECISIONS.md`, adapted from the plan's draft with this consequence;
   E13.11 asks the engine to answer subscriptions.
-- The stream counts as back on the first frame of a reopened call or once the call stayed open
-  for two seconds, because the engine sends nothing on a call it took, and ends one it refuses at
-  once. The pause before an attempt is 1 s doubling to 30 s, cut short by a random part of up to a
+- The stream counts as back on the first frame of a reopened call which is no refusal, or once the
+  call stayed open for two seconds after its connection was ready (since the review answers below),
+  because the engine sends nothing on a call it took, and ends one it refuses at once. The pause before an attempt is 1 s doubling to 30 s, cut short by a random part of up to a
   fifth. Before each attempt the stream resets the channel's own connect backoff, which grows to two
   minutes: measured with the engine away for three seconds, a channel without the reset found the
   engine back after 2 to 2.7 s instead of 0.1 s
   (`#anEngineBackInReachIsFoundOnTheNextAttempt`).
-- A refused client id is told by `UNKNOWN` before the engine sent anything on the call, and logged
+- A refused client id is told by `UNKNOWN` before the call counted as taken (see above), and logged
   at WARN once per outage with `vanillabp.adapters.<id>.client-id` and the default derivation; the
   stream keeps trying, since after a lost connection the engine may still hold the old call.
 - The executor of S2.4.2 does not exist yet, so the stream takes a `ScheduledExecutorService`, the
@@ -716,9 +717,73 @@ Where the code differs from the instructions:
   first stream unsubscribe after it received the job, so that the job, once its lock lapsed, can
   only go to the second stream (the engine hands jobs round robin).
 
-Not done: the channel sends no keepalive pings, so a connection a network silently dropped is
-noticed only when the engine sends the next job. A ping every five minutes is the most the engine
-accepts (above); E11 can add it with a test against the pinned engine.
+**Answers to two reviews, 2026-10-14.** Every finding was checked against the source, grpc-java
+1.81.0, grpc-go 1.84.0 and the engine at `bdd795a3`, and reproduced where it could be. A regression
+test was written first and seen to fail on the reviewed commit, then the fix made it pass. Valid and
+fixed:
+
+- A job waiting for a timing thread was handed on after `close()`, or after its call was lost,
+  although the end of the call had given it back to the engine. Each job now carries its call, and
+  a timing thread hands it on only while that call is the open one
+  (`#aQueuedJobIsDroppedWhenTheStreamCloses`, `#aQueuedJobIsDroppedWhenItsCallIsLost`). A
+  consumer already running when the stream closes runs to its end.
+- An error frame refusing a subscription ended the outage before it reopened the call, so an engine
+  refusing every subscription was tried every second for ever, with an INFO, an ERROR and a WARN
+  each time. A refusal no longer counts as an answer (`#refusalsKeepTheOutage`: one WARN, growing
+  pauses).
+- The refusal cancelled the call outside the stream's lock while the call stayed the open one, so a
+  `subscribe`, an `unsubscribe` or `close()` meanwhile met grpc-java's `call was cancelled`, and a
+  `close()` which threw left the channel open (reproduced: 6 of them in one second of
+  `#noSendMeetsACancelledCall`). The call is now cancelled and forgotten in one step under the lock.
+- A call counted as back two seconds after it was opened, even while its connection still waited
+  for the engine's first HTTP/2 frame; the stream then never tried again. Reproduced with a proxy
+  which accepts and never answers: the channel stayed `CONNECTING`, "is back" was logged, and the
+  stream stayed silent. The two seconds now start once the connection is ready, and a call whose
+  connection is not ready within twenty seconds counts as failed
+  (`#aConnectionNobodyAnswersIsNoReturn`).
+- A quiet, healthy call which later ended with `UNKNOWN` was reported as a refused client id,
+  because the engine sends nothing on a call it took. `UNKNOWN` now reads as a refused client id
+  only before the call counted as taken (`#aLateUnknownOnAQuietCallIsAnOrdinaryOutage`).
+- A lock duration of `Long.MAX_VALUE` milliseconds and a fraction was rounded up past the largest
+  `long` into a negative number, which the engine reads as its default.
+- **Keepalive (the user's decision: now).** The "Not done" note this block replaces was wrong: a
+  connection a network dropped silently is not noticed when the engine sends a job, since nothing
+  reaches the client. Netty sets `SO_KEEPALIVE`, but Linux probes only after two hours. The channel
+  now pings after 5 min 30 s of silence and gives up after 20 s without an answer
+  (`#aSilentlyDroppedConnectionIsNoticed`, with the shortest interval gRPC allows, 10 s). grpc-go,
+  which the engine keeps at its defaults, sends `GOAWAY too_many_pings` after the third ping which
+  comes sooner than five minutes after the one before. Measured against the pinned engine once, not
+  in the build (18 minutes): a stream pinging every minute got that `GOAWAY` after four minutes, a
+  stream with the adapter's interval stayed up for 18 minutes and still received a job afterwards.
+  E13.12 asks the engine to ping its side as well.
+- **Inbound size (the user's decision: no limit).** gRPC refuses a message above 4 MiB unless the
+  client raises the limit, and a job carries a copy of its scope's variables. The channel now takes
+  messages of any size (`#thePingsAndTheJobSizeSuitTheEngine` receives a 5 MiB job). Measured on the
+  way: the pinned engine refuses a start or a variable update above 4 MiB with `500` (its gRPC between
+  the nodes keeps the default), so no job of that size can be made today; notes under S5.1.1 and
+  E13.13.
+- A refused unsubscription gets the same error as a refused subscription; the ERROR, decision 9 and
+  E13.11 now say both.
+- The constructor's promise to refuse an old protobuf runtime had no test.
+  `#buildingOnAnOldProtobufRuntimeIsRefused` builds the stream through a class loader which hides
+  `RuntimeVersion` and loads the generated classes itself, so a check moved behind a generated
+  class fails it.
+- Long messages were joined with `+`; they are text blocks now, as everywhere else in the
+  repository. The job types in log lines are a copy, a Javadoc line was rewrapped, and
+  `ZenBpmJobLockIT` measures the locks on the application's clock alone. The thread-name criterion
+  says who names the threads.
+
+Seen to fail, each restored afterwards: a queued job handed on after its call ended, a refusal
+counted as back, a cancelled call left as the open one, a quiet call never counting as taken, the
+two seconds counted from the opening, no deadline for a connection, no keepalive, gRPC's default
+inbound limit, the protobuf check skipped, and the rounding overflow. After the answers `mvn clean
+install` builds green (`ZenBpmJobStreamTest` 38 cases, `ProtobufRuntimeCheckTest` 5,
+`ZenBpmJobStreamIT` 2, `ZenBpmJobLockIT` 3), the coverage gate measures 100 % of 6,186 instructions
+on both platforms, and `bin/check-deploy-safety.sh` passes both runs.
+
+Not changed: one engine claim of a review is not right. It said Netty does not set `SO_KEEPALIVE`;
+grpc-java's `NettyClientTransport` does. The finding stands, because Linux sends the first probe
+after two hours.
 
 ---
 
