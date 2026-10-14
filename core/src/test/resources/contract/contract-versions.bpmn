@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" id="Definitions_ContractVersions" targetNamespace="http://bpmn.io/schema/bpmn">
+  <bpmn:process id="contract-versions" name="Version 1" isExecutable="true">
+    <bpmn:startEvent id="StartEvent">
+      <bpmn:outgoing>Flow_ToEnd</bpmn:outgoing>
+    </bpmn:startEvent>
+    <bpmn:sequenceFlow id="Flow_ToEnd" sourceRef="StartEvent" targetRef="EndEvent" />
+    <bpmn:endEvent id="EndEvent">
+      <bpmn:incoming>Flow_ToEnd</bpmn:incoming>
+    </bpmn:endEvent>
+  </bpmn:process>
+</bpmn:definitions>

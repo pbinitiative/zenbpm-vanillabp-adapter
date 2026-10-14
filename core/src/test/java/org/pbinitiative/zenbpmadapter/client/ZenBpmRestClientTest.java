@@ -24,6 +24,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.OptionalInt;
 import java.util.concurrent.TimeoutException;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
@@ -481,8 +482,8 @@ class ZenBpmRestClientTest {
                 .items()
                 .size());
         assertFalse(page.last());
-        assertEquals(List.of("businessKey=order+1%262&bpmnProcessId=orders_order&processDefinitionKey=4503599627370498"
-                + "&state=active&createdFrom=2026-10-13T00%3A00%3A00Z&page=1&size=1&sortBy=key&sortOrder=asc"),
+        assertEquals(List.of(
+                "businessKey=order+1%262&bpmnProcessId=orders_order&processDefinitionKey=4503599627370498&state=active&createdFrom=2026-10-13T00%3A00%3A00Z&page=1&size=1&sortBy=key&sortOrder=asc"),
                 queries());
 
     }
@@ -681,8 +682,9 @@ class ZenBpmRestClientTest {
 
         assertEquals(1, page.totalCount());
         assertTrue(page.last());
-        assertEquals(List.of("jobType=orders_order%23ship&state=terminated&processInstanceKey=4503599627370501"
-                + "&page=1&size=10&sortBy=key&sortOrder=asc"), queries());
+        assertEquals(List.of(
+                "jobType=orders_order%23ship&state=terminated&processInstanceKey=4503599627370501&page=1&size=10&sortBy=key&sortOrder=asc"),
+                queries());
 
     }
 
@@ -731,20 +733,58 @@ class ZenBpmRestClientTest {
 
     }
 
-    @Test
-    @DisplayName("A lock is extended by an ISO-8601 duration, and the new deadline is read")
-    void aLockIsExtended() throws Exception {
+    @ParameterizedTest(name = "{0} is sent as {1}")
+    @MethodSource("lockDurations")
+    @DisplayName("A lock is extended by whole seconds, rounded up, and the new deadline is read")
+    void aLockIsExtended(
+        final Duration duration,
+        final String sent
+    ) throws Exception {
 
         engine.answers("POST", "/v1/jobs/1/extend-lock", 200, """
                 {"lockUntil": "2026-10-13T15:20:30Z"}""");
 
-        final var lockUntil = client.extendJobLock(1, "app-orders-1a2b3c4d", Duration.ofMinutes(5));
+        final var lockUntil = client.extendJobLock(1, "app-orders-1a2b3c4d", duration);
 
         assertEquals(Instant.parse("2026-10-13T15:20:30Z"), lockUntil);
         assertEquals(JSON.readTree("""
-                {"clientId": "app-orders-1a2b3c4d", "lockDuration": "PT5M"}"""), JSON.readTree(engine
+                {"clientId": "app-orders-1a2b3c4d", "lockDuration": "%s"}""".formatted(sent)), JSON.readTree(engine
                 .onlyRequest()
                 .body()));
+
+    }
+
+    @Test
+    @DisplayName("A lock extended without a duration sends none, so the subscription's duration applies")
+    void aLockExtendedWithoutADuration() throws Exception {
+
+        engine.answers("POST", "/v1/jobs/1/extend-lock", 200, """
+                {"lockUntil": "2026-10-13T15:20:30Z"}""");
+
+        client.extendJobLock(1, "app-orders-1a2b3c4d", null);
+
+        assertEquals(JSON.readTree("""
+                {"clientId": "app-orders-1a2b3c4d"}"""), JSON.readTree(engine
+                .onlyRequest()
+                .body()));
+
+    }
+
+    @ParameterizedTest(name = "{0}")
+    @ValueSource(strings = {
+            "PT0S", "PT-1S"
+    })
+    @DisplayName("A lock duration which is not positive is refused before anything is sent")
+    void aLockDurationWhichIsNotPositiveIsRefused(
+        final String duration
+    ) {
+
+        final var failure = assertThrows(IllegalArgumentException.class,
+                () -> client.extendJobLock(1, "app-orders-1a2b3c4d", Duration.parse(duration)));
+
+        assertEquals("A lock is extended by a positive duration, but %s was asked for".formatted(duration),
+                failure.getMessage());
+        assertEquals(List.of(), engine.requests());
 
     }
 
@@ -971,9 +1011,23 @@ class ZenBpmRestClientTest {
                 () -> assertEquals(ADAPTER_ID, failure.getAdapterId()),
                 () -> assertEquals("GET", failure.getMethod()),
                 () -> assertEquals("/v1/jobs/1", failure.getPath()),
+                () -> assertEquals(OptionalInt.of(200), failure.getStatus()),
                 () -> assertEquals(
                         "ZenBPM adapter 'orders': GET /v1/jobs/1 was answered with status 200, but the answer cannot be read",
                         failure.getMessage()));
+
+    }
+
+    @Test
+    @DisplayName("A start whose answer cannot be read names the status, which says the instance was created")
+    void aStartWhoseAnswerCannotBeReadNamesTheStatus() {
+
+        engine.answers("POST", "/v1/process-instances", 201, "<html>maintenance</html>");
+
+        final var failure = assertThrows(ZenBpmUnavailableException.class,
+                () -> client.createInstance(CreateInstanceRequest.latestVersionOf("orders_order")));
+
+        assertEquals(OptionalInt.of(201), failure.getStatus());
 
     }
 
@@ -986,8 +1040,10 @@ class ZenBpmRestClientTest {
         final var failure = assertUnavailableInTime(() -> client.job(1));
 
         assertInstanceOf(HttpTimeoutException.class, failure.getCause());
-        assertEquals("ZenBPM adapter 'orders': GET /v1/jobs/1 got no answer within PT1S, which "
-                + "'vanillabp.adapters.orders.request-timeout' allows", failure.getMessage());
+        assertEquals(OptionalInt.empty(), failure.getStatus());
+        assertEquals(
+                "ZenBPM adapter 'orders': GET /v1/jobs/1 got no answer within PT1S, which 'vanillabp.adapters.orders.request-timeout' allows",
+                failure.getMessage());
 
     }
 
@@ -995,14 +1051,64 @@ class ZenBpmRestClientTest {
     @DisplayName("A body which stops arriving ends the call in time too")
     void aBodyWhichStopsArrivingEndsTheCallInTime() {
 
-        engine.answers("GET", "/v1/jobs/1", ZenBpmRestClientTest::stallTheBody);
+        engine.answers("GET", "/v1/jobs/1", exchange -> stallTheBody(exchange, 200));
 
         final var failure = assertUnavailableInTime(() -> client.job(1));
 
         assertInstanceOf(TimeoutException.class, failure.getCause());
+        assertEquals(OptionalInt.of(200), failure.getStatus());
+        assertEquals(
+                "ZenBPM adapter 'orders': GET /v1/jobs/1 was answered with status 200, but the body did not arrive within PT1S, which 'vanillabp.adapters.orders.request-timeout' allows",
+                failure.getMessage());
+
+    }
+
+    @Test
+    @DisplayName("An unexpected status whose body stops arriving is the engine's answer all the same")
+    void anUnexpectedStatusWhoseBodyStopsArriving() {
+
+        engine.answers("POST", "/v1/jobs/1/complete", exchange -> stallTheBody(exchange, 400));
+
+        final var failure = assertTimeoutPreemptively(REQUEST_TIMEOUT.plus(TIMEOUT_TOLERANCE),
+                () -> assertThrows(ZenBpmApiException.class, () -> client.completeJob(1, null)));
+
+        assertAll(
+                () -> assertEquals(400, failure.getStatus()),
+                () -> assertNull(failure.getEngineCode()),
+                () -> assertNull(failure.getEngineMessage()),
+                () -> assertInstanceOf(TimeoutException.class, failure.getCause()),
+                () -> assertEquals("ZenBPM adapter 'orders': POST /v1/jobs/1/complete was answered with status 400",
+                        failure.getMessage()));
+
+    }
+
+    @Test
+    @DisplayName("An unexpected status whose body breaks off is the engine's answer all the same")
+    void anUnexpectedStatusWhoseBodyBreaksOff() {
+
+        engine.answers("POST", "/v1/jobs/1/complete", exchange -> breakOffTheBody(exchange, 409));
+
+        final var failure = assertThrows(ZenBpmApiException.class, () -> client.completeJob(1, null));
+
+        assertEquals(409, failure.getStatus());
+        assertInstanceOf(IOException.class, failure.getCause());
+
+    }
+
+    @Test
+    @DisplayName("An expected status whose body breaks off is no usable answer, and names the status")
+    void anExpectedStatusWhoseBodyBreaksOff() {
+
+        engine.answers("GET", "/v1/jobs/1", exchange -> breakOffTheBody(exchange, 200));
+
+        final var failure = assertThrows(ZenBpmUnavailableException.class, () -> client.job(1));
+
+        assertEquals(OptionalInt.of(200), failure.getStatus());
         assertTrue(failure
                 .getMessage()
-                .contains("got no answer within PT1S"), failure::getMessage);
+                .startsWith(
+                        "ZenBPM adapter 'orders': GET /v1/jobs/1 was answered with status 200, but the body did not arrive ("),
+                failure::getMessage);
 
     }
 
@@ -1039,7 +1145,7 @@ class ZenBpmRestClientTest {
         final var failure = assertThrows(ZenBpmUnavailableException.class, () -> client.job(1));
 
         assertTrue(Thread.interrupted(), "the interrupt is kept for the caller");
-        assertEquals("ZenBPM adapter 'orders': GET /v1/jobs/1 was interrupted before the engine answered",
+        assertEquals("ZenBPM adapter 'orders': GET /v1/jobs/1 got no answer before the calling thread was interrupted",
                 failure.getMessage());
 
     }
@@ -1062,12 +1168,26 @@ class ZenBpmRestClientTest {
     void closingDoesNotWaitForACallWhichRanOutOfTime() {
 
         // the headers arrive and the body stops, so only the client's own wait ends the call
-        engine.answers("GET", "/v1/jobs/1", ZenBpmRestClientTest::stallTheBody);
+        engine.answers("GET", "/v1/jobs/1", exchange -> stallTheBody(exchange, 200));
         final var closing = clientOf(engine.address());
         assertUnavailableInTime(() -> closing.job(1));
 
         assertTimeoutPreemptively(TIMEOUT_TOLERANCE, closing::close,
                 "Closing waited for the call which had run out of time");
+
+    }
+
+    @Test
+    @DisplayName("A call after the client was closed is refused, and is no sign of an unavailable engine")
+    void aCallAfterCloseIsRefused() {
+
+        client.close();
+
+        final var failure = assertThrows(IllegalStateException.class, () -> client.job(1));
+
+        assertEquals("ZenBPM adapter 'orders': GET /v1/jobs/1 was called after the client was closed",
+                failure.getMessage());
+        assertEquals(List.of(), engine.requests());
 
     }
 
@@ -1174,9 +1294,21 @@ class ZenBpmRestClientTest {
                 Arguments.of("null", "null"),
                 Arguments.of("a required field missing", JOB.replace("\"key\": 4503599627370540,", "")),
                 Arguments.of("a required number null", JOB.replace("4503599627370540", "null")),
+                Arguments.of("a required text null", JOB.replace("\"Task_Ship\"", "null")),
+                Arguments.of("a whole number with a fraction", JOB.replace("4503599627370540", "7.9")),
                 Arguments.of("a state the pinned API does not know", JOB.replace("\"active\"", "\"paused\"")),
                 Arguments.of("a timestamp which is none", JOB.replace("2026-10-13T15:10:26Z", "yesterday")),
                 Arguments.of("variables null", JOB.replace("{\"orderId\": \"order-1\"}", "null")));
+
+    }
+
+    private static Stream<Arguments> lockDurations() {
+
+        return Stream.of(
+                Arguments.of(Duration.ofMinutes(5), "PT300S"),
+                Arguments.of(Duration.ofSeconds(30), "PT30S"),
+                Arguments.of(Duration.ofMillis(1_500), "PT2S"),
+                Arguments.of(Duration.ofNanos(1), "PT1S"));
 
     }
 
@@ -1237,10 +1369,11 @@ class ZenBpmRestClientTest {
     }
 
     private static void stallTheBody(
-        final HttpExchange exchange
+        final HttpExchange exchange,
+        final int status
     ) throws IOException {
 
-        exchange.sendResponseHeaders(200, 1_000);
+        exchange.sendResponseHeaders(status, 1_000);
         exchange
                 .getResponseBody()
                 .write("{\"key\":".getBytes(StandardCharsets.UTF_8));
@@ -1248,6 +1381,23 @@ class ZenBpmRestClientTest {
                 .getResponseBody()
                 .flush();
         sleepLongerThanTheTimeout();
+
+    }
+
+    // fewer bytes than announced, then the connection ends; flushed, or the headers end with it
+    private static void breakOffTheBody(
+        final HttpExchange exchange,
+        final int status
+    ) throws IOException {
+
+        exchange.sendResponseHeaders(status, 1_000);
+        exchange
+                .getResponseBody()
+                .write("{\"key\":".getBytes(StandardCharsets.UTF_8));
+        exchange
+                .getResponseBody()
+                .flush();
+        exchange.close();
 
     }
 

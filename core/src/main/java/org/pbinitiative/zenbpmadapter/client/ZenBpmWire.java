@@ -12,9 +12,10 @@ import com.fasterxml.jackson.annotation.JsonProperty;
 /**
  * The JSON the engine reads and writes, named as the schemas of the pinned copy of the engine's
  * <code>api.yaml</code> name it, with the fields the adapter uses. A field the schema requires is
- * required here too, so an answer without it fails to decode instead of reading as 0 or
- * <code>null</code>. These types never leave {@link ZenBpmRestClient}, which turns them into the
- * records of the <code>api</code> package.
+ * required here too, so an answer without it, or with <code>null</code> in it, fails to decode
+ * instead of reading as 0 or <code>null</code>. A whole number with a fraction fails as well.
+ * These types never leave {@link ZenBpmRestClient}, which turns them into the records of the
+ * <code>api</code> package.
  */
 final class ZenBpmWire {
 

@@ -22,6 +22,12 @@ import java.util.Map;
  * can be changed.</li>
  * </ul>
  * A date has no type of its own in JSON and is a {@link String}.
+ * <p>
+ * The engine stores every number as a floating-point number of 64 bits. That holds a whole number
+ * exactly up to 2^53 (9,007,199,254,740,992), and a larger one comes back rounded: 2^53 + 1 is read
+ * back as 2^53. From 10^21 on, the engine writes a number with an exponent, so it comes back as a
+ * {@link Double}. An id which may be larger than 2^53, like a key of the engine, belongs in a
+ * {@link String}.
  */
 public final class Variables {
 

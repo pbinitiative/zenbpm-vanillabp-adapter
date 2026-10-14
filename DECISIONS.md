@@ -52,7 +52,9 @@ While an application boots, the adapter answers questions which read what the en
 and that grows for as long as the application is in production: how many workflows still run on an
 old version, how many tasks are open for a process. A start of ten seconds must not become one of
 two minutes because the application did its job for two years. The platform states this rule for
-every adapter as decision 19 of its own DECISIONS.md, the Camunda 8 adapter as its decision 13.
+every adapter in its own DECISIONS.md, as decision 19 "A start asks for numbers, and asks as many
+questions on the last day as on the first". The Camunda 8 adapter states it as its decision 13, "A
+start asks the cluster for numbers, and asks as many of them on the last day as on the first".
 
 For ZenBPM a quantity is read from what the engine counts: the `totalCount` of a search which asked
 for a small page, or a statistics endpoint. The items of the page which came back are never counted.

@@ -11,6 +11,7 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpRequest.BodyPublisher;
 import java.net.http.HttpRequest.BodyPublishers;
+import java.net.http.HttpResponse.BodyHandler;
 import java.net.http.HttpResponse.BodyHandlers;
 import java.net.http.HttpTimeoutException;
 import java.nio.charset.StandardCharsets;
@@ -29,6 +30,7 @@ import java.util.Optional;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Function;
 import java.util.function.IntFunction;
 import java.util.function.IntPredicate;
@@ -48,9 +50,14 @@ import org.pbinitiative.zenbpmadapter.client.api.ProcessInstanceRef;
 import org.pbinitiative.zenbpmadapter.client.api.Readiness;
 
 import com.fasterxml.jackson.annotation.JsonInclude;
+import com.fasterxml.jackson.annotation.JsonSetter;
+import com.fasterxml.jackson.annotation.Nulls;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.introspect.Annotated;
+import com.fasterxml.jackson.databind.introspect.AnnotatedMember;
+import com.fasterxml.jackson.databind.introspect.JacksonAnnotationIntrospector;
 import com.fasterxml.jackson.databind.json.JsonMapper;
 
 /**
@@ -59,11 +66,16 @@ import com.fasterxml.jackson.databind.json.JsonMapper;
  * against the copy of the engine's <code>api.yaml</code> this repository pins, see decision 3 in
  * the repository's DECISIONS.md.
  * <p>
- * Every call ends within <code>request-timeout</code>, counted from sending the request; one
- * whose answer started but whose body stopped arriving is given a quarter of a second more. A status the call does not expect throws {@link ZenBpmApiException}. No answer
- * the adapter can use throws {@link ZenBpmUnavailableException}: the engine unreachable or too
- * slow, the connection broken, an answer which cannot be read. The engine adds fields between
- * minor versions, so a field the adapter does not know is ignored.
+ * Every call ends within <code>request-timeout</code>, counted from sending the request. A call
+ * whose answer started but whose body stopped arriving is given a quarter of a second more. The
+ * whole body has to arrive in that time, so a large answer over a slow link may run out of it.
+ * <p>
+ * A status the call does not expect throws {@link ZenBpmApiException}, also where its body never
+ * arrives: the status is what the engine decided, the body only explains it. No answer the adapter
+ * can use throws {@link ZenBpmUnavailableException}: the engine unreachable or too slow, the
+ * connection broken, an answer which cannot be read. The engine adds fields between minor
+ * versions, so a field the adapter does not know is ignored. A call after {@link #close()} throws
+ * {@link IllegalStateException}.
  * <p>
  * The engine's business API lives under <code>/v1</code> of <code>rest-address</code>, its
  * operational endpoints under <code>/system</code> beside it. Building a client contacts nothing.
@@ -108,6 +120,8 @@ public class ZenBpmRestClient implements AutoCloseable {
 
     private final ObjectMapper json;
 
+    private volatile boolean closed;
+
     /**
      * A client of the engine a configuration names. Contacts nothing.
      *
@@ -136,6 +150,9 @@ public class ZenBpmRestClient implements AutoCloseable {
                 .builder()
                 .disable(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES)
                 .enable(DeserializationFeature.FAIL_ON_NULL_FOR_PRIMITIVES)
+                // a key with a fraction is no key, rather than a key cut down to a whole number
+                .disable(DeserializationFeature.ACCEPT_FLOAT_AS_INT)
+                .annotationIntrospector(new RequiredMeansNotNull())
                 // a field left null is not sent, but a variable set to null is
                 .defaultPropertyInclusion(
                         JsonInclude.Value.construct(JsonInclude.Include.NON_NULL, JsonInclude.Include.ALWAYS))
@@ -167,17 +184,21 @@ public class ZenBpmRestClient implements AutoCloseable {
     public EngineStatus status() {
 
         final var call = new Call(GET, "/system/status");
-        return call.decoded(call.send(SUCCESS), ZenBpmWire.SystemStatus.class, status -> new EngineStatus(
-                status
-                        .build()
-                        .version(), status
-                                .git()
-                                .commitId(), status
-                                        .nodes()
-                                        .keySet()
-                                        .stream()
-                                        .sorted()
-                                        .toList()));
+        return call.decoded(call.send(SUCCESS), ZenBpmWire.SystemStatus.class, status -> {
+            final var nodes = status
+                    .nodes()
+                    .keySet()
+                    .stream()
+                    .sorted()
+                    .toList();
+            final var version = status
+                    .build()
+                    .version();
+            final var commit = status
+                    .git()
+                    .commitId();
+            return new EngineStatus(version, commit, nodes);
+        });
 
     }
 
@@ -391,7 +412,10 @@ public class ZenBpmRestClient implements AutoCloseable {
     /**
      * One page of the flow elements a process instance visited (<code>GET
      * /v1/process-instances/{key}/history</code>), in the order they were entered,
-     * {@value #PAGE_SIZE} to a page.
+     * {@value #PAGE_SIZE} to a page. The engine orders them by the millisecond they were entered
+     * and by nothing else, and no other order is offered. So entries of the same millisecond may
+     * swap places between two reads, and where they meet at the end of a page, one of them may
+     * come on both pages or on neither.
      *
      * @param key The process instance key
      * @param page The page, counted from 1
@@ -410,15 +434,11 @@ public class ZenBpmRestClient implements AutoCloseable {
         final var call = new Call(GET, "/v1/process-instances/%d/history".formatted(key), query);
         return call.decoded(call.send(SUCCESS), ZenBpmWire.FlowElementHistoryPage.class, read -> {
             final var items = Objects.requireNonNullElse(read.items(), List.<ZenBpmWire.FlowElementHistory>of());
-            return new Page<>(
-                    items
-                            .stream()
-                            .map(entry -> new HistoryEntry(
-                                    entry.key(), entry.elementId(), entry.elementType(), entry
-                                            .processInstanceKey(), Instant
-                                                    .parse(entry.createdAt()), entry.completedAt() == null ? null
-                                                            : Instant.parse(entry.completedAt())))
-                            .toList(), read.totalCount(), isLastPage(page, items.size(), read.totalCount()));
+            final var entries = items
+                    .stream()
+                    .map(ZenBpmRestClient::historyEntry)
+                    .toList();
+            return new Page<>(entries, read.totalCount(), isLastPage(page, items.size(), read.totalCount()));
         });
 
     }
@@ -534,8 +554,12 @@ public class ZenBpmRestClient implements AutoCloseable {
      *
      * @param key The job key
      * @param clientId The client id of the job stream the job was delivered to
-     * @param duration How long from now the job stays locked
+     * @param duration How long from now the job stays locked, rounded up to whole seconds;
+     *            <code>null</code> for the lock duration of the subscription the job was delivered
+     *            under
      * @return When the extended lock lapses, on the engine's clock
+     * @throws IllegalArgumentException Where the duration is zero or negative, before anything is
+     *             sent
      * @throws ZenBpmApiException With status 409 where the lock is not held, or is held by another
      *             client
      */
@@ -546,7 +570,7 @@ public class ZenBpmRestClient implements AutoCloseable {
     ) {
 
         final var call = new Call(POST, "/v1/jobs/%d/extend-lock".formatted(key));
-        final var body = call.jsonBody(new ZenBpmWire.ExtendJobLock(clientId, duration.toString()));
+        final var body = call.jsonBody(new ZenBpmWire.ExtendJobLock(clientId, lockDuration(duration)));
         return call.decoded(call.send(JSON, body, SUCCESS), ZenBpmWire.LockExtended.class,
                 lock -> Instant.parse(lock.lockUntil()));
 
@@ -572,11 +596,13 @@ public class ZenBpmRestClient implements AutoCloseable {
 
     /**
      * Closes the HTTP client, after the calls in flight have ended. Each of them ends within
-     * <code>request-timeout</code> and a quarter of a second.
+     * <code>request-timeout</code> and a quarter of a second. A call after that throws
+     * {@link IllegalStateException}: a closed client is no sign of an engine which is unavailable.
      */
     @Override
     public void close() {
 
+        closed = true;
         http.close();
 
     }
@@ -592,14 +618,14 @@ public class ZenBpmRestClient implements AutoCloseable {
         query.put("onlyLatest", onlyLatest);
         sortedByKey(query, page, PAGE_SIZE);
         final var call = new Call(GET, "/v1/process-definitions", query);
-        return call.decoded(call.send(SUCCESS), ZenBpmWire.ProcessDefinitionsPage.class, read -> new Page<>(
-                read
-                        .items()
-                        .stream()
-                        .map(ZenBpmRestClient::processDefinitionRef)
-                        .toList(), read.totalCount(), isLastPage(page, read
-                                .items()
-                                .size(), read.totalCount())));
+        return call.decoded(call.send(SUCCESS), ZenBpmWire.ProcessDefinitionsPage.class, read -> {
+            final var definitions = read
+                    .items()
+                    .stream()
+                    .map(ZenBpmRestClient::processDefinitionRef)
+                    .toList();
+            return new Page<>(definitions, read.totalCount(), isLastPage(page, definitions.size(), read.totalCount()));
+        });
 
     }
 
@@ -696,13 +722,49 @@ public class ZenBpmRestClient implements AutoCloseable {
 
     }
 
+    // the engine reads whole seconds only and refuses PT1.5S; rounding up never shortens the lock
+    private static String lockDuration(
+        final Duration duration
+    ) {
+
+        if (duration == null) {
+            return null;
+        }
+        if (duration.isZero() || duration.isNegative()) {
+            throw new IllegalArgumentException("A lock is extended by a positive duration, but %s was asked for"
+                    .formatted(duration));
+        }
+        final var seconds = duration.getSeconds() + ((duration.getNano() > 0) ? 1 : 0);
+        return "PT%dS".formatted(seconds);
+
+    }
+
     private static ProcessDefinitionRef processDefinitionRef(
         final ZenBpmWire.ProcessDefinition definition
     ) {
 
-        return new ProcessDefinitionRef(
-                definition.key(), definition.bpmnProcessId(), definition.version(), definition.versionTag(), definition
-                        .bpmnData());
+        final var key = definition.key();
+        final var bpmnProcessId = definition.bpmnProcessId();
+        final var version = definition.version();
+        final var versionTag = definition.versionTag();
+        final var bpmnData = definition.bpmnData();
+        return new ProcessDefinitionRef(key, bpmnProcessId, version, versionTag, bpmnData);
+
+    }
+
+    private static HistoryEntry historyEntry(
+        final ZenBpmWire.FlowElementHistory entry
+    ) {
+
+        final var key = entry.key();
+        final var elementId = entry.elementId();
+        final var elementType = entry.elementType();
+        final var instanceKey = entry.processInstanceKey();
+        final var createdAt = Instant.parse(entry.createdAt());
+        final var completedAt = entry.completedAt() == null
+                ? null
+                : Instant.parse(entry.completedAt());
+        return new HistoryEntry(key, elementId, elementType, instanceKey, createdAt, completedAt);
 
     }
 
@@ -710,13 +772,18 @@ public class ZenBpmRestClient implements AutoCloseable {
         final ZenBpmWire.ProcessInstance instance
     ) {
 
+        final var key = instance.key();
+        final var definitionKey = instance.processDefinitionKey();
+        final var bpmnProcessId = instance.bpmnProcessId();
+        final var version = instance.version();
+        final var versionTag = instance.versionTag();
+        final var businessKey = instance.businessKey();
         final var state = instanceState(instance.state());
-        final var processType = processType(instance.processType());
         final var variables = variables(instance.variables());
-        return new ProcessInstanceRef(instance.key(), instance.processDefinitionKey(), instance
-                .bpmnProcessId(), instance.version(), instance.versionTag(), instance
-                        .businessKey(), state, variables, instance
-                                .parentProcessInstanceKey(), processType, Instant.parse(instance.createdAt()));
+        final var parentKey = instance.parentProcessInstanceKey();
+        final var processType = processType(instance.processType());
+        final var createdAt = Instant.parse(instance.createdAt());
+        return new ProcessInstanceRef(key, definitionKey, bpmnProcessId, version, versionTag, businessKey, state, variables, parentKey, processType, createdAt);
 
     }
 
@@ -753,11 +820,17 @@ public class ZenBpmRestClient implements AutoCloseable {
         final ZenBpmWire.Job job
     ) {
 
+        final var key = job.key();
+        final var type = job.type();
         final var state = jobState(job.state());
+        final var elementId = job.elementId();
+        final var elementType = job.elementType();
+        final var elementInstanceKey = job.elementInstanceKey();
+        final var instanceKey = job.processInstanceKey();
+        final var assignee = job.assignee();
         final var inputVariables = variables(job.inputVariables());
-        return new JobRef(job.key(), job.type(), state, job.elementId(), job.elementType(), job
-                .elementInstanceKey(), job
-                        .processInstanceKey(), job.assignee(), inputVariables, Instant.parse(job.createdAt()));
+        final var createdAt = Instant.parse(job.createdAt());
+        return new JobRef(key, type, state, elementId, elementType, elementInstanceKey, instanceKey, assignee, inputVariables, createdAt);
 
     }
 
@@ -777,8 +850,8 @@ public class ZenBpmRestClient implements AutoCloseable {
 
     // Jackson reads a whole number as an Integer where it fits, else as a Long or a BigInteger;
     // the api package promises a Long for every one which fits a Long. Jackson's own
-    // USE_LONG_FOR_INTS would refuse a number beyond a Long instead, and the engine writes a large
-    // whole number exactly that way. Nested objects and arrays are copied unmodifiable on the way.
+    // USE_LONG_FOR_INTS would refuse a number beyond a Long instead, which the engine writes
+    // without an exponent up to 1e21. Nested objects and arrays are copied unmodifiable on the way.
     private static Map<String, Object> variables(
         final Map<String, Object> variables
     ) {
@@ -806,6 +879,29 @@ public class ZenBpmRestClient implements AutoCloseable {
             }
             case null, default -> value;
         };
+
+    }
+
+    /**
+     * Reads a field the schema requires as required in both ways: present, and not
+     * <code>null</code>. Jackson's own <code>required</code> checks presence only.
+     */
+    private static final class RequiredMeansNotNull extends JacksonAnnotationIntrospector {
+
+        private static final long serialVersionUID = 1L;
+
+        @Override
+        public JsonSetter.Value findSetterInfo(
+            final Annotated annotated
+        ) {
+
+            final var setter = super.findSetterInfo(annotated);
+            if ((annotated instanceof AnnotatedMember member) && Boolean.TRUE.equals(hasRequiredMarker(member))) {
+                return setter.withValueNulls(Nulls.FAIL);
+            }
+            return setter;
+
+        }
 
     }
 
@@ -874,6 +970,10 @@ public class ZenBpmRestClient implements AutoCloseable {
             final IntPredicate expected
         ) {
 
+            if (closed) {
+                throw new IllegalStateException("ZenBPM adapter '%s': %s %s was called after the client was closed"
+                        .formatted(adapterId, method, path));
+            }
             final var request = HttpRequest
                     .newBuilder(uri)
                     .timeout(requestTimeout)
@@ -882,7 +982,7 @@ public class ZenBpmRestClient implements AutoCloseable {
             if (contentType != null) {
                 request.header("Content-Type", contentType);
             }
-            final var answer = exchange(request.build());
+            final var answer = exchange(request.build(), expected);
             if (!expected.test(answer.status())) {
                 throw unexpected(answer);
             }
@@ -903,9 +1003,9 @@ public class ZenBpmRestClient implements AutoCloseable {
 
         }
 
-        // An answer the adapter cannot read is no answer it can use: what the engine did is
-        // unknown. That covers a mapping which meets a value the pinned API does not know, or a
-        // null where the API promises a value, so a NullPointerException is caught as well.
+        // An answer the adapter cannot read is no answer it can use, although its status says
+        // what the engine did. That covers a mapping which meets a value the pinned API does not
+        // know, or a null where the API promises a value, so a NullPointerException is caught too.
         <W, T> T decoded(
             final Answer answer,
             final Class<W> wireType,
@@ -915,19 +1015,29 @@ public class ZenBpmRestClient implements AutoCloseable {
             try {
                 return mapping.apply(Objects.requireNonNull(json.readValue(answer.body(), wireType)));
             } catch (IOException | IllegalArgumentException | DateTimeException | NullPointerException e) {
-                throw new ZenBpmUnavailableException(adapterId, "was answered with status %d, but the answer cannot be read"
-                        .formatted(answer.status()), e, method, path);
+                final var status = answer.status();
+                final var what = "was answered with status %d, but the answer cannot be read".formatted(status);
+                throw new ZenBpmUnavailableException(adapterId, status, what, e, method, path);
             }
 
         }
 
         private Answer exchange(
-            final HttpRequest request
+            final HttpRequest request,
+            final IntPredicate expected
         ) {
 
+            // kept as soon as the headers arrive, so the status survives a body which does not
+            final var status = new AtomicInteger();
+            final BodyHandler<byte[]> statusKept = headers -> {
+                status.set(headers.statusCode());
+                return BodyHandlers
+                        .ofByteArray()
+                        .apply(headers);
+            };
             // the request's own timeout ends when the answer's headers arrive, so waiting for the
             // future bounds a body which stops arriving as well
-            final var future = http.sendAsync(request, BodyHandlers.ofByteArray());
+            final var future = http.sendAsync(request, statusKept);
             try {
                 final var response = future.get(requestTimeout
                         .plus(BODY_TIMEOUT_MARGIN)
@@ -935,30 +1045,50 @@ public class ZenBpmRestClient implements AutoCloseable {
                 return new Answer(response.statusCode(), response.body());
             } catch (TimeoutException e) {
                 future.cancel(true);
-                throw noAnswerInTime(e);
+                throw incomplete(status.get(), expected, withinTimeout(), e);
             } catch (ExecutionException e) {
-                if (e.getCause() instanceof HttpTimeoutException) {
-                    throw noAnswerInTime(e.getCause());
-                }
-                throw new ZenBpmUnavailableException(adapterId, "got no answer (%s)".formatted(e.getCause()), e
-                        .getCause(), method, path);
+                final var reason = e.getCause() instanceof HttpTimeoutException
+                        ? withinTimeout()
+                        : "(%s)".formatted(e.getCause());
+                throw incomplete(status.get(), expected, reason, e.getCause());
             } catch (InterruptedException e) {
                 future.cancel(true);
                 Thread
                         .currentThread()
                         .interrupt();
-                throw new ZenBpmUnavailableException(adapterId, "was interrupted before the engine answered", e, method, path);
+                throw incomplete(status.get(), expected, "before the calling thread was interrupted", e);
             }
 
         }
 
-        private ZenBpmUnavailableException noAnswerInTime(
+        private String withinTimeout() {
+
+            return "within %s, which '%s' allows".formatted(requestTimeout,
+                    ZenBpmAdapterConfiguration.propertyKey(adapterId, "request-timeout"));
+
+        }
+
+        // A status the call does not expect is the engine's answer, whether its body arrived or
+        // not. Any other call which did not end with a whole answer is no answer the adapter can
+        // use, and it names the status where one arrived.
+        private RuntimeException incomplete(
+            final int status,
+            final IntPredicate expected,
+            final String reason,
             final Throwable cause
         ) {
 
-            return new ZenBpmUnavailableException(adapterId, "got no answer within %s, which '%s' allows"
-                    .formatted(requestTimeout,
-                            ZenBpmAdapterConfiguration.propertyKey(adapterId, "request-timeout")), cause, method, path);
+            if (status == 0) {
+                return new ZenBpmUnavailableException(adapterId, "got no answer %s"
+                        .formatted(reason), cause, method, path);
+            }
+            if (!expected.test(status)) {
+                final var unexpected = new ZenBpmApiException(adapterId, status, null, null, method, path);
+                unexpected.initCause(cause);
+                return unexpected;
+            }
+            return new ZenBpmUnavailableException(adapterId, status, "was answered with status %d, but the body did not arrive %s"
+                    .formatted(status, reason), cause, method, path);
 
         }
 

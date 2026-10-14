@@ -14,6 +14,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.IOException;
 import java.io.UncheckedIOException;
+import java.math.BigInteger;
+import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
@@ -24,6 +26,7 @@ import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Supplier;
+import java.util.stream.Stream;
 
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
@@ -36,6 +39,7 @@ import org.pbinitiative.zenbpmadapter.client.api.HistoryEntry;
 import org.pbinitiative.zenbpmadapter.client.api.InstanceFilter;
 import org.pbinitiative.zenbpmadapter.client.api.JobFilter;
 import org.pbinitiative.zenbpmadapter.client.api.JobRef;
+import org.pbinitiative.zenbpmadapter.client.api.ProcessDefinitionRef;
 import org.pbinitiative.zenbpmadapter.client.api.ProcessInstanceRef;
 import org.pbinitiative.zenbpmadapter.client.grpc.ZenBpmGrpc;
 import org.pbinitiative.zenbpmadapter.client.grpc.Zenbpm.JobStreamRequest;
@@ -176,6 +180,65 @@ class ZenBpmRestClientContractIT {
     }
 
     @Test
+    @DisplayName("Of two versions of a process, both are listed in key order, and the latest one alone")
+    void ofTwoVersionsTheLatestIsListedAlone() {
+
+        final var first = client.deployBpmn(fixture("contract-versions.bpmn"));
+        final var second = client.deployBpmn(new String(fixture("contract-versions.bpmn"), StandardCharsets.UTF_8)
+                .replace("Version 1", "Version 2")
+                .getBytes(StandardCharsets.UTF_8));
+
+        assertTrue(second.created());
+        assertEquals(List.of(first.key(), second.key()), client
+                .processDefinitions("contract-versions", false)
+                .stream()
+                .map(ProcessDefinitionRef::key)
+                .toList());
+        final var latest = client.processDefinitions("contract-versions", true);
+        assertEquals(List.of(second.key()), latest
+                .stream()
+                .map(ProcessDefinitionRef::key)
+                .toList());
+        assertEquals(2, latest
+                .getFirst()
+                .version());
+
+    }
+
+    @Test
+    @DisplayName("A search of one instance a page reads the engine's totals, and its last page says so")
+    void aSearchIsPaged() {
+
+        final var definition = client.deployBpmn(fixture("contract-paged.bpmn"));
+        final var started = List.of(
+                client.createInstance(CreateInstanceRequest.version(definition.key())),
+                client.createInstance(CreateInstanceRequest.version(definition.key())));
+        final var filter = InstanceFilter
+                .anyInstance()
+                .withProcessDefinitionKey(definition.key())
+                .withSize(1);
+
+        final var first = client.instances(filter);
+        final var second = client.instances(filter.withPage(2));
+
+        assertEquals(List.of(2L, 2L), List.of(first.totalCount(), second.totalCount()));
+        assertEquals(List.of(false, true), List.of(first.last(), second.last()));
+        assertEquals(started
+                .stream()
+                .map(ProcessInstanceRef::key)
+                .sorted()
+                .toList(),
+                Stream
+                        .of(first, second)
+                        .flatMap(page -> page
+                                .items()
+                                .stream())
+                        .map(ProcessInstanceRef::key)
+                        .toList());
+
+    }
+
+    @Test
     @DisplayName("A definition the engine does not know is a 404")
     void anUnknownDefinitionIsA404() {
 
@@ -254,6 +317,35 @@ class ZenBpmRestClientContractIT {
 
         assertEquals(1000L, variables.get("amount"));
         assertEquals(0.5, variables.get("rate"));
+
+    }
+
+    /**
+     * The engine reads every number as a float of 64 bits, which holds a whole number exactly up
+     * to 2^53 only. When an engine keeps larger ones exact, this test fails, and the Javadoc of
+     * {@link org.pbinitiative.zenbpmadapter.client.api.Variables} has to say so.
+     */
+    @Test
+    @DisplayName("A whole number beyond 2^53 comes back rounded by the engine, from 10^21 on as a Double")
+    void aWholeNumberBeyond2To53ComesBackRounded() {
+
+        final var started = client.createInstance(CreateInstanceRequest
+                .latestVersionOf("contract-task")
+                .withVariables(Map.of(
+                        "orderId", uniqueBusinessKey(),
+                        "id", (1L << 53) + 1,
+                        "beyondALong", new BigInteger("12345678901234567890"),
+                        "beyond10To21", BigInteger.TEN.pow(22))));
+
+        final var variables = client
+                .instance(started.key())
+                .orElseThrow()
+                .variables();
+
+        assertAll(
+                () -> assertEquals(1L << 53, variables.get("id")),
+                () -> assertEquals(new BigInteger("12345678901234567000"), variables.get("beyondALong")),
+                () -> assertEquals(1e22, variables.get("beyond10To21")));
 
     }
 
@@ -416,7 +508,10 @@ class ZenBpmRestClientContractIT {
             assertEquals(started.key(), delivered.getInstanceKey());
 
             final var before = Instant.now();
-            final var lockUntil = client.extendJobLock(delivered.getKey(), clientId, Duration.ofMinutes(10));
+            // a fraction of a second, which the engine refuses unless the client rounds it away
+            final var lockUntil = client.extendJobLock(delivered.getKey(), clientId, Duration
+                    .ofMinutes(10)
+                    .plusMillis(500));
 
             assertTrue(lockUntil.isAfter(before.plus(Duration.ofMinutes(9))), lockUntil::toString);
             final var failure = assertThrows(ZenBpmApiException.class,

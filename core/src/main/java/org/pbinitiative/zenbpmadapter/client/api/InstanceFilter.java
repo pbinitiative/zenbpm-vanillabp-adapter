@@ -15,7 +15,7 @@ import java.time.Instant;
  * @param bpmnProcessId Only instances of this process, in every version
  * @param processDefinitionKey Only instances of this one version
  * @param state Only instances in this state
- * @param createdFrom Only instances created after this moment
+ * @param createdFrom Only instances created at or after this moment
  * @param page The page to read, counted from 1
  * @param size How many items a page holds per partition of the engine, 1 to
  *            {@value #MAXIMUM_SIZE}
@@ -112,7 +112,7 @@ public record InstanceFilter(
     }
 
     /**
-     * This filter, narrowed to instances created after a moment.
+     * This filter, narrowed to instances created at or after a moment.
      *
      * @param createdFrom The moment
      * @return A new filter
