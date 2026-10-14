@@ -388,6 +388,22 @@ of an unreadable answer dropped.
 pinned engine answers with 400 (probed); it is refused before sending now, as the filters do.
 `ZenBpmRestClientTest` has 96 cases; seen to fail with the check switched off.
 
+**Done 2026-10-14**, merged to `main` as `0759616` (pull request #12, together with decision 23).
+On that commit (GitHub keeps run logs for 90 days, so what they showed is written here as well):
+
+- `Checks`, run
+  [38558179625](https://github.com/pbinitiative/zenbpm-vanillabp-adapter/actions/runs/38558179625):
+  green on both JDKs. `bin/check-engine-copies.sh` reported both copies as the engine's files of
+  `bdd795a3...`. `ZenBpmRestClientTest` ran 96 tests, `ZenBpmRestClientContractIT` 18, none
+  skipped. The gate measured 100 % on both platforms, of 4,537 instructions on JDK 25 and 4,535 on
+  JDK 21.
+- `Publish snapshots`, run
+  [38558179618](https://github.com/pbinitiative/zenbpm-vanillabp-adapter/actions/runs/38558179618):
+  green. `ZenBpmRestClientContractIT` ran 18 tests against the pinned engine, none skipped. The core
+  snapshot it published, `2.0.0-20261014.114013-8`, contains `ZenBpmRestClient`, both exceptions
+  and the records of `client.api`. Both report pages answer HTTP 200 and show 0 of 4,537
+  instructions missed.
+
 ### S2.2.2 `ZenBpmErrors` - the one classification
 
 - [ ] **Depends on:** S2.2.1.
