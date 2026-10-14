@@ -58,6 +58,12 @@ sections 3.3 and 5, `TaskInvocationContext` javadoc.
    (5 attempts, 50 ms doubling, bounded by the remaining lock read from `lock_until`), stop at once
    while the module shuts down.
 
+*Found by S2.2.2, 2026-10-14.* `isGoneJob` reads calls under `/v1/jobs/{key}` only, so it does not
+catch the `PATCH` of instruction 3. Read in the engine's code at `bdd795a3` (not measured):
+`UpdateProcessInstanceVariables` answers `409` for an instance which is neither active nor failed,
+and `404` for one the engine does not hold. Decide what the handler does with either before it
+completes the job; by the README's table both are merely repeatable.
+
 **Tests**
 
 - `ZenBpmJobHandlerTest` (fake server + a `TestCollaborators` invoker): the context's fields, the
@@ -126,6 +132,12 @@ means the lock was already lost; the attempt is counted anyway. At `count >= max
 aggregate, task and the attempts; remove the entry. A successful run removes the entry. Entries older
 than one hour are swept by a timing thread. A resolved `retry-backoff` above the 5-minute cap is
 never applied as written: say so at startup with a WARN naming the key and the cap.
+
+*Found by a review of S2.2.2, 2026-10-14.* Should this story (or S6.1.2) send a `deliveryToken`
+with `failJob`, a failure of a delivery the engine already handed out again is answered `409`
+(`ErrDeliverySuperseded`), which `ZenBpmErrors.isGoneJob` reads as a gone job: the handler accepts
+it, and the newer delivery decides. Without the token, a failure repeated after its answer was lost
+counts twice (`JobFailByKey` in the engine's `pkg/bpmn/jobs_api.go`).
 
 **Tests**: `ZenBpmLocalRetryTest` (backoff arithmetic, cap, the extension sent per attempt, sweep);
 `ZenBpmTaskProcessingIT#aThrowingHandlerEndsInAnIncidentAfterMaxRedeliveries` with

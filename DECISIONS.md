@@ -37,6 +37,23 @@ against the image the integration tests run.
 *The last sentence is superseded by decision 18: the engine does not serve its OpenAPI document, so
 the copies are checked against the engine's files of the pinned commit instead.*
 
+### 10. What the engine did is read from status codes, not from message text
+
+The engine writes its reasons as prose, and any version of it may reword them. So what a failed call
+means is decided by the status of the answer, the method and the path of the call, in one place,
+`ZenBpmErrors`, and nothing reads the engine's `message`. A `404` on a job means that the job is
+gone, and so does a `409` on its completion or failure, because the engine answers it there for a
+command the job no longer takes, and repeating the command cannot change that. A `404` on a message
+means that nothing waits for it yet, and a `409` on a lock extension means that the lock is lost.
+`400`, `413`, `415` and a key which is not a number are permanent: every attempt is refused the same
+way, so an outbox entry is blocked after the first. Everything else may be repeated, `500` and `502`
+included, because repeating is the safe answer to a failure which may not come again. The table,
+with the reason of each row, is the README's section "Which phase-two failures are repeated".
+
+The first exception of the REST client in a chain of causes answers alone, whatever is wrapped
+around it or lies beneath it. Where the engine answered with a status the call does not expect,
+that status decides, even when the HTTP client then timed out on the body.
+
 ### 13. A class opens its fields one by one, not as a whole
 
 The deployment service, the process service and the engine client of this adapter hold many

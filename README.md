@@ -78,6 +78,56 @@ Moving the pin is one commit with these steps:
 5. Update the table above.
 6. Run `bin/check-engine-copies.sh` and `mvn install`.
 
+## Which phase-two failures are repeated
+
+A failed call of the engine is classified in one place, `ZenBpmErrors` in the core, so that the
+phase-two outbox and the commands a job handler sends back cannot disagree about what a failure
+means. It answers from the status, the method and the path of the call and never from the
+engine's message, which any version of the engine may reword (decision 10 in
+[`DECISIONS.md`](./DECISIONS.md)). The first exception of the REST client in the chain of causes
+answers alone, so a failure wrapped by a caller is read like a plain one.
+
+|                                Failure                                 |   Read as    |                                      Why                                      |
+|------------------------------------------------------------------------|--------------|-------------------------------------------------------------------------------|
+| status `400`, `413` or `415`                                           | permanent    | the request is malformed, too large or of the wrong content type              |
+| `NumberFormatException`                                                | permanent    | a key which is not a number never becomes one                                 |
+| status `404` from a call of a job                                      | gone job     | the engine holds no such job                                                  |
+| status `409` from a completion or failure of a job                     | gone job     | the job no longer takes the command: it ended, or a newer delivery decides    |
+| status `404` from `POST /v1/messages`                                  | nobody waits | the engine drops a message nothing waits for                                  |
+| status `409` from `POST /v1/jobs/{key}/extend-lock`                    | lock lost    | the lock lapsed or was never taken, the job ended, or another client holds it |
+| status `502`, `503` or `504`                                           | unavailable  | the engine or a proxy in front of it could not pass the request               |
+| `ZenBpmUnavailableException`                                           | unavailable  | no answer, a broken connection, or an answer which cannot be read             |
+| `SocketTimeoutException`, `HttpTimeoutException` or `ConnectException` | unavailable  | the engine could not be reached, and no REST client wrapped it                |
+| any other status, `500` included                                       | repeatable   | a technical fault of the engine may pass                                      |
+
+`ZenBpmErrorsTest` holds every row, plain and wrapped, and fails when the table names a row it does
+not test, tests a row the table does not name, names a row twice or orders the rows differently.
+`ZenBpmErrorsIT` makes the pinned engine answer each status of the job, message and lock rows,
+`400`, `413` and `502`, and checks how each is read.
+
+Only a permanent failure is not repeatable: `ZenBpmErrors.isRepeatable` is false for the first two
+rows and true for every other. The three narrower answers, a gone job, nobody waits and a lost lock,
+mean something only to the caller which sent that call, so it asks for them before it asks whether
+to repeat.
+
+Where the status says less than it seems:
+
+- The engine answers `502` also for a key of a partition it does not have, such as a key another
+  engine handed out. The status alone cannot tell this apart from a node which could not be
+  reached, so such a key reads as unavailable. Telling the two apart needs the key's partition (bits
+  12 to 21) compared with the partitions `GET /system/status` reports.
+- A `ZenBpmUnavailableException` may name a `2xx` status: the engine did what was asked, and only
+  the body of its answer was lost or could not be read. It is repeatable all the same, because a
+  permanent failure would block an operation the engine carried out. Not every repetition is
+  harmless, though. A read is answered again, and a completion of a completed job is answered as the
+  first one was. A start is repeated only after the core asked whether its workflow is there already,
+  which a wrong "unknown" turns into a second workflow. A message may be correlated twice, because
+  the engine does not deduplicate messages, and a failure without a delivery token counts twice. The
+  caller of such a call decides whether it accepts the duplicate.
+- A `404` or `409` is read from its status, method and path alone. A proxy in front of the engine
+  which answers `404` to a call of a job, for example because its routes leave out a path, is read
+  as a gone job like the engine's own answer.
+
 ## Building
 
 The build depends on two repositories of the VanillaBP project, which have to be in the local Maven
