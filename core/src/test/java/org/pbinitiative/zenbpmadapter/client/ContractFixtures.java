@@ -6,6 +6,7 @@ package org.pbinitiative.zenbpmadapter.client;
 
 import java.io.IOException;
 import java.io.UncheckedIOException;
+import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.Map;
 import java.util.Optional;
@@ -57,6 +58,46 @@ final class ContractFixtures {
         } catch (IOException e) {
             throw new UncheckedIOException(e);
         }
+    }
+
+    /**
+     * A model of one process with one service task between its start and its end. A test which
+     * gives it a job type of its own receives no job of another test sharing the engine.
+     *
+     * @param processId The BPMN process id
+     * @param jobType The job type of the service task
+     * @return The model's bytes
+     */
+    static byte[] oneServiceTask(
+        final String processId,
+        final String jobType
+    ) {
+        return """
+                <?xml version="1.0" encoding="UTF-8"?>
+                <bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" \
+                xmlns:zenbpm="http://zenbpm.pbinitiative.org/1.0" id="Definitions_%1$s" \
+                targetNamespace="http://bpmn.io/schema/bpmn">
+                  <bpmn:process id="%1$s" isExecutable="true">
+                    <bpmn:startEvent id="StartEvent">
+                      <bpmn:outgoing>Flow_ToWork</bpmn:outgoing>
+                    </bpmn:startEvent>
+                    <bpmn:sequenceFlow id="Flow_ToWork" sourceRef="StartEvent" targetRef="Task_Work" />
+                    <bpmn:serviceTask id="Task_Work" name="Work">
+                      <bpmn:extensionElements>
+                        <zenbpm:taskDefinition type="%2$s" />
+                      </bpmn:extensionElements>
+                      <bpmn:incoming>Flow_ToWork</bpmn:incoming>
+                      <bpmn:outgoing>Flow_ToEnd</bpmn:outgoing>
+                    </bpmn:serviceTask>
+                    <bpmn:sequenceFlow id="Flow_ToEnd" sourceRef="Task_Work" targetRef="EndEvent" />
+                    <bpmn:endEvent id="EndEvent">
+                      <bpmn:incoming>Flow_ToEnd</bpmn:incoming>
+                    </bpmn:endEvent>
+                  </bpmn:process>
+                </bpmn:definitions>
+                """
+                .formatted(processId, jobType)
+                .getBytes(StandardCharsets.UTF_8);
     }
 
     /**

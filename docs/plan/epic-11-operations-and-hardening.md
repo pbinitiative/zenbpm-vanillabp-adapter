@@ -22,6 +22,10 @@ exist only with Micrometer.
 
 **Acceptance criteria**: an application without Micrometer boots unchanged.
 
+*Note from S2.3.1, 2026-10-14.* `ZenBpmJobStream.reconnects()` counts every attempt to open the
+call again since the stream was built; `vanillabp.zenbpm.stream.reconnects` is a function counter on
+it rather than a callback the stream would need to know about.
+
 ## S11.2.1 Startup-message review
 
 - [ ] **Depends on:** E10.

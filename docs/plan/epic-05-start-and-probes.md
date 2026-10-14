@@ -55,6 +55,21 @@ it permanent with `Camunda8RefusedStart`; whether this adapter does the same is 
 decision, and a new row of the README's table "Which phase-two failures are repeated" and of
 decision 10.
 
+*Note from a review of S2.3.1, 2026-10-14.* The pinned engine refuses a start whose variables are
+above 4 MiB, and a variable update which would bring an instance above 4 MiB, with `500
+TECHNICAL_ERROR` ("grpc: received message larger than max (5242957 vs. 4194304)"). The node which
+takes the request passes it on over the gRPC between the nodes. That gRPC keeps its default limit of
+4 MiB: neither `Server.Open` in `internal/cluster/server/server.go` nor `ClientManager.newClient` in
+`internal/cluster/client/client_manager.go` sets another. `ZenNode.CreateInstance` and
+`ZenNode.ModifyProcessInstance` in `internal/cluster/node.go` turn the failed call into
+`zenerr.TechnicalError`. REST itself takes bodies up to 10 MiB, the default of
+`HttpServer.MaxRequestBodyBytes` in `internal/config/config.go` (all at the pinned commit
+`bdd795a3`). The adapter's `ZenBpmErrors`
+(`core/src/main/java/org/pbinitiative/zenbpmadapter/client/ZenBpmErrors.java`) reads a `500` as
+repeatable, so such a start would be repeated for as long as the outbox keeps it, refused the same
+way every time. Decide here whether the adapter measures the variables before it sends them; E13.13
+asks the engine for a status which says what happened.
+
 **Tests**: `ZenBpmProcessServiceTest` (fake server): phase one contacts nothing (zero requests), phase
 two sends business key, id variable and shared values, the 400 message; `ZenBpmSharedValuesTest` for
 the id winning and `@NoSyncWithBPMS` still carrying the id.

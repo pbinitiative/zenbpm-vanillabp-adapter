@@ -37,6 +37,25 @@ against the image the integration tests run.
 *The last sentence is superseded by decision 18: the engine does not serve its OpenAPI document, so
 the copies are checked against the engine's files of the pinned commit instead.*
 
+### 9. Job delivery takes the stream, with a lock the adapter sizes and renews
+
+Only the gRPC stream hands a job to one client at a time; the REST list of jobs is a plain query
+which two nodes would answer alike. Every job type is subscribed with a lock duration and a cap of
+active jobs, `lock_duration_ms` = the resolved `job-timeout` and `max_active_jobs` = the handler
+slots, which the engine keeps once per client id and job type. A job which waits in front of busy
+slots is no risk, because the handler extends its lock when it starts and at half the timeout while
+it runs, so a handler always works under a full lock. Every command back to the engine goes over
+REST, the lock extensions included with the stream's client id, so that the one classification of
+decision 10 reads a status code for each of them, and a completion does not depend on the stream
+being up.
+
+So the stream sends nothing but subscriptions and unsubscriptions, and an error frame which names
+no job answers one of them. The engine takes either without an answer and refuses one with an error
+which names its job type only in prose, so the stream cannot tell which one was refused. It logs the
+error and opens its call again, which subscribes every job type it still holds again. What the lock cannot cover is a change
+of the partition leader, which forgets every lock; the second delivery which follows is the
+at-least-once residual.
+
 ### 10. What the engine did is read from status codes, not from message text
 
 The engine writes its reasons as prose, and any version of it may reword them. So what a failed call

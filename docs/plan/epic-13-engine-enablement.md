@@ -139,3 +139,52 @@ not measured), so the completion stays repeatable. If the engine half of this it
 not active" to `409` for these two calls as well, the adapter would drop a completion of a job which
 still waits. Keep that case off `409` for `complete` and `fail`, or supersede decision 10 and split
 it in `ZenBpmErrors` first.
+
+## E13.11 Answered subscriptions
+
+- [ ] **Engine:** answer every `StreamSubscriptionRequest` on the job stream, subscriptions and
+  unsubscriptions, the ones it takes as well as the ones it refuses, with a frame naming the job
+  type, and give a refusal a `JobStreamErrorCode`. Today a request it takes gets no answer, and one
+  it refuses gets an `ErrorResult` without a code whose message alone names the job type
+  (`recvClientRequests` in `internal/grpc/server.go`; `unknownRequestError` has the same shape).
+- [ ] **Adapter twin (refines S2.3.1):** a refused subscription fails that subscription and names
+  its job type, instead of the whole call being opened again; a stream counts as back once every
+  subscription was answered, instead of after a frame or two seconds without a failure.
+
+*Found by S2.3.1, 2026-10-14.* At the pinned commit `bdd795a3` the engine refuses a subscription
+only where the client is not registered (`addJobSub` in `internal/cluster/jobmanager/client.go`),
+and the engine's handler registers the client before it reads the first request, so a refusal is not
+expected in practice. The adapter
+cannot tell which subscription an error frame answers, because nothing reads the engine's prose
+(decision 10), so it logs the error with every subscribed job type and opens the call again.
+
+## E13.12 Server keepalive on the job stream
+
+- [ ] **Engine:** set `keepalive.ServerParameters` on the public gRPC server (`NewServer` in
+  `internal/grpc/server.go`), so that the engine notices a job stream whose client is gone within
+  minutes. Today it keeps grpc-go's default of a ping after two hours of silence, and until the
+  connection fails it goes on handing jobs of the client's types to it, round robin; each such job
+  waits for its lock to lapse.
+- [ ] **Adapter twin:** none; the adapter pings from its side already (S2.3.1).
+
+*Found by a review of S2.3.1, 2026-10-14.*
+
+## E13.13 Variables above 4 MiB
+
+- [ ] **Engine:** either carry what REST accepts through the gRPC between the nodes (raise
+  `MaxRecvMsgSize`/`MaxCallRecvMsgSize` there to at least `httpServer.maxRequestBodyBytes`), or answer
+  a request whose variables are too large with `413` instead of `500 TECHNICAL_ERROR`.
+- [ ] **Adapter twin (refines S5.1.1 and `ZenBpmErrors`):** with `413`, a start or a variable update
+  which is too large is permanent at once (decision 10 already reads `413` so).
+
+*Found by a review of S2.3.1, 2026-10-14.* At the pinned commit `bdd795a3` a start with a 5 MiB
+variable and a variable update which brings an instance to 6 MiB are both answered `500` with
+"grpc: received message larger than max (... vs. 4194304)". The gRPC between the nodes keeps its
+default limit of 4 MiB, since neither `Server.Open` in `internal/cluster/server/server.go` nor
+`ClientManager.newClient` in `internal/cluster/client/client_manager.go` sets another.
+`ZenNode.CreateInstance` and `ZenNode.ModifyProcessInstance` in `internal/cluster/node.go` turn the
+failed call into `zenerr.TechnicalError`. REST takes bodies up to 10 MiB
+(`HttpServer.MaxRequestBodyBytes` in `internal/config/config.go`) and answers a larger one with `413`
+(`internal/rest/middleware/openapi.go`). So no instance gets more than 4 MiB of variables through
+the API, and no job above that size reaches the job stream today. The stream takes jobs of any size
+all the same (S2.3.1).

@@ -75,6 +75,13 @@ always from the core properties.
    - `ZenBpmHealthBootTest`: actuator health shows the adapter UNKNOWN when unconfigured, DOWN
      against a closed port (bounded time).
 
+*Note from S2.3.1, 2026-10-14.* `ProtobufRuntimeCheck.defect()` in `core` says why the
+application's protobuf runtime cannot run the job stream (older than the `protoc` of this build, or
+without `com.google.protobuf.RuntimeVersion`). Call it while the application starts, before any
+factory is built, and end the boot with its message where it answers one; a boot test puts an old
+runtime on the classpath or calls the check through a class loader which hides `RuntimeVersion`, as
+`ProtobufRuntimeCheckTest` does. The stream's constructor runs it again as a backstop.
+
 **Acceptance criteria**
 
 - [ ] No bean of type `List<...>` is registered; the platform's `ObjectProvider` streams find both
@@ -121,6 +128,10 @@ always from the core properties.
    `ZenBpmInconsistentConfigurationTest` (boot fails naming the key), `ZenBpmUnknownKeyTest` (a typo
    `vanillabp.adapters.zenbpm.rest-adress` fails the startup with `SRCFG00050` - the assertion is that
    the failure names the key), `ZenBpmOverlayResolutionTest` (`retry-backoff` through all four levels).
+
+*Note from S2.3.1, 2026-10-14.* The protobuf runtime is checked at build time here: a build
+step of `ZenBpmIntegrationProcessor` calls `ProtobufRuntimeCheck.defect()` on the application's
+build class path and fails the build with its message where it answers one.
 
 **Acceptance criteria**
 
