@@ -620,12 +620,105 @@ run logs for 90 days, so what they showed is written here as well):
 
 **Acceptance criteria**
 
-- [ ] A job created while the stream is subscribed arrives; one created while the stream is down
+- [x] A job created while the stream is subscribed arrives; one created while the stream is down
   arrives after the reconnect (the engine hands undelivered jobs out on the next poll).
-- [ ] Two subscriptions and one unsubscription of the same type leave the type subscribed.
-- [ ] Each subscription carries the lock duration and the active-job cap it was given, and they
-  survive a reconnect.
-- [ ] The consumer runs on an adapter thread, proven by asserting the thread name prefix.
+  `ZenBpmJobStreamIT#aJobArrivesAndItsCompletionCompletesTheInstance` receives the job within 5 s,
+  completes it over REST and reads the instance `COMPLETED`.
+  `#theStreamComesBackAfterTheEngineWasReplaced` cuts a TCP relay between stream and engine, stops
+  the engine, starts a new one and creates a job on it while the relay is still cut, then restores
+  the relay: the job arrives after the reconnect, and the log holds the WARN and the INFO.
+- [x] Two subscriptions and one unsubscription of the same type leave the type subscribed.
+  `ZenBpmJobStreamTest#aSharedTypeStaysSubscribedUntilTheLastSubscriberLeaves`: no unsubscription
+  reaches the engine until the second subscriber leaves.
+- [x] Each subscription carries the lock duration and the active-job cap it was given, and they
+  survive a reconnect. `#everySubscriptionCarriesItsSettings` and
+  `#aReconnectSubscribesEveryTypeAgain` compare the requests the engine received;
+  `ZenBpmJobLockIT` shows the engine keeping a 2 s lock.
+- [x] The consumer runs on an adapter thread, proven by asserting the thread name prefix.
+  `ZenBpmJobStreamTest#aJobReachesTheConsumerOnATimingThread` and the first IT assert
+  `zenbpm-<id>-timing-`.
+
+**Implemented 2026-10-14.** `ZenBpmJobStream`, `ReceivedJob` and `ProtobufRuntimeCheck` in
+`client`. `ZenBpmJobStreamTest` (29 cases, against an engine played in the same JVM with
+`grpc-inprocess`, which this story adds as a test dependency), `ProtobufRuntimeCheckTest` (5),
+`ZenBpmJobStreamIT` (2) and `ZenBpmJobLockIT` (3) against the pinned engine are green;
+`mvn clean install` builds green, the coverage gate measures 100 % of 6,044 instructions on both
+platforms, and `bin/check-deploy-safety.sh` passes both runs. Seen to fail,
+each restored afterwards: no resubscription after a reconnect (the unit tests and
+`ZenBpmJobStreamIT`), no lock duration in a subscription (the unit tests and `ZenBpmJobLockIT`,
+whose job then stays locked for the engine's default of 30 s), a job handed over on the gRPC
+thread, a cancel instead of a half-close on `close()`, every `UNKNOWN` read as a refused client id,
+a lock duration rounded down, no conflict check, no reference count, an error frame which does not
+reopen the call, the client-id WARN and the outage WARN repeated, no INFO once a frame arrives or
+once the call stayed open, no reconnect count, no reset of the channel's own backoff, no cancel of a
+pending reconnect on `close()`, a reconnect already due opening a call after `close()`, a job after
+`close()` handed on, and a subscription during an outage opening a second call.
+
+What the engine at `bdd795a3` does, read in `internal/grpc/server.go` and
+`internal/cluster/jobmanager/`:
+
+- A subscription the engine takes is answered with nothing. One it refuses gets an `ErrorResult`
+  without a code, without a job and without a lock, whose message alone names the job type; it
+  refuses one only where the client is not registered, and its handler registers the client before
+  it reads the first request. A second call with a client id it serves ends at once with `UNKNOWN`
+  (`failed to add client: ...`), the status every error of its handler gets; a panic would be
+  `INTERNAL`.
+- An unsubscription keeps the locks of jobs delivered before; the end of the call releases them at
+  once (`removeClient` drops the client's entries of `distributedJobs`). Half-closing the call ends
+  it: the handler returns once the client stops sending.
+- The engine's gRPC server keeps grpc-go's default keepalive policy, which ends a connection whose
+  client pings more often than every five minutes.
+
+Where the code differs from the instructions:
+
+- `subscribe(subscriber, jobType, lockDuration, maxActiveJobs)` and `unsubscribe(subscriber,
+  jobType)` name who subscribes, so the conflict message names both subscribers, and the reference
+  count is the set of subscribers: a module subscribing or unsubscribing twice changes nothing,
+  where a bare count would cut another module off. The last unsubscription keeps the call open.
+- **Error frames (the user's decision, 2026-10-14):** a refusal cannot fail its subscription,
+  because nothing says which subscription it answers (above) and decision 10 forbids reading the
+  prose. So an error frame naming neither a job nor a lock is logged at ERROR with code, message and
+  every subscribed job type, and the call is cancelled and opened again, which subscribes every
+  type again. One naming a job or a lock answers a request the stream never sends and is logged at
+  WARN. Decision 9 is now in `DECISIONS.md`, adapted from the plan's draft with this consequence;
+  E13.11 asks the engine to answer subscriptions.
+- The stream counts as back on the first frame of a reopened call or once the call stayed open
+  for two seconds, because the engine sends nothing on a call it took, and ends one it refuses at
+  once. The pause before an attempt is 1 s doubling to 30 s, cut short by a random part of up to a
+  fifth. Before each attempt the stream resets the channel's own connect backoff, which grows to two
+  minutes: measured with the engine away for three seconds, a channel without the reset found the
+  engine back after 2 to 2.7 s instead of 0.1 s
+  (`#anEngineBackInReachIsFoundOnTheNextAttempt`).
+- A refused client id is told by `UNKNOWN` before the engine sent anything on the call, and logged
+  at WARN once per outage with `vanillabp.adapters.<id>.client-id` and the default derivation; the
+  stream keeps trying, since after a lost connection the engine may still hold the old call.
+- The executor of S2.4.2 does not exist yet, so the stream takes a `ScheduledExecutorService`, the
+  adapter id's timing threads: jobs are handed over with `execute`, reconnects scheduled with
+  `schedule`. A job or a reconnect it refuses while it shuts down is logged; the job is left to its
+  lock. Notes added under S2.4.1 and S2.4.2.
+- `ZenBpmMetrics` arrives with E11, so the stream counts its attempts in `reconnects()`; note added
+  under S11.1.1.
+- The receive instant travels with the job as `ReceivedJob(WaitingJob job, Instant receivedAt)`.
+  The constructor takes the client id resolved (`clientIdInUse`), note under S2.4.1. A lock duration
+  is sent in whole milliseconds rounded up, zero asks for the engine's default, and a negative
+  duration or cap is refused before anything is sent.
+- `close()` half-closes the call, so the engine hands this stream's locked jobs to other clients at
+  once, and waits up to five seconds for the engine to end it before it cuts the connection.
+- `ProtobufRuntimeCheck` asks protobuf's own `RuntimeVersion.validateProtobufGencodeVersion`, the
+  call the generated classes make when they load, with the version of the `protoc` of this build,
+  which the build filters into `adapter-zenbpm.properties` as `protobuf.gencode`. A runtime older
+  than 4.26.0 has no `RuntimeVersion` and is refused as well. The stream's public constructor runs
+  the check before it touches a generated class; calling it at startup (Spring Boot) and at build
+  time (Quarkus) belongs to E3, notes added under S3.1.1 and S3.2.1.
+- `ZenBpmJobStreamIT` replaces the engine behind a TCP relay rather than on a fixed port: a new
+  container maps its port anew, and the relay keeps the stream out of reach while the job is
+  created, so the job is certainly created while the stream is down. `ZenBpmJobLockIT` lets the
+  first stream unsubscribe after it received the job, so that the job, once its lock lapsed, can
+  only go to the second stream (the engine hands jobs round robin).
+
+Not done: the channel sends no keepalive pings, so a connection a network silently dropped is
+noticed only when the engine sends the next job. A ping every five minutes is the most the engine
+accepts (above); E11 can add it with a test against the pinned engine.
 
 ---
 
@@ -658,6 +751,14 @@ run logs for 90 days, so what they showed is written here as well):
    differ. Not a comparison of versions: while the pin is a `main` build, the engine's version names
    the last release and is the same for every build since.
 
+*Note from S2.3.1, 2026-10-14.* `ZenBpmJobStream(adapterId, configuration, clientId, executor)`
+takes the client id resolved, so the factory calls `configuration.clientIdInUse(adapterId,
+applicationName)` and needs the application name the platform knows (E3 names its source). The
+`executor` is the adapter id's timing threads as a `ScheduledExecutorService`, which S2.4.2 has to
+offer; the stream hands every job over on them and schedules its reconnects there. The stream's
+constructor runs `ProtobufRuntimeCheck` (S2.3.1), so building a factory refuses a protobuf runtime
+which cannot run the stream, before anything is contacted.
+
 **Tests**
 
 - `ZenBpmEngineWaitIT` (Docker): start the container 3 s AFTER the wait began (a `CompletableFuture`
@@ -688,6 +789,12 @@ free slots. Drop what is Camunda-specific (the client's own executor hand-over).
 beside `virtual`), so call `ZenBpmExecutionModel.resolve` with `getWorkerThreads()` and the raw
 `getWorkerThreadsBound()` (null where unset), never with `workerThreadsBoundInUse()`; its checks
 stay as the backstop for a caller which skipped the validation.
+
+*Note from S2.3.1, 2026-10-14.* The job stream takes the timing threads as a
+`ScheduledExecutorService` named `zenbpm-<id>-timing-N`: it hands jobs over with `execute`, which
+must never wait (an unbounded queue, as `ScheduledThreadPoolExecutor` has), and schedules its
+reconnects with `schedule`. A job or a reconnect the executor refuses because it shuts down is
+logged and dropped, which `ZenBpmJobStreamTest` holds.
 
 **Tests**: copies of `Camunda8ExecutorTest`, `Camunda8VirtualThreadExecutorTest`,
 `Camunda8PlatformThreadExecutorTest` and `Camunda8ExecutionModelTest` adjusted to the new names,

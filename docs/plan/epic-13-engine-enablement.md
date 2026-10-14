@@ -139,3 +139,21 @@ not measured), so the completion stays repeatable. If the engine half of this it
 not active" to `409` for these two calls as well, the adapter would drop a completion of a job which
 still waits. Keep that case off `409` for `complete` and `fail`, or supersede decision 10 and split
 it in `ZenBpmErrors` first.
+
+## E13.11 Answered subscriptions
+
+- [ ] **Engine:** answer every `StreamSubscriptionRequest` on the job stream, the subscription it
+  takes as well as the one it refuses, with a frame naming the job type, and give a refusal a
+  `JobStreamErrorCode`. Today a subscription it takes gets no answer, and one it refuses gets an
+  `ErrorResult` without a code whose message alone names the job type
+  (`recvClientRequests` in `internal/grpc/server.go`).
+- [ ] **Adapter twin (refines S2.3.1):** a refused subscription fails that subscription and names
+  its job type, instead of the whole call being opened again; a stream counts as back once every
+  subscription was answered, instead of after a frame or two seconds without a failure.
+
+*Found by S2.3.1, 2026-10-14.* At the pinned commit `bdd795a3` the engine refuses a subscription
+only where the client is not registered (`addJobSub` in `internal/cluster/jobmanager/client.go`),
+and the engine's handler registers the client before it reads the first request, so a refusal is not
+expected in practice. The adapter
+cannot tell which subscription an error frame answers, because nothing reads the engine's prose
+(decision 10), so it logs the error with every subscribed job type and opens the call again.
