@@ -36,7 +36,6 @@ class GeneratedStubPackageTest {
     @Test
     @DisplayName("No module writes sources into the package of the generated stubs")
     void noModuleWritesSourcesIntoTheStubPackage() throws IOException {
-
         try (Stream<Path> files = Files.walk(ROOT)) {
             final var offenders = files
                     .map(ROOT::relativize)
@@ -52,22 +51,17 @@ class GeneratedStubPackageTest {
                             + "gRPC stubs only and is left out of every coverage report. Move them to "
                             + "'org.pbinitiative.zenbpmadapter.client'.").formatted(offenders));
         }
-
     }
 
     /**
      * Compares the names of the directories, not the path as text, so the check reads the same
      * whichever separator the operating system writes.
      */
-    private static boolean isMainSourceOutsideTarget(
-        final Path path
-    ) {
-
+    private static boolean isMainSourceOutsideTarget(final Path path) {
         final var names = new ArrayList<String>();
         path.forEach(name -> names.add(name.toString()));
         final var src = names.indexOf("src");
         return !names.contains("target") && (src >= 0) && (src + 1 < names.size()) && "main".equals(names.get(src + 1));
-
     }
 
 }

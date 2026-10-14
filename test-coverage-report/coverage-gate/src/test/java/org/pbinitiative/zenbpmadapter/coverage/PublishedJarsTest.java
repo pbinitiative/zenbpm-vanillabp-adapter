@@ -48,7 +48,6 @@ class PublishedJarsTest {
     @Test
     @DisplayName("Every published jar carries both licence texts and the NOTICE")
     void everyPublishedJarCarriesTheLicences() throws IOException {
-
         final var commandLine = System.getProperty("coverage.maven.command", "");
         if (CoverageGate.stopsBeforeTheReportsAreWritten(commandLine)) {
             final var reason = CoverageGate.describeRunWithoutReports(commandLine);
@@ -82,13 +81,9 @@ class PublishedJarsTest {
                 which declares <resources> of its own replaces that list and has to repeat the entry, as \
                 core/pom.xml does."""
                 .formatted(String.join("; ", offenders)));
-
     }
 
-    private static List<Path> publishedModules(
-        final Path root
-    ) {
-
+    private static List<Path> publishedModules(final Path root) {
         final var modules = new ArrayList<Path>();
         try {
             Files.walkFileTree(root, new SimpleFileVisitor<>() {
@@ -98,7 +93,6 @@ class PublishedJarsTest {
                     final Path directory,
                     final BasicFileAttributes attributes
                 ) throws IOException {
-
                     final var name = directory.getFileName() == null
                             ? ""
                             : directory
@@ -117,7 +111,6 @@ class PublishedJarsTest {
                         }
                     }
                     return FileVisitResult.CONTINUE;
-
                 }
 
             });
@@ -125,13 +118,9 @@ class PublishedJarsTest {
             throw new UncheckedIOException(e);
         }
         return modules;
-
     }
 
-    private static List<Path> jarsOf(
-        final Path module
-    ) throws IOException {
-
+    private static List<Path> jarsOf(final Path module) throws IOException {
         final var target = module.resolve("target");
         if (!Files.isDirectory(target)) {
             return List.of();
@@ -145,7 +134,6 @@ class PublishedJarsTest {
                     .sorted()
                     .toList();
         }
-
     }
 
 }

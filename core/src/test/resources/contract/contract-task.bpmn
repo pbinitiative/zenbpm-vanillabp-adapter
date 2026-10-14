@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" xmlns:zenbpm="http://zenbpm.pbinitiative.org/1.0" id="Definitions_ContractTask" targetNamespace="http://bpmn.io/schema/bpmn">
+  <bpmn:process id="contract-task" isExecutable="true">
+    <bpmn:startEvent id="StartEvent">
+      <bpmn:outgoing>Flow_ToWork</bpmn:outgoing>
+    </bpmn:startEvent>
+    <bpmn:sequenceFlow id="Flow_ToWork" sourceRef="StartEvent" targetRef="Task_Work" />
+    <bpmn:serviceTask id="Task_Work" name="Work">
+      <bpmn:extensionElements>
+        <zenbpm:taskDefinition type="contract-work" />
+      </bpmn:extensionElements>
+      <bpmn:incoming>Flow_ToWork</bpmn:incoming>
+      <bpmn:outgoing>Flow_ToPaid</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:sequenceFlow id="Flow_ToPaid" sourceRef="Task_Work" targetRef="Catch_Paid" />
+    <bpmn:intermediateCatchEvent id="Catch_Paid" name="Paid">
+      <bpmn:incoming>Flow_ToPaid</bpmn:incoming>
+      <bpmn:outgoing>Flow_ToEnd</bpmn:outgoing>
+      <bpmn:messageEventDefinition id="Definition_Paid" messageRef="Message_Paid" />
+    </bpmn:intermediateCatchEvent>
+    <bpmn:sequenceFlow id="Flow_ToEnd" sourceRef="Catch_Paid" targetRef="EndEvent" />
+    <bpmn:endEvent id="EndEvent">
+      <bpmn:incoming>Flow_ToEnd</bpmn:incoming>
+    </bpmn:endEvent>
+  </bpmn:process>
+  <bpmn:message id="Message_Paid" name="contract-paid">
+    <bpmn:extensionElements>
+      <zenbpm:subscription correlationKey="=orderId" />
+    </bpmn:extensionElements>
+  </bpmn:message>
+</bpmn:definitions>

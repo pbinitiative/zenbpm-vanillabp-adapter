@@ -36,7 +36,6 @@ class TestClassConventionsTest {
     @Test
     @DisplayName("Every test class of this repository suppresses its output")
     void everyTestClassSuppressesItsOutput() {
-
         final var root = CoverageGate.repositoryRoot("coverage.repository.root");
 
         final var offenders = TestClassConventions.testClassesWithoutOutputSuppression(root);
@@ -44,13 +43,11 @@ class TestClassConventionsTest {
         assertTrue(
                 offenders.isEmpty(),
                 () -> TestClassConventions.describeTestClassesWithoutOutputSuppression(offenders));
-
     }
 
     @Test
     @DisplayName("No test class registers the suppression after '@Testcontainers'")
     void noTestClassSuppressesTooLate() {
-
         final var root = CoverageGate.repositoryRoot("coverage.repository.root");
 
         final var offenders = TestClassConventions.testClassesSuppressingTooLate(root);
@@ -58,13 +55,11 @@ class TestClassConventionsTest {
         assertTrue(
                 offenders.isEmpty(),
                 () -> TestClassConventions.describeTestClassesSuppressingTooLate(offenders));
-
     }
 
     @Test
     @DisplayName("No message of this repository carries a run of spaces between two words")
     void noMessageFellApart() {
-
         final var root = CoverageGate.repositoryRoot("coverage.repository.root");
 
         final var offenders = MessageConventions.messagesPulledApart(root);
@@ -72,13 +67,11 @@ class TestClassConventionsTest {
         assertTrue(
                 offenders.isEmpty(),
                 () -> MessageConventions.describeMessagesPulledApart(offenders));
-
     }
 
     @Test
     @DisplayName("No message of this repository glues two words into one")
     void noMessageIsGluedTogether() {
-
         final var root = CoverageGate.repositoryRoot("coverage.repository.root");
 
         final var offenders = MessageConventions.messagesGluedTogether(root);
@@ -86,7 +79,6 @@ class TestClassConventionsTest {
         assertTrue(
                 offenders.isEmpty(),
                 () -> MessageConventions.describeMessagesGluedTogether(offenders));
-
     }
 
 }

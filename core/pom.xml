@@ -63,6 +63,18 @@
       <artifactId>junit-jupiter</artifactId>
       <scope>test</scope>
     </dependency>
+    <!-- the engine the contract test of the REST client runs against -->
+    <dependency>
+      <groupId>org.pbinitiative.zenbpm</groupId>
+      <artifactId>zenbpm-vanillabp-adapter-engine-test-support</artifactId>
+      <version>${project.version}</version>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.testcontainers</groupId>
+      <artifactId>testcontainers-junit-jupiter</artifactId>
+      <scope>test</scope>
+    </dependency>
   </dependencies>
 
   <build>
@@ -119,6 +131,10 @@
             </goals>
           </execution>
         </executions>
+      </plugin>
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-failsafe-plugin</artifactId>
       </plugin>
       <!-- the generated stubs carry the proto's comments, not javadoc this repository wrote,
            and would break the check on warnings it cannot fix -->

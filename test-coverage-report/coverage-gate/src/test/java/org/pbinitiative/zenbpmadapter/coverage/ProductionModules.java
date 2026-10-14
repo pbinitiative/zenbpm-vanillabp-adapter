@@ -66,7 +66,6 @@ final class ProductionModules {
         final Report quarkus,
         final Set<String> deliberatelyNotAggregated
     ) {
-
         final var readBySpringBoot = aggregatedArtifactIds(springBoot.pom());
         final var readByQuarkus = aggregatedArtifactIds(quarkus.pom());
 
@@ -106,7 +105,6 @@ final class ProductionModules {
             }
         }
         return missing;
-
     }
 
     /**
@@ -122,7 +120,6 @@ final class ProductionModules {
         final Report springBoot,
         final Report quarkus
     ) {
-
         return """
                 %d production module(s) are not read by the report of their platform: %s. Their code \
                 counts in no report, so a report can look complete, or hold no instruction at all, while \
@@ -135,13 +132,9 @@ final class ProductionModules {
                         String.join("; ", missing),
                         springBoot.pom(),
                         quarkus.pom());
-
     }
 
-    private static List<Path> modulesWithProductionSources(
-        final Path repositoryRoot
-    ) {
-
+    private static List<Path> modulesWithProductionSources(final Path repositoryRoot) {
         final var productionSources = Path.of("src", "main", "java");
         final var modules = new ArrayList<Path>();
         try {
@@ -152,7 +145,6 @@ final class ProductionModules {
                     final Path directory,
                     final BasicFileAttributes attributes
                 ) {
-
                     final var name = directory.getFileName() == null
                             ? ""
                             : directory
@@ -173,7 +165,6 @@ final class ProductionModules {
                         return FileVisitResult.SKIP_SUBTREE;
                     }
                     return FileVisitResult.CONTINUE;
-
                 }
 
             });
@@ -182,13 +173,9 @@ final class ProductionModules {
         }
         modules.sort(null);
         return modules;
-
     }
 
-    private static List<String> aggregatedArtifactIds(
-        final Path pom
-    ) {
-
+    private static List<String> aggregatedArtifactIds(final Path pom) {
         final var dependencies = DEPENDENCIES.matcher(withoutComments(pom));
         final var artifactIds = new ArrayList<String>();
         while (dependencies.find()) {
@@ -198,26 +185,18 @@ final class ProductionModules {
             }
         }
         return artifactIds;
-
     }
 
-    private static String artifactIdOf(
-        final Path pom
-    ) {
-
+    private static String artifactIdOf(final Path pom) {
         final var ownPart = PARENT.matcher(withoutComments(pom)).replaceFirst("");
         final var artifactId = ARTIFACT_ID.matcher(ownPart);
         if (!artifactId.find()) {
             throw new IllegalStateException("'%s' names no artifactId".formatted(pom));
         }
         return artifactId.group(1).trim();
-
     }
 
-    private static String withoutComments(
-        final Path pom
-    ) {
-
+    private static String withoutComments(final Path pom) {
         try {
             return COMMENT
                     .matcher(Files.readString(pom, StandardCharsets.UTF_8))
@@ -225,7 +204,6 @@ final class ProductionModules {
         } catch (final IOException e) {
             throw new UncheckedIOException(e);
         }
-
     }
 
 }

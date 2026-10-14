@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" xmlns:zenbpm="http://zenbpm.pbinitiative.org/1.0" id="Definitions_ContractParent" targetNamespace="http://bpmn.io/schema/bpmn">
+  <bpmn:process id="contract-parent" isExecutable="true">
+    <bpmn:startEvent id="StartEvent">
+      <bpmn:outgoing>Flow_ToCall</bpmn:outgoing>
+    </bpmn:startEvent>
+    <bpmn:sequenceFlow id="Flow_ToCall" sourceRef="StartEvent" targetRef="Call_Task" />
+    <bpmn:callActivity id="Call_Task" name="Call the task process">
+      <bpmn:extensionElements>
+        <zenbpm:calledElement processId="contract-task" propagateAllChildVariables="false" />
+      </bpmn:extensionElements>
+      <bpmn:incoming>Flow_ToCall</bpmn:incoming>
+      <bpmn:outgoing>Flow_ToEnd</bpmn:outgoing>
+    </bpmn:callActivity>
+    <bpmn:sequenceFlow id="Flow_ToEnd" sourceRef="Call_Task" targetRef="EndEvent" />
+    <bpmn:endEvent id="EndEvent">
+      <bpmn:incoming>Flow_ToEnd</bpmn:incoming>
+    </bpmn:endEvent>
+  </bpmn:process>
+</bpmn:definitions>

@@ -278,11 +278,115 @@ Where the code differs from the instructions:
 
 **Acceptance criteria**
 
-- [ ] Every endpoint of `analysis/02-spi-requirements-mapping.md` the design names is a method here
-  and is covered by the contract IT.
-- [ ] No method returns the engine's JSON untyped; no method reads a message text to decide anything.
-- [ ] A request longer than `request-timeout` ends in `ZenBpmUnavailableException` within the timeout
-  plus one second.
+- [x] Every endpoint of `analysis/02-spi-requirements-mapping.md` the design names is a method here
+  and is covered by the contract IT. All twenty of the table are methods, and
+  `ZenBpmRestClientContractIT` calls each against the pinned engine (18 tests). The mapping also
+  names `GET /process-definitions/statistics`, as one of two ways to answer `activeInstanceCountOf`;
+  S10's plan takes the other, `instances(processDefinitionKey, state=active, size=1).totalCount()`,
+  so the endpoint has no method.
+- [x] No method returns the engine's JSON untyped; no method reads a message text to decide anything.
+  Answers are decoded into package-private `ZenBpmWire` records named after the `api.yaml` schemas
+  and handed out as records of `client.api`; only variables are maps, as instruction 4 asks. The
+  client decides by status alone; the engine's `message` goes into the exception for people.
+- [x] A request longer than `request-timeout` ends in `ZenBpmUnavailableException` within the timeout
+  plus one second. `ZenBpmRestClientTest` with a timeout of one second: an answer which never comes
+  ends through the HTTP client's own timeout, a body which stops after its headers through the
+  client's wait 250 ms later; both tests fail preemptively after two seconds. A status the call
+  does not expect, whose body stops, ends as `ZenBpmApiException` with that status in the same time.
+
+**Implemented 2026-10-13.** `ZenBpmRestClientTest` (81 cases, fake engine on a port the system
+picks) and `ZenBpmRestClientContractIT` (15 cases, Docker) are green; `mvn clean install` builds
+green, the coverage gate measures 100 % of 4,240 instructions on both platforms, and
+`bin/check-deploy-safety.sh` passes both runs. Seen to fail, each restored afterwards: no wait for a
+body which stopped (the test failed after two seconds instead of hanging, which the first version of
+it did), unknown fields refused, `/v1` kept in the engine address, no widening of `Integer`, the
+total of a partition ignored, the total of a plain page ignored, no cancel of a call which ran out
+of time (caught only once the close test stalled a body; with no headers at all the HTTP client's
+own timeout had ended the call already), a `null` variable dropped, the interrupt flag lost.
+
+What the contract test found about the engine at `bdd795a3`:
+
+- A job carries a copy of its scope's variables, with the targets of its element's input mappings
+  set on top (`pkg/bpmn/jobs.go`, `runtime.NewVariableHolder`): a job of a task without mappings
+  carries the instance variable `orderId`. The analysis and S4.2.3 assumed an empty job; S4.2.3 has
+  a note.
+- `GET /process-instances/{key}` and `GET /jobs/{key}` answer a key of a partition the engine does
+  not have (partition 0, a key of another engine) with 502 `CLUSTER_ERROR`, not 404. A key carries
+  its partition in bits 12 to 21; the test uses `1 << 12` for a key nobody holds. Notes under S2.2.2
+  and S5.2.1.
+- A whole number sent as `1000.0` comes back as `1000`, and `GET /v1/openapi` is a 404; the test of
+  the latter fails once an engine serves its document (decision 18).
+- Every number is a Go `float64` in the engine: `2^53 + 1` comes back as `2^53`,
+  `12345678901234567890` as `12345678901234567000`, and `10^22` with an exponent, so as a `Double`
+  (found by a review, 2026-10-14, and pinned by the contract test).
+- An unknown process definition is a 404, an unknown message correlation a 404, a lock extension by
+  another client a 409, a second completion of a job 201.
+
+Where the code differs from the instructions:
+
+- `Readiness(ready, reasons)`: `ready` is status 200 rather than the `status` text, which says the
+  same.
+- `EngineStatus(version, commit, nodes)`: the commit as the engine reports it (12 characters), the
+  node ids sorted.
+- `DefinitionStatistics` is per element (`elements` -> `ElementCounts(active, incidents)`), because
+  S5.2.2 sums the job-producing elements; the pinned engine answers no completed or terminated
+  counts.
+- `ProcessInstanceRef` also carries `createdAt` (S9 orders children by it); its `state` and
+  `processType` and `JobRef.state` are enums. A value the pinned API does not know makes the answer
+  unreadable rather than guessed.
+- The filters are records, `InstanceFilter` and `JobFilter`, with `page` and `size` (1 to 100, the
+  size per partition, refused before sending); every search asks for key order, so its paging
+  neither repeats nor skips. The history can only be ordered by `createdAt`, in milliseconds and
+  without a second key, so entries of one millisecond may repeat or go missing at a page boundary.
+  `Page` carries `last`; `processDefinitions` and `children` read to the end, `history(key, page)`
+  reads 100 entries a page.
+- `failJob(key, errorCode, variables)` as the story names it, without `clientId`, `message`,
+  `retries` or `deliveryToken`. E6 adds what it needs once it settles how a failure and the engine's
+  retries (E13.3) work together.
+- `extendJobLock(key, clientId, duration)` sends no `deliveryToken` either. With the token, a
+  renewal by a handler whose lock lapsed answers 409 even where the job came back to the same
+  client; without it, that renewal extends the second delivery's lock. E6 decides whether its
+  renewal sends the token, together with `failJob`.
+- A 2xx answer which cannot be read is a `ZenBpmUnavailableException` too, but it names the status:
+  the engine did what was asked, only the body is lost. An interrupted call is one as well, and the
+  interrupt is kept.
+- Numbers in variables: Jackson's `USE_LONG_FOR_INTS` refuses a whole number beyond a `Long`, which
+  the engine writes for a large one, so the client widens `Integer` itself and keeps a
+  `BigInteger`. Nested objects and arrays are unmodifiable.
+- `/system` is resolved beside `/v1`, so a path in front of the engine (a proxy) is kept for both.
+- Decision 14 is now in `DECISIONS.md`, adapted from the plan's draft, because `Page` cites it.
+- `core` takes `engine-test-support` and Testcontainers as test dependencies, runs failsafe and
+  carries the logback template. `FakeEngine` is a test helper of its own, for S2.4.1's fake-server
+  tests too.
+
+**Answers to two reviews, 2026-10-14.** Every finding was checked against the source, the engine
+at `bdd795a3` or the running engine before it was changed. `ZenBpmRestClientTest` now has 94 cases
+and `ZenBpmRestClientContractIT` 18. Seen to fail, each restored afterwards: a lock duration sent
+unrounded (the engine answered 400 to `PT10M0.5S` in the contract test), a duration of zero sent,
+`null` read for a required field, a key of `7.9` read as `7`, the status of a stalled or broken
+answer lost, the status not kept when the headers arrive, a call after `close()` sent, the status
+of an unreadable answer dropped.
+
+- `extendJobLock` sends whole seconds, rounded up, since the engine reads no fraction of a second.
+  A duration of zero or less is refused before sending; `null` sends no duration, so the
+  subscription's applies.
+- `ZenBpmUnavailableException.getStatus()` names the status where one arrived (the user's
+  decision). A start answered 201 whose body cannot be read is a start which happened.
+- A status the call does not expect is the engine's answer even where its body stalls or breaks
+  off: `ZenBpmApiException` with that status and no engine code (the user's decision). An expected
+  status whose body does not arrive stays unavailable, naming the status.
+- A required field holding `null` and a whole number with a fraction no longer decode; Jackson's
+  `required` checked only that a field is present.
+- A call after `close()` throws `IllegalStateException`, not a sign of an unavailable engine.
+- `createdFrom` is inclusive (`created_at >=`), and the Javadoc says so now.
+- The contract test now also covers `onlyLatest = true` over two versions and a search paged one
+  instance at a time.
+- Not changed: the BPMN fixtures carry no `BPMNDiagram`. That rule belongs to the engine's Go
+  tests; neither this repository nor the VanillaBP adapters ask it of their test fixtures.
+
+**CodeRabbit on the pull request, 2026-10-14.** `history(key, page)` sent a page below 1, which the
+pinned engine answers with 400 (probed); it is refused before sending now, as the filters do.
+`ZenBpmRestClientTest` has 96 cases; seen to fail with the check switched off.
 
 ### S2.2.2 `ZenBpmErrors` - the one classification
 
@@ -303,6 +407,21 @@ Where the code differs from the instructions:
 
 The exception knows its `method` and `path`, which is how a 404 on a job is told from one on a message
 without reading text.
+
+*Found by S2.2.1's contract test, 2026-10-13.* `GET /process-instances/{key}` and `GET /jobs/{key}`
+answer a key whose partition bits (12 to 21) name a partition the engine does not have with 502
+`CLUSTER_ERROR` ("partition not found"), not with 404. That covers partition 0, which holds only
+what every partition shares, and a key another engine handed out. By this table it is unavailable,
+so a probe would answer BPMS_UNAVAILABLE for a key which is simply not this engine's. S5.2.1 and
+S5.2.2 decide what such a key means; telling it apart without reading the message needs the key's
+partition compared with the partitions `GET /system/status` reports.
+
+*Found by two reviews of S2.2.1, 2026-10-14.* `ZenBpmUnavailableException.getStatus()` names the
+status where the engine's answer arrived and only its body was lost or unreadable. A 2xx status
+there means the engine did what was asked: a repeated `createInstance` would start a second
+instance, and a value the pinned API does not know stays unreadable however often it is asked. The
+table decides whether such an exception is repeatable. A status the call does not expect is a
+`ZenBpmApiException` even where its body stalled, so its row applies as it stands.
 
 **Tests** (`ZenBpmErrorsTest`): a table test per status code and per exception shape, plain and
 wrapped in `CompletionException` and `RuntimeException`.

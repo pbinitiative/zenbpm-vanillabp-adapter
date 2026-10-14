@@ -58,19 +58,15 @@ class EngineUnderTestIT {
 
     @AfterAll
     static void closeTheClient() {
-
         HTTP.close();
-
     }
 
     @Test
     @DisplayName("The engine answers ready once the container is started")
     void theEngineAnswersReady() throws Exception {
-
         final var response = get("/system/health/ready");
 
         assertEquals(200, response.statusCode(), response.body());
-
     }
 
     /**
@@ -81,7 +77,6 @@ class EngineUnderTestIT {
     @Test
     @DisplayName("The container runs the pinned image, by digest")
     void theContainerRunsThePinnedImage() {
-
         final var pinned = System.getProperty("zenbpm.image");
         assertNotNull(pinned, "Failsafe hands in 'zenbpm.image', so run this test through Maven ('mvn verify').");
         final var image = ENGINE
@@ -93,7 +88,6 @@ class EngineUnderTestIT {
                 .parse(pinned)
                 .asCanonicalNameString(), image);
         assertTrue(image.contains("@sha256:"), () -> "'%s' is not pinned by its digest".formatted(image));
-
     }
 
     /**
@@ -104,7 +98,6 @@ class EngineUnderTestIT {
     @Test
     @DisplayName("The engine reports the pinned commit")
     void theEngineReportsThePinnedCommit() throws Exception {
-
         final var response = get("/system/status");
         final var reported = new ObjectMapper()
                 .readTree(response.body())
@@ -118,13 +111,9 @@ class EngineUnderTestIT {
                         .startsWith(reported),
                 () -> "The engine reports commit '%s', the pin is '%s'. The report has to be a prefix of the pin, at least %d characters long."
                         .formatted(reported, EngineUnderTest.pinnedCommit(), SHORTEST_REPORTED_COMMIT));
-
     }
 
-    private static HttpResponse<String> get(
-        final String path
-    ) throws IOException, InterruptedException {
-
+    private static HttpResponse<String> get(final String path) throws IOException, InterruptedException {
         return HTTP
                 .send(
                         HttpRequest
@@ -133,7 +122,6 @@ class EngineUnderTestIT {
                                 .GET()
                                 .build(),
                         HttpResponse.BodyHandlers.ofString());
-
     }
 
 }

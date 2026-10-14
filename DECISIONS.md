@@ -46,6 +46,27 @@ on the class is refused even where an IDE offers it: it would publish the curren
 then keep publishing whatever field a later change adds.
 `@SuppressWarnings("LombokGetterMayBeUsed")` on such a class keeps that offer from coming back.
 
+### 14. A start asks the engine for numbers, and asks as many on the last day as on the first
+
+While an application boots, the adapter answers questions which read what the engine has stored,
+and that grows for as long as the application is in production: how many workflows still run on an
+old version, how many tasks are open for a process. A start of ten seconds must not become one of
+two minutes because the application did its job for two years. The platform states this rule for
+every adapter in its own DECISIONS.md, as decision 19 "A start asks for numbers, and asks as many
+questions on the last day as on the first". The Camunda 8 adapter states it as its decision 13, "A
+start asks the cluster for numbers, and asks as many of them on the last day as on the first".
+
+For ZenBPM a quantity is read from what the engine counts: the `totalCount` of a search which asked
+for a small page, or a statistics endpoint. The items of the page which came back are never counted.
+Counting them would grow with the data and would be capped by the page size. On ZenBPM it would also
+be wrong. A search over the engine's partitions applies the page size to every partition, so one
+page holds up to that many items per partition. `Page.totalCount()` of the REST client is where such
+a number comes from.
+
+What does grow is the number of versions of a process the engine holds, one per deployment which
+changed a model, and the questions about older versions grow with it. That is on purpose: those
+questions are what the check is for.
+
 ### 15. One pinned engine version, no release lines
 
 The adapter needs at least the engine's job lock per subscription with its extension (engine commit
@@ -76,9 +97,10 @@ ownership decides: the licence, the coordinates (groupId `org.pbinitiative.zenbp
 `org.pbinitiative.zenbpmadapter`), the CI and where releases are published. The Go conventions of
 the engine repository do not reach into this one.
 
-*"Spotless with the platform's formatting conventions" is superseded in part by decisions 20 and
-22: the formatter is the platform's, but it indents by four spaces instead of two, and a wrapped
-parameter list closes on a line of its own.*
+*"Spotless with the platform's formatting conventions" is superseded in part by decisions 20, 22
+and 23: the formatter is the platform's, but it indents by four spaces instead of two, a wrapped
+parameter list closes on a line of its own, one parameter stays on the declaration's line, and a
+method body has no blank line at its start or end.*
 
 ### 17. Code adapted from the Apache-2.0 adapters keeps its licence and its notice
 
@@ -150,3 +172,38 @@ and adding a parameter changes one line instead of two. `formatting_conventions.
 "indent by one" on the three parameter alignments and `separate_lines_if_wrapped` for the
 parentheses of method and record declarations; Spotless applies and checks it on every build. A
 declaration short enough for one line stays on one line.
+
+*Superseded in part by decision 23. The last sentence never held: the formatter wraps every list of
+parameters, however short. Since decision 23, a list of one parameter stays on the declaration's
+line, and a list of two or more is wrapped as shown here.*
+
+### 23. One parameter stays on the declaration's line, a body has no blank line at its ends
+
+Supersedes in part decision 22 and, like it, decision 16. The owners of this repository chose this
+layout for every Java file, main and test. A method, constructor or record with one parameter keeps
+it on the line of the declaration. With two or more, each parameter stands on a line of its own as
+decision 22 shows, however short the list. The body of a method or constructor starts right after
+`{` and ends right before `}`, without a blank line at either end:
+
+```java
+private static ProcessInstanceRef start(final String businessKey) {
+    return client.createInstance(CreateInstanceRequest.latestVersionOf("contract-task"));
+}
+
+private FakeEngine(
+    final HttpServer server,
+    final ExecutorService handlers
+) {
+    this.server = server;
+    this.handlers = handlers;
+}
+```
+
+One parameter on a line of its own costs two lines and gives no list to read, and a blank line at
+the edge of a body separates nothing. Spotless applies and checks both on every build.
+`formatting_conventions.xml` removes the blank lines: it sets both
+`number_of_blank_lines_at_beginning_of_method_body` and
+`number_of_blank_lines_at_end_of_method_body` to -1. The Eclipse formatter cannot wrap by the
+number of parameters, so it still wraps every list. A `replaceRegex` step of Spotless in the root
+POM then joins a list of one parameter back onto its declaration, even where that line grows longer
+than the 120 columns the formatter aims at.

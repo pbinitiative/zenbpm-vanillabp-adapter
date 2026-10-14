@@ -258,9 +258,7 @@ public class ZenBpmAdapterConfiguration {
          * @param notices Lines worth one INFO at startup
          */
         public ValidationResult {
-
             notices = List.copyOf(notices);
-
         }
 
     }
@@ -320,9 +318,7 @@ public class ZenBpmAdapterConfiguration {
         final String adapterId,
         final String key
     ) {
-
         return "%s.%s.%s".formatted(CONFIGURATION_PREFIX, adapterId, key);
-
     }
 
     /**
@@ -331,9 +327,7 @@ public class ZenBpmAdapterConfiguration {
      * @return What the application wrote, or <code>null</code>
      */
     public String getRestAddress() {
-
         return restAddress;
-
     }
 
     /**
@@ -341,12 +335,8 @@ public class ZenBpmAdapterConfiguration {
      *
      * @param restAddress E.g. <code>http://zenbpm:8080</code>, or <code>null</code>
      */
-    public void setRestAddress(
-        final String restAddress
-    ) {
-
+    public void setRestAddress(final String restAddress) {
         this.restAddress = restAddress;
-
     }
 
     /**
@@ -356,9 +346,7 @@ public class ZenBpmAdapterConfiguration {
      * @return <code>host:port</code>, or <code>null</code> where it is derived
      */
     public String getGrpcAddress() {
-
         return grpcAddress;
-
     }
 
     /**
@@ -366,12 +354,8 @@ public class ZenBpmAdapterConfiguration {
      *
      * @param grpcAddress <code>host:port</code>, or <code>null</code> to derive it
      */
-    public void setGrpcAddress(
-        final String grpcAddress
-    ) {
-
+    public void setGrpcAddress(final String grpcAddress) {
         this.grpcAddress = grpcAddress;
-
     }
 
     /**
@@ -380,9 +364,7 @@ public class ZenBpmAdapterConfiguration {
      * @return <code>true</code> by default
      */
     public boolean isGrpcPlaintext() {
-
         return grpcPlaintext;
-
     }
 
     /**
@@ -390,12 +372,8 @@ public class ZenBpmAdapterConfiguration {
      *
      * @param grpcPlaintext <code>false</code> for TLS, <code>null</code> for the default
      */
-    public void setGrpcPlaintext(
-        final Boolean grpcPlaintext
-    ) {
-
+    public void setGrpcPlaintext(final Boolean grpcPlaintext) {
         this.grpcPlaintext = grpcPlaintext == null || grpcPlaintext;
-
     }
 
     /**
@@ -405,9 +383,7 @@ public class ZenBpmAdapterConfiguration {
      * @return What the application wrote, or <code>null</code> where it is derived
      */
     public String getClientId() {
-
         return clientId;
-
     }
 
     /**
@@ -415,12 +391,8 @@ public class ZenBpmAdapterConfiguration {
      *
      * @param clientId An id unique per node, or <code>null</code> to derive it
      */
-    public void setClientId(
-        final String clientId
-    ) {
-
+    public void setClientId(final String clientId) {
         this.clientId = clientId;
-
     }
 
     /**
@@ -429,9 +401,7 @@ public class ZenBpmAdapterConfiguration {
      * @return Never <code>null</code>
      */
     public Duration getRequestTimeout() {
-
         return requestTimeout;
-
     }
 
     /**
@@ -439,12 +409,8 @@ public class ZenBpmAdapterConfiguration {
      *
      * @param requestTimeout The deadline, or <code>null</code> for the default
      */
-    public void setRequestTimeout(
-        final Duration requestTimeout
-    ) {
-
+    public void setRequestTimeout(final Duration requestTimeout) {
         this.requestTimeout = requestTimeout == null ? DEFAULT_REQUEST_TIMEOUT : requestTimeout;
-
     }
 
     /**
@@ -453,9 +419,7 @@ public class ZenBpmAdapterConfiguration {
      * @return Never <code>null</code>
      */
     public Duration getStartupWait() {
-
         return startupWait;
-
     }
 
     /**
@@ -463,12 +427,8 @@ public class ZenBpmAdapterConfiguration {
      *
      * @param startupWait The wait, or <code>null</code> for the default
      */
-    public void setStartupWait(
-        final Duration startupWait
-    ) {
-
+    public void setStartupWait(final Duration startupWait) {
         this.startupWait = startupWait == null ? DEFAULT_STARTUP_WAIT : startupWait;
-
     }
 
     /**
@@ -477,9 +437,7 @@ public class ZenBpmAdapterConfiguration {
      * @return What the application wrote, or the default
      */
     public String getWorkerThreads() {
-
         return workerThreads;
-
     }
 
     /**
@@ -488,12 +446,8 @@ public class ZenBpmAdapterConfiguration {
      * @param workerThreads A positive number or <code>virtual</code>; <code>null</code> or blank
      *          for the default, as an empty key binds to an empty text
      */
-    public void setWorkerThreads(
-        final String workerThreads
-    ) {
-
+    public void setWorkerThreads(final String workerThreads) {
         this.workerThreads = isBlank(workerThreads) ? DEFAULT_WORKER_THREADS : workerThreads;
-
     }
 
     /**
@@ -503,9 +457,7 @@ public class ZenBpmAdapterConfiguration {
      * @return The bound, or <code>null</code> where the key is not set
      */
     public Integer getWorkerThreadsBound() {
-
         return workerThreadsBound;
-
     }
 
     /**
@@ -516,13 +468,11 @@ public class ZenBpmAdapterConfiguration {
      * @return The bound in use
      */
     public int workerThreadsBoundInUse() {
-
         if (workerThreadsBound != null) {
             return workerThreadsBound;
         }
         final var threads = workerThreadsAsNumber();
         return threads == null ? Integer.parseInt(DEFAULT_WORKER_THREADS) : threads;
-
     }
 
     /**
@@ -530,12 +480,8 @@ public class ZenBpmAdapterConfiguration {
      *
      * @param workerThreadsBound The bound, or <code>null</code> for the default
      */
-    public void setWorkerThreadsBound(
-        final Integer workerThreadsBound
-    ) {
-
+    public void setWorkerThreadsBound(final Integer workerThreadsBound) {
         this.workerThreadsBound = workerThreadsBound;
-
     }
 
     /**
@@ -544,9 +490,7 @@ public class ZenBpmAdapterConfiguration {
      * @return Never <code>null</code>
      */
     public Duration getRetryBackoff() {
-
         return retryBackoff;
-
     }
 
     /**
@@ -554,12 +498,8 @@ public class ZenBpmAdapterConfiguration {
      *
      * @param retryBackoff The wait, or <code>null</code> for the default
      */
-    public void setRetryBackoff(
-        final Duration retryBackoff
-    ) {
-
+    public void setRetryBackoff(final Duration retryBackoff) {
         this.retryBackoff = retryBackoff == null ? DEFAULT_RETRY_BACKOFF : retryBackoff;
-
     }
 
     /**
@@ -568,9 +508,7 @@ public class ZenBpmAdapterConfiguration {
      * @return The number
      */
     public int getMaxRedeliveries() {
-
         return maxRedeliveries;
-
     }
 
     /**
@@ -578,12 +516,8 @@ public class ZenBpmAdapterConfiguration {
      *
      * @param maxRedeliveries The number, or <code>null</code> for the default
      */
-    public void setMaxRedeliveries(
-        final Integer maxRedeliveries
-    ) {
-
+    public void setMaxRedeliveries(final Integer maxRedeliveries) {
         this.maxRedeliveries = maxRedeliveries == null ? DEFAULT_MAX_REDELIVERIES : maxRedeliveries;
-
     }
 
     /**
@@ -592,9 +526,7 @@ public class ZenBpmAdapterConfiguration {
      * @return Never <code>null</code>
      */
     public Duration getShutdownGrace() {
-
         return shutdownGrace;
-
     }
 
     /**
@@ -602,12 +534,8 @@ public class ZenBpmAdapterConfiguration {
      *
      * @param shutdownGrace The grace, or <code>null</code> for the default
      */
-    public void setShutdownGrace(
-        final Duration shutdownGrace
-    ) {
-
+    public void setShutdownGrace(final Duration shutdownGrace) {
         this.shutdownGrace = shutdownGrace == null ? DEFAULT_SHUTDOWN_GRACE : shutdownGrace;
-
     }
 
     /**
@@ -616,9 +544,7 @@ public class ZenBpmAdapterConfiguration {
      * @return Never <code>null</code>
      */
     public Duration getWorkflowVisibilityTimeout() {
-
         return workflowVisibilityTimeout;
-
     }
 
     /**
@@ -626,14 +552,10 @@ public class ZenBpmAdapterConfiguration {
      *
      * @param workflowVisibilityTimeout The timeout, or <code>null</code> for the default
      */
-    public void setWorkflowVisibilityTimeout(
-        final Duration workflowVisibilityTimeout
-    ) {
-
+    public void setWorkflowVisibilityTimeout(final Duration workflowVisibilityTimeout) {
         this.workflowVisibilityTimeout = workflowVisibilityTimeout == null
                 ? DEFAULT_WORKFLOW_VISIBILITY_TIMEOUT
                 : workflowVisibilityTimeout;
-
     }
 
     /**
@@ -642,9 +564,7 @@ public class ZenBpmAdapterConfiguration {
      * @return Never <code>null</code>; zero means the notifications are off
      */
     public Duration getUserTaskPollInterval() {
-
         return userTaskPollInterval;
-
     }
 
     /**
@@ -653,14 +573,10 @@ public class ZenBpmAdapterConfiguration {
      * @param userTaskPollInterval The interval, zero to switch the notifications off, or
      *          <code>null</code> for the default
      */
-    public void setUserTaskPollInterval(
-        final Duration userTaskPollInterval
-    ) {
-
+    public void setUserTaskPollInterval(final Duration userTaskPollInterval) {
         this.userTaskPollInterval = userTaskPollInterval == null
                 ? DEFAULT_USER_TASK_POLL_INTERVAL
                 : userTaskPollInterval;
-
     }
 
     /**
@@ -669,9 +585,7 @@ public class ZenBpmAdapterConfiguration {
      * @return The time, or <code>null</code> where the engine's own default applies
      */
     public Duration getHistoryTimeToLive() {
-
         return historyTimeToLive;
-
     }
 
     /**
@@ -679,12 +593,8 @@ public class ZenBpmAdapterConfiguration {
      *
      * @param historyTimeToLive The time, or <code>null</code> for the engine's own default
      */
-    public void setHistoryTimeToLive(
-        final Duration historyTimeToLive
-    ) {
-
+    public void setHistoryTimeToLive(final Duration historyTimeToLive) {
         this.historyTimeToLive = historyTimeToLive;
-
     }
 
     /**
@@ -693,9 +603,7 @@ public class ZenBpmAdapterConfiguration {
      * @return The number of entries
      */
     public int getInstanceCacheMaxEntries() {
-
         return instanceCacheMaxEntries;
-
     }
 
     /**
@@ -703,14 +611,10 @@ public class ZenBpmAdapterConfiguration {
      *
      * @param instanceCacheMaxEntries The number of entries, or <code>null</code> for the default
      */
-    public void setInstanceCacheMaxEntries(
-        final Integer instanceCacheMaxEntries
-    ) {
-
+    public void setInstanceCacheMaxEntries(final Integer instanceCacheMaxEntries) {
         this.instanceCacheMaxEntries = instanceCacheMaxEntries == null
                 ? DEFAULT_INSTANCE_CACHE_MAX_ENTRIES
                 : instanceCacheMaxEntries;
-
     }
 
     /**
@@ -719,9 +623,7 @@ public class ZenBpmAdapterConfiguration {
      * @return Never <code>null</code>
      */
     public MessageStartLookup getMessageStartLookup() {
-
         return messageStartLookup;
-
     }
 
     /**
@@ -729,12 +631,8 @@ public class ZenBpmAdapterConfiguration {
      *
      * @param messageStartLookup The choice, or <code>null</code> for the default
      */
-    public void setMessageStartLookup(
-        final MessageStartLookup messageStartLookup
-    ) {
-
+    public void setMessageStartLookup(final MessageStartLookup messageStartLookup) {
         this.messageStartLookup = messageStartLookup == null ? MessageStartLookup.REFUSE : messageStartLookup;
-
     }
 
     /**
@@ -765,7 +663,6 @@ public class ZenBpmAdapterConfiguration {
         final boolean nowhereFirst,
         final boolean deploymentFailureWarns
     ) {
-
         final var connectionDefects = new ArrayList<String>();
         final var valueDefects = new ArrayList<String>();
         final var notices = new ArrayList<String>();
@@ -862,7 +759,6 @@ public class ZenBpmAdapterConfiguration {
         return new ValidationResult(
                 ValidationResult.Kind.INCONSISTENT, inconsistentMessage(adapterId, defects, nowhereFirst,
                         deploymentFailureWarns, degrades), !degrades, notices);
-
     }
 
     /**
@@ -874,12 +770,10 @@ public class ZenBpmAdapterConfiguration {
      *           <code>grpc-address</code> is not set
      */
     public String grpcAddressInUse() {
-
         if (grpcAddress != null) {
             return grpcAddress.trim();
         }
         return "%s:%d".formatted(parsedRestAddress().getHost(), DEFAULT_GRPC_PORT);
-
     }
 
     /**
@@ -895,13 +789,11 @@ public class ZenBpmAdapterConfiguration {
         final String adapterId,
         final Supplier<String> applicationName
     ) {
-
         if (clientId != null) {
             return clientId.trim();
         }
         final var name = applicationName.get();
         return "%s-%s-%s".formatted(isBlank(name) ? DEFAULT_APPLICATION_NAME : name.trim(), adapterId, clientIdSuffix);
-
     }
 
     /**
@@ -915,7 +807,6 @@ public class ZenBpmAdapterConfiguration {
      * @throws IllegalStateException If <code>rest-address</code> is missing or malformed
      */
     public URI restBaseUri() {
-
         final var address = parsedRestAddress();
         final var scheme = address
                 .getScheme()
@@ -931,7 +822,6 @@ public class ZenBpmAdapterConfiguration {
                         .toLowerCase(Locale.ROOT),
                 port,
                 path.endsWith(API_VERSION_PATH) ? path : path + API_VERSION_PATH));
-
     }
 
     /**
@@ -942,16 +832,13 @@ public class ZenBpmAdapterConfiguration {
      * @throws IllegalStateException If <code>rest-address</code> is missing or malformed
      */
     public String instanceIdentity() {
-
         return restBaseUri().toString();
-
     }
 
     private void addRestAddressNotices(
         final String adapterId,
         final List<String> notices
     ) {
-
         final var address = parsedRestAddress();
         if (normalisedPath(address.getRawPath()).endsWith(API_VERSION_PATH)) {
             notices.add(
@@ -973,21 +860,17 @@ public class ZenBpmAdapterConfiguration {
                                     propertyKey(adapterId, "grpc-address"),
                                     propertyKey(adapterId, "grpc-plaintext")));
         }
-
     }
 
     private URI parsedRestAddress() {
-
         if (isBlank(restAddress) || (restAddressDefect() != null)) {
             throw new IllegalStateException(
                     "The address of the engine is derived from a valid rest-address only; validate the configuration first");
         }
         return URI.create(restAddress.trim());
-
     }
 
     private String restAddressDefect() {
-
         final URI address;
         try {
             address = new URI(restAddress.trim());
@@ -1013,13 +896,9 @@ public class ZenBpmAdapterConfiguration {
             return "carries a query or a fragment; it is the engine's address and nothing else";
         }
         return null;
-
     }
 
-    private static String grpcAddressDefect(
-        final String address
-    ) {
-
+    private static String grpcAddressDefect(final String address) {
         final var example = "e.g. localhost:%d or [::1]:%d".formatted(DEFAULT_GRPC_PORT, DEFAULT_GRPC_PORT);
         if (address.isEmpty()) {
             return "is blank; remove the key to have it derived from the host of rest-address and port %d"
@@ -1056,14 +935,12 @@ public class ZenBpmAdapterConfiguration {
             return "names a port outside 1 to 65535, %s".formatted(example);
         }
         return null;
-
     }
 
     private void addWorkerThreadsDefects(
         final String adapterId,
         final List<String> defects
     ) {
-
         final var configured = workerThreads.trim();
         final var threads = workerThreadsAsNumber();
         if ((threads == null) && configured.matches("[+-]?\\d+")) {
@@ -1099,17 +976,14 @@ public class ZenBpmAdapterConfiguration {
                             .formatted(propertyKey(adapterId, "worker-threads-bound"), workerThreadsBound,
                                     DEFAULT_WORKER_THREADS));
         }
-
     }
 
     private Integer workerThreadsAsNumber() {
-
         try {
             return Integer.valueOf(workerThreads.trim());
         } catch (NumberFormatException e) {
             return null;
         }
-
     }
 
     private static void addNegativeDurationDefect(
@@ -1119,18 +993,13 @@ public class ZenBpmAdapterConfiguration {
         final String defaultIso,
         final List<String> defects
     ) {
-
         if (configured.isNegative()) {
             defects.add("%s is %s and must not be negative; the default is %s"
                     .formatted(propertyKey(adapterId, key), configured, defaultIso));
         }
-
     }
 
-    private static String unconfiguredMessage(
-        final String adapterId
-    ) {
-
+    private static String unconfiguredMessage(final String adapterId) {
         return """
                 ZenBPM adapter '%s' is not configured: '%s' is missing. The application boots, and the \
                 adapter refuses work with this message until the address of the engine's REST API is \
@@ -1148,7 +1017,6 @@ public class ZenBpmAdapterConfiguration {
                         API_VERSION_PATH,
                         propertyKey(adapterId, "grpc-address"),
                         propertyKey(adapterId, "client-id"));
-
     }
 
     private static String inconsistentMessage(
@@ -1158,7 +1026,6 @@ public class ZenBpmAdapterConfiguration {
         final boolean deploymentFailureWarns,
         final boolean degrades
     ) {
-
         final var listed = defects
                 .stream()
                 .map("  - %s"::formatted)
@@ -1184,16 +1051,12 @@ public class ZenBpmAdapterConfiguration {
                     .formatted(propertyKey(adapterId, "deployment-failure"));
         }
         return "ZenBPM adapter '%s' is configured inconsistently:\n%s\n%s".formatted(adapterId, listed, consequence);
-
     }
 
     // RFC 3986 normalisation of a raw path (section 6.2.2.2: an escaped unreserved character is
     // the character itself), plus repeated and trailing slashes removed, so the '/v1' check and
     // the identity of two spellings of one address agree
-    private static String normalisedPath(
-        final String rawPath
-    ) {
-
+    private static String normalisedPath(final String rawPath) {
         final var path = new StringBuilder();
         for (var i = 0; i < rawPath.length(); ++i) {
             final var character = rawPath.charAt(i);
@@ -1217,24 +1080,15 @@ public class ZenBpmAdapterConfiguration {
             path.setLength(path.length() - 1);
         }
         return path.toString();
-
     }
 
-    private static boolean isUnreserved(
-        final char character
-    ) {
-
+    private static boolean isUnreserved(final char character) {
         // the ASCII letters and digits only: Character.isLetterOrDigit alone accepts every alphabet
         return ((character < 128) && Character.isLetterOrDigit(character)) || ("-._~".indexOf(character) >= 0);
-
     }
 
-    private static boolean isBlank(
-        final String text
-    ) {
-
+    private static boolean isBlank(final String text) {
         return (text == null) || text.isBlank();
-
     }
 
 }

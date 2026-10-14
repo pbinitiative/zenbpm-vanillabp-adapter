@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" xmlns:zenbpm="http://zenbpm.pbinitiative.org/1.0" id="Definitions_ContractLocked" targetNamespace="http://bpmn.io/schema/bpmn">
+  <bpmn:process id="contract-locked" isExecutable="true">
+    <bpmn:startEvent id="StartEvent">
+      <bpmn:outgoing>Flow_ToWork</bpmn:outgoing>
+    </bpmn:startEvent>
+    <bpmn:sequenceFlow id="Flow_ToWork" sourceRef="StartEvent" targetRef="Task_Locked" />
+    <bpmn:serviceTask id="Task_Locked" name="Locked work">
+      <bpmn:extensionElements>
+        <zenbpm:taskDefinition type="contract-locked-work" />
+      </bpmn:extensionElements>
+      <bpmn:incoming>Flow_ToWork</bpmn:incoming>
+      <bpmn:outgoing>Flow_ToEnd</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:sequenceFlow id="Flow_ToEnd" sourceRef="Task_Locked" targetRef="EndEvent" />
+    <bpmn:endEvent id="EndEvent">
+      <bpmn:incoming>Flow_ToEnd</bpmn:incoming>
+    </bpmn:endEvent>
+  </bpmn:process>
+</bpmn:definitions>

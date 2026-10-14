@@ -29,12 +29,10 @@ class ZenBpmGrpcStubsTest {
     @Test
     @DisplayName("The stubs offer the engine's job stream as a bidirectional stream")
     void theStubsOfferTheJobStream() {
-
         final var jobStream = ZenBpmGrpc.getJobStreamMethod();
 
         assertEquals("grpc.ZenBpm/JobStream", jobStream.getFullMethodName());
         assertEquals(MethodType.BIDI_STREAMING, jobStream.getType());
-
     }
 
 }
