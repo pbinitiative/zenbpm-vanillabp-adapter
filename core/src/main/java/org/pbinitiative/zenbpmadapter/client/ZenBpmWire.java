@@ -41,24 +41,16 @@ final class ZenBpmWire {
     ) {
     }
 
-    record Git(
-        @JsonProperty(required = true) String commitId
-    ) {
+    record Git(@JsonProperty(required = true) String commitId) {
     }
 
-    record Build(
-        @JsonProperty(required = true) String version
-    ) {
+    record Build(@JsonProperty(required = true) String version) {
     }
 
-    record ProcessDefinitionCreated(
-        @JsonProperty(required = true) long processDefinitionKey
-    ) {
+    record ProcessDefinitionCreated(@JsonProperty(required = true) long processDefinitionKey) {
     }
 
-    record DmnResourceDefinitionCreated(
-        @JsonProperty(required = true) long dmnResourceDefinitionKey
-    ) {
+    record DmnResourceDefinitionCreated(@JsonProperty(required = true) long dmnResourceDefinitionKey) {
     }
 
     record ProcessDefinition(
@@ -76,14 +68,10 @@ final class ZenBpmWire {
     ) {
     }
 
-    record ElementStatisticsPartitions(
-        @JsonProperty(required = true) List<PartitionElementStatistics> partitions
-    ) {
+    record ElementStatisticsPartitions(@JsonProperty(required = true) List<PartitionElementStatistics> partitions) {
     }
 
-    record PartitionElementStatistics(
-        @JsonProperty(required = true) Map<String, ElementStatisticCounts> items
-    ) {
+    record PartitionElementStatistics(@JsonProperty(required = true) Map<String, ElementStatisticCounts> items) {
     }
 
     record ElementStatisticCounts(
@@ -161,9 +149,7 @@ final class ZenBpmWire {
     ) {
     }
 
-    record LockExtended(
-        @JsonProperty(required = true) String lockUntil
-    ) {
+    record LockExtended(@JsonProperty(required = true) String lockUntil) {
     }
 
     record CreateProcessInstance(
@@ -175,14 +161,10 @@ final class ZenBpmWire {
     ) {
     }
 
-    record UpdateVariables(
-        Map<String, Object> variables
-    ) {
+    record UpdateVariables(Map<String, Object> variables) {
     }
 
-    record CompleteJob(
-        Map<String, Object> variables
-    ) {
+    record CompleteJob(Map<String, Object> variables) {
     }
 
     record FailJob(

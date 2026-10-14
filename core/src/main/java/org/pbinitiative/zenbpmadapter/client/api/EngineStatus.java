@@ -24,9 +24,7 @@ public record EngineStatus(
      * Copies the node ids, so the record stays as it was read.
      */
     public EngineStatus {
-
         nodes = List.copyOf(nodes);
-
     }
 
 }

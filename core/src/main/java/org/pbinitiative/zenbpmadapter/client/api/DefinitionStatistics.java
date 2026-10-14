@@ -13,17 +13,13 @@ import java.util.Map;
  *
  * @param elements The counts by element id
  */
-public record DefinitionStatistics(
-    Map<String, ElementCounts> elements
-) {
+public record DefinitionStatistics(Map<String, ElementCounts> elements) {
 
     /**
      * Copies the counts, so the record stays as it was read.
      */
     public DefinitionStatistics {
-
         elements = Map.copyOf(elements);
-
     }
 
     /**

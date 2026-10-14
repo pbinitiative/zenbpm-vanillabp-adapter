@@ -17,7 +17,6 @@ final class PageRange {
         final int size,
         final int maximumSize
     ) {
-
         if (page < 1) {
             throw new IllegalArgumentException("A page is counted from 1, but %d was asked for".formatted(page));
         }
@@ -25,7 +24,6 @@ final class PageRange {
             throw new IllegalArgumentException(
                     "A page holds 1 to %d items, but %d were asked for".formatted(maximumSize, size));
         }
-
     }
 
 }

@@ -53,7 +53,6 @@ public final class EngineUnderTest extends GenericContainer<EngineUnderTest> {
      * An engine which is not started yet, ready to be declared as a {@code @Container} field.
      */
     public EngineUnderTest() {
-
         super(image());
         withExposedPorts(REST_PORT, GRPC_PORT);
         withEnv("REST_API_ADDR", ":%d".formatted(REST_PORT));
@@ -77,7 +76,6 @@ public final class EngineUnderTest extends GenericContainer<EngineUnderTest> {
                         .forPort(REST_PORT)
                         .forStatusCode(200)
                         .withStartupTimeout(STARTUP_TIMEOUT));
-
     }
 
     /**
@@ -86,9 +84,7 @@ public final class EngineUnderTest extends GenericContainer<EngineUnderTest> {
      * @return The pinned image, by digest
      */
     public static DockerImageName image() {
-
         return DockerImageName.parse(IMAGE);
-
     }
 
     /**
@@ -98,9 +94,7 @@ public final class EngineUnderTest extends GenericContainer<EngineUnderTest> {
      * @return The full commit, 40 hexadecimal characters
      */
     public static String pinnedCommit() {
-
         return COMMIT;
-
     }
 
     /**
@@ -110,9 +104,7 @@ public final class EngineUnderTest extends GenericContainer<EngineUnderTest> {
      * @return The base address without a path, e.g. {@code http://localhost:32770}
      */
     public String restAddress() {
-
         return "http://%s:%d".formatted(getHost(), getMappedPort(REST_PORT));
-
     }
 
     /**
@@ -122,13 +114,10 @@ public final class EngineUnderTest extends GenericContainer<EngineUnderTest> {
      * @return Host and port, e.g. {@code localhost:32771}
      */
     public String grpcAddress() {
-
         return "%s:%d".formatted(getHost(), getMappedPort(GRPC_PORT));
-
     }
 
     private static Properties read() {
-
         final var properties = new Properties();
         try (var resource = EngineUnderTest.class.getResourceAsStream(RESOURCE)) {
             if (resource == null) {
@@ -143,7 +132,6 @@ public final class EngineUnderTest extends GenericContainer<EngineUnderTest> {
             throw new UncheckedIOException("Cannot read '%s'".formatted(RESOURCE), e);
         }
         return properties;
-
     }
 
     /**
@@ -173,12 +161,10 @@ public final class EngineUnderTest extends GenericContainer<EngineUnderTest> {
             final String form,
             final String formDescription
         ) {
-
             this.key = key;
             this.pomProperty = pomProperty;
             this.form = Pattern.compile(form);
             this.formDescription = formDescription;
-
         }
 
         /**
@@ -188,10 +174,7 @@ public final class EngineUnderTest extends GenericContainer<EngineUnderTest> {
          * @return The value, which has the form of this part of the pin
          * @throws IllegalStateException where the value is missing, unfiltered or of another form
          */
-        String checked(
-            final String value
-        ) {
-
+        String checked(final String value) {
             if ((value == null) || value.isBlank() || value.contains("${")) {
                 throw new IllegalStateException(
                         ("'%s' of '%s' is '%s' instead of a value. The resources of 'engine-test-support' have "
@@ -206,7 +189,6 @@ public final class EngineUnderTest extends GenericContainer<EngineUnderTest> {
                                 .formatted(key, RESOURCE, value, formDescription, pomProperty));
             }
             return value;
-
         }
 
     }

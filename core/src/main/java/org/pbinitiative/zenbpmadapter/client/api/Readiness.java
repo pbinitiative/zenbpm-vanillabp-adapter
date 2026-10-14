@@ -23,9 +23,7 @@ public record Readiness(
      * Copies the reasons, so the record stays as it was read.
      */
     public Readiness {
-
         reasons = List.copyOf(reasons);
-
     }
 
 }

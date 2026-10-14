@@ -29,9 +29,7 @@ public record Page<T>(
      * Copies the items, so the record stays as it was read.
      */
     public Page {
-
         items = List.copyOf(items);
-
     }
 
 }

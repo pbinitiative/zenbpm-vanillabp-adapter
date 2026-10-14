@@ -43,9 +43,7 @@ public record JobRef(
      * Keeps the input variables unmodifiable, so the record stays as it was read.
      */
     public JobRef {
-
         inputVariables = Variables.unmodifiable(inputVariables);
-
     }
 
     /**

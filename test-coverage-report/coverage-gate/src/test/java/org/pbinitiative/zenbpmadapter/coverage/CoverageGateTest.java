@@ -82,12 +82,10 @@ class CoverageGateTest {
     @Test
     @DisplayName("Every module producing coverage data is read by an aggregated report")
     void everyModuleProducingCoverageDataIsAggregated() {
-
         final var missing = CoverageGate
                 .modulesMissingFromAggregates(ROOT, AGGREGATE_POMS, DELIBERATELY_NOT_AGGREGATED);
 
         assertTrue(missing.isEmpty(), () -> CoverageGate.describeMissingModules(missing, AGGREGATE_POMS));
-
     }
 
     /**
@@ -98,7 +96,6 @@ class CoverageGateTest {
     @Test
     @DisplayName("Every production module is read by the report of its platform")
     void everyProductionModuleIsReadByTheReportOfItsPlatform() {
-
         final var springBoot = new ProductionModules.Report("Spring Boot", AGGREGATE_POMS.get(0));
         final var quarkus = new ProductionModules.Report("Quarkus", AGGREGATE_POMS.get(1));
 
@@ -106,23 +103,18 @@ class CoverageGateTest {
                 .missingFromTheReportOfTheirPlatform(ROOT, springBoot, quarkus, DELIBERATELY_NOT_AGGREGATED);
 
         assertTrue(missing.isEmpty(), () -> ProductionModules.describe(missing, springBoot, quarkus));
-
     }
 
     @Test
     @DisplayName("The Spring Boot report is above the coverage threshold")
     void theSpringBootReportIsAboveTheThreshold() {
-
         assertAboveThreshold("Spring Boot", 0, "coverage.threshold.spring-boot");
-
     }
 
     @Test
     @DisplayName("The Quarkus report is above the coverage threshold")
     void theQuarkusReportIsAboveTheThreshold() {
-
         assertAboveThreshold("Quarkus", 1, "coverage.threshold.quarkus");
-
     }
 
     /**
@@ -147,7 +139,6 @@ class CoverageGateTest {
         final int report,
         final String thresholdProperty
     ) {
-
         if (CoverageGate.stopsBeforeTheReportsAreWritten(MAVEN_COMMAND_LINE)) {
             final var reason = CoverageGate.describeRunWithoutReports(MAVEN_COMMAND_LINE);
             System.out.println("coverage gate | %s | %s".formatted(platform, reason));
@@ -182,7 +173,6 @@ class CoverageGateTest {
                         MISSED instructions, not by percentage, and put the test where the uncovered code \
                         belongs. Code nobody can reach is dead and gets deleted rather than covered."""
                         .formatted(coverage, plain(threshold), plain(RULE)));
-
     }
 
     /**
@@ -194,25 +184,19 @@ class CoverageGateTest {
         final CoverageGate.Coverage coverage,
         final double threshold
     ) {
-
         final var verdict = coverage.percentage() >= RULE
                 ? "at the rule of %s %%".formatted(plain(RULE))
                 : "%.2f points below the rule of %s %%, build breaks below %s %%"
                         .formatted(RULE - coverage.percentage(), plain(RULE), plain(threshold));
 
         System.out.println("coverage gate | %s | %s".formatted(coverage, verdict));
-
     }
 
     /** A whole percentage without the '.0' a double would print. */
-    private static String plain(
-        final double percentage
-    ) {
-
+    private static String plain(final double percentage) {
         return percentage == Math.rint(percentage)
                 ? String.valueOf((long) percentage)
                 : String.valueOf(percentage);
-
     }
 
 }

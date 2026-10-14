@@ -462,6 +462,14 @@
               <file>${maven.multiModuleProjectDirectory}/formatting_conventions.xml</file>
               <version>4.35</version>
             </eclipse>
+            <!-- the formatter wraps every parameter list, and this joins a list of one
+                 parameter back onto its declaration, see decision 23 in the repository's
+                 DECISIONS.md -->
+            <replaceRegex>
+              <name>One parameter stays on the declaration's line</name>
+              <searchRegex>(?m)^([ \t]*[^\s][^\n]*)\(\n[ \t]+([^\n]*[^,\n])\n[ \t]*\)([^\n]*)$</searchRegex>
+              <replacement>$1($2)$3</replacement>
+            </replaceRegex>
             <removeUnusedImports/>
             <importOrder>
               <order>java,javax,org,com,at.phactum</order>

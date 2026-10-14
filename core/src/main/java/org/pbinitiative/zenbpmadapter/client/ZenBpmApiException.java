@@ -67,7 +67,6 @@ public class ZenBpmApiException extends RuntimeException {
         final String method,
         final String path
     ) {
-
         super(message(adapterId, status, engineCode, engineMessage, method, path));
         this.adapterId = adapterId;
         this.status = status;
@@ -75,7 +74,6 @@ public class ZenBpmApiException extends RuntimeException {
         this.engineMessage = engineMessage;
         this.method = method;
         this.path = path;
-
     }
 
     /**
@@ -84,9 +82,7 @@ public class ZenBpmApiException extends RuntimeException {
      * @return The adapter id
      */
     public String getAdapterId() {
-
         return adapterId;
-
     }
 
     /**
@@ -95,9 +91,7 @@ public class ZenBpmApiException extends RuntimeException {
      * @return E.g. <code>404</code>
      */
     public int getStatus() {
-
         return status;
-
     }
 
     /**
@@ -107,9 +101,7 @@ public class ZenBpmApiException extends RuntimeException {
      *         answer of a proxy does
      */
     public String getEngineCode() {
-
         return engineCode;
-
     }
 
     /**
@@ -118,9 +110,7 @@ public class ZenBpmApiException extends RuntimeException {
      * @return The message; <code>null</code> where the answer carried none
      */
     public String getEngineMessage() {
-
         return engineMessage;
-
     }
 
     /**
@@ -129,9 +119,7 @@ public class ZenBpmApiException extends RuntimeException {
      * @return E.g. <code>POST</code>
      */
     public String getMethod() {
-
         return method;
-
     }
 
     /**
@@ -141,9 +129,7 @@ public class ZenBpmApiException extends RuntimeException {
      * @return E.g. <code>/v1/jobs/42/complete</code>
      */
     public String getPath() {
-
         return path;
-
     }
 
     private static String message(
@@ -154,7 +140,6 @@ public class ZenBpmApiException extends RuntimeException {
         final String method,
         final String path
     ) {
-
         final var answer = "ZenBPM adapter '%s': %s %s was answered with status %d".formatted(adapterId, method, path,
                 status);
         if (engineCode == null) {
@@ -163,7 +148,6 @@ public class ZenBpmApiException extends RuntimeException {
         return engineMessage == null
                 ? "%s, %s".formatted(answer, engineCode)
                 : "%s, %s: %s".formatted(answer, engineCode, engineMessage);
-
     }
 
 }

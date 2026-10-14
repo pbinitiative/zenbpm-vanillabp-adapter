@@ -39,9 +39,7 @@ public record InstanceFilter(
      * Refuses a page or a size the engine would refuse.
      */
     public InstanceFilter {
-
         PageRange.check(page, size, MAXIMUM_SIZE);
-
     }
 
     /**
@@ -50,9 +48,7 @@ public record InstanceFilter(
      * @return The filter
      */
     public static InstanceFilter anyInstance() {
-
         return new InstanceFilter(null, null, null, null, null, 1, MAXIMUM_SIZE);
-
     }
 
     /**
@@ -61,12 +57,8 @@ public record InstanceFilter(
      * @param businessKey The business key
      * @return A new filter
      */
-    public InstanceFilter withBusinessKey(
-        final String businessKey
-    ) {
-
+    public InstanceFilter withBusinessKey(final String businessKey) {
         return new InstanceFilter(businessKey, bpmnProcessId, processDefinitionKey, state, createdFrom, page, size);
-
     }
 
     /**
@@ -75,12 +67,8 @@ public record InstanceFilter(
      * @param bpmnProcessId The id of the process
      * @return A new filter
      */
-    public InstanceFilter withBpmnProcessId(
-        final String bpmnProcessId
-    ) {
-
+    public InstanceFilter withBpmnProcessId(final String bpmnProcessId) {
         return new InstanceFilter(businessKey, bpmnProcessId, processDefinitionKey, state, createdFrom, page, size);
-
     }
 
     /**
@@ -89,12 +77,8 @@ public record InstanceFilter(
      * @param processDefinitionKey The key of the process definition
      * @return A new filter
      */
-    public InstanceFilter withProcessDefinitionKey(
-        final Long processDefinitionKey
-    ) {
-
+    public InstanceFilter withProcessDefinitionKey(final Long processDefinitionKey) {
         return new InstanceFilter(businessKey, bpmnProcessId, processDefinitionKey, state, createdFrom, page, size);
-
     }
 
     /**
@@ -103,12 +87,8 @@ public record InstanceFilter(
      * @param state The state
      * @return A new filter
      */
-    public InstanceFilter withState(
-        final ProcessInstanceRef.State state
-    ) {
-
+    public InstanceFilter withState(final ProcessInstanceRef.State state) {
         return new InstanceFilter(businessKey, bpmnProcessId, processDefinitionKey, state, createdFrom, page, size);
-
     }
 
     /**
@@ -117,12 +97,8 @@ public record InstanceFilter(
      * @param createdFrom The moment
      * @return A new filter
      */
-    public InstanceFilter withCreatedFrom(
-        final Instant createdFrom
-    ) {
-
+    public InstanceFilter withCreatedFrom(final Instant createdFrom) {
         return new InstanceFilter(businessKey, bpmnProcessId, processDefinitionKey, state, createdFrom, page, size);
-
     }
 
     /**
@@ -131,12 +107,8 @@ public record InstanceFilter(
      * @param page The page, counted from 1
      * @return A new filter
      */
-    public InstanceFilter withPage(
-        final int page
-    ) {
-
+    public InstanceFilter withPage(final int page) {
         return new InstanceFilter(businessKey, bpmnProcessId, processDefinitionKey, state, createdFrom, page, size);
-
     }
 
     /**
@@ -145,12 +117,8 @@ public record InstanceFilter(
      * @param size How many items a page holds per partition, 1 to {@value #MAXIMUM_SIZE}
      * @return A new filter
      */
-    public InstanceFilter withSize(
-        final int size
-    ) {
-
+    public InstanceFilter withSize(final int size) {
         return new InstanceFilter(businessKey, bpmnProcessId, processDefinitionKey, state, createdFrom, page, size);
-
     }
 
 }

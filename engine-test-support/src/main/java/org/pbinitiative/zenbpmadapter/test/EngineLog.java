@@ -40,14 +40,12 @@ public final class EngineLog {
      * @return What {@code withLogConsumer(...)} of the container takes
      */
     public static Consumer<OutputFrame> consumer() {
-
         return frame -> {
             final var line = frame.getUtf8StringWithoutLineEnding();
             if (!line.isEmpty()) {
                 LOGGER.debug(line);
             }
         };
-
     }
 
 }

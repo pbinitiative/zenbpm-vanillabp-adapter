@@ -31,7 +31,6 @@ class MalformedPinsTest {
     @Test
     @DisplayName("The pin of the root POM passes both checks")
     void thePinOfTheRootPomIsAccepted() {
-
         assertEquals(40, EngineUnderTest
                 .pinnedCommit()
                 .length());
@@ -39,7 +38,6 @@ class MalformedPinsTest {
                 .image()
                 .asCanonicalNameString()
                 .contains("@sha256:"));
-
     }
 
     @ParameterizedTest
@@ -47,10 +45,7 @@ class MalformedPinsTest {
             "0123456789ab", "0123456789ABCDEF0123456789ABCDEF01234567", "0123456789abcdef0123456789abcdef01234567 ", "v1.8.0", "${zenbpm.commit}"
     })
     @DisplayName("A commit which is not 40 lower-case hexadecimal characters is refused")
-    void aCommitOfAnotherFormIsRefused(
-        final String commit
-    ) {
-
+    void aCommitOfAnotherFormIsRefused(final String commit) {
         final var refusal = assertThrows(
                 IllegalStateException.class,
                 () -> EngineUnderTest.Pin.COMMIT.checked(commit));
@@ -58,7 +53,6 @@ class MalformedPinsTest {
         assertTrue(refusal
                 .getMessage()
                 .contains("'zenbpm.commit' of the root pom"), refusal.getMessage());
-
     }
 
     @ParameterizedTest
@@ -66,10 +60,7 @@ class MalformedPinsTest {
             "ghcr.io/pbinitiative/zenbpm:dev", "ghcr.io/pbinitiative/zenbpm:dev@sha256:0000000000000000000000000000000000000000000000000000000000000000", "ghcr.io/pbinitiative/zenbpm@sha256:01234567", "ghcr.io/pbinitiative/zenbpm"
     })
     @DisplayName("An image which is not named by its digest alone is refused")
-    void anImageOfAnotherFormIsRefused(
-        final String image
-    ) {
-
+    void anImageOfAnotherFormIsRefused(final String image) {
         final var refusal = assertThrows(
                 IllegalStateException.class,
                 () -> EngineUnderTest.Pin.IMAGE.checked(image));
@@ -77,7 +68,6 @@ class MalformedPinsTest {
         assertTrue(refusal
                 .getMessage()
                 .contains("'zenbpm.image' of the root pom"), refusal.getMessage());
-
     }
 
     @ParameterizedTest
@@ -85,12 +75,8 @@ class MalformedPinsTest {
             "ghcr.io/pbinitiative/zenbpm@sha256:0000000000000000000000000000000000000000000000000000000000000000", "localhost:5000/zenbpm@sha256:0000000000000000000000000000000000000000000000000000000000000000"
     })
     @DisplayName("An image named by its digest is accepted, also from a registry with a port")
-    void anImageByDigestIsAccepted(
-        final String image
-    ) {
-
+    void anImageByDigestIsAccepted(final String image) {
         assertEquals(image, EngineUnderTest.Pin.IMAGE.checked(image));
-
     }
 
 }

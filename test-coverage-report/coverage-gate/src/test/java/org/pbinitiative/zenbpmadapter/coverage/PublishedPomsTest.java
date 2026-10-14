@@ -72,21 +72,17 @@ class PublishedPomsTest {
     @Test
     @DisplayName("no POM of this repository hands an application a tool of the build")
     void noPomHandsAnApplicationAToolOfTheBuild() {
-
         PublishedPoms
                 .ofTheRepositoryUnderTest(PublishedPoms.THE_FLATTENED_POM)
                 .handAnApplicationNoToolOfTheBuild(TOOLS_OF_THIS_BUILD);
-
     }
 
     @Test
     @DisplayName("no POM of this repository hands an application a property instead of a value")
     void noPomHandsAnApplicationAPropertyInsteadOfAValue() {
-
         PublishedPoms
                 .ofTheRepositoryUnderTest(PublishedPoms.THE_FLATTENED_POM)
                 .handAnApplicationNoPropertyInsteadOfAValue();
-
     }
 
 }

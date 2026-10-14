@@ -66,7 +66,6 @@ class PublicationSafetyTest {
     @Test
     @DisplayName("Nothing is uploaded before the coverage gate, the last module, passed")
     void nothingIsUploadedBeforeTheGatePassed() {
-
         final var rootPom = withoutComments(ROOT.resolve("pom.xml"));
         final var deployPlugin = DEPLOY_PLUGIN.matcher(rootPom);
         assertTrue(
@@ -100,13 +99,11 @@ class PublicationSafetyTest {
                 lastModule(withoutComments(ROOT.resolve("test-coverage-report/pom.xml"))),
                 "The gate has to be the last module of test-coverage-report, so it is the last of the "
                         + "whole reactor and nothing is uploaded before it passed.");
-
     }
 
     @Test
     @DisplayName("Each coverage badge reads the instruction coverage of its own report")
     void eachCoverageBadgeReadsTheInstructionCoverageOfItsReport() throws IOException {
-
         final var badges = badges();
         assertEquals(
                 List.of("Spring Boot", "Quarkus"),
@@ -141,7 +138,6 @@ class PublicationSafetyTest {
                     "The %s badge reads '%s' from the report this build wrote, not a percentage or 'n/a'."
                             .formatted(platform, shown));
         }
-
     }
 
     /** The table footer of a JaCoCo report page: instructions first, branches second. */
@@ -149,27 +145,22 @@ class PublicationSafetyTest {
         final String instructions,
         final String instructionCoverage
     ) {
-
         return """
                 <tfoot><tr><td>Total</td><td class="bar">%s</td><td class="ctr2">%s</td>\
                 <td class="bar">0 of 0</td><td class="ctr2">n/a</td></tr></tfoot>"""
                 .formatted(instructions, instructionCoverage);
-
     }
 
     private static String firstGroup(
         final Pattern pattern,
         final String text
     ) {
-
         final var matcher = pattern.matcher(text);
         return matcher.find() ? matcher.group(1) : null;
-
     }
 
     /** The badge parameters per platform, in the order the README shows them. */
     private static Map<String, Map<String, String>> badges() throws IOException {
-
         final var badges = new LinkedHashMap<String, Map<String, String>>();
         final var matcher = BADGE.matcher(Files.readString(ROOT.resolve("README.md")));
         while (matcher.find()) {
@@ -186,24 +177,18 @@ class PublicationSafetyTest {
             badges.put(matcher.group(1), parameters);
         }
         return badges;
-
     }
 
-    private static String lastModule(
-        final String pom
-    ) {
-
+    private static String lastModule(final String pom) {
         final var matcher = MODULE.matcher(pom);
         String last = null;
         while (matcher.find()) {
             last = matcher.group(1);
         }
         return last;
-
     }
 
     private static List<Path> poms() {
-
         final var poms = new ArrayList<Path>();
         try {
             Files.walkFileTree(ROOT, new SimpleFileVisitor<>() {
@@ -213,7 +198,6 @@ class PublicationSafetyTest {
                     final Path directory,
                     final BasicFileAttributes attributes
                 ) {
-
                     final var name = directory.getFileName() == null
                             ? ""
                             : directory
@@ -227,7 +211,6 @@ class PublicationSafetyTest {
                         poms.add(pom);
                     }
                     return FileVisitResult.CONTINUE;
-
                 }
 
             });
@@ -235,13 +218,9 @@ class PublicationSafetyTest {
             throw new UncheckedIOException(e);
         }
         return poms;
-
     }
 
-    private static String withoutComments(
-        final Path file
-    ) {
-
+    private static String withoutComments(final Path file) {
         try {
             return COMMENT
                     .matcher(Files.readString(file, StandardCharsets.UTF_8))
@@ -249,7 +228,6 @@ class PublicationSafetyTest {
         } catch (final IOException e) {
             throw new UncheckedIOException(e);
         }
-
     }
 
 }

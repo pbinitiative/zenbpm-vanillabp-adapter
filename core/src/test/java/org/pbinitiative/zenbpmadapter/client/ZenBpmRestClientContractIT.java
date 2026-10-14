@@ -102,7 +102,6 @@ class ZenBpmRestClientContractIT {
 
     @BeforeAll
     static void deployTheFixtures() {
-
         final var configuration = new ZenBpmAdapterConfiguration();
         configuration.setRestAddress(ENGINE.restAddress());
         client = new ZenBpmRestClient(ADAPTER_ID, configuration);
@@ -110,20 +109,16 @@ class ZenBpmRestClientContractIT {
         client.deployBpmn(fixture("contract-parent.bpmn"));
         client.deployBpmn(fixture("contract-locked.bpmn"));
         decision = client.deployDmn(fixture("contract-decision.dmn"));
-
     }
 
     @AfterAll
     static void closeTheClient() {
-
         client.close();
-
     }
 
     @Test
     @DisplayName("The engine answers ready and names its commit")
     void theEngineAnswersReadyAndNamesItsCommit() {
-
         final var readiness = client.ready();
         final var status = client.status();
 
@@ -138,25 +133,21 @@ class ZenBpmRestClientContractIT {
         assertEquals(1, status
                 .nodes()
                 .size(), status::toString);
-
     }
 
     @Test
     @DisplayName("A second identical deployment creates nothing and answers the same key")
     void aSecondIdenticalDeploymentCreatesNothing() {
-
         assertTrue(task.created());
         assertTrue(decision.created());
 
         assertEquals(new DeployedResource(task.key(), false), client.deployBpmn(fixture("contract-task.bpmn")));
         assertEquals(new DeployedResource(decision.key(), false), client.deployDmn(fixture("contract-decision.dmn")));
-
     }
 
     @Test
     @DisplayName("A deployed process is read by key, with its BPMN, and among the versions of its id")
     void aDeployedProcessIsRead() {
-
         final var definition = client.processDefinition(task.key());
         final var versions = client.processDefinitions("contract-task", false);
 
@@ -176,13 +167,11 @@ class ZenBpmRestClientContractIT {
                         .getFirst()
                         .bpmnData()),
                 () -> assertEquals(List.of(), client.processDefinitions("contract-nobody-deployed", false)));
-
     }
 
     @Test
     @DisplayName("Of two versions of a process, both are listed in key order, and the latest one alone")
     void ofTwoVersionsTheLatestIsListedAlone() {
-
         final var first = client.deployBpmn(fixture("contract-versions.bpmn"));
         final var second = client.deployBpmn(new String(fixture("contract-versions.bpmn"), StandardCharsets.UTF_8)
                 .replace("Version 1", "Version 2")
@@ -202,13 +191,11 @@ class ZenBpmRestClientContractIT {
         assertEquals(2, latest
                 .getFirst()
                 .version());
-
     }
 
     @Test
     @DisplayName("A search of one instance a page reads the engine's totals, and its last page says so")
     void aSearchIsPaged() {
-
         final var definition = client.deployBpmn(fixture("contract-paged.bpmn"));
         final var started = List.of(
                 client.createInstance(CreateInstanceRequest.version(definition.key())),
@@ -235,26 +222,22 @@ class ZenBpmRestClientContractIT {
                                 .stream())
                         .map(ProcessInstanceRef::key)
                         .toList());
-
     }
 
     @Test
     @DisplayName("A definition the engine does not know is a 404")
     void anUnknownDefinitionIsA404() {
-
         final var failure = assertThrows(ZenBpmApiException.class, () -> client.processDefinition(1));
 
         assertAll(
                 () -> assertEquals(404, failure.getStatus()),
                 () -> assertEquals("GET", failure.getMethod()),
                 () -> assertEquals("/v1/process-definitions/1", failure.getPath()));
-
     }
 
     @Test
     @DisplayName("A started instance is found by its business key, and its waiting job is active")
     void aStartedInstanceIsFoundAndItsJobIsActive() {
-
         final var businessKey = uniqueBusinessKey();
 
         final var started = start(businessKey);
@@ -299,13 +282,11 @@ class ZenBpmRestClientContractIT {
                 .elements()
                 .get("Task_Work")
                 .active() >= 1);
-
     }
 
     @Test
     @DisplayName("A whole number sent as a fraction comes back as a Long")
     void aWholeNumberComesBackAsALong() {
-
         final var started = client.createInstance(CreateInstanceRequest
                 .latestVersionOf("contract-task")
                 .withVariables(Map.of("orderId", uniqueBusinessKey(), "amount", 1000.0, "rate", 0.5)));
@@ -317,7 +298,6 @@ class ZenBpmRestClientContractIT {
 
         assertEquals(1000L, variables.get("amount"));
         assertEquals(0.5, variables.get("rate"));
-
     }
 
     /**
@@ -328,7 +308,6 @@ class ZenBpmRestClientContractIT {
     @Test
     @DisplayName("A whole number beyond 2^53 comes back rounded by the engine, from 10^21 on as a Double")
     void aWholeNumberBeyond2To53ComesBackRounded() {
-
         final var started = client.createInstance(CreateInstanceRequest
                 .latestVersionOf("contract-task")
                 .withVariables(Map.of(
@@ -346,13 +325,11 @@ class ZenBpmRestClientContractIT {
                 () -> assertEquals(1L << 53, variables.get("id")),
                 () -> assertEquals(new BigInteger("12345678901234567000"), variables.get("beyondALong")),
                 () -> assertEquals(1e22, variables.get("beyond10To21")));
-
     }
 
     @Test
     @DisplayName("Patched variables are visible in the instance")
     void patchedVariablesAreVisible() {
-
         final var started = start(uniqueBusinessKey());
 
         client.patchVariables(started.key(), Map.of("note", "checked", "amount", 2));
@@ -363,13 +340,11 @@ class ZenBpmRestClientContractIT {
                 .variables();
         assertEquals("checked", variables.get("note"));
         assertEquals(2L, variables.get("amount"));
-
     }
 
     @Test
     @DisplayName("A job completed twice is answered normally, and a message moves the instance to its end")
     void aJobCompletedTwiceAndAMessage() {
-
         final var businessKey = uniqueBusinessKey();
         final var started = start(businessKey);
         final var job = waitingJobOf(started);
@@ -397,13 +372,11 @@ class ZenBpmRestClientContractIT {
                 .toList()
                 .containsAll(List.of("StartEvent", "Task_Work", "Catch_Paid", "EndEvent")), history::toString);
         assertTrue(history.totalCount() >= 4);
-
     }
 
     @Test
     @DisplayName("A message nothing waits for is a 404")
     void aMessageNothingWaitsForIsA404() {
-
         final var failure = assertThrows(ZenBpmApiException.class,
                 () -> client.publishMessage("contract-paid", uniqueBusinessKey(), null));
 
@@ -411,13 +384,11 @@ class ZenBpmRestClientContractIT {
                 () -> assertEquals(404, failure.getStatus()),
                 () -> assertEquals("POST", failure.getMethod()),
                 () -> assertEquals("/v1/messages", failure.getPath()));
-
     }
 
     @Test
     @DisplayName("A job failed with an error code nothing catches fails with an incident")
     void aJobFailedWithAnUncaughtErrorCode() {
-
         final var started = start(uniqueBusinessKey());
         final var job = waitingJobOf(started);
 
@@ -426,13 +397,11 @@ class ZenBpmRestClientContractIT {
         assertEquals(JobRef.State.FAILED, eventually(() -> client
                 .job(job.key())
                 .filter(failed -> failed.state() == JobRef.State.FAILED)).state());
-
     }
 
     @Test
     @DisplayName("The child a call activity started is found with its parent")
     void theChildOfACallActivityIsFound() {
-
         final var parent = client.createInstance(CreateInstanceRequest.latestVersionOf("contract-parent"));
 
         final var children = client.children(parent.key());
@@ -443,28 +412,23 @@ class ZenBpmRestClientContractIT {
                 () -> assertEquals("contract-task", child.bpmnProcessId()),
                 () -> assertEquals(ProcessInstanceRef.ProcessType.CALL_ACTIVITY, child.processType()),
                 () -> assertEquals(parent.key(), child.parentKey()));
-
     }
 
     @Test
     @DisplayName("An instance and a job the engine does not know are empty")
     void unknownInstancesAndJobsAreEmpty() {
-
         assertEquals(Optional.empty(), client.instance(KEY_NOBODY_HOLDS));
         assertEquals(Optional.empty(), client.job(KEY_NOBODY_HOLDS));
-
     }
 
     @Test
     @DisplayName("A key of a partition the engine does not have is a 502, not a 404")
     void aKeyOfAnUnknownPartitionIsA502() {
-
         final var instance = assertThrows(ZenBpmApiException.class, () -> client.instance(KEY_OF_NO_PARTITION));
         final var job = assertThrows(ZenBpmApiException.class, () -> client.job(KEY_OF_NO_PARTITION));
 
         assertEquals(502, instance.getStatus());
         assertEquals(502, job.getStatus());
-
     }
 
     /**
@@ -475,15 +439,12 @@ class ZenBpmRestClientContractIT {
     @Test
     @DisplayName("The pinned engine does not serve its OpenAPI document")
     void theEngineDoesNotServeItsOpenApiDocument() {
-
         assertEquals(Optional.empty(), client.openApi());
-
     }
 
     @Test
     @DisplayName("The lock of a job delivered over the job stream is extended for its client only")
     void theLockOfADeliveredJobIsExtended() throws Exception {
-
         final var clientId = "contract-%s".formatted(UUID.randomUUID());
         final var channel = ManagedChannelBuilder
                 .forTarget(ENGINE.grpcAddress())
@@ -524,42 +485,28 @@ class ZenBpmRestClientContractIT {
                     .shutdownNow()
                     .awaitTermination(10, TimeUnit.SECONDS);
         }
-
     }
 
-    private static byte[] fixture(
-        final String name
-    ) {
-
+    private static byte[] fixture(final String name) {
         try (var resource = ZenBpmRestClientContractIT.class.getResourceAsStream("/contract/%s".formatted(name))) {
             return resource.readAllBytes();
         } catch (IOException e) {
             throw new UncheckedIOException(e);
         }
-
     }
 
     private static String uniqueBusinessKey() {
-
         return "order-%s".formatted(UUID.randomUUID());
-
     }
 
-    private static ProcessInstanceRef start(
-        final String businessKey
-    ) {
-
+    private static ProcessInstanceRef start(final String businessKey) {
         return client.createInstance(CreateInstanceRequest
                 .latestVersionOf("contract-task")
                 .withBusinessKey(businessKey)
                 .withVariables(Map.of("orderId", businessKey)));
-
     }
 
-    private static JobRef waitingJobOf(
-        final ProcessInstanceRef instance
-    ) {
-
+    private static JobRef waitingJobOf(final ProcessInstanceRef instance) {
         return eventually(() -> client
                 .jobs(JobFilter
                         .anyJob()
@@ -569,13 +516,9 @@ class ZenBpmRestClientContractIT {
                 .items()
                 .stream()
                 .findFirst());
-
     }
 
-    private static <T> T eventually(
-        final Supplier<Optional<T>> read
-    ) {
-
+    private static <T> T eventually(final Supplier<Optional<T>> read) {
         final var deadline = System.nanoTime() + EFFECT_TIMEOUT.toNanos();
         while (true) {
             final var value = read.get();
@@ -594,7 +537,6 @@ class ZenBpmRestClientContractIT {
                 throw new AssertionError(e);
             }
         }
-
     }
 
     private static StreamObserver<JobStreamRequest> jobStream(
@@ -602,7 +544,6 @@ class ZenBpmRestClientContractIT {
         final String clientId,
         final BlockingQueue<JobStreamResponse> deliveries
     ) {
-
         final var headers = new Metadata();
         headers.put(Metadata.Key.of("client_id", Metadata.ASCII_STRING_MARSHALLER), clientId);
         return ZenBpmGrpc
@@ -611,18 +552,12 @@ class ZenBpmRestClientContractIT {
                 .jobStream(new StreamObserver<>() {
 
                     @Override
-                    public void onNext(
-                        final JobStreamResponse response
-                    ) {
-
+                    public void onNext(final JobStreamResponse response) {
                         deliveries.add(response);
-
                     }
 
                     @Override
-                    public void onError(
-                        final Throwable failure
-                    ) {
+                    public void onError(final Throwable failure) {
                     }
 
                     @Override
@@ -630,13 +565,9 @@ class ZenBpmRestClientContractIT {
                     }
 
                 });
-
     }
 
-    private static WaitingJob deliveredJob(
-        final BlockingQueue<JobStreamResponse> deliveries
-    ) throws InterruptedException {
-
+    private static WaitingJob deliveredJob(final BlockingQueue<JobStreamResponse> deliveries) throws InterruptedException {
         final var deadline = System.nanoTime() + DELIVERY_TIMEOUT.toNanos();
         while (true) {
             final var response = deliveries.poll(Math.max(0, deadline - System.nanoTime()), TimeUnit.NANOSECONDS);
@@ -647,7 +578,6 @@ class ZenBpmRestClientContractIT {
                 return response.getJob();
             }
         }
-
     }
 
 }

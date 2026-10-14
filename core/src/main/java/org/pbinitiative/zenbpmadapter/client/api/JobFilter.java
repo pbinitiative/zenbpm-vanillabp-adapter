@@ -33,9 +33,7 @@ public record JobFilter(
      * Refuses a page or a size the engine would refuse.
      */
     public JobFilter {
-
         PageRange.check(page, size, MAXIMUM_SIZE);
-
     }
 
     /**
@@ -44,9 +42,7 @@ public record JobFilter(
      * @return The filter
      */
     public static JobFilter anyJob() {
-
         return new JobFilter(null, null, null, 1, MAXIMUM_SIZE);
-
     }
 
     /**
@@ -55,12 +51,8 @@ public record JobFilter(
      * @param jobType The job type
      * @return A new filter
      */
-    public JobFilter withJobType(
-        final String jobType
-    ) {
-
+    public JobFilter withJobType(final String jobType) {
         return new JobFilter(jobType, state, processInstanceKey, page, size);
-
     }
 
     /**
@@ -69,12 +61,8 @@ public record JobFilter(
      * @param state The state
      * @return A new filter
      */
-    public JobFilter withState(
-        final JobRef.State state
-    ) {
-
+    public JobFilter withState(final JobRef.State state) {
         return new JobFilter(jobType, state, processInstanceKey, page, size);
-
     }
 
     /**
@@ -83,12 +71,8 @@ public record JobFilter(
      * @param processInstanceKey The key of the process instance
      * @return A new filter
      */
-    public JobFilter withProcessInstanceKey(
-        final Long processInstanceKey
-    ) {
-
+    public JobFilter withProcessInstanceKey(final Long processInstanceKey) {
         return new JobFilter(jobType, state, processInstanceKey, page, size);
-
     }
 
     /**
@@ -97,12 +81,8 @@ public record JobFilter(
      * @param page The page, counted from 1
      * @return A new filter
      */
-    public JobFilter withPage(
-        final int page
-    ) {
-
+    public JobFilter withPage(final int page) {
         return new JobFilter(jobType, state, processInstanceKey, page, size);
-
     }
 
     /**
@@ -111,12 +91,8 @@ public record JobFilter(
      * @param size How many items a page holds per partition, 1 to {@value #MAXIMUM_SIZE}
      * @return A new filter
      */
-    public JobFilter withSize(
-        final int size
-    ) {
-
+    public JobFilter withSize(final int size) {
         return new JobFilter(jobType, state, processInstanceKey, page, size);
-
     }
 
 }

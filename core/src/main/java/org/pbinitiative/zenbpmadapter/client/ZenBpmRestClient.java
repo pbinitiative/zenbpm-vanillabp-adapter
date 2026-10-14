@@ -133,7 +133,6 @@ public class ZenBpmRestClient implements AutoCloseable {
         final String adapterId,
         final ZenBpmAdapterConfiguration configuration
     ) {
-
         this.adapterId = adapterId;
         this.requestTimeout = configuration.getRequestTimeout();
         final var restBase = configuration
@@ -157,7 +156,6 @@ public class ZenBpmRestClient implements AutoCloseable {
                 .defaultPropertyInclusion(
                         JsonInclude.Value.construct(JsonInclude.Include.NON_NULL, JsonInclude.Include.ALWAYS))
                 .build();
-
     }
 
     /**
@@ -167,13 +165,11 @@ public class ZenBpmRestClient implements AutoCloseable {
      * @return Ready for status 200, not ready with the engine's reasons for status 503
      */
     public Readiness ready() {
-
         final var call = new Call(GET, "/system/health/ready");
         final var answer = call.send(status -> (status == 200) || (status == 503));
         return call.decoded(answer, ZenBpmWire.Health.class,
                 health -> new Readiness(answer.status() == 200, Objects.requireNonNullElse(health.reasons(),
                         List.of())));
-
     }
 
     /**
@@ -182,7 +178,6 @@ public class ZenBpmRestClient implements AutoCloseable {
      * @return Version, commit and node ids
      */
     public EngineStatus status() {
-
         final var call = new Call(GET, "/system/status");
         return call.decoded(call.send(SUCCESS), ZenBpmWire.SystemStatus.class, status -> {
             final var nodes = status
@@ -199,7 +194,6 @@ public class ZenBpmRestClient implements AutoCloseable {
                     .commitId();
             return new EngineStatus(version, commit, nodes);
         });
-
     }
 
     /**
@@ -209,15 +203,11 @@ public class ZenBpmRestClient implements AutoCloseable {
      * @param bpmn The file
      * @return The definition key, and whether the file became a new version
      */
-    public DeployedResource deployBpmn(
-        final byte[] bpmn
-    ) {
-
+    public DeployedResource deployBpmn(final byte[] bpmn) {
         final var call = new Call(POST, "/v1/process-definitions");
         final var answer = call.send(OCTET_STREAM, BodyPublishers.ofByteArray(bpmn), SUCCESS);
         return call.decoded(answer, ZenBpmWire.ProcessDefinitionCreated.class,
                 created -> new DeployedResource(created.processDefinitionKey(), answer.status() == 201));
-
     }
 
     /**
@@ -227,15 +217,11 @@ public class ZenBpmRestClient implements AutoCloseable {
      * @param dmn The file
      * @return The DMN resource definition key, and whether the file became a new version
      */
-    public DeployedResource deployDmn(
-        final byte[] dmn
-    ) {
-
+    public DeployedResource deployDmn(final byte[] dmn) {
         final var call = new Call(POST, "/v1/dmn-resource-definitions");
         final var answer = call.send(OCTET_STREAM, BodyPublishers.ofByteArray(dmn), SUCCESS);
         return call.decoded(answer, ZenBpmWire.DmnResourceDefinitionCreated.class,
                 created -> new DeployedResource(created.dmnResourceDefinitionKey(), answer.status() == 201));
-
     }
 
     /**
@@ -245,14 +231,10 @@ public class ZenBpmRestClient implements AutoCloseable {
      * @return The version
      * @throws ZenBpmApiException With status 404 where the engine knows no such definition
      */
-    public ProcessDefinitionRef processDefinition(
-        final long key
-    ) {
-
+    public ProcessDefinitionRef processDefinition(final long key) {
         final var call = new Call(GET, "/v1/process-definitions/%d".formatted(key));
         return call.decoded(call.send(SUCCESS), ZenBpmWire.ProcessDefinition.class,
                 ZenBpmRestClient::processDefinitionRef);
-
     }
 
     /**
@@ -267,9 +249,7 @@ public class ZenBpmRestClient implements AutoCloseable {
         final String bpmnProcessId,
         final boolean onlyLatest
     ) {
-
         return everyPage(page -> processDefinitionsPage(bpmnProcessId, onlyLatest, page));
-
     }
 
     /**
@@ -281,10 +261,7 @@ public class ZenBpmRestClient implements AutoCloseable {
      * @return The counts by element id
      * @throws ZenBpmApiException With status 404 where the engine knows no such definition
      */
-    public DefinitionStatistics processDefinitionStatistics(
-        final long key
-    ) {
-
+    public DefinitionStatistics processDefinitionStatistics(final long key) {
         final var call = new Call(GET, "/v1/process-definitions/%d/statistics".formatted(key));
         return call.decoded(call.send(SUCCESS), ZenBpmWire.ElementStatisticsPartitions.class, statistics -> {
             final var elements = new HashMap<String, DefinitionStatistics.ElementCounts>();
@@ -304,7 +281,6 @@ public class ZenBpmRestClient implements AutoCloseable {
                                                     .active(), sum.incidents() + more.incidents()))));
             return new DefinitionStatistics(elements);
         });
-
     }
 
     /**
@@ -314,17 +290,13 @@ public class ZenBpmRestClient implements AutoCloseable {
      * @return The new instance as the engine reports it right after the start
      * @throws ZenBpmApiException With status 404 where the engine knows no such process
      */
-    public ProcessInstanceRef createInstance(
-        final CreateInstanceRequest request
-    ) {
-
+    public ProcessInstanceRef createInstance(final CreateInstanceRequest request) {
         final var call = new Call(POST, "/v1/process-instances");
         final var body = call.jsonBody(new ZenBpmWire.CreateProcessInstance(
                 request.bpmnProcessId(), request.processDefinitionKey(), request.businessKey(), request
                         .variables(), request.historyTimeToLive()));
         return call.decoded(call.send(JSON, body, SUCCESS), ZenBpmWire.ProcessInstance.class,
                 ZenBpmRestClient::processInstanceRef);
-
     }
 
     /**
@@ -335,10 +307,7 @@ public class ZenBpmRestClient implements AutoCloseable {
      * @throws ZenBpmApiException With status 502 where the key names a partition the engine does
      *             not have: a key carries the partition which holds it
      */
-    public Optional<ProcessInstanceRef> instance(
-        final long key
-    ) {
-
+    public Optional<ProcessInstanceRef> instance(final long key) {
         final var call = new Call(GET, "/v1/process-instances/%d".formatted(key));
         final var answer = call.send(SUCCESS_OR_NOT_FOUND);
         if (answer.status() == 404) {
@@ -346,7 +315,6 @@ public class ZenBpmRestClient implements AutoCloseable {
         }
         return Optional
                 .of(call.decoded(answer, ZenBpmWire.ProcessInstance.class, ZenBpmRestClient::processInstanceRef));
-
     }
 
     /**
@@ -357,10 +325,7 @@ public class ZenBpmRestClient implements AutoCloseable {
      * @param filter Which instances, and which page
      * @return The page
      */
-    public Page<ProcessInstanceRef> instances(
-        final InstanceFilter filter
-    ) {
-
+    public Page<ProcessInstanceRef> instances(final InstanceFilter filter) {
         final var query = new LinkedHashMap<String, Object>();
         query.put("businessKey", filter.businessKey());
         query.put("bpmnProcessId", filter.bpmnProcessId());
@@ -372,7 +337,6 @@ public class ZenBpmRestClient implements AutoCloseable {
         return call.decoded(call.send(SUCCESS), ZenBpmWire.ProcessInstancePage.class,
                 read -> partitionedPage(read.partitions(), read.totalCount(), filter.page(), filter.size(),
                         ZenBpmRestClient::processInstanceRef));
-
     }
 
     /**
@@ -383,12 +347,8 @@ public class ZenBpmRestClient implements AutoCloseable {
      * @param key The key of the parent instance
      * @return The children, ordered by key within each partition of the engine
      */
-    public List<ProcessInstanceRef> children(
-        final long key
-    ) {
-
+    public List<ProcessInstanceRef> children(final long key) {
         return everyPage(page -> childrenPage(key, page));
-
     }
 
     /**
@@ -403,10 +363,8 @@ public class ZenBpmRestClient implements AutoCloseable {
         final long key,
         final Map<String, Object> variables
     ) {
-
         final var call = new Call(PATCH, "/v1/process-instances/%d/variables".formatted(key));
         call.send(JSON, call.jsonBody(new ZenBpmWire.UpdateVariables(Objects.requireNonNull(variables))), SUCCESS);
-
     }
 
     /**
@@ -426,7 +384,6 @@ public class ZenBpmRestClient implements AutoCloseable {
         final long key,
         final int page
     ) {
-
         // the engine answers such a page with 400, a permanent failure of whatever the adapter was
         // doing; refused here, the mistake shows up in the code which made it
         if (page < 1) {
@@ -446,7 +403,6 @@ public class ZenBpmRestClient implements AutoCloseable {
                     .toList();
             return new Page<>(entries, read.totalCount(), isLastPage(page, items.size(), read.totalCount()));
         });
-
     }
 
     /**
@@ -457,17 +413,13 @@ public class ZenBpmRestClient implements AutoCloseable {
      * @throws ZenBpmApiException With status 502 where the key names a partition the engine does
      *             not have: a key carries the partition which holds it
      */
-    public Optional<JobRef> job(
-        final long key
-    ) {
-
+    public Optional<JobRef> job(final long key) {
         final var call = new Call(GET, "/v1/jobs/%d".formatted(key));
         final var answer = call.send(SUCCESS_OR_NOT_FOUND);
         if (answer.status() == 404) {
             return Optional.empty();
         }
         return Optional.of(call.decoded(answer, ZenBpmWire.Job.class, ZenBpmRestClient::jobRef));
-
     }
 
     /**
@@ -478,10 +430,7 @@ public class ZenBpmRestClient implements AutoCloseable {
      * @param filter Which jobs, and which page
      * @return The page
      */
-    public Page<JobRef> jobs(
-        final JobFilter filter
-    ) {
-
+    public Page<JobRef> jobs(final JobFilter filter) {
         final var query = new LinkedHashMap<String, Object>();
         query.put("jobType", filter.jobType());
         query.put("state", wireName(filter.state()));
@@ -491,7 +440,6 @@ public class ZenBpmRestClient implements AutoCloseable {
         return call.decoded(call.send(SUCCESS), ZenBpmWire.JobPartitionPage.class,
                 read -> partitionedPage(read.partitions(), read.totalCount(), filter.page(), filter.size(),
                         ZenBpmRestClient::jobRef));
-
     }
 
     /**
@@ -507,10 +455,8 @@ public class ZenBpmRestClient implements AutoCloseable {
         final long key,
         final Map<String, Object> variables
     ) {
-
         final var call = new Call(POST, "/v1/jobs/%d/complete".formatted(key));
         call.send(JSON, call.jsonBody(new ZenBpmWire.CompleteJob(variables)), SUCCESS);
-
     }
 
     /**
@@ -528,10 +474,8 @@ public class ZenBpmRestClient implements AutoCloseable {
         final String errorCode,
         final Map<String, Object> variables
     ) {
-
         final var call = new Call(POST, "/v1/jobs/%d/fail".formatted(key));
         call.send(JSON, call.jsonBody(new ZenBpmWire.FailJob(errorCode, variables)), SUCCESS);
-
     }
 
     /**
@@ -548,10 +492,8 @@ public class ZenBpmRestClient implements AutoCloseable {
         final String correlationKey,
         final Map<String, Object> variables
     ) {
-
         final var call = new Call(POST, "/v1/messages");
         call.send(JSON, call.jsonBody(new ZenBpmWire.PublishMessage(name, correlationKey, variables)), SUCCESS);
-
     }
 
     /**
@@ -574,12 +516,10 @@ public class ZenBpmRestClient implements AutoCloseable {
         final String clientId,
         final Duration duration
     ) {
-
         final var call = new Call(POST, "/v1/jobs/%d/extend-lock".formatted(key));
         final var body = call.jsonBody(new ZenBpmWire.ExtendJobLock(clientId, lockDuration(duration)));
         return call.decoded(call.send(JSON, body, SUCCESS), ZenBpmWire.LockExtended.class,
                 lock -> Instant.parse(lock.lockUntil()));
-
     }
 
     /**
@@ -590,14 +530,12 @@ public class ZenBpmRestClient implements AutoCloseable {
      * @return The document, empty where the engine answers 404
      */
     public Optional<String> openApi() {
-
         final var call = new Call(GET, "/v1/openapi");
         final var answer = call.send(SUCCESS_OR_NOT_FOUND);
         if (answer.status() == 404) {
             return Optional.empty();
         }
         return Optional.of(new String(answer.body(), StandardCharsets.UTF_8));
-
     }
 
     /**
@@ -607,10 +545,8 @@ public class ZenBpmRestClient implements AutoCloseable {
      */
     @Override
     public void close() {
-
         closed = true;
         http.close();
-
     }
 
     private Page<ProcessDefinitionRef> processDefinitionsPage(
@@ -618,7 +554,6 @@ public class ZenBpmRestClient implements AutoCloseable {
         final boolean onlyLatest,
         final int page
     ) {
-
         final var query = new LinkedHashMap<String, Object>();
         query.put("bpmnProcessId", bpmnProcessId);
         query.put("onlyLatest", onlyLatest);
@@ -632,27 +567,21 @@ public class ZenBpmRestClient implements AutoCloseable {
                     .toList();
             return new Page<>(definitions, read.totalCount(), isLastPage(page, definitions.size(), read.totalCount()));
         });
-
     }
 
     private Page<ProcessInstanceRef> childrenPage(
         final long key,
         final int page
     ) {
-
         final var query = new LinkedHashMap<String, Object>();
         sortedByKey(query, page, PAGE_SIZE);
         final var call = new Call(GET, "/v1/process-instances/%d/child-processes".formatted(key), query);
         return call.decoded(call.send(SUCCESS), ZenBpmWire.ProcessInstancePage.class,
                 read -> partitionedPage(read.partitions(), read.totalCount(), page, PAGE_SIZE,
                         ZenBpmRestClient::processInstanceRef));
-
     }
 
-    private static <T> List<T> everyPage(
-        final IntFunction<Page<T>> pageReader
-    ) {
-
+    private static <T> List<T> everyPage(final IntFunction<Page<T>> pageReader) {
         final var items = new ArrayList<T>();
         for (var page = 1;; ++page) {
             final var read = pageReader.apply(page);
@@ -661,7 +590,6 @@ public class ZenBpmRestClient implements AutoCloseable {
                 return items;
             }
         }
-
     }
 
     // a page is the last one where it reached the total; a short page is the last one too, for a
@@ -671,9 +599,7 @@ public class ZenBpmRestClient implements AutoCloseable {
         final int itemsRead,
         final long totalCount
     ) {
-
         return (itemsRead < PAGE_SIZE) || (((long) page * PAGE_SIZE) >= totalCount);
-
     }
 
     // every partition answers the same page of its own items, so the last page is the one which
@@ -685,7 +611,6 @@ public class ZenBpmRestClient implements AutoCloseable {
         final int size,
         final Function<W, T> mapping
     ) {
-
         return new Page<>(
                 partitions
                         .stream()
@@ -698,7 +623,6 @@ public class ZenBpmRestClient implements AutoCloseable {
                                 .allMatch(partition -> (partition
                                         .items()
                                         .size() < size) || (((long) page * size) >= partition.totalCount())));
-
     }
 
     // paging without an order may hand out an item twice or never, because the engine's database
@@ -708,31 +632,22 @@ public class ZenBpmRestClient implements AutoCloseable {
         final int page,
         final int size
     ) {
-
         query.put("page", page);
         query.put("size", size);
         query.put("sortBy", "key");
         query.put("sortOrder", "asc");
-
     }
 
-    private static String wireName(
-        final Enum<?> state
-    ) {
-
+    private static String wireName(final Enum<?> state) {
         return state == null
                 ? null
                 : state
                         .name()
                         .toLowerCase(Locale.ROOT);
-
     }
 
     // the engine reads whole seconds only and refuses PT1.5S; rounding up never shortens the lock
-    private static String lockDuration(
-        final Duration duration
-    ) {
-
+    private static String lockDuration(final Duration duration) {
         if (duration == null) {
             return null;
         }
@@ -742,26 +657,18 @@ public class ZenBpmRestClient implements AutoCloseable {
         }
         final var seconds = duration.getSeconds() + ((duration.getNano() > 0) ? 1 : 0);
         return "PT%dS".formatted(seconds);
-
     }
 
-    private static ProcessDefinitionRef processDefinitionRef(
-        final ZenBpmWire.ProcessDefinition definition
-    ) {
-
+    private static ProcessDefinitionRef processDefinitionRef(final ZenBpmWire.ProcessDefinition definition) {
         final var key = definition.key();
         final var bpmnProcessId = definition.bpmnProcessId();
         final var version = definition.version();
         final var versionTag = definition.versionTag();
         final var bpmnData = definition.bpmnData();
         return new ProcessDefinitionRef(key, bpmnProcessId, version, versionTag, bpmnData);
-
     }
 
-    private static HistoryEntry historyEntry(
-        final ZenBpmWire.FlowElementHistory entry
-    ) {
-
+    private static HistoryEntry historyEntry(final ZenBpmWire.FlowElementHistory entry) {
         final var key = entry.key();
         final var elementId = entry.elementId();
         final var elementType = entry.elementType();
@@ -771,13 +678,9 @@ public class ZenBpmRestClient implements AutoCloseable {
                 ? null
                 : Instant.parse(entry.completedAt());
         return new HistoryEntry(key, elementId, elementType, instanceKey, createdAt, completedAt);
-
     }
 
-    private static ProcessInstanceRef processInstanceRef(
-        final ZenBpmWire.ProcessInstance instance
-    ) {
-
+    private static ProcessInstanceRef processInstanceRef(final ZenBpmWire.ProcessInstance instance) {
         final var key = instance.key();
         final var definitionKey = instance.processDefinitionKey();
         final var bpmnProcessId = instance.bpmnProcessId();
@@ -790,13 +693,9 @@ public class ZenBpmRestClient implements AutoCloseable {
         final var processType = processType(instance.processType());
         final var createdAt = Instant.parse(instance.createdAt());
         return new ProcessInstanceRef(key, definitionKey, bpmnProcessId, version, versionTag, businessKey, state, variables, parentKey, processType, createdAt);
-
     }
 
-    private static ProcessInstanceRef.State instanceState(
-        final String state
-    ) {
-
+    private static ProcessInstanceRef.State instanceState(final String state) {
         return switch (state) {
             case "active" -> ProcessInstanceRef.State.ACTIVE;
             case "completed" -> ProcessInstanceRef.State.COMPLETED;
@@ -805,13 +704,9 @@ public class ZenBpmRestClient implements AutoCloseable {
             default ->
                 throw new IllegalArgumentException("the process instance state '%s' is unknown".formatted(state));
         };
-
     }
 
-    private static ProcessInstanceRef.ProcessType processType(
-        final String processType
-    ) {
-
+    private static ProcessInstanceRef.ProcessType processType(final String processType) {
         return switch (processType) {
             case "default" -> ProcessInstanceRef.ProcessType.DEFAULT;
             case "multiInstance" -> ProcessInstanceRef.ProcessType.MULTI_INSTANCE;
@@ -819,13 +714,9 @@ public class ZenBpmRestClient implements AutoCloseable {
             case "callActivity" -> ProcessInstanceRef.ProcessType.CALL_ACTIVITY;
             default -> throw new IllegalArgumentException("the process type '%s' is unknown".formatted(processType));
         };
-
     }
 
-    private static JobRef jobRef(
-        final ZenBpmWire.Job job
-    ) {
-
+    private static JobRef jobRef(final ZenBpmWire.Job job) {
         final var key = job.key();
         final var type = job.type();
         final var state = jobState(job.state());
@@ -837,13 +728,9 @@ public class ZenBpmRestClient implements AutoCloseable {
         final var inputVariables = variables(job.inputVariables());
         final var createdAt = Instant.parse(job.createdAt());
         return new JobRef(key, type, state, elementId, elementType, elementInstanceKey, instanceKey, assignee, inputVariables, createdAt);
-
     }
 
-    private static JobRef.State jobState(
-        final String state
-    ) {
-
+    private static JobRef.State jobState(final String state) {
         return switch (state) {
             case "active" -> JobRef.State.ACTIVE;
             case "completed" -> JobRef.State.COMPLETED;
@@ -851,30 +738,22 @@ public class ZenBpmRestClient implements AutoCloseable {
             case "failed" -> JobRef.State.FAILED;
             default -> throw new IllegalArgumentException("the job state '%s' is unknown".formatted(state));
         };
-
     }
 
     // Jackson reads a whole number as an Integer where it fits, else as a Long or a BigInteger;
     // the api package promises a Long for every one which fits a Long. Jackson's own
     // USE_LONG_FOR_INTS would refuse a number beyond a Long instead, which the engine writes
     // without an exponent up to 1e21. Nested objects and arrays are copied unmodifiable on the way.
-    private static Map<String, Object> variables(
-        final Map<String, Object> variables
-    ) {
-
+    private static Map<String, Object> variables(final Map<String, Object> variables) {
         final var copy = new LinkedHashMap<String, Object>();
         variables.forEach((
             name,
             value) -> copy.put(name, variableValue(value)));
         return Collections.unmodifiableMap(copy);
-
     }
 
     @SuppressWarnings("unchecked")
-    private static Object variableValue(
-        final Object value
-    ) {
-
+    private static Object variableValue(final Object value) {
         return switch (value) {
             case Integer number -> number.longValue();
             case Map<?, ?> object -> variables((Map<String, Object>) object);
@@ -885,7 +764,6 @@ public class ZenBpmRestClient implements AutoCloseable {
             }
             case null, default -> value;
         };
-
     }
 
     /**
@@ -897,16 +775,12 @@ public class ZenBpmRestClient implements AutoCloseable {
         private static final long serialVersionUID = 1L;
 
         @Override
-        public JsonSetter.Value findSetterInfo(
-            final Annotated annotated
-        ) {
-
+        public JsonSetter.Value findSetterInfo(final Annotated annotated) {
             final var setter = super.findSetterInfo(annotated);
             if ((annotated instanceof AnnotatedMember member) && Boolean.TRUE.equals(hasRequiredMarker(member))) {
                 return setter.withValueNulls(Nulls.FAIL);
             }
             return setter;
-
         }
 
     }
@@ -935,9 +809,7 @@ public class ZenBpmRestClient implements AutoCloseable {
             final String method,
             final String path
         ) {
-
             this(method, path, Map.of());
-
         }
 
         Call(
@@ -945,7 +817,6 @@ public class ZenBpmRestClient implements AutoCloseable {
             final String path,
             final Map<String, Object> query
         ) {
-
             this.method = method;
             this.path = path;
             final var encodedQuery = query
@@ -959,15 +830,10 @@ public class ZenBpmRestClient implements AutoCloseable {
             this.uri = URI.create(encodedQuery.isEmpty()
                     ? engineAddress + path
                     : "%s%s?%s".formatted(engineAddress, path, encodedQuery));
-
         }
 
-        Answer send(
-            final IntPredicate expected
-        ) {
-
+        Answer send(final IntPredicate expected) {
             return send(null, BodyPublishers.noBody(), expected);
-
         }
 
         Answer send(
@@ -975,7 +841,6 @@ public class ZenBpmRestClient implements AutoCloseable {
             final BodyPublisher body,
             final IntPredicate expected
         ) {
-
             if (closed) {
                 throw new IllegalStateException("ZenBPM adapter '%s': %s %s was called after the client was closed"
                         .formatted(adapterId, method, path));
@@ -993,20 +858,15 @@ public class ZenBpmRestClient implements AutoCloseable {
                 throw unexpected(answer);
             }
             return answer;
-
         }
 
-        BodyPublisher jsonBody(
-            final Object body
-        ) {
-
+        BodyPublisher jsonBody(final Object body) {
             try {
                 return BodyPublishers.ofByteArray(json.writeValueAsBytes(body));
             } catch (JsonProcessingException e) {
                 throw new IllegalArgumentException("ZenBPM adapter '%s': the request of %s %s cannot be written as JSON"
                         .formatted(adapterId, method, path), e);
             }
-
         }
 
         // An answer the adapter cannot read is no answer it can use, although its status says
@@ -1017,7 +877,6 @@ public class ZenBpmRestClient implements AutoCloseable {
             final Class<W> wireType,
             final Function<W, T> mapping
         ) {
-
             try {
                 return mapping.apply(Objects.requireNonNull(json.readValue(answer.body(), wireType)));
             } catch (IOException | IllegalArgumentException | DateTimeException | NullPointerException e) {
@@ -1025,14 +884,12 @@ public class ZenBpmRestClient implements AutoCloseable {
                 final var what = "was answered with status %d, but the answer cannot be read".formatted(status);
                 throw new ZenBpmUnavailableException(adapterId, status, what, e, method, path);
             }
-
         }
 
         private Answer exchange(
             final HttpRequest request,
             final IntPredicate expected
         ) {
-
             // kept as soon as the headers arrive, so the status survives a body which does not
             final var status = new AtomicInteger();
             final BodyHandler<byte[]> statusKept = headers -> {
@@ -1064,14 +921,11 @@ public class ZenBpmRestClient implements AutoCloseable {
                         .interrupt();
                 throw incomplete(status.get(), expected, "before the calling thread was interrupted", e);
             }
-
         }
 
         private String withinTimeout() {
-
             return "within %s, which '%s' allows".formatted(requestTimeout,
                     ZenBpmAdapterConfiguration.propertyKey(adapterId, "request-timeout"));
-
         }
 
         // A status the call does not expect is the engine's answer, whether its body arrived or
@@ -1083,7 +937,6 @@ public class ZenBpmRestClient implements AutoCloseable {
             final String reason,
             final Throwable cause
         ) {
-
             if (status == 0) {
                 return new ZenBpmUnavailableException(adapterId, "got no answer %s"
                         .formatted(reason), cause, method, path);
@@ -1095,15 +948,11 @@ public class ZenBpmRestClient implements AutoCloseable {
             }
             return new ZenBpmUnavailableException(adapterId, status, "was answered with status %d, but the body did not arrive %s"
                     .formatted(status, reason), cause, method, path);
-
         }
 
         // Only the code and the message of the engine's error are read, never the rest of the
         // body: the answer of a proxy may carry anything.
-        private ZenBpmApiException unexpected(
-            final Answer answer
-        ) {
-
+        private ZenBpmApiException unexpected(final Answer answer) {
             ZenBpmWire.Error error;
             try {
                 error = Objects.requireNonNullElse(json.readValue(answer.body(), ZenBpmWire.Error.class),
@@ -1112,7 +961,6 @@ public class ZenBpmRestClient implements AutoCloseable {
                 error = new ZenBpmWire.Error(null, null);
             }
             return new ZenBpmApiException(adapterId, answer.status(), error.code(), error.message(), method, path);
-
         }
 
     }

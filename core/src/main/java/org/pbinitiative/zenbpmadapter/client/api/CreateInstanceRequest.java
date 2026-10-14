@@ -33,11 +33,9 @@ public record CreateInstanceRequest(
      * Refuses a request which names no process: the engine would answer it with 400.
      */
     public CreateInstanceRequest {
-
         if ((bpmnProcessId == null) && (processDefinitionKey == null)) {
             throw new IllegalArgumentException("A start names the process or the version of a process to start");
         }
-
     }
 
     /**
@@ -46,12 +44,8 @@ public record CreateInstanceRequest(
      * @param bpmnProcessId The id of the process
      * @return The request
      */
-    public static CreateInstanceRequest latestVersionOf(
-        final String bpmnProcessId
-    ) {
-
+    public static CreateInstanceRequest latestVersionOf(final String bpmnProcessId) {
         return new CreateInstanceRequest(bpmnProcessId, null, null, null, null);
-
     }
 
     /**
@@ -60,12 +54,8 @@ public record CreateInstanceRequest(
      * @param processDefinitionKey The key of the process definition
      * @return The request
      */
-    public static CreateInstanceRequest version(
-        final long processDefinitionKey
-    ) {
-
+    public static CreateInstanceRequest version(final long processDefinitionKey) {
         return new CreateInstanceRequest(null, processDefinitionKey, null, null, null);
-
     }
 
     /**
@@ -74,12 +64,8 @@ public record CreateInstanceRequest(
      * @param businessKey The business key
      * @return A new request
      */
-    public CreateInstanceRequest withBusinessKey(
-        final String businessKey
-    ) {
-
+    public CreateInstanceRequest withBusinessKey(final String businessKey) {
         return new CreateInstanceRequest(bpmnProcessId, processDefinitionKey, businessKey, variables, historyTimeToLive);
-
     }
 
     /**
@@ -88,12 +74,8 @@ public record CreateInstanceRequest(
      * @param variables The variables
      * @return A new request
      */
-    public CreateInstanceRequest withVariables(
-        final Map<String, Object> variables
-    ) {
-
+    public CreateInstanceRequest withVariables(final Map<String, Object> variables) {
         return new CreateInstanceRequest(bpmnProcessId, processDefinitionKey, businessKey, variables, historyTimeToLive);
-
     }
 
     /**
@@ -102,12 +84,8 @@ public record CreateInstanceRequest(
      * @param historyTimeToLive The time to live in the engine's form, e.g. <code>30d</code>
      * @return A new request
      */
-    public CreateInstanceRequest withHistoryTimeToLive(
-        final String historyTimeToLive
-    ) {
-
+    public CreateInstanceRequest withHistoryTimeToLive(final String historyTimeToLive) {
         return new CreateInstanceRequest(bpmnProcessId, processDefinitionKey, businessKey, variables, historyTimeToLive);
-
     }
 
 }

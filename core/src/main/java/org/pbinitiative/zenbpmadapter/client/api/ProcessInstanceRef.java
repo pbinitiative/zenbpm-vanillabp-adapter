@@ -43,9 +43,7 @@ public record ProcessInstanceRef(
      * <code>null</code>, so they are not copied with {@link Map#copyOf(Map)}.
      */
     public ProcessInstanceRef {
-
         variables = Variables.unmodifiable(variables);
-
     }
 
     /**

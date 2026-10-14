@@ -78,12 +78,8 @@ final class JavaMembers {
         boolean isPublic
     ) {
 
-        String describe(
-            final Path root
-        ) {
-
+        String describe(final Path root) {
             return "  %s:%d %s()".formatted(root.relativize(source), line, name);
-
         }
 
     }
@@ -103,7 +99,6 @@ final class JavaMembers {
         final Path root,
         final String sourceSet
     ) {
-
         try (var paths = Files.walk(root)) {
             return paths
                     .filter(path -> path
@@ -116,7 +111,6 @@ final class JavaMembers {
         } catch (IOException e) {
             throw new UncheckedIOException(e);
         }
-
     }
 
     /**
@@ -125,14 +119,10 @@ final class JavaMembers {
      * @param source The file
      * @return {@code true} for {@code public class}, {@code public final class} and the like
      */
-    static boolean declaresAPublicClass(
-        final Path source
-    ) {
-
+    static boolean declaresAPublicClass(final Path source) {
         return PUBLIC_CLASS
                 .matcher(read(source))
                 .find();
-
     }
 
     /**
@@ -142,10 +132,7 @@ final class JavaMembers {
      * @param source The file
      * @return The members
      */
-    static List<Member> methodsOf(
-        final Path source
-    ) {
-
+    static List<Member> methodsOf(final Path source) {
         final var className = source
                 .getFileName()
                 .toString()
@@ -172,7 +159,6 @@ final class JavaMembers {
                     }
         }
         return methods;
-
     }
 
     private static Kind kindOf(
@@ -181,7 +167,6 @@ final class JavaMembers {
         final String name,
         final String className
     ) {
-
         if (TEST_ANNOTATION
                 .matcher(annotations)
                 .find()) {
@@ -200,19 +185,14 @@ final class JavaMembers {
             return Kind.PRIVATE;
         }
         return Kind.OTHER;
-
     }
 
-    private static String read(
-        final Path source
-    ) {
-
+    private static String read(final Path source) {
         try {
             return Files.readString(source);
         } catch (IOException e) {
             throw new UncheckedIOException(e);
         }
-
     }
 
     /**
@@ -224,13 +204,11 @@ final class JavaMembers {
         final Path path,
         final String sourceSet
     ) {
-
         final var names = new ArrayList<String>();
         path.forEach(name -> names.add(name.toString()));
         final var src = names.indexOf("src");
         return !names.contains("target") && (src >= 0) && (src + 2 < names.size()) && sourceSet
                 .equals(names.get(src + 1)) && "java".equals(names.get(src + 2));
-
     }
 
 }

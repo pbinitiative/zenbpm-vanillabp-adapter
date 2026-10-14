@@ -28,7 +28,6 @@ class TestVisibilityTest {
     @Test
     @DisplayName("No test class is declared public")
     void noTestClassIsPublic() {
-
         final var offenders = JavaMembers
                 .javaSources(ROOT, "test")
                 .filter(TestVisibilityTest::holdsATest)
@@ -43,13 +42,11 @@ class TestVisibilityTest {
                         in the repository's DECISIONS.md). Remove it from:
                         %s"""
                         .formatted(String.join("\n", offenders)));
-
     }
 
     @Test
     @DisplayName("No test or lifecycle method is declared public")
     void noTestMethodIsPublic() {
-
         final var offenders = JavaMembers
                 .javaSources(ROOT, "test")
                 .flatMap(source -> JavaMembers
@@ -67,18 +64,13 @@ class TestVisibilityTest {
                         (see decision 21 in the repository's DECISIONS.md). Remove it from:
                         %s"""
                         .formatted(String.join("\n", offenders)));
-
     }
 
-    private static boolean holdsATest(
-        final Path source
-    ) {
-
+    private static boolean holdsATest(final Path source) {
         return JavaMembers
                 .methodsOf(source)
                 .stream()
                 .anyMatch(method -> method.kind() == Kind.TEST);
-
     }
 
 }

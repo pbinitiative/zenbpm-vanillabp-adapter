@@ -34,12 +34,8 @@ public final class Variables {
     private Variables() {
     }
 
-    static Map<String, Object> unmodifiable(
-        final Map<String, Object> variables
-    ) {
-
+    static Map<String, Object> unmodifiable(final Map<String, Object> variables) {
         return Collections.unmodifiableMap(new LinkedHashMap<>(variables));
-
     }
 
 }

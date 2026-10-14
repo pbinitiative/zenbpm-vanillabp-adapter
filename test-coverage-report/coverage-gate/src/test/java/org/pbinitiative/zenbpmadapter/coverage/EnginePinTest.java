@@ -50,23 +50,18 @@ class EnginePinTest {
     @Test
     @DisplayName("The header of the copied REST contract names the pinned commit and image")
     void theRestContractNamesThePin() throws IOException {
-
         assertNamesThePin("core/src/main/zenbpm/api.yaml", header("core/src/main/zenbpm/api.yaml", "#"));
-
     }
 
     @Test
     @DisplayName("The header of the copied proto names the pinned commit and image")
     void theProtoNamesThePin() throws IOException {
-
         assertNamesThePin("core/src/main/proto/zenbpm.proto", header("core/src/main/proto/zenbpm.proto", "//"));
-
     }
 
     @Test
     @DisplayName("The README's section on the supported engine names the pinned commit and image")
     void theReadmeNamesThePin() throws IOException {
-
         final var readme = Files.readString(ROOT.resolve("README.md"));
         final var start = readme.indexOf("## Supported engine version");
         assertTrue(start >= 0, "README.md has no section '## Supported engine version' any more.");
@@ -74,7 +69,6 @@ class EnginePinTest {
         final var section = readme.substring(start, (end < 0) ? readme.length() : end);
 
         assertNamesThePin("the section 'Supported engine version' of README.md", section);
-
     }
 
     /**
@@ -84,13 +78,11 @@ class EnginePinTest {
         final String file,
         final String commentMarker
     ) throws IOException {
-
         final List<String> lines = Files.readAllLines(ROOT.resolve(file));
         return lines
                 .stream()
                 .takeWhile(line -> line.startsWith(commentMarker))
                 .collect(Collectors.joining("\n"));
-
     }
 
     /**
@@ -101,7 +93,6 @@ class EnginePinTest {
         final String place,
         final String text
     ) {
-
         final var commits = everyMatch(ANY_COMMIT, text);
         final var images = everyMatch(ANY_IMAGE, text);
 
@@ -119,20 +110,17 @@ class EnginePinTest {
                         + "updates the README's table and the headers of both engine copies in the same "
                         + "commit, see the README, section 'Supported engine version'.")
                         .formatted(place, images, IMAGE));
-
     }
 
     private static Set<String> everyMatch(
         final Pattern pattern,
         final String text
     ) {
-
         return pattern
                 .matcher(text)
                 .results()
                 .map(MatchResult::group)
                 .collect(Collectors.toSet());
-
     }
 
 }

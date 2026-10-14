@@ -58,9 +58,7 @@ public class ZenBpmUnavailableException extends RuntimeException {
         final String method,
         final String path
     ) {
-
         this(adapterId, null, what, cause, method, path);
-
     }
 
     /**
@@ -81,9 +79,7 @@ public class ZenBpmUnavailableException extends RuntimeException {
         final String method,
         final String path
     ) {
-
         this(adapterId, Integer.valueOf(status), what, cause, method, path);
-
     }
 
     private ZenBpmUnavailableException(
@@ -94,13 +90,11 @@ public class ZenBpmUnavailableException extends RuntimeException {
         final String method,
         final String path
     ) {
-
         super("ZenBPM adapter '%s': %s %s %s".formatted(adapterId, method, path, what), cause);
         this.adapterId = adapterId;
         this.status = status;
         this.method = method;
         this.path = path;
-
     }
 
     /**
@@ -109,9 +103,7 @@ public class ZenBpmUnavailableException extends RuntimeException {
      * @return The adapter id
      */
     public String getAdapterId() {
-
         return adapterId;
-
     }
 
     /**
@@ -120,9 +112,7 @@ public class ZenBpmUnavailableException extends RuntimeException {
      * @return E.g. <code>POST</code>
      */
     public String getMethod() {
-
         return method;
-
     }
 
     /**
@@ -132,9 +122,7 @@ public class ZenBpmUnavailableException extends RuntimeException {
      * @return E.g. <code>/v1/jobs/42/complete</code>
      */
     public String getPath() {
-
         return path;
-
     }
 
     /**
@@ -143,11 +131,9 @@ public class ZenBpmUnavailableException extends RuntimeException {
      * @return The status, empty where no answer arrived
      */
     public OptionalInt getStatus() {
-
         return status == null
                 ? OptionalInt.empty()
                 : OptionalInt.of(status);
-
     }
 
 }

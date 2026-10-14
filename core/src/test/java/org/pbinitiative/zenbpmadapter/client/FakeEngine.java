@@ -41,10 +41,8 @@ final class FakeEngine implements AutoCloseable {
         final HttpServer server,
         final ExecutorService handlers
     ) {
-
         this.server = server;
         this.handlers = handlers;
-
     }
 
     /**
@@ -53,7 +51,6 @@ final class FakeEngine implements AutoCloseable {
      * @return The server
      */
     static FakeEngine started() {
-
         try {
             final var server = HttpServer.create(new InetSocketAddress(InetAddress.getLoopbackAddress(), 0), 0);
             // one thread per request, so an answer which takes its time does not hold up the next
@@ -66,7 +63,6 @@ final class FakeEngine implements AutoCloseable {
         } catch (IOException e) {
             throw new UncheckedIOException(e);
         }
-
     }
 
     /**
@@ -75,7 +71,6 @@ final class FakeEngine implements AutoCloseable {
      * @return The loopback address as a literal, e.g. <code>http://127.0.0.1:41234</code>
      */
     String address() {
-
         return "http://%s:%d".formatted(
                 server
                         .getAddress()
@@ -84,7 +79,6 @@ final class FakeEngine implements AutoCloseable {
                 server
                         .getAddress()
                         .getPort());
-
     }
 
     /**
@@ -101,9 +95,7 @@ final class FakeEngine implements AutoCloseable {
         final int status,
         final String body
     ) {
-
         answers(method, path, exchange -> respond(exchange, status, body));
-
     }
 
     /**
@@ -118,9 +110,7 @@ final class FakeEngine implements AutoCloseable {
         final String path,
         final Handler handler
     ) {
-
         answers.put("%s %s".formatted(method, path), handler);
-
     }
 
     /**
@@ -129,9 +119,7 @@ final class FakeEngine implements AutoCloseable {
      * @return The requests
      */
     List<Request> requests() {
-
         return List.copyOf(requests);
-
     }
 
     /**
@@ -141,12 +129,10 @@ final class FakeEngine implements AutoCloseable {
      * @throws AssertionError Where not exactly one request was received
      */
     Request onlyRequest() {
-
         if (requests.size() != 1) {
             throw new AssertionError("Expected one request, received %s".formatted(requests));
         }
         return requests.getFirst();
-
     }
 
     /**
@@ -154,10 +140,8 @@ final class FakeEngine implements AutoCloseable {
      */
     @Override
     public void close() {
-
         server.stop(0);
         handlers.shutdownNow();
-
     }
 
     /**
@@ -173,7 +157,6 @@ final class FakeEngine implements AutoCloseable {
         final int status,
         final String body
     ) throws IOException {
-
         if (body == null) {
             exchange.sendResponseHeaders(status, -1);
             exchange.close();
@@ -187,13 +170,9 @@ final class FakeEngine implements AutoCloseable {
         try (var responseBody = exchange.getResponseBody()) {
             responseBody.write(bytes);
         }
-
     }
 
-    private void handle(
-        final HttpExchange exchange
-    ) throws IOException {
-
+    private void handle(final HttpExchange exchange) throws IOException {
         final var method = exchange.getRequestMethod();
         final var path = exchange
                 .getRequestURI()
@@ -216,7 +195,6 @@ final class FakeEngine implements AutoCloseable {
             return;
         }
         handler.handle(exchange);
-
     }
 
     /**
@@ -225,9 +203,7 @@ final class FakeEngine implements AutoCloseable {
     @FunctionalInterface
     interface Handler {
 
-        void handle(
-            HttpExchange exchange
-        ) throws IOException;
+        void handle(HttpExchange exchange) throws IOException;
 
     }
 

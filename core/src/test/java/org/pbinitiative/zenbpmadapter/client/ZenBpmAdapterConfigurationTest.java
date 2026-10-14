@@ -42,7 +42,6 @@ class ZenBpmAdapterConfigurationTest {
     @Test
     @DisplayName("A configuration without a REST address is unconfigured and tells which YAML to add")
     void anUnconfiguredAdapterIsToldWhatToAdd() {
-
         final var validation = new ZenBpmAdapterConfiguration().validate(ADAPTER_ID, false, false);
 
         assertEquals(Kind.UNCONFIGURED, validation.kind());
@@ -58,26 +57,22 @@ class ZenBpmAdapterConfigurationTest {
                               orders:
                                 rest-address: http://localhost:8080
                         """), validation.message());
-
     }
 
     @Test
     @DisplayName("A blank REST address counts as none")
     void aBlankRestAddressIsUnconfigured() {
-
         final var configuration = new ZenBpmAdapterConfiguration();
         configuration.setRestAddress("  ");
 
         assertEquals(Kind.UNCONFIGURED, configuration
                 .validate(ADAPTER_ID, false, false)
                 .kind());
-
     }
 
     @Test
     @DisplayName("A REST address and nothing else is a complete configuration with every default")
     void aRestAddressAloneIsComplete() {
-
         final var configuration = configured("http://zenbpm:8080");
 
         final var validation = configuration.validate(ADAPTER_ID, false, false);
@@ -102,13 +97,11 @@ class ZenBpmAdapterConfigurationTest {
         assertNull(configuration.getHistoryTimeToLive());
         assertEquals(10_000, configuration.getInstanceCacheMaxEntries());
         assertEquals(MessageStartLookup.REFUSE, configuration.getMessageStartLookup());
-
     }
 
     @Test
     @DisplayName("Every key holds what was set, and null restores its default")
     void everySetterTakesAValueAndNullRestoresTheDefault() {
-
         final var configuration = configured("https://zenbpm");
         configuration.setGrpcAddress("zenbpm-grpc:443");
         configuration.setGrpcPlaintext(false);
@@ -173,7 +166,6 @@ class ZenBpmAdapterConfigurationTest {
         assertEquals(defaults.getUserTaskPollInterval(), configuration.getUserTaskPollInterval());
         assertEquals(defaults.getInstanceCacheMaxEntries(), configuration.getInstanceCacheMaxEntries());
         assertEquals(defaults.getMessageStartLookup(), configuration.getMessageStartLookup());
-
     }
 
     @ParameterizedTest(name = "{0} with {1}")
@@ -185,7 +177,6 @@ class ZenBpmAdapterConfigurationTest {
         final String fix,
         final Consumer<ZenBpmAdapterConfiguration> breakIt
     ) {
-
         final var configuration = configured("http://zenbpm:8080");
         breakIt.accept(configuration);
 
@@ -202,13 +193,11 @@ class ZenBpmAdapterConfigurationTest {
         assertTrue(line
                 .get()
                 .contains(fix), line.get());
-
     }
 
     @Test
     @DisplayName("Two defects are reported in one message")
     void twoDefectsAreReportedTogether() {
-
         final var configuration = configured("zenbpm:8080");
         configuration.setRequestTimeout(Duration.ZERO);
 
@@ -218,13 +207,11 @@ class ZenBpmAdapterConfigurationTest {
 
         assertTrue(message.contains("  - vanillabp.adapters.orders.rest-address "), message);
         assertTrue(message.contains("  - vanillabp.adapters.orders.request-timeout "), message);
-
     }
 
     @Test
     @DisplayName("A defect beside a missing REST address is inconsistent and names both keys")
     void aDefectBesideAMissingAddressIsInconsistent() {
-
         final var configuration = new ZenBpmAdapterConfiguration();
         configuration.setWorkerThreads("0");
 
@@ -237,7 +224,6 @@ class ZenBpmAdapterConfigurationTest {
         assertTrue(validation
                 .message()
                 .contains("  - vanillabp.adapters.orders.worker-threads "), validation.message());
-
     }
 
     @ParameterizedTest(name = "{0}")
@@ -247,7 +233,6 @@ class ZenBpmAdapterConfigurationTest {
         final String key,
         final Consumer<ZenBpmAdapterConfiguration> configure
     ) {
-
         final var configuration = new ZenBpmAdapterConfiguration();
         configure.accept(configuration);
 
@@ -260,7 +245,6 @@ class ZenBpmAdapterConfigurationTest {
                 .contains(
                         "  - vanillabp.adapters.orders.rest-address is missing, but other keys of this adapter are set"),
                 validation.message());
-
     }
 
     /**
@@ -271,7 +255,6 @@ class ZenBpmAdapterConfigurationTest {
     @Test
     @DisplayName("Neither the client id nor a password in the REST address is ever repeated")
     void valuesWhichMayBeSecretAreNeverRepeated() {
-
         final var configuration = configured("http://operator:s3cret@zenbpm.internal:8080");
         configuration.setClientId("billing-host-17.internal");
         configuration.setGrpcAddress("zenbpm.internal");
@@ -286,7 +269,6 @@ class ZenBpmAdapterConfigurationTest {
         assertFalse(message.contains("operator"), message);
         assertFalse(message.contains("zenbpm.internal"), message);
         assertFalse(message.contains("billing-host-17"), message);
-
     }
 
     @ParameterizedTest(name = "{0}")
@@ -296,7 +278,6 @@ class ZenBpmAdapterConfigurationTest {
         final String description,
         final Consumer<ZenBpmAdapterConfiguration> breakIt
     ) {
-
         final var configuration = configured("http://zenbpm:8080");
         breakIt.accept(configuration);
 
@@ -309,7 +290,6 @@ class ZenBpmAdapterConfigurationTest {
                 .contains(
                         "'vanillabp.adapters.orders.deployment-failure' is 'warn', so the application boots DEGRADED"),
                 validation.message());
-
     }
 
     @ParameterizedTest
@@ -317,10 +297,7 @@ class ZenBpmAdapterConfigurationTest {
             "http://zenbpm:8080", "zenbpm:8080"
     })
     @DisplayName("A number or duration which cannot work ends the boot even where the adapter may boot degraded")
-    void aValueWhichCannotWorkAlwaysEndsTheBoot(
-        final String restAddress
-    ) {
-
+    void aValueWhichCannotWorkAlwaysEndsTheBoot(final String restAddress) {
         final var configuration = configured(restAddress);
         configuration.setWorkerThreads("-1");
 
@@ -335,13 +312,11 @@ class ZenBpmAdapterConfigurationTest {
         assertFalse(validation
                 .message()
                 .contains("DEGRADED"), validation.message());
-
     }
 
     @Test
     @DisplayName("An adapter which is nowhere first but fails on deployment failures is shown the way to degrade")
     void aNowhereFirstAdapterWithFailIsShownTheWarnPolicy() {
-
         final var validation = configured("zenbpm:8080").validate(ADAPTER_ID, true, false);
 
         assertTrue(validation.endsTheBoot());
@@ -349,26 +324,22 @@ class ZenBpmAdapterConfigurationTest {
                 .message()
                 .contains("may instead set 'vanillabp.adapters.orders.deployment-failure: warn'"),
                 validation.message());
-
     }
 
     @Test
     @DisplayName("An adapter which is first priority somewhere cannot boot degraded, whatever its policy")
     void aFirstPriorityAdapterNeverDegrades() {
-
         final var validation = configured("zenbpm:8080").validate(ADAPTER_ID, false, true);
 
         assertTrue(validation.endsTheBoot());
         assertTrue(validation
                 .message()
                 .contains("first priority somewhere, so it cannot boot degraded"), validation.message());
-
     }
 
     @Test
     @DisplayName("An unconfigured adapter never ends the boot, whatever its priority and policy")
     void anUnconfiguredAdapterNeverEndsTheBoot() {
-
         final var configuration = new ZenBpmAdapterConfiguration();
 
         assertFalse(configuration
@@ -377,7 +348,6 @@ class ZenBpmAdapterConfigurationTest {
         assertFalse(configuration
                 .validate(ADAPTER_ID, true, true)
                 .endsTheBoot());
-
     }
 
     @ParameterizedTest
@@ -385,10 +355,7 @@ class ZenBpmAdapterConfigurationTest {
             "virtual", "VIRTUAL", " virtual "
     })
     @DisplayName("Virtual worker threads are accepted, bounded by four unless a bound is set")
-    void virtualWorkerThreadsAreAccepted(
-        final String workerThreads
-    ) {
-
+    void virtualWorkerThreadsAreAccepted(final String workerThreads) {
         final var configuration = configured("http://zenbpm:8080");
         configuration.setWorkerThreads(workerThreads);
 
@@ -403,7 +370,6 @@ class ZenBpmAdapterConfigurationTest {
                 .validate(ADAPTER_ID, false, false)
                 .kind());
         assertEquals(32, configuration.workerThreadsBoundInUse());
-
     }
 
     @ParameterizedTest
@@ -411,10 +377,7 @@ class ZenBpmAdapterConfigurationTest {
             4, 12, 20
     })
     @DisplayName("Platform threads are their own bound, so a bound beside them is refused whatever its size")
-    void platformThreadsAreTheirOwnBound(
-        final int bound
-    ) {
-
+    void platformThreadsAreTheirOwnBound(final int bound) {
         final var configuration = configured("http://zenbpm:8080");
         configuration.setWorkerThreads("12");
 
@@ -432,13 +395,11 @@ class ZenBpmAdapterConfigurationTest {
         assertTrue(validation
                 .message()
                 .contains("set 'virtual' or remove the bound"), validation.message());
-
     }
 
     @Test
     @DisplayName("A misspelt 'virtual' beside a bound is reported once, as the worker threads it is")
     void aMisspeltVirtualIsReportedOnce() {
-
         final var configuration = configured("http://zenbpm:8080");
         configuration.setWorkerThreads("virtul");
         configuration.setWorkerThreadsBound(16);
@@ -450,13 +411,11 @@ class ZenBpmAdapterConfigurationTest {
         assertTrue(message.contains("  - vanillabp.adapters.orders.worker-threads is neither a number nor 'virtual'"),
                 message);
         assertFalse(message.contains("  - vanillabp.adapters.orders.worker-threads-bound "), message);
-
     }
 
     @Test
     @DisplayName("The gRPC address defaults to the REST host and port 9090, and a configured one is used as written")
     void theGrpcAddressIsDerivedFromTheRestHost() {
-
         final var configuration = configured("https://ZenBPM.example:8443/");
 
         assertEquals("ZenBPM.example:9090", configuration.grpcAddressInUse());
@@ -467,13 +426,11 @@ class ZenBpmAdapterConfigurationTest {
         assertEquals(Kind.COMPLETE, configuration
                 .validate(ADAPTER_ID, false, false)
                 .kind());
-
     }
 
     @Test
     @DisplayName("An IPv6 REST host gives an IPv6 gRPC address, which validates")
     void anIpv6HostIsDerivedInBrackets() {
-
         final var configuration = configured("http://[::1]:8080");
 
         assertEquals("[::1]:9090", configuration.grpcAddressInUse());
@@ -483,13 +440,11 @@ class ZenBpmAdapterConfigurationTest {
         assertEquals(Kind.COMPLETE, configuration
                 .validate(ADAPTER_ID, false, false)
                 .kind());
-
     }
 
     @Test
     @DisplayName("The client id is derived from application name, adapter id and a random part drawn once")
     void theClientIdIsDerived() {
-
         final var configuration = configured("http://zenbpm:8080");
 
         final var clientId = configuration.clientIdInUse(ADAPTER_ID, () -> "billing");
@@ -507,13 +462,11 @@ class ZenBpmAdapterConfigurationTest {
         configuration.setClientId(" billing-node-1 ");
 
         assertEquals("billing-node-1", configuration.clientIdInUse(ADAPTER_ID, () -> "billing"));
-
     }
 
     @Test
     @DisplayName("'/v1' is appended to the REST address once, and an address carrying it already is noticed")
     void theApiVersionIsAppendedOnce() {
-
         assertEquals(URI.create("http://zenbpm:8080/v1"), configured("http://zenbpm:8080").restBaseUri());
         assertEquals(URI.create("http://zenbpm:8080/v1"), configured("http://zenbpm:8080/").restBaseUri());
         assertEquals(URI.create("http://zenbpm:80/engine/v1"), configured("http://zenbpm/engine/").restBaseUri());
@@ -532,7 +485,6 @@ class ZenBpmAdapterConfigurationTest {
                 .getFirst()
                 .contains("'vanillabp.adapters.orders.rest-address' already ends with '/v1'"),
                 validation.notices().getFirst());
-
     }
 
     @ParameterizedTest
@@ -540,10 +492,7 @@ class ZenBpmAdapterConfigurationTest {
             "/%76%31", "/v%31", "/v1/", "//v1//", "/proxy/%76%31/"
     })
     @DisplayName("An address ending with an escaped or doubled '/v1' gets no second one, and the notice says so")
-    void theNoticeAndTheBaseAgreeOnTheApiVersion(
-        final String path
-    ) {
-
+    void theNoticeAndTheBaseAgreeOnTheApiVersion(final String path) {
         final var configuration = configured("http://zenbpm:8080"
                 + path);
 
@@ -556,29 +505,24 @@ class ZenBpmAdapterConfigurationTest {
                 .restBaseUri()
                 .getRawPath()
                 .matches("(/proxy)?/v1"), configuration.restBaseUri()::toString);
-
     }
 
     @Test
     @DisplayName("Escaped ASCII letters, digits and '-._~' are written as themselves, every other escape stays")
     void onlyUnreservedEscapesAreDecoded() {
-
         assertEquals(URI.create("http://zenbpm:8080/Az09-._~/%C3%A4%20/v1"),
                 configured("http://zenbpm:8080/%41%7a%30%39%2d%2e%5f%7e/%c3%a4%20").restBaseUri());
-
     }
 
     @Test
     @DisplayName("An escaped slash stays escaped, so it never becomes a separator in front of '/v1'")
     void anEscapedSlashStaysEscaped() {
-
         final var configuration = configured("http://zenbpm:8080/%2fv1");
 
         assertEquals(URI.create("http://zenbpm:8080/%2Fv1/v1"), configuration.restBaseUri());
         assertEquals(List.of(), configuration
                 .validate(ADAPTER_ID, false, false)
                 .notices());
-
     }
 
     @ParameterizedTest
@@ -586,10 +530,7 @@ class ZenBpmAdapterConfigurationTest {
             "", "  "
     })
     @DisplayName("Blank worker threads are the default, as an empty key binds to an empty text")
-    void blankWorkerThreadsAreTheDefault(
-        final String workerThreads
-    ) {
-
+    void blankWorkerThreadsAreTheDefault(final String workerThreads) {
         final var configuration = configured("http://zenbpm:8080");
         configuration.setWorkerThreads(workerThreads);
 
@@ -597,13 +538,11 @@ class ZenBpmAdapterConfigurationTest {
         assertEquals(Kind.COMPLETE, configuration
                 .validate(ADAPTER_ID, false, false)
                 .kind());
-
     }
 
     @Test
     @DisplayName("An https REST address with a derived plaintext job stream is noticed, and not where either is set")
     void aTlsRestAddressBesideAPlaintextJobStreamIsNoticed() {
-
         final var configuration = configured("https://zenbpm");
 
         assertEquals(1, configuration
@@ -629,13 +568,11 @@ class ZenBpmAdapterConfigurationTest {
         assertEquals(List.of(), configuration
                 .validate(ADAPTER_ID, false, false)
                 .notices());
-
     }
 
     @Test
     @DisplayName("Two spellings of one engine's address have one identity, another port another")
     void theIdentityIsNormalised() {
-
         final var identity = configured("http://host:8080").instanceIdentity();
 
         assertEquals(identity, configured("HTTP://Host:8080/").instanceIdentity());
@@ -645,7 +582,6 @@ class ZenBpmAdapterConfigurationTest {
         assertEquals(configured("http://host").instanceIdentity(), configured("http://host:80/").instanceIdentity());
         assertNotEquals(identity, configured("http://host:8081").instanceIdentity());
         assertNotEquals(identity, configured("https://host:8080").instanceIdentity());
-
     }
 
     @ParameterizedTest
@@ -653,22 +589,17 @@ class ZenBpmAdapterConfigurationTest {
             "", "zenbpm:8080"
     })
     @DisplayName("Nothing is derived from a missing or malformed REST address")
-    void nothingIsDerivedFromAnUnusableAddress(
-        final String restAddress
-    ) {
-
+    void nothingIsDerivedFromAnUnusableAddress(final String restAddress) {
         final var configuration = configured(restAddress);
 
         assertThrows(IllegalStateException.class, configuration::restBaseUri);
         assertThrows(IllegalStateException.class, configuration::instanceIdentity);
         assertThrows(IllegalStateException.class, configuration::grpcAddressInUse);
-
     }
 
     @Test
     @DisplayName("The notices of a validation cannot be changed afterwards")
     void theNoticesAreACopy() {
-
         final var notices = new ArrayList<String>();
         notices.add("one");
         final var validation = new ZenBpmAdapterConfiguration.ValidationResult(Kind.COMPLETE, "", false, notices);
@@ -678,11 +609,9 @@ class ZenBpmAdapterConfigurationTest {
         assertThrows(UnsupportedOperationException.class, () -> validation
                 .notices()
                 .add("three"));
-
     }
 
     static Stream<Arguments> defects() {
-
         return Stream.of(
                 defect("rest-address", "localhost:8080", "needs the scheme http or https, as in http://localhost:8080",
                         c -> c.setRestAddress("localhost:8080")),
@@ -798,22 +727,18 @@ class ZenBpmAdapterConfigurationTest {
                         c -> c.setMaxRedeliveries(-1)),
                 defect("instance-cache-max-entries", "a negative number", "must not be negative; the default is 10000",
                         c -> c.setInstanceCacheMaxEntries(-1)));
-
     }
 
     static Stream<Arguments> keysWithoutADefault() {
-
         return Stream.of(
                 Arguments.of("grpc-address",
                         (Consumer<ZenBpmAdapterConfiguration>) c -> c.setGrpcAddress("zenbpm:9090")),
                 Arguments.of("client-id", (Consumer<ZenBpmAdapterConfiguration>) c -> c.setClientId("orders-node-1")),
                 Arguments.of("history-time-to-live",
                         (Consumer<ZenBpmAdapterConfiguration>) c -> c.setHistoryTimeToLive(Duration.ofDays(30))));
-
     }
 
     static Stream<Arguments> connectionDefects() {
-
         return Stream.of(
                 Arguments.of("a REST address without a scheme",
                         (Consumer<ZenBpmAdapterConfiguration>) c -> c.setRestAddress("zenbpm:8080")),
@@ -824,17 +749,12 @@ class ZenBpmAdapterConfigurationTest {
                     c.setRestAddress(null);
                     c.setGrpcAddress("zenbpm:9090");
                 }));
-
     }
 
-    private static ZenBpmAdapterConfiguration configured(
-        final String restAddress
-    ) {
-
+    private static ZenBpmAdapterConfiguration configured(final String restAddress) {
         final var configuration = new ZenBpmAdapterConfiguration();
         configuration.setRestAddress(restAddress);
         return configuration;
-
     }
 
     private static Arguments defect(
@@ -843,9 +763,7 @@ class ZenBpmAdapterConfigurationTest {
         final String fix,
         final Consumer<ZenBpmAdapterConfiguration> breakIt
     ) {
-
         return Arguments.of(key, description, fix, breakIt);
-
     }
 
 }

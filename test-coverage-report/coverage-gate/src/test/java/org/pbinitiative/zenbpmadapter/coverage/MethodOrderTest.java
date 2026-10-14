@@ -31,7 +31,6 @@ class MethodOrderTest {
     @Test
     @DisplayName("In every test class the lifecycle methods come first, then the tests, then every other method")
     void testsComeBeforeTheirHelpers() {
-
         final var offenders = JavaMembers
                 .javaSources(ROOT, "test")
                 .flatMap(source -> outOfOrderInATestClass(source).stream())
@@ -45,13 +44,11 @@ class MethodOrderTest {
                         decision 19 in the repository's DECISIONS.md). Move these methods:
                         %s"""
                         .formatted(String.join("\n", offenders)));
-
     }
 
     @Test
     @DisplayName("In every class the private methods follow the others")
     void privateMethodsComeLast() {
-
         final var offenders = Stream
                 .concat(JavaMembers.javaSources(ROOT, "main"), JavaMembers.javaSources(ROOT, "test"))
                 .flatMap(source -> outOfOrderAfterAPrivateMethod(source).stream())
@@ -65,13 +62,11 @@ class MethodOrderTest {
                         the first private method:
                         %s"""
                         .formatted(String.join("\n", offenders)));
-
     }
 
     @Test
     @DisplayName("The check reads the methods of this repository's classes, so it cannot pass by reading none")
     void theCheckReadsMethods() {
-
         final var tests = JavaMembers
                 .javaSources(ROOT, "test")
                 .flatMap(source -> JavaMembers
@@ -90,13 +85,9 @@ class MethodOrderTest {
         assertTrue(tests > 0, "no test method found; does the member indentation still match the formatter?");
         assertTrue(privateMethods > 0,
                 "no private method found; does the member indentation still match the formatter?");
-
     }
 
-    private static List<String> outOfOrderInATestClass(
-        final Path source
-    ) {
-
+    private static List<String> outOfOrderInATestClass(final Path source) {
         final var methods = JavaMembers.methodsOf(source);
         final var tests = methods
                 .stream()
@@ -119,13 +110,9 @@ class MethodOrderTest {
                         method.describe(ROOT),
                         method.kind() == Kind.LIFECYCLE ? "a lifecycle method after a test" : "a helper before a test"))
                 .toList();
-
     }
 
-    private static List<String> outOfOrderAfterAPrivateMethod(
-        final Path source
-    ) {
-
+    private static List<String> outOfOrderAfterAPrivateMethod(final Path source) {
         final var methods = JavaMembers.methodsOf(source);
         final var firstPrivate = methods
                 .stream()
@@ -142,7 +129,6 @@ class MethodOrderTest {
                 .map(method -> "%s, after the private method in line %d"
                         .formatted(method.describe(ROOT), firstPrivate.getAsInt()))
                 .toList();
-
     }
 
 }
