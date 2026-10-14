@@ -133,6 +133,12 @@ aggregate, task and the attempts; remove the entry. A successful run removes the
 than one hour are swept by a timing thread. A resolved `retry-backoff` above the 5-minute cap is
 never applied as written: say so at startup with a WARN naming the key and the cap.
 
+*Found by a review of S2.2.2, 2026-10-14.* Should this story (or S6.1.2) send a `deliveryToken`
+with `failJob`, a failure of a delivery the engine already handed out again is answered `409`
+(`ErrDeliverySuperseded`), which `ZenBpmErrors.isGoneJob` reads as a gone job: the handler accepts
+it, and the newer delivery decides. Without the token, a failure repeated after its answer was lost
+counts twice (`JobFailByKey` in the engine's `pkg/bpmn/jobs_api.go`).
+
 **Tests**: `ZenBpmLocalRetryTest` (backoff arithmetic, cap, the extension sent per attempt, sweep);
 `ZenBpmTaskProcessingIT#aThrowingHandlerEndsInAnIncidentAfterMaxRedeliveries` with
 `max-redeliveries: 2` and `retry-backoff: PT1S` (a few seconds: the backoff IS the redelivery delay);

@@ -4,6 +4,7 @@
  */
 package org.pbinitiative.zenbpmadapter.client;
 
+import static org.junit.jupiter.api.Assertions.assertAll;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -19,8 +20,11 @@ import java.net.http.HttpTimeoutException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
+import java.util.ArrayList;
 import java.util.EnumSet;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.CompletionException;
@@ -80,7 +84,11 @@ class ZenBpmErrorsTest {
                     .formatted(row, before, readAs));
         });
 
-        assertEquals(tested, rowsOfTheReadmeTable());
+        assertEquals(tested
+                .entrySet()
+                .stream()
+                .map(row -> Map.entry(row.getKey(), row.getValue()))
+                .toList(), rowsOfTheReadmeTable());
     }
 
     @Test
@@ -110,12 +118,47 @@ class ZenBpmErrorsTest {
     }
 
     @Test
+    @DisplayName("A failure this class reads without the client, wrapped around the client's exception, does not hide it")
+    void aFailureWrappedAroundTheClientsExceptionDoesNotHideIt() {
+        final var timeoutAroundARefusal = new HttpTimeoutException("request timed out");
+        timeoutAroundARefusal.initCause(refusal(400, "POST", "/v1/process-instances"));
+        final var refusedConnectionAroundNobodyWaits = new ConnectException("Connection refused");
+        refusedConnectionAroundNobodyWaits.initCause(refusal(404, "POST", "/v1/messages"));
+        final var notANumberAroundNoAnswer = new NumberFormatException("For input string: \"order-1\"");
+        notANumberAroundNoAnswer.initCause(noAnswer(new ConnectException("Connection refused")));
+        // the client's exception above one this class would read without it
+        final var notANumber = new NumberFormatException("For input string: \"x\"");
+        final var unreadable = "was answered with status 200, but the answer cannot be read";
+        final var notANumberBeneathAnUnreadableAnswer = new ZenBpmUnavailableException(ADAPTER_ID, 200, unreadable, notANumber, "GET", "/v1/jobs/42");
+        // without an exception of the client, the first failure this class reads answers
+        final var timeoutAroundNotANumber = new SocketTimeoutException("Read timed out");
+        timeoutAroundNotANumber.initCause(new IllegalStateException("parsing failed", new NumberFormatException(
+                "For input string: \"y\"")));
+
+        assertAll(
+                () -> assertEquals(EnumSet.of(ReadAs.PERMANENT), answersTo(timeoutAroundARefusal)),
+                () -> assertEquals(EnumSet.of(ReadAs.PERMANENT), answersTo(new CompletionException(
+                        timeoutAroundARefusal))),
+                () -> assertEquals(EnumSet.of(ReadAs.NOBODY_WAITS, ReadAs.REPEATABLE), answersTo(
+                        refusedConnectionAroundNobodyWaits)),
+                () -> assertEquals(EnumSet.of(ReadAs.UNAVAILABLE, ReadAs.REPEATABLE), answersTo(
+                        notANumberAroundNoAnswer)),
+                () -> assertEquals(EnumSet.of(ReadAs.UNAVAILABLE, ReadAs.REPEATABLE), answersTo(new RuntimeException(
+                        notANumberAroundNoAnswer))),
+                () -> assertEquals(EnumSet.of(ReadAs.UNAVAILABLE, ReadAs.REPEATABLE), answersTo(
+                        notANumberBeneathAnUnreadableAnswer)),
+                () -> assertEquals(EnumSet.of(ReadAs.UNAVAILABLE, ReadAs.REPEATABLE), answersTo(
+                        timeoutAroundNotANumber)));
+    }
+
+    @Test
     @DisplayName("A path which is not one of the job's own calls is no gone job and no lost lock")
     void onlyTheCallsOfAJobAreReadAsAJob() {
         assertEquals(EnumSet.of(ReadAs.REPEATABLE), answersTo(refusal(404, "GET", "/v1/jobs")));
         assertEquals(EnumSet.of(ReadAs.REPEATABLE), answersTo(refusal(404, "POST", "/v1/jobs/42/complete/again")));
         assertEquals(EnumSet.of(ReadAs.REPEATABLE), answersTo(refusal(404, "POST", "/system/v1/jobs/42/complete")));
         assertEquals(EnumSet.of(ReadAs.REPEATABLE), answersTo(refusal(409, "POST", "/v1/jobs/order-1/complete")));
+        assertEquals(EnumSet.of(ReadAs.REPEATABLE), answersTo(refusal(409, "GET", "/v1/jobs/42/complete")));
         assertEquals(EnumSet.of(ReadAs.REPEATABLE), answersTo(refusal(409, "GET", "/v1/jobs/42/extend-lock")));
         assertEquals(EnumSet.of(ReadAs.REPEATABLE), answersTo(refusal(404, "POST", null)));
     }
@@ -131,9 +174,18 @@ class ZenBpmErrorsTest {
         final var refusal = new ZenBpmApiException(ADAPTER_ID, 400, null, null, "POST", "/v1/process-instances");
         refusal.initCause(wrapper);
         wrapper.initCause(refusal);
+        final var timeout = new SocketTimeoutException("Read timed out");
+        final var refusalBeneathTheTimeout = new ZenBpmApiException(ADAPTER_ID, 400, null, null, "POST", "/v1/process-instances");
+        timeout.initCause(refusalBeneathTheTimeout);
+        refusalBeneathTheTimeout.initCause(timeout);
+        final var timeoutWithoutTheClient = new SocketTimeoutException("Read timed out");
+        final var wrappedTimeout = new IllegalStateException("the timeout wrapped", timeoutWithoutTheClient);
+        timeoutWithoutTheClient.initCause(wrappedTimeout);
 
         assertEquals(EnumSet.of(ReadAs.REPEATABLE), answersTo(outer));
         assertEquals(EnumSet.of(ReadAs.PERMANENT), answersTo(wrapper));
+        assertEquals(EnumSet.of(ReadAs.PERMANENT), answersTo(timeout));
+        assertEquals(EnumSet.of(ReadAs.UNAVAILABLE, ReadAs.REPEATABLE), answersTo(wrappedTimeout));
     }
 
     @Test
@@ -148,19 +200,28 @@ class ZenBpmErrorsTest {
             engine.answers("POST", "/v1/process-instances", 400, "{\"code\":\"BAD_REQUEST\",\"message\":\"ttl\"}");
             engine.answers("GET", "/v1/process-instances/1", 502, "{\"code\":\"CLUSTER_ERROR\",\"message\":\"p0\"}");
 
-            assertTrue(ZenBpmErrors.isGoneJob(assertThrows(ZenBpmApiException.class, () -> client.completeJob(42,
-                    null))));
-            assertTrue(ZenBpmErrors.isGoneJob(assertThrows(ZenBpmApiException.class, () -> client.completeJob(43,
-                    null))));
-            assertTrue(ZenBpmErrors.isGoneJob(assertThrows(ZenBpmApiException.class, () -> client.failJob(43, null,
-                    null))));
-            assertTrue(ZenBpmErrors.lockLost(assertThrows(ZenBpmApiException.class, () -> client.extendJobLock(43,
-                    "orders-node-1", Duration.ofMinutes(5)))));
-            assertTrue(ZenBpmErrors.nobodyWaits(assertThrows(ZenBpmApiException.class, () -> client.publishMessage(
-                    "paid", "order-1", null))));
-            assertTrue(ZenBpmErrors.permanentFailure(assertThrows(ZenBpmApiException.class, () -> client
-                    .createInstance(CreateInstanceRequest.latestVersionOf("orders_order")))));
-            assertTrue(ZenBpmErrors.isUnavailable(assertThrows(ZenBpmApiException.class, () -> client.instance(1))));
+            final var unknownJob = assertThrows(ZenBpmApiException.class, () -> client.completeJob(42, null));
+            final var completionOfAFailedJob = assertThrows(ZenBpmApiException.class,
+                    () -> client.completeJob(43, null));
+            final var failureOfAFailedJob = assertThrows(ZenBpmApiException.class,
+                    () -> client.failJob(43, null, null));
+            final var lapsedLock = assertThrows(ZenBpmApiException.class,
+                    () -> client.extendJobLock(43, "orders-node-1",
+                            Duration.ofMinutes(5)));
+            final var message = assertThrows(ZenBpmApiException.class, () -> client.publishMessage("paid", "order-1",
+                    null));
+            final var start = assertThrows(ZenBpmApiException.class, () -> client.createInstance(CreateInstanceRequest
+                    .latestVersionOf("orders_order")));
+            final var read = assertThrows(ZenBpmApiException.class, () -> client.instance(1));
+
+            assertAll(
+                    () -> assertTrue(ZenBpmErrors.isGoneJob(unknownJob)),
+                    () -> assertTrue(ZenBpmErrors.isGoneJob(completionOfAFailedJob)),
+                    () -> assertTrue(ZenBpmErrors.isGoneJob(failureOfAFailedJob)),
+                    () -> assertTrue(ZenBpmErrors.lockLost(lapsedLock)),
+                    () -> assertTrue(ZenBpmErrors.nobodyWaits(message)),
+                    () -> assertTrue(ZenBpmErrors.permanentFailure(start)),
+                    () -> assertTrue(ZenBpmErrors.isUnavailable(read)));
         }
     }
 
@@ -288,13 +349,15 @@ class ZenBpmErrorsTest {
     }
 
     /**
-     * The first two cells of every row of the README's table, in the README's order.
+     * The first two cells of every row of the README's table, in the README's order. A row named
+     * twice fails the test, because the second could contradict the first.
      */
-    private static Map<String, String> rowsOfTheReadmeTable() throws IOException, URISyntaxException {
+    private static List<Map.Entry<String, String>> rowsOfTheReadmeTable() throws IOException, URISyntaxException {
         final var readme = Files.readString(repositoryRoot().resolve("README.md"));
         final var start = readme.indexOf(README_SECTION);
         assertTrue(start >= 0, "README.md has no section '%s' any more".formatted(README_SECTION));
-        final var rows = new LinkedHashMap<String, String>();
+        final var rows = new ArrayList<Map.Entry<String, String>>();
+        final var named = new HashSet<String>();
         final var table = readme
                 .substring(start)
                 .lines()
@@ -305,7 +368,9 @@ class ZenBpmErrorsTest {
                 .toList();
         for (final var line : table) {
             final var cells = line.split("\\|");
-            rows.put(cells[1].strip(), cells[2].strip());
+            final var row = cells[1].strip();
+            assertTrue(named.add(row), "README.md names the row '%s' twice".formatted(row));
+            rows.add(Map.entry(row, cells[2].strip()));
         }
         assertFalse(rows.isEmpty(), "The section '%s' of README.md has no table".formatted(README_SECTION));
         return rows;

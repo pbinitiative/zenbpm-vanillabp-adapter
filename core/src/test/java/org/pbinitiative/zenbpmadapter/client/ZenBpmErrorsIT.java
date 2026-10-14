@@ -9,14 +9,15 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.pbinitiative.zenbpmadapter.client.ContractFixtures.KEY_NOBODY_HOLDS;
+import static org.pbinitiative.zenbpmadapter.client.ContractFixtures.KEY_OF_NO_PARTITION;
+import static org.pbinitiative.zenbpmadapter.client.ContractFixtures.eventually;
+import static org.pbinitiative.zenbpmadapter.client.ContractFixtures.fixture;
+import static org.pbinitiative.zenbpmadapter.client.ContractFixtures.start;
+import static org.pbinitiative.zenbpmadapter.client.ContractFixtures.uniqueBusinessKey;
+import static org.pbinitiative.zenbpmadapter.client.ContractFixtures.waitingJobOf;
 
-import java.io.IOException;
-import java.io.UncheckedIOException;
 import java.time.Duration;
-import java.util.Map;
-import java.util.Optional;
-import java.util.UUID;
-import java.util.function.Supplier;
 
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
@@ -24,9 +25,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.pbinitiative.zenbpmadapter.client.api.CreateInstanceRequest;
-import org.pbinitiative.zenbpmadapter.client.api.JobFilter;
 import org.pbinitiative.zenbpmadapter.client.api.JobRef;
-import org.pbinitiative.zenbpmadapter.client.api.ProcessInstanceRef;
 import org.pbinitiative.zenbpmadapter.test.EngineUnderTest;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
@@ -43,24 +42,6 @@ import io.vanillabp.integration.test.utils.SuppressOutputExtension;
 class ZenBpmErrorsIT {
 
     private static final String ADAPTER_ID = "errors";
-
-    /**
-     * How long the engine may take to move an instance on after a command. It answers the command
-     * once the instance moved, so this only bounds a test which waits for an effect.
-     */
-    private static final Duration EFFECT_TIMEOUT = Duration.ofSeconds(10);
-
-    /**
-     * A key carries the partition which holds it in bits 12 to 21. This is the oldest key partition
-     * 1 can hand out, at the epoch of the engine's key generator, so no job has it.
-     */
-    private static final long KEY_NOBODY_HOLDS = 1L << 12;
-
-    /**
-     * A key of partition 0, which holds what every partition shares, like the process
-     * definitions. No instance and no job is routed there.
-     */
-    private static final long KEY_OF_NO_PARTITION = 1;
 
     /**
      * One byte more than the engine takes in a request by default (<code>MaxRequestBodyBytes</code>,
@@ -109,7 +90,7 @@ class ZenBpmErrorsIT {
     @Test
     @DisplayName("A job which failed with an incident is gone for a completion and for a failure")
     void aJobWhichFailedWithAnIncidentIsGone() {
-        final var job = waitingJobOf(start());
+        final var job = waitingJobOf(client, start(client, uniqueBusinessKey()));
         client.failJob(job.key(), "errors-nobody-catches", null);
         eventually(() -> client
                 .job(job.key())
@@ -128,7 +109,7 @@ class ZenBpmErrorsIT {
     @Test
     @DisplayName("The lock of a job nobody received over the job stream is lost, and the job is not gone")
     void theLockOfAJobNeverDeliveredIsLost() {
-        final var job = waitingJobOf(start());
+        final var job = waitingJobOf(client, start(client, uniqueBusinessKey()));
 
         final var extension = assertThrows(ZenBpmApiException.class, () -> client.extendJobLock(job.key(),
                 "errors-node-1", Duration.ofMinutes(1)));
@@ -198,59 +179,6 @@ class ZenBpmErrorsIT {
                 () -> assertEquals(502, read.getStatus()),
                 () -> assertTrue(ZenBpmErrors.isUnavailable(read)),
                 () -> assertTrue(ZenBpmErrors.isRepeatable(read)));
-    }
-
-    private static ProcessInstanceRef start() {
-        final var businessKey = uniqueBusinessKey();
-        return client.createInstance(CreateInstanceRequest
-                .latestVersionOf("contract-task")
-                .withBusinessKey(businessKey)
-                .withVariables(Map.of("orderId", businessKey)));
-    }
-
-    private static JobRef waitingJobOf(final ProcessInstanceRef instance) {
-        return eventually(() -> client
-                .jobs(JobFilter
-                        .anyJob()
-                        .withJobType("contract-work")
-                        .withState(JobRef.State.ACTIVE)
-                        .withProcessInstanceKey(instance.key()))
-                .items()
-                .stream()
-                .findFirst());
-    }
-
-    private static <T> T eventually(final Supplier<Optional<T>> read) {
-        final var deadline = System.nanoTime() + EFFECT_TIMEOUT.toNanos();
-        while (true) {
-            final var value = read.get();
-            if (value.isPresent()) {
-                return value.get();
-            }
-            if (System.nanoTime() > deadline) {
-                throw new AssertionError("Nothing was read within %s".formatted(EFFECT_TIMEOUT));
-            }
-            try {
-                Thread.sleep(100);
-            } catch (InterruptedException e) {
-                Thread
-                        .currentThread()
-                        .interrupt();
-                throw new AssertionError(e);
-            }
-        }
-    }
-
-    private static byte[] fixture(final String name) {
-        try (var resource = ZenBpmErrorsIT.class.getResourceAsStream("/contract/%s".formatted(name))) {
-            return resource.readAllBytes();
-        } catch (IOException e) {
-            throw new UncheckedIOException(e);
-        }
-    }
-
-    private static String uniqueBusinessKey() {
-        return "order-%s".formatted(UUID.randomUUID());
     }
 
 }

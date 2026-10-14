@@ -23,9 +23,13 @@ import java.util.regex.Pattern;
  * repository's DECISIONS.md. Each question walks the chain of causes, so a failure wrapped by a
  * {@link java.util.concurrent.CompletionException} or by a caller still answers. The first
  * {@link ZenBpmApiException} or {@link ZenBpmUnavailableException} in the chain answers alone:
- * what the HTTP client reported beneath it is how it came about, not a second answer. So a status
- * the call did not expect, whose body then stalled, is that status, although its cause is a
- * timeout.
+ * what the HTTP client reported beneath it is how it came about, not a second answer, and a
+ * failure wrapped around it is no answer either. So a status the call did not expect, whose body
+ * then stalled, is that status, although its cause is a timeout.
+ * <p>
+ * Hand in only what a call of the engine failed with, or what reading a key failed with: every
+ * <code>NumberFormatException</code> in the chain is read as a key which is not a number, also one
+ * thrown by other code.
  */
 public final class ZenBpmErrors {
 
@@ -85,10 +89,13 @@ public final class ZenBpmErrors {
      * engine answers for a technical fault of its own.
      * <p>
      * A failure whose status arrived but whose body was lost or cannot be read is repeatable as
-     * well, although a <code>2xx</code> status says that the engine did what was asked. Another
-     * attempt does no harm there: a read is answered again, a completion of a completed job is
-     * answered as the first one was, and the core asks whether a workflow is there already before
-     * it repeats a start.
+     * well, although a <code>2xx</code> status says that the engine did what was asked. A read is
+     * answered again, and a completion of a completed job is answered as the first one was. A
+     * repeated start may start a second workflow where the core's question whether one is there
+     * already gets a wrong "unknown", a repeated message may be correlated twice, and a repeated
+     * failure without a delivery token counts twice. It stays repeatable all the same, because a
+     * permanent failure would block an operation the engine carried out; the caller of such a
+     * call decides whether it accepts the duplicate.
      *
      * @param throwable What the call failed with
      * @return Whether another attempt is worth making
@@ -100,8 +107,9 @@ public final class ZenBpmErrors {
     /**
      * Whether the job a command named is gone, so no repetition of the command is accepted: the
      * engine answered <code>404</code> to a call of a job (it holds no such job), or
-     * <code>409</code> to a completion or a failure (the job no longer waits: it was completed,
-     * terminated, or failed with an incident). This is the rest of at-least-once delivery, and a
+     * <code>409</code> to a completion or a failure (the job no longer takes the command: it was
+     * completed, terminated, or failed with an incident; or a failure named a delivery token, and a
+     * newer delivery of the job decides). This is what at-least-once delivery leaves over, and a
      * handler accepts it. A completion of a job the engine completed already is answered as the
      * first one was, not with <code>409</code>.
      * <p>
@@ -169,8 +177,9 @@ public final class ZenBpmErrors {
 
     /**
      * The failure in the chain of causes which answers every question, <code>null</code> where
-     * none does. That is the first exception of this client, or the first failure this class
-     * reads without one.
+     * none does. That is the first exception of this client, wherever it is in the chain, so a
+     * timeout or a <code>NumberFormatException</code> wrapped around it does not hide it. Where the
+     * chain holds none, it is the first failure this class reads without one.
      * <p>
      * A chain of causes does not always end: a failure wrapped into one it wrapped before forms a
      * ring. So the walk remembers each failure it saw, by identity, and stops at the first it sees
@@ -178,20 +187,21 @@ public final class ZenBpmErrors {
      */
     private static Throwable answerIn(final Throwable throwable) {
         final var seen = Collections.newSetFromMap(new IdentityHashMap<Throwable, Boolean>());
+        Throwable readWithoutTheClient = null;
         var current = throwable;
         while ((current != null) && seen.add(current)) {
-            if (answers(current)) {
+            if ((current instanceof ZenBpmApiException) || (current instanceof ZenBpmUnavailableException)) {
                 return current;
+            }
+            if ((readWithoutTheClient == null) && isReadWithoutTheClient(current)) {
+                readWithoutTheClient = current;
             }
             current = current.getCause();
         }
-        return null;
+        return readWithoutTheClient;
     }
 
-    private static boolean answers(final Throwable failure) {
-        if ((failure instanceof ZenBpmApiException) || (failure instanceof ZenBpmUnavailableException)) {
-            return true;
-        }
+    private static boolean isReadWithoutTheClient(final Throwable failure) {
         return (failure instanceof NumberFormatException) || isOneOf(TRANSPORT_FAILURES, failure);
     }
 

@@ -454,18 +454,17 @@ wrapped in `CompletionException` and `RuntimeException`.
   not found", and a plain exception the words of a `404` on a message: both stay merely
   repeatable.
 
-**Implemented 2026-10-14.** `ZenBpmErrorsTest` (36 cases, every case plain, in a
-`CompletionException`, in a `RuntimeException` and wrapped twice) and `ZenBpmErrorsIT` (8 cases
+**Implemented 2026-10-14.** `ZenBpmErrorsTest` (36 cases, 37 since the reviews, every case plain, in
+a `CompletionException`, in a `RuntimeException` and wrapped twice) and `ZenBpmErrorsIT` (8 cases
 against the pinned engine) are green; `mvn clean install` builds green, the coverage gate measures
 100 % of 4,760 instructions on both platforms, and `bin/check-deploy-safety.sh` passes both runs.
-Seen to fail, each restored afterwards: a `409` of a
-completion or failure not read as a gone job (the unit table and the IT), no guard against a ring of
-causes (the test fails after ten seconds instead of hanging), a cause below the client's exception
-answering instead of it, `413` not permanent, `502` not unavailable, the method not checked, a
-`null` path not guarded, every `404` read as a gone job, a job path matched loosely, a
-`NumberFormatException` ignored, an `HttpTimeoutException` ignored, a
-`ZenBpmUnavailableException` answering only through its cause, a README row relabelled and a
-README row renamed.
+Seen to fail, each restored afterwards: a `409` of a completion or failure not read as a gone job
+(the unit table and the IT), no guard against a ring of causes (the test fails after ten seconds
+instead of hanging), a cause below the client's exception answering instead of it, `413` not
+permanent, `502` not unavailable, the method not checked, a `null` path not guarded, every `404`
+read as a gone job, a job path matched loosely, a `NumberFormatException` ignored, an
+`HttpTimeoutException` ignored, a `ZenBpmUnavailableException` answering only through its cause, a
+README row relabelled and a README row renamed.
 
 What the IT found the pinned engine answers (`bdd795a3`):
 
@@ -496,12 +495,15 @@ Where the code differs from the instructions:
   `HttpTimeoutException` and `ConnectException` answer only where no exception of the client is in
   the chain.
 - Settling the note on unreadable `2xx` answers: a `ZenBpmUnavailableException` is unavailable and
-  repeatable whatever status it names. Another attempt does no harm: a read is answered again, a
-  completion of a completed job is answered `201`, and the core asks the adapter's redispatch probe
-  whether a workflow is there before it repeats a start (`ADAPTER-AUTHORS.md`, "The redispatch
-  probe must never be optimistic"). Making it permanent would block an outbox entry whose
-  operation the engine carried out. `ADAPTER-AUTHORS.md` asks the permanent list to hold only what
-  the BPMS answers the same way every time.
+  repeatable whatever status it names. Making it permanent would block an outbox entry whose
+  operation the engine carried out, and `ADAPTER-AUTHORS.md` asks the permanent list to hold only
+  what the BPMS answers the same way every time. Not every repetition is harmless: a read is
+  answered again and a completion of a completed job is answered `201`, but a start is guarded only
+  by the core asking the adapter's redispatch probe first (`ADAPTER-AUTHORS.md`, "The redispatch
+  probe must never be optimistic"; a wrong "unknown" costs a second workflow), a message may be
+  correlated twice (the engine's `POST /v1/messages` carries no message id), and a failure without
+  a delivery token counts twice (`JobFailByKey` in `pkg/bpmn/jobs_api.go`). E5, E6 and E7 decide
+  what their callers accept.
 - An expected `404` (of `instance()`, `job()`, `openApi()`) whose body stalled stays a
   `ZenBpmUnavailableException` naming `404`, as S2.2.1 decided, so it is unavailable and not a gone
   job.
@@ -510,6 +512,42 @@ Where the code differs from the instructions:
   what such a key means.
 - Decision 10 is now in `DECISIONS.md`, adapted from the plan's draft to the pinned engine: a
   `409` on a job's completion or failure, not a `500`, is how the engine says a job no longer waits.
+
+**Answers to two reviews, 2026-10-14.** Every finding was checked against the source and the
+engine at `bdd795a3`. Valid and fixed:
+
+- A failure `ZenBpmErrors` reads without the client (a JDK timeout, a refused connection, a
+  `NumberFormatException`) wrapped *around* an exception of the client used to answer in its place,
+  against the rule above; reproduced in JShell (a timeout around a `400` read as unavailable, a
+  `NumberFormatException` around an engine nobody answers for read as permanent). Now only an
+  exception of the client ends the walk, the first other failure answers where the chain holds
+  none, and `aFailureWrappedAroundTheClientsExceptionDoesNotHideIt` holds the shapes, a ring among
+  them.
+- Decision 10 said a `409` of a completion or failure means "the job no longer waits", but the
+  engine answers `409` there also for `ErrDeliverySuperseded`, a failure naming a delivery token
+  another delivery replaced, while the job waits for that newer delivery. The decision now says the
+  engine answers it for a command the job no longer takes; the javadoc and the README name both
+  reasons. Notes added under S6.2.1 and E13.10.
+- Decision 10 said an arrived status decides even when the body stalled; that holds only for a
+  status the call does not expect, so it says so now.
+- The README and the javadoc said repeating after an unreadable `2xx` "does no harm"; they now
+  name the duplicates it may cause (above).
+- The README guard compared maps, so it missed a reordered or a repeated row; it compares the rows
+  in order now and refuses a row named twice. The `409` branch of `isGoneJob` checked the method
+  without a test needing it; a row pins it. `ZenBpmErrorsIT` and `ZenBpmRestClientContractIT`
+  share their helpers in `ContractFixtures`. The class javadoc says what to hand in, since every
+  `NumberFormatException` reads as a key which is not a number.
+- The README names the trade-off of a `404` or `409` a proxy answers (user's decision: record it,
+  do not read the engine's `code`).
+
+Not changed: the draft of decision 10 in `docs/architecture/02-design-decisions.md` stays as
+drafted, like the drafts of the decisions adopted before it, and the row of the three JDK transport
+failures stays as this story names it until a caller shows which exceptions it meets unwrapped. Seen to fail, each restored afterwards:
+a JDK failure ending the walk again, the last instead of the first such failure answering, the
+`409` branch ignoring the method, a README row moved and a README row repeated. After the answers
+`mvn clean install` builds green (`ZenBpmErrorsTest` 37 cases, `ZenBpmErrorsIT` 8,
+`ZenBpmRestClientContractIT` 18), the coverage gate measures 100 % of 4,764 instructions on both
+platforms, and `bin/check-deploy-safety.sh` passes both runs.
 
 ---
 

@@ -11,9 +11,14 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.pbinitiative.zenbpmadapter.client.ContractFixtures.KEY_NOBODY_HOLDS;
+import static org.pbinitiative.zenbpmadapter.client.ContractFixtures.KEY_OF_NO_PARTITION;
+import static org.pbinitiative.zenbpmadapter.client.ContractFixtures.eventually;
+import static org.pbinitiative.zenbpmadapter.client.ContractFixtures.fixture;
+import static org.pbinitiative.zenbpmadapter.client.ContractFixtures.start;
+import static org.pbinitiative.zenbpmadapter.client.ContractFixtures.uniqueBusinessKey;
+import static org.pbinitiative.zenbpmadapter.client.ContractFixtures.waitingJobOf;
 
-import java.io.IOException;
-import java.io.UncheckedIOException;
 import java.math.BigInteger;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
@@ -25,7 +30,6 @@ import java.util.UUID;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
-import java.util.function.Supplier;
 import java.util.stream.Stream;
 
 import org.junit.jupiter.api.AfterAll;
@@ -37,7 +41,6 @@ import org.pbinitiative.zenbpmadapter.client.api.CreateInstanceRequest;
 import org.pbinitiative.zenbpmadapter.client.api.DeployedResource;
 import org.pbinitiative.zenbpmadapter.client.api.HistoryEntry;
 import org.pbinitiative.zenbpmadapter.client.api.InstanceFilter;
-import org.pbinitiative.zenbpmadapter.client.api.JobFilter;
 import org.pbinitiative.zenbpmadapter.client.api.JobRef;
 import org.pbinitiative.zenbpmadapter.client.api.ProcessDefinitionRef;
 import org.pbinitiative.zenbpmadapter.client.api.ProcessInstanceRef;
@@ -72,24 +75,6 @@ class ZenBpmRestClientContractIT {
      * milliseconds, so the limit only turns a job which never comes into a failure.
      */
     private static final Duration DELIVERY_TIMEOUT = Duration.ofSeconds(30);
-
-    /**
-     * How long the engine may take to move an instance on after a command. It answers the command
-     * once the instance moved, so this only bounds a test which waits for an effect.
-     */
-    private static final Duration EFFECT_TIMEOUT = Duration.ofSeconds(10);
-
-    /**
-     * A key carries the partition which holds it in bits 12 to 21. This is the oldest key partition
-     * 1 can hand out, at the epoch of the engine's key generator, so no instance and no job has it.
-     */
-    private static final long KEY_NOBODY_HOLDS = 1L << 12;
-
-    /**
-     * A key of partition 0, which holds what every partition shares, like the process
-     * definitions. No instance and no job is routed there.
-     */
-    private static final long KEY_OF_NO_PARTITION = 1;
 
     @Container
     private static final EngineUnderTest ENGINE = new EngineUnderTest();
@@ -240,7 +225,7 @@ class ZenBpmRestClientContractIT {
     void aStartedInstanceIsFoundAndItsJobIsActive() {
         final var businessKey = uniqueBusinessKey();
 
-        final var started = start(businessKey);
+        final var started = start(client, businessKey);
 
         assertAll(
                 () -> assertEquals(task.key(), started.definitionKey()),
@@ -267,7 +252,7 @@ class ZenBpmRestClientContractIT {
                 .stream()
                 .map(ProcessInstanceRef::key)
                 .toList());
-        final var job = waitingJobOf(started);
+        final var job = waitingJobOf(client, started);
         assertAll(
                 () -> assertEquals(JobRef.State.ACTIVE, job.state()),
                 () -> assertEquals("contract-work", job.type()),
@@ -330,7 +315,7 @@ class ZenBpmRestClientContractIT {
     @Test
     @DisplayName("Patched variables are visible in the instance")
     void patchedVariablesAreVisible() {
-        final var started = start(uniqueBusinessKey());
+        final var started = start(client, uniqueBusinessKey());
 
         client.patchVariables(started.key(), Map.of("note", "checked", "amount", 2));
 
@@ -346,8 +331,8 @@ class ZenBpmRestClientContractIT {
     @DisplayName("A job completed twice is answered normally, and a message moves the instance to its end")
     void aJobCompletedTwiceAndAMessage() {
         final var businessKey = uniqueBusinessKey();
-        final var started = start(businessKey);
-        final var job = waitingJobOf(started);
+        final var started = start(client, businessKey);
+        final var job = waitingJobOf(client, started);
 
         client.completeJob(job.key(), Map.of("worked", true));
         client.completeJob(job.key(), Map.of("worked", true));
@@ -389,8 +374,8 @@ class ZenBpmRestClientContractIT {
     @Test
     @DisplayName("A job failed with an error code nothing catches fails with an incident")
     void aJobFailedWithAnUncaughtErrorCode() {
-        final var started = start(uniqueBusinessKey());
-        final var job = waitingJobOf(started);
+        final var started = start(client, uniqueBusinessKey());
+        final var job = waitingJobOf(client, started);
 
         client.failJob(job.key(), "contract-nobody-catches", Map.of("reason", "test"));
 
@@ -484,58 +469,6 @@ class ZenBpmRestClientContractIT {
             channel
                     .shutdownNow()
                     .awaitTermination(10, TimeUnit.SECONDS);
-        }
-    }
-
-    private static byte[] fixture(final String name) {
-        try (var resource = ZenBpmRestClientContractIT.class.getResourceAsStream("/contract/%s".formatted(name))) {
-            return resource.readAllBytes();
-        } catch (IOException e) {
-            throw new UncheckedIOException(e);
-        }
-    }
-
-    private static String uniqueBusinessKey() {
-        return "order-%s".formatted(UUID.randomUUID());
-    }
-
-    private static ProcessInstanceRef start(final String businessKey) {
-        return client.createInstance(CreateInstanceRequest
-                .latestVersionOf("contract-task")
-                .withBusinessKey(businessKey)
-                .withVariables(Map.of("orderId", businessKey)));
-    }
-
-    private static JobRef waitingJobOf(final ProcessInstanceRef instance) {
-        return eventually(() -> client
-                .jobs(JobFilter
-                        .anyJob()
-                        .withJobType("contract-work")
-                        .withState(JobRef.State.ACTIVE)
-                        .withProcessInstanceKey(instance.key()))
-                .items()
-                .stream()
-                .findFirst());
-    }
-
-    private static <T> T eventually(final Supplier<Optional<T>> read) {
-        final var deadline = System.nanoTime() + EFFECT_TIMEOUT.toNanos();
-        while (true) {
-            final var value = read.get();
-            if (value.isPresent()) {
-                return value.get();
-            }
-            if (System.nanoTime() > deadline) {
-                throw new AssertionError("Nothing was read within %s".formatted(EFFECT_TIMEOUT));
-            }
-            try {
-                Thread.sleep(100);
-            } catch (InterruptedException e) {
-                Thread
-                        .currentThread()
-                        .interrupt();
-                throw new AssertionError(e);
-            }
         }
     }
 
