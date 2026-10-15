@@ -5,9 +5,11 @@
  */
 package org.pbinitiative.zenbpmadapter.client;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.io.IOException;
 import java.time.Duration;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
@@ -21,9 +23,10 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import io.vanillabp.integration.test.utils.SuppressOutputExtension;
 
 /**
- * The executor of the platform-thread mode, which an adapter id uses unless <code>worker-threads:
- * virtual</code> says otherwise. It runs the handlers on a pool as wide as the configured number. The timing runs on threads of
- * its own. {@link ZenBpmExecutorTest} holds what both models promise.
+ * The executor of the platform-thread mode, which an adapter id uses unless
+ * <code>worker-threads: virtual</code> says otherwise. It runs the handlers on a pool as wide as
+ * the configured number, and the timing on threads of its own. {@link ZenBpmExecutorTest} holds
+ * what both models promise.
  */
 @ExtendWith(SuppressOutputExtension.class)
 class ZenBpmPlatformThreadExecutorTest {
@@ -82,7 +85,45 @@ class ZenBpmPlatformThreadExecutorTest {
     }
 
     @Test
-    @DisplayName("shutdown ends both halves")
+    @DisplayName("A handler which throws a checked exception sneakily does not cost its thread")
+    void aSneakyCheckedExceptionKeepsTheThread() throws Exception {
+        final var executor = new ZenBpmPlatformThreadExecutor("orders", 1);
+        try {
+            executor.execute(() -> throwSneakily(new IOException("checked failure")));
+            final var name = new AtomicReference<String>();
+            final var ran = new CountDownLatch(1);
+            executor.execute(() -> {
+                name.set(Thread
+                        .currentThread()
+                        .getName());
+                ran.countDown();
+            });
+
+            assertTrue(ran.await(UNTIL_THE_EXECUTOR_COUNTS_AS_STUCK, TimeUnit.MILLISECONDS));
+            assertEquals("zenbpm-orders-handler-0", name.get(), "the same thread serves the next handler");
+        } finally {
+            executor.shutdownNow();
+        }
+    }
+
+    @Test
+    @DisplayName("The largest number of threads builds an executor which works")
+    void theLargestNumberOfThreadsWorks() throws Exception {
+        final var executor = ZenBpmExecutor.of("orders", ZenBpmExecutionModel.resolve("orders", String.valueOf(
+                Integer.MAX_VALUE), null));
+        try {
+            final var ran = new CountDownLatch(1);
+            executor.execute(ran::countDown);
+
+            assertTrue(ran.await(UNTIL_THE_EXECUTOR_COUNTS_AS_STUCK, TimeUnit.MILLISECONDS));
+            assertEquals(Integer.MAX_VALUE, executor.getSlots());
+        } finally {
+            executor.shutdownNow();
+        }
+    }
+
+    @Test
+    @DisplayName("shutdown ends the handler and the timing threads")
     void shutdownEndsBothHalves() throws Exception {
         final var executor = new ZenBpmPlatformThreadExecutor("orders", 2);
 
@@ -92,6 +133,15 @@ class ZenBpmPlatformThreadExecutorTest {
                 "both halves terminate");
         assertTrue(executor.isShutdown());
         assertTrue(executor.isTerminated());
+    }
+
+    /**
+     * Throws a checked exception from a method which does not declare it, as Lombok's
+     * <code>@SneakyThrows</code> does.
+     */
+    @SuppressWarnings("unchecked")
+    private static <E extends Exception> void throwSneakily(final Exception e) throws E {
+        throw (E) e;
     }
 
 }

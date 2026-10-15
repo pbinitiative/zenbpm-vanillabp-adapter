@@ -150,17 +150,6 @@ public record ZenBpmExecutionModel(
         return new ZenBpmExecutionModel(false, threads);
     }
 
-    /**
-     * How the model is named in the startup line and in messages.
-     *
-     * @return A short description, e.g. <code>4 platform threads</code>
-     */
-    public String describe() {
-        return virtual
-                ? "virtual threads, bounded at %d".formatted(slots)
-                : "%d platform threads".formatted(slots);
-    }
-
     private static String unparseable(
         final String adapterId,
         final String configured

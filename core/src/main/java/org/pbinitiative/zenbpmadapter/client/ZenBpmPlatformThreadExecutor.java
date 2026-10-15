@@ -5,7 +5,7 @@
  */
 package org.pbinitiative.zenbpmadapter.client;
 
-import java.util.concurrent.ArrayBlockingQueue;
+import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -15,9 +15,11 @@ import java.util.concurrent.atomic.AtomicInteger;
  * platform threads named <code>zenbpm-&lt;id&gt;-handler-N</code> as the number says. The timing
  * runs on the separate threads which {@link ZenBpmExecutor} keeps for it.
  * <p>
- * {@link ZenBpmExecutor} never hands the pool more handlers than it has threads. A thread which ran
- * a handler may still be on its way back into the pool when the next one arrives, so the pool has
- * a queue of as many places as threads, which is the most that can wait for such a thread.
+ * {@link ZenBpmExecutor} hands the pool one handler per slot. A slot is given back just before its
+ * thread is back in the pool, so the next handler can arrive while every thread is still busy. The
+ * pool keeps such handlers in a queue with one place per thread, which is the most that can wait
+ * this way. The queue takes memory only for what it holds, so a large number of threads costs
+ * nothing until they are used.
  */
 public class ZenBpmPlatformThreadExecutor extends ZenBpmExecutor {
 
@@ -25,24 +27,24 @@ public class ZenBpmPlatformThreadExecutor extends ZenBpmExecutor {
      * Builds the pool, with as many threads as the configured number.
      *
      * @param adapterId The adapter id, used to name the threads
-     * @param bound How many handlers may run at the same time
+     * @param slots How many handlers may run at the same time
      */
     public ZenBpmPlatformThreadExecutor(
         final String adapterId,
-        final int bound
+        final int slots
     ) {
-        super(adapterId, bound, handlingHalf(adapterId, bound));
+        super(adapterId, slots, handlerThreads(adapterId, slots));
     }
 
-    private static ThreadPoolExecutor handlingHalf(
+    private static ThreadPoolExecutor handlerThreads(
         final String adapterId,
-        final int bound
+        final int slots
     ) {
         final var nextThread = new AtomicInteger();
-        // a bound below one reaches the constructor of ZenBpmExecutor, which refuses it with a
+        // fewer than one slot reaches the constructor of ZenBpmExecutor, which refuses it with a
         // message, rather than the pool, which refuses it without one
-        final var threads = Math.max(1, bound);
-        return new ThreadPoolExecutor(threads, threads, 0, TimeUnit.MILLISECONDS, new ArrayBlockingQueue<>(
+        final var threads = Math.max(1, slots);
+        return new ThreadPoolExecutor(threads, threads, 0, TimeUnit.MILLISECONDS, new LinkedBlockingQueue<>(
                 threads), runnable -> {
                     final var thread = new Thread(runnable, "zenbpm-%s-handler-%d"
                             .formatted(adapterId, nextThread.getAndIncrement()));

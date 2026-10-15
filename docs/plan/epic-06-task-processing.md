@@ -58,15 +58,18 @@ sections 3.3 and 5, `TaskInvocationContext` javadoc.
    (5 attempts, 50 ms doubling, bounded by the remaining lock read from `lock_until`), stop at once
    while the module shuts down.
 
-*Note from S2.4.2, 2026-10-14.* `ZenBpmExecutor` keeps no queue: a submission while every handler
-thread is busy waits in the submitting thread, so the jobs which wait for a slot are the
-dispatcher's alone. With a slot in hand the submission waits at most for a handler thread which
-just gave its slot back. `execute` refuses a call on one of the executor's own handler threads
-(`IllegalStateException`), because with every thread busy it would wait for itself. So the
-handler's `finally` gives the slot back and asks for the next job on a timing thread
-(`executor.timing().execute(...)`), as `ZenBpmExecutorTest#aDispatcherWithSlotsRunsEveryJob` does.
-An exception which escapes a handler is logged at ERROR by the executor, and its thread serves the
-next one.
+*Note from S2.4.2, 2026-10-15.* The executor counts the slots itself, so instruction 3's
+`executor.releaseSlot()` in `finally` does not exist: a slot is taken by `executor.tryExecute(handler)`
+and given back by the executor once the handler returned. `tryExecute` never waits; it answers
+`false` where every slot is taken, and throws `RejectedExecutionException` once the executor shuts
+down. So the dispatcher keeps the jobs which wait for a slot, and nothing queues in the executor.
+`executor.onSlotFreed(listener)` tells the dispatcher on the handler thread, right after the slot
+came back, that it can hand over the next job; the listener may call `tryExecute` directly, as
+`ZenBpmExecutorTest#aDispatcherToldAboutFreedSlotsRunsEveryJob` does. It is not called once the
+executor shuts down. `execute(handler)` waits for a slot and is refused on a handler thread. After
+`shutdown()` the timing threads keep running until the last handler returned, so the lock renewal
+of a running handler still has them. An exception which escapes a handler is logged at ERROR by the
+executor, and its thread serves the next one.
 
 *Found by S2.2.2, 2026-10-14.* `isGoneJob` reads calls under `/v1/jobs/{key}` only, so it does not
 catch the `PATCH` of instruction 3. Read in the engine's code at `bdd795a3` (not measured):

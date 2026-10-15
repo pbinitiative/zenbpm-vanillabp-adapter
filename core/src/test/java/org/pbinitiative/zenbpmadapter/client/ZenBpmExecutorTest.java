@@ -8,18 +8,22 @@ package org.pbinitiative.zenbpmadapter.client;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.pbinitiative.zenbpmadapter.client.ContractFixtures.eventually;
 
+import java.io.IOException;
 import java.time.Duration;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.RejectedExecutionException;
-import java.util.concurrent.ScheduledThreadPoolExecutor;
+import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
@@ -37,9 +41,9 @@ import io.vanillabp.integration.test.utils.CapturedOutput;
 import io.vanillabp.integration.test.utils.SuppressOutputExtension;
 
 /**
- * What both execution models promise, asserted against each of them: a bound which holds by making
- * the submitter wait instead of queuing, slots for the dispatcher, and timing threads which no
- * handler occupies.
+ * What both execution models promise, asserted against each of them: slots which hold, a
+ * submission which waits or is refused instead of queuing, timing threads which no handler
+ * occupies, and a shutdown which leaves the timing threads to the handlers still running.
  */
 @ExtendWith(SuppressOutputExtension.class)
 class ZenBpmExecutorTest {
@@ -56,51 +60,53 @@ class ZenBpmExecutorTest {
 
     @ParameterizedTest(name = "{0}")
     @MethodSource("executionModels")
-    @DisplayName("More submissions than the bound make the submitter wait, and nothing is queued")
-    void moreSubmissionsThanTheBoundBlockTheSubmitter(
+    @DisplayName("More submissions than slots make the submitter wait, and nothing is queued")
+    void moreSubmissionsThanSlotsBlockTheSubmitter(
         final String model,
         final IntFunction<ZenBpmExecutor> executionModel
     ) throws Exception {
-        final var bound = 2;
-        final var executor = executionModel.apply(bound);
+        final var slots = 2;
+        final var executor = executionModel.apply(slots);
         try {
             final var running = new AtomicInteger();
             final var peak = new AtomicInteger();
             final var release = new CountDownLatch(1);
-            final var everyThreadTaken = new CountDownLatch(bound);
-            final var finished = new CountDownLatch(bound + 1);
+            final var everySlotTaken = new CountDownLatch(slots);
+            final var finished = new CountDownLatch(slots + 1);
             final var submitted = new AtomicInteger();
-            final var submitter = Thread.ofPlatform().start(() -> {
-                for (int job = 0; job < bound + 1; job++) {
-                    executor.execute(() -> {
-                        peak.accumulateAndGet(running.incrementAndGet(), Math::max);
-                        everyThreadTaken.countDown();
-                        try {
-                            awaitQuietly(release);
-                        } finally {
-                            running.decrementAndGet();
-                            finished.countDown();
+            final var submitter = Thread
+                    .ofPlatform()
+                    .start(() -> {
+                        for (int job = 0; job < slots + 1; job++) {
+                            executor.execute(() -> {
+                                peak.accumulateAndGet(running.incrementAndGet(), Math::max);
+                                everySlotTaken.countDown();
+                                try {
+                                    awaitQuietly(release);
+                                } finally {
+                                    running.decrementAndGet();
+                                    finished.countDown();
+                                }
+                            });
+                            submitted.incrementAndGet();
                         }
                     });
-                    submitted.incrementAndGet();
-                }
-            });
 
-            assertTrue(everyThreadTaken.await(UNTIL_THE_EXECUTOR_COUNTS_AS_STUCK, TimeUnit.MILLISECONDS),
-                    "the bound is used");
+            assertTrue(everySlotTaken.await(UNTIL_THE_EXECUTOR_COUNTS_AS_STUCK, TimeUnit.MILLISECONDS),
+                    "every slot is used");
             eventually(() -> Optional
                     .of(submitter.getState())
                     .filter(Thread.State.TIMED_WAITING::equals));
-            assertEquals(bound, submitted.get(), "the submission beyond the bound has not returned");
+            assertEquals(slots, submitted.get(), "the submission beyond the slots has not returned");
             assertTrue(submitter.isAlive(), "the submitter waits inside execute");
-            assertEquals(bound, running.get(), "nothing beyond the bound runs");
+            assertEquals(slots, running.get(), "nothing beyond the slots runs");
 
             release.countDown();
             assertTrue(finished.await(UNTIL_THE_EXECUTOR_COUNTS_AS_STUCK, TimeUnit.MILLISECONDS),
-                    "the waiting handler runs once a thread returned");
+                    "the waiting handler runs once a slot is free");
             submitter.join(UNTIL_THE_EXECUTOR_COUNTS_AS_STUCK);
-            assertEquals(bound + 1, submitted.get());
-            assertEquals(bound, peak.get(), "never more handlers at once than the bound allows");
+            assertEquals(slots + 1, submitted.get());
+            assertEquals(slots, peak.get(), "never more handlers at once than there are slots");
         } finally {
             executor.shutdownNow();
         }
@@ -108,117 +114,133 @@ class ZenBpmExecutorTest {
 
     @ParameterizedTest(name = "{0}")
     @MethodSource("executionModels")
-    @DisplayName("A timing task runs on a timing thread while every handler thread is busy")
+    @DisplayName("tryExecute answers false at once where every slot is taken, whoever took them")
+    void tryExecuteNeverWaits(
+        final String model,
+        final IntFunction<ZenBpmExecutor> executionModel
+    ) throws Exception {
+        final var executor = executionModel.apply(2);
+        final var release = new CountDownLatch(1);
+        try {
+            assertEquals(2, executor.getSlots());
+            assertEquals(2, executor.getFreeSlots());
+            assertEquals(0, executor.getBusySlots());
+            // one slot taken by each way of submitting: a handler submitted with execute is
+            // counted in the same slots as one submitted with tryExecute
+            takeEverySlot(executor, 1, release);
+            final var inside = new CountDownLatch(1);
+            assertTrue(executor.tryExecute(() -> {
+                inside.countDown();
+                awaitQuietly(release);
+            }));
+            assertTrue(inside.await(UNTIL_THE_EXECUTOR_COUNTS_AS_STUCK, TimeUnit.MILLISECONDS));
+            assertEquals(0, executor.getFreeSlots());
+            assertEquals(2, executor.getBusySlots());
+
+            final var ran = new AtomicInteger();
+            assertFalse(executor.tryExecute(ran::incrementAndGet), "no third slot, and no wait for one");
+
+            release.countDown();
+            eventually(() -> Optional
+                    .of(executor.getFreeSlots())
+                    .filter(free -> free == 2));
+            assertEquals(0, ran.get(), "the refused handler never ran");
+            final var later = new CountDownLatch(1);
+            assertTrue(executor.tryExecute(later::countDown), "the slots came back once the handlers returned");
+            assertTrue(later.await(UNTIL_THE_EXECUTOR_COUNTS_AS_STUCK, TimeUnit.MILLISECONDS));
+        } finally {
+            release.countDown();
+            executor.shutdownNow();
+        }
+    }
+
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("executionModels")
+    @DisplayName("The two timing threads run at the same time while every slot is taken")
     void theTimingIsNotStarvedByBusyHandlers(
         final String model,
         final IntFunction<ZenBpmExecutor> executionModel
     ) throws Exception {
-        final var bound = 2;
-        final var executor = executionModel.apply(bound);
+        final var slots = 2;
+        final var executor = executionModel.apply(slots);
+        final var release = new CountDownLatch(1);
+        final var bothInside = new CountDownLatch(2);
         try {
-            final var release = new CountDownLatch(1);
-            final var handlerThreads = takeEveryHandlerThread(executor, bound, release);
+            final var handlerThreads = takeEverySlot(executor, slots, release);
 
             final var timingThreads = ConcurrentHashMap.<String>newKeySet();
-            final var ran = new CountDownLatch(4);
             executor
                     .timing()
-                    .schedule(() -> recordThread(timingThreads, ran), 1, TimeUnit.MILLISECONDS);
-            for (int task = 0; task < 3; task++) {
-                executor
-                        .timing()
-                        .execute(() -> recordThread(timingThreads, ran));
-            }
+                    .schedule(() -> stayUntilBothAreInside(timingThreads, bothInside), 1, TimeUnit.MILLISECONDS);
+            executor
+                    .timing()
+                    .execute(() -> stayUntilBothAreInside(timingThreads, bothInside));
 
-            assertTrue(ran.await(UNTIL_THE_EXECUTOR_COUNTS_AS_STUCK, TimeUnit.MILLISECONDS),
-                    "the timing tasks ran while every handler was inside");
+            // each task stays until the other one entered, so a single timing thread would never
+            // let the second one in
+            assertTrue(bothInside.await(UNTIL_THE_EXECUTOR_COUNTS_AS_STUCK, TimeUnit.MILLISECONDS),
+                    "two timing tasks ran at the same time while every handler was inside");
             assertEquals(1, release.getCount(), "the handlers were still inside");
-            assertTrue(timingThreads
-                    .stream()
-                    .allMatch(name -> name.matches("zenbpm-orders-timing-[01]")), timingThreads::toString);
+            assertEquals(Set.of("zenbpm-orders-timing-0", "zenbpm-orders-timing-1"), timingThreads);
             assertTrue(handlerThreads
                     .stream()
                     .allMatch(name -> name.startsWith("zenbpm-orders-handler-")), handlerThreads::toString);
+        } finally {
             release.countDown();
-        } finally {
             executor.shutdownNow();
         }
     }
 
     @ParameterizedTest(name = "{0}")
     @MethodSource("executionModels")
-    @DisplayName("Slots are handed out up to the bound, and one more given back is refused")
-    void slotsAreHandedOutUpToTheBound(
-        final String model,
-        final IntFunction<ZenBpmExecutor> executionModel
-    ) {
-        final var executor = executionModel.apply(2);
-        try {
-            assertEquals(2, executor.getBound());
-            assertEquals(2, executor.getFreeSlots());
-            assertEquals(0, executor.getBusySlots());
-
-            assertTrue(executor.tryAcquireSlot());
-            assertTrue(executor.tryAcquireSlot());
-            assertFalse(executor.tryAcquireSlot(), "no third slot");
-            assertEquals(0, executor.getFreeSlots());
-            assertEquals(2, executor.getBusySlots());
-
-            executor.releaseSlot();
-            assertEquals(1, executor.getFreeSlots());
-            executor.releaseSlot();
-            final var exception = assertThrows(IllegalStateException.class, executor::releaseSlot);
-            assertEquals("ZenBPM[orders]: a slot was given back which nobody took", exception.getMessage());
-            assertEquals(2, executor.getFreeSlots(), "the bound did not grow");
-        } finally {
-            executor.shutdownNow();
-        }
-    }
-
-    @ParameterizedTest(name = "{0}")
-    @MethodSource("executionModels")
-    @DisplayName("A dispatcher which submits only with a slot in hand runs every job on handler threads")
-    void aDispatcherWithSlotsRunsEveryJob(
+    @DisplayName("A dispatcher told about freed slots runs every job on handler threads, one per slot")
+    void aDispatcherToldAboutFreedSlotsRunsEveryJob(
         final String model,
         final IntFunction<ZenBpmExecutor> executionModel
     ) throws Exception {
-        final var executor = executionModel.apply(1);
+        final var slots = 2;
+        final var executor = executionModel.apply(slots);
         try {
-            final var jobs = 20;
+            final var jobs = 40;
             final var waiting = new AtomicInteger(jobs);
             final var done = new CountDownLatch(jobs);
+            final var running = new AtomicInteger();
+            final var peak = new AtomicInteger();
             final var handlerThreads = ConcurrentHashMap.<String>newKeySet();
-            final var dispatch = new AtomicReference<Runnable>();
-            // the way the dispatcher is meant to work: it runs on a timing thread, takes a slot
-            // before it submits, and the handler gives the slot back and asks for the next job on
-            // a timing thread
-            dispatch.set(() -> {
-                while ((waiting.get() > 0) && executor.tryAcquireSlot()) {
-                    waiting.decrementAndGet();
-                    executor.execute(() -> {
-                        try {
+            final var refusals = new CopyOnWriteArrayList<Throwable>();
+            // the way the dispatcher is meant to work: it takes the next job only with a free
+            // slot, and it is told on the handler thread when a slot became free again
+            final Runnable dispatch = () -> {
+                try {
+                    while (waiting.getAndDecrement() > 0) {
+                        if (!executor.tryExecute(() -> {
+                            peak.accumulateAndGet(running.incrementAndGet(), Math::max);
                             recordThread(handlerThreads, done);
-                        } finally {
-                            executor.releaseSlot();
-                            executor
-                                    .timing()
-                                    .execute(dispatch.get());
+                            running.decrementAndGet();
+                        })) {
+                            break;
                         }
-                    });
+                    }
+                    waiting.incrementAndGet();
+                } catch (final RuntimeException e) {
+                    refusals.add(e);
                 }
-            });
+            };
+            executor.onSlotFreed(dispatch);
 
             executor
                     .timing()
-                    .execute(dispatch.get());
+                    .execute(dispatch);
 
             assertTrue(done.await(UNTIL_THE_EXECUTOR_COUNTS_AS_STUCK, TimeUnit.MILLISECONDS), "every job ran");
+            assertEquals(List.of(), refusals, "no hand-over was refused");
+            assertTrue(peak.get() <= slots, "never more handlers at once than there are slots");
             assertTrue(handlerThreads
                     .stream()
                     .allMatch(name -> name.startsWith("zenbpm-orders-handler-")), handlerThreads::toString);
             eventually(() -> Optional
                     .of(executor.getFreeSlots())
-                    .filter(free -> free == 1));
+                    .filter(free -> free == slots));
         } finally {
             executor.shutdownNow();
         }
@@ -226,17 +248,20 @@ class ZenBpmExecutorTest {
 
     @ParameterizedTest(name = "{0}")
     @MethodSource("executionModels")
-    @DisplayName("A handler cannot submit a handler, which could wait for its own thread")
-    void aHandlerCannotSubmitAHandler(
+    @DisplayName("A handler cannot wait for a slot of its own threads, but it may try for one")
+    void aHandlerCannotWaitForASlot(
         final String model,
         final IntFunction<ZenBpmExecutor> executionModel
     ) throws Exception {
         final var executor = executionModel.apply(1);
         try {
             final var refusal = new AtomicReference<Exception>();
+            final var tried = new AtomicReference<Boolean>();
             final var ran = new CountDownLatch(1);
             executor.execute(() -> {
                 try {
+                    tried.set(executor.tryExecute(() -> {
+                    }));
                     executor.execute(() -> {
                     });
                 } catch (final IllegalStateException e) {
@@ -247,11 +272,12 @@ class ZenBpmExecutorTest {
             });
 
             assertTrue(ran.await(UNTIL_THE_EXECUTOR_COUNTS_AS_STUCK, TimeUnit.MILLISECONDS));
+            assertFalse(tried.get(), "the only slot is the handler's own, and trying does not wait for it");
             assertInstanceOf(IllegalStateException.class, refusal.get());
             assertTrue(refusal
                     .get()
                     .getMessage()
-                    .startsWith("ZenBPM[orders]: a handler submitted another handler"),
+                    .startsWith("ZenBPM[orders]: a handler waited for a slot of the threads it runs on"),
                     refusal
                             .get()
                             .getMessage());
@@ -266,7 +292,7 @@ class ZenBpmExecutorTest {
 
     @ParameterizedTest(name = "{0}")
     @MethodSource("executionModels")
-    @DisplayName("A handler which throws is logged, and its thread serves the next one")
+    @DisplayName("A handler which throws is logged, a checked exception included, and its slot comes back")
     void aThrowingHandlerIsLogged(
         final String model,
         final IntFunction<ZenBpmExecutor> executionModel,
@@ -277,6 +303,7 @@ class ZenBpmExecutorTest {
             executor.execute(() -> {
                 throw new IllegalArgumentException("broken handler");
             });
+            executor.execute(() -> throwSneakily(new IOException("checked failure")));
             final var next = new CountDownLatch(1);
             executor.execute(next::countDown);
 
@@ -284,7 +311,8 @@ class ZenBpmExecutorTest {
             eventually(() -> Optional
                     .of(output.getAllOfThisTest())
                     .filter(printed -> printed.contains("ZenBPM[orders]: a handler threw"))
-                    .filter(printed -> printed.contains("broken handler")));
+                    .filter(printed -> printed.contains("broken handler"))
+                    .filter(printed -> printed.contains("java.io.IOException: checked failure")));
         } finally {
             executor.shutdownNow();
         }
@@ -292,24 +320,90 @@ class ZenBpmExecutorTest {
 
     @ParameterizedTest(name = "{0}")
     @MethodSource("executionModels")
-    @DisplayName("A submission waiting for a thread is refused when the executor shuts down")
+    @DisplayName("A listener of freed slots which throws is logged; one refused by a shutdown is not an error")
+    void aThrowingListenerIsLogged(
+        final String model,
+        final IntFunction<ZenBpmExecutor> executionModel,
+        final CapturedOutput output
+    ) throws Exception {
+        final var executor = executionModel.apply(1);
+        try {
+            final var told = new CountDownLatch(2);
+            executor.onSlotFreed(() -> {
+                told.countDown();
+                throw told.getCount() == 1
+                        ? new IllegalStateException("broken listener")
+                        : new RejectedExecutionException("refused hand-over");
+            });
+            executor.execute(() -> {
+            });
+            executor.execute(() -> {
+            });
+
+            assertTrue(told.await(UNTIL_THE_EXECUTOR_COUNTS_AS_STUCK, TimeUnit.MILLISECONDS));
+            eventually(() -> Optional
+                    .of(output.getAllOfThisTest())
+                    .filter(printed -> printed.contains("ZenBPM[orders]: the listener of freed slots threw"))
+                    .filter(printed -> printed.contains("broken listener")));
+            assertEquals(1, output
+                    .getAllOfThisTest()
+                    .split("the listener of freed slots threw", -1).length - 1,
+                    "only the broken listener is an error, the refused hand-over is not");
+            eventually(() -> Optional
+                    .of(executor.getFreeSlots())
+                    .filter(free -> free == 1));
+        } finally {
+            executor.shutdownNow();
+        }
+    }
+
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("executionModels")
+    @DisplayName("No handler is refused later than at once: null fails without waiting or taking a slot")
+    void aMissingHandlerIsRefusedAtOnce(
+        final String model,
+        final IntFunction<ZenBpmExecutor> executionModel
+    ) throws Exception {
+        final var executor = executionModel.apply(1);
+        final var release = new CountDownLatch(1);
+        try {
+            takeEverySlot(executor, 1, release);
+
+            assertThrows(NullPointerException.class, () -> executor.execute(null), "no wait for a slot first");
+            assertThrows(NullPointerException.class, () -> executor.tryExecute(null));
+
+            release.countDown();
+            eventually(() -> Optional
+                    .of(executor.getFreeSlots())
+                    .filter(free -> free == 1));
+        } finally {
+            release.countDown();
+            executor.shutdownNow();
+        }
+    }
+
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("executionModels")
+    @DisplayName("A submission waiting for a slot is refused when the executor shuts down")
     void aWaitingSubmissionIsRefusedAtShutdown(
         final String model,
         final IntFunction<ZenBpmExecutor> executionModel
     ) throws Exception {
         final var executor = executionModel.apply(1);
+        final var release = new CountDownLatch(1);
         try {
-            final var release = new CountDownLatch(1);
-            takeEveryHandlerThread(executor, 1, release);
+            takeEverySlot(executor, 1, release);
             final var refusal = new AtomicReference<RuntimeException>();
             final var ran = new AtomicInteger();
-            final var submitter = Thread.ofPlatform().start(() -> {
-                try {
-                    executor.execute(ran::incrementAndGet);
-                } catch (final RuntimeException e) {
-                    refusal.set(e);
-                }
-            });
+            final var submitter = Thread
+                    .ofPlatform()
+                    .start(() -> {
+                        try {
+                            executor.execute(ran::incrementAndGet);
+                        } catch (final RuntimeException e) {
+                            refusal.set(e);
+                        }
+                    });
             eventually(() -> Optional
                     .of(submitter.getState())
                     .filter(Thread.State.TIMED_WAITING::equals));
@@ -317,19 +411,20 @@ class ZenBpmExecutorTest {
             executor.shutdown();
 
             // the handler stays inside, so a refusal can only come from the wait itself, which
-            // looks for a shutdown every 100 ms
+            // checks for a shutdown every 100 ms
             submitter.join(5_000);
             assertInstanceOf(RejectedExecutionException.class, refusal.get(), "refused while still waiting");
             assertEquals("ZenBPM[orders]: the adapter shuts down, so the handler is not run", refusal
                     .get()
                     .getMessage());
-            assertEquals(null, refusal
+            assertNull(refusal
                     .get()
-                    .getCause(), "refused by the wait, not by the handler half once a thread was free");
+                    .getCause(), "refused by the wait, not by the handler threads once a slot was free");
             release.countDown();
             assertTrue(executor.awaitTermination(Duration.ofMillis(UNTIL_THE_EXECUTOR_COUNTS_AS_STUCK)));
             assertEquals(0, ran.get(), "the refused handler never ran");
         } finally {
+            release.countDown();
             executor.shutdownNow();
         }
     }
@@ -342,22 +437,24 @@ class ZenBpmExecutorTest {
         final IntFunction<ZenBpmExecutor> executionModel
     ) throws Exception {
         final var executor = executionModel.apply(1);
+        final var release = new CountDownLatch(1);
         try {
-            final var release = new CountDownLatch(1);
-            takeEveryHandlerThread(executor, 1, release);
+            takeEverySlot(executor, 1, release);
             final var refusal = new AtomicReference<RuntimeException>();
             final var interrupted = new AtomicReference<Boolean>();
-            final var submitter = Thread.ofPlatform().start(() -> {
-                try {
-                    executor.execute(() -> {
+            final var submitter = Thread
+                    .ofPlatform()
+                    .start(() -> {
+                        try {
+                            executor.execute(() -> {
+                            });
+                        } catch (final RuntimeException e) {
+                            refusal.set(e);
+                            interrupted.set(Thread
+                                    .currentThread()
+                                    .isInterrupted());
+                        }
                     });
-                } catch (final RuntimeException e) {
-                    refusal.set(e);
-                    interrupted.set(Thread
-                            .currentThread()
-                            .isInterrupted());
-                }
-            });
             eventually(() -> Optional
                     .of(submitter.getState())
                     .filter(Thread.State.TIMED_WAITING::equals));
@@ -374,15 +471,16 @@ class ZenBpmExecutorTest {
             final var later = new CountDownLatch(1);
             executor.execute(later::countDown);
             assertTrue(later.await(UNTIL_THE_EXECUTOR_COUNTS_AS_STUCK, TimeUnit.MILLISECONDS),
-                    "the refused submission took no thread with it");
+                    "the refused submission took no slot with it");
         } finally {
+            release.countDown();
             executor.shutdownNow();
         }
     }
 
     @ParameterizedTest(name = "{0}")
     @MethodSource("executionModels")
-    @DisplayName("A submission after the shutdown is refused and takes no thread with it")
+    @DisplayName("A submission after the shutdown is refused and takes no slot with it")
     void aSubmissionAfterTheShutdownIsRefused(
         final String model,
         final IntFunction<ZenBpmExecutor> executionModel
@@ -390,18 +488,106 @@ class ZenBpmExecutorTest {
         final var executor = executionModel.apply(1);
         executor.shutdown();
 
-        final var first = assertThrows(RejectedExecutionException.class, () -> executor.execute(() -> {
+        final var waiting = assertThrows(RejectedExecutionException.class, () -> executor.execute(() -> {
         }));
-        final var second = assertThrows(RejectedExecutionException.class, () -> executor.execute(() -> {
+        final var trying = assertThrows(RejectedExecutionException.class, () -> executor.tryExecute(() -> {
         }));
 
-        assertEquals("ZenBPM[orders]: the adapter shuts down, so the handler is not run", first.getMessage());
-        assertInstanceOf(RejectedExecutionException.class, first.getCause(), "the handler half refused it");
-        assertInstanceOf(RejectedExecutionException.class, second.getCause(),
-                "the second reached the handler half too, it did not wait for the thread the first took");
+        assertEquals("ZenBPM[orders]: the adapter shuts down, so the handler is not run", waiting.getMessage());
+        assertInstanceOf(RejectedExecutionException.class, waiting.getCause(), "the handler threads refused it");
+        assertEquals("ZenBPM[orders]: the adapter shuts down, so the handler is not run", trying.getMessage());
+        assertEquals(1, executor.getFreeSlots(), "the refused handler gave its slot back");
         assertTrue(executor.awaitTermination(Duration.ofMillis(UNTIL_THE_EXECUTOR_COUNTS_AS_STUCK)));
         assertTrue(executor.isShutdown());
         assertTrue(executor.isTerminated());
+    }
+
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("executionModels")
+    @DisplayName("After shutdown the timing threads serve the handlers still running, then stop")
+    void theTimingOutlivesTheHandlers(
+        final String model,
+        final IntFunction<ZenBpmExecutor> executionModel,
+        final CapturedOutput output
+    ) throws Exception {
+        final var executor = executionModel.apply(1);
+        final var release = new CountDownLatch(1);
+        try {
+            final var inside = new CountDownLatch(1);
+            final var handedBack = new CountDownLatch(1);
+            final var told = new AtomicInteger();
+            executor.onSlotFreed(told::incrementAndGet);
+            // a handler as the dispatcher's will be: it hands something to the timing threads
+            // once it is done
+            executor.execute(() -> {
+                inside.countDown();
+                awaitQuietly(release);
+                executor
+                        .timing()
+                        .execute(handedBack::countDown);
+            });
+            assertTrue(inside.await(UNTIL_THE_EXECUTOR_COUNTS_AS_STUCK, TimeUnit.MILLISECONDS));
+
+            executor.shutdown();
+
+            assertTrue(executor.isShutdown());
+            assertFalse(executor.isTerminated());
+            assertFalse(executor
+                    .timing()
+                    .isShutdown(), "the timing threads still run for the handler inside");
+            assertThrows(RejectedExecutionException.class, () -> executor.tryExecute(() -> {
+            }), "refused, not merely answered false because the only slot is taken");
+            release.countDown();
+            assertTrue(handedBack.await(UNTIL_THE_EXECUTOR_COUNTS_AS_STUCK, TimeUnit.MILLISECONDS),
+                    "the handler handed something to the timing threads after the shutdown");
+            assertTrue(executor.awaitTermination(Duration.ofMillis(UNTIL_THE_EXECUTOR_COUNTS_AS_STUCK)));
+            assertTrue(executor
+                    .timing()
+                    .isTerminated(), "the timing threads stopped after the last handler");
+            assertEquals(0, told.get(), "nobody is told about a slot nothing may use any longer");
+            assertFalse(output
+                    .getAllOfThisTest()
+                    .contains("ERROR"), output.getAllOfThisTest());
+        } finally {
+            release.countDown();
+            executor.shutdownNow();
+        }
+    }
+
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("executionModels")
+    @DisplayName("A timing task due later does not hold the shutdown up, one which runs does")
+    void aDelayedTimingTaskDoesNotHoldTheShutdownUp(
+        final String model,
+        final IntFunction<ZenBpmExecutor> executionModel
+    ) throws Exception {
+        final var executor = executionModel.apply(1);
+        final var release = new CountDownLatch(1);
+        try {
+            final var dueLater = executor
+                    .timing()
+                    .schedule(() -> {
+                    }, 1, TimeUnit.HOURS);
+            final var inside = new CountDownLatch(1);
+            executor
+                    .timing()
+                    .execute(() -> {
+                        inside.countDown();
+                        awaitQuietly(release);
+                    });
+            assertTrue(inside.await(UNTIL_THE_EXECUTOR_COUNTS_AS_STUCK, TimeUnit.MILLISECONDS));
+
+            executor.shutdown();
+
+            assertFalse(executor.awaitTermination(Duration.ofMillis(200)), "the running timing task is waited for");
+            release.countDown();
+            assertTrue(executor.awaitTermination(Duration.ofMillis(UNTIL_THE_EXECUTOR_COUNTS_AS_STUCK)),
+                    "the task due in an hour is not");
+            assertTrue(dueLater.isCancelled());
+        } finally {
+            release.countDown();
+            executor.shutdownNow();
+        }
     }
 
     @ParameterizedTest(name = "{0}")
@@ -412,45 +598,62 @@ class ZenBpmExecutorTest {
         final IntFunction<ZenBpmExecutor> executionModel
     ) throws Exception {
         final var executor = executionModel.apply(1);
-        final var interrupted = new CountDownLatch(1);
-        final var started = new CountDownLatch(1);
-        executor.execute(() -> {
-            started.countDown();
-            try {
-                Thread.sleep(UNTIL_THE_EXECUTOR_COUNTS_AS_STUCK);
-            } catch (final InterruptedException e) {
-                interrupted.countDown();
-            }
-        });
-        assertTrue(started.await(UNTIL_THE_EXECUTOR_COUNTS_AS_STUCK, TimeUnit.MILLISECONDS));
-        executor
-                .timing()
-                .schedule(() -> {
-                }, 1, TimeUnit.HOURS);
+        final var neverReleased = new CountDownLatch(1);
+        try {
+            final var interrupted = new CountDownLatch(1);
+            final var started = new CountDownLatch(1);
+            executor.execute(() -> {
+                started.countDown();
+                try {
+                    neverReleased.await();
+                } catch (final InterruptedException e) {
+                    interrupted.countDown();
+                }
+            });
+            assertTrue(started.await(UNTIL_THE_EXECUTOR_COUNTS_AS_STUCK, TimeUnit.MILLISECONDS));
+            executor
+                    .timing()
+                    .schedule(() -> {
+                    }, 1, TimeUnit.HOURS);
 
-        final var pending = executor.shutdownNow();
+            final var pending = executor.shutdownNow();
 
-        assertEquals(1, pending.size(), "the timing task due in an hour");
-        assertTrue(interrupted.await(UNTIL_THE_EXECUTOR_COUNTS_AS_STUCK, TimeUnit.MILLISECONDS));
-        assertTrue(executor.awaitTermination(Duration.ofMillis(UNTIL_THE_EXECUTOR_COUNTS_AS_STUCK)));
+            assertEquals(1, pending.size(), "the timing task due in an hour");
+            assertTrue(interrupted.await(UNTIL_THE_EXECUTOR_COUNTS_AS_STUCK, TimeUnit.MILLISECONDS));
+            assertTrue(executor.awaitTermination(Duration.ofMillis(UNTIL_THE_EXECUTOR_COUNTS_AS_STUCK)));
+        } finally {
+            neverReleased.countDown();
+            executor.shutdownNow();
+        }
     }
 
     @ParameterizedTest(name = "{0}")
     @MethodSource("executionModels")
-    @DisplayName("Shutting down only the timing threads does not count as shut down")
-    void halfAShutdownIsNoShutdown(
+    @DisplayName("Whoever receives the timing threads can neither shut them down nor resize them")
+    void theTimingThreadsStayWithTheExecutor(
         final String model,
         final IntFunction<ZenBpmExecutor> executionModel
     ) throws Exception {
         final var executor = executionModel.apply(1);
         try {
-            executor
-                    .timing()
-                    .shutdown();
+            final var timing = executor.timing();
 
-            assertFalse(executor.isShutdown());
-            assertFalse(executor.isTerminated());
-            assertFalse(executor.awaitTermination(Duration.ofMillis(10)), "the handler half still runs");
+            final var refusal = assertThrows(UnsupportedOperationException.class, timing::shutdown);
+            assertThrows(UnsupportedOperationException.class, timing::shutdownNow);
+            assertThrows(UnsupportedOperationException.class, () -> {
+                try (var closing = executor.timing()) {
+                    closing.execute(() -> {
+                    });
+                }
+            }, "not by try-with-resources either");
+
+            assertEquals("ZenBPM[orders]: the timing threads stop with the executor which owns them, not before",
+                    refusal.getMessage());
+            assertFalse(timing.isShutdown());
+            assertFalse(timing instanceof ThreadPoolExecutor, "no resizing");
+            assertTrue(timing
+                    .submit(() -> true)
+                    .get(UNTIL_THE_EXECUTOR_COUNTS_AS_STUCK, TimeUnit.MILLISECONDS), "the timing threads still work");
         } finally {
             executor.shutdownNow();
         }
@@ -479,29 +682,48 @@ class ZenBpmExecutorTest {
 
     @ParameterizedTest(name = "{0}")
     @MethodSource("executionModels")
-    @DisplayName("The timing threads cannot be resized by whoever receives them")
-    void theTimingThreadsCannotBeResized(
-        final String model,
-        final IntFunction<ZenBpmExecutor> executionModel
-    ) {
-        final var executor = executionModel.apply(1);
-        try {
-            assertFalse(executor.timing() instanceof ScheduledThreadPoolExecutor);
-        } finally {
-            executor.shutdownNow();
-        }
-    }
-
-    @ParameterizedTest(name = "{0}")
-    @MethodSource("executionModels")
-    @DisplayName("A bound below one is refused with the adapter id")
-    void aBoundBelowOneIsRefused(
+    @DisplayName("Fewer than one slot is refused with the adapter id")
+    void fewerThanOneSlotIsRefused(
         final String model,
         final IntFunction<ZenBpmExecutor> executionModel
     ) {
         final var exception = assertThrows(IllegalArgumentException.class, () -> executionModel.apply(0));
 
         assertEquals("ZenBPM[orders]: an executor needs at least one slot, not 0", exception.getMessage());
+    }
+
+    @Test
+    @DisplayName("A hand-over which a shutdown overtook still stops the timing threads once it is refused")
+    void aHandOverOvertakenByTheShutdownStillStopsTheTiming() throws Exception {
+        final var owner = new AtomicReference<ZenBpmExecutor>();
+        // handler threads which see the shutdown arrive between the slot taken and the hand-over,
+        // the moment no other test can reach: shutdown() finds the slot taken and leaves the
+        // timing threads to whoever gives it back
+        final var handlerThreads = new ThreadPoolExecutor(1, 1, 0, TimeUnit.MILLISECONDS, new LinkedBlockingQueue<>()) {
+
+            @Override
+            public void execute(final Runnable command) {
+                owner
+                        .get()
+                        .shutdown();
+                super.execute(command);
+            }
+
+        };
+        owner.set(new ZenBpmExecutor("overtaken", 1, handlerThreads) {
+        });
+
+        assertThrows(RejectedExecutionException.class, () -> owner
+                .get()
+                .tryExecute(() -> {
+                }));
+
+        assertEquals(1, owner
+                .get()
+                .getFreeSlots(), "the slot came back");
+        assertTrue(owner
+                .get()
+                .awaitTermination(Duration.ofSeconds(5)), "the timing threads stopped with it");
     }
 
     @Test
@@ -533,9 +755,9 @@ class ZenBpmExecutorTest {
         final var virtual = ZenBpmExecutor.of(ADAPTER_ID, new ZenBpmExecutionModel(true, 5));
         try {
             assertInstanceOf(ZenBpmPlatformThreadExecutor.class, platform);
-            assertEquals(3, platform.getBound());
+            assertEquals(3, platform.getSlots());
             assertInstanceOf(ZenBpmVirtualThreadExecutor.class, virtual);
-            assertEquals(5, virtual.getBound());
+            assertEquals(5, virtual.getSlots());
         } finally {
             platform.shutdownNow();
             virtual.shutdownNow();
@@ -543,40 +765,40 @@ class ZenBpmExecutorTest {
     }
 
     /**
-     * The two models, each as a way of building an executor of a given bound.
+     * The two models, each as a way of building an executor with a given number of slots.
      *
      * @return The models under test, named after the value which configures them
      */
     static Stream<Arguments> executionModels() {
         return Stream.of(
                 Arguments.of("worker-threads: <number>",
-                        (IntFunction<ZenBpmExecutor>) bound -> new ZenBpmPlatformThreadExecutor(
-                                ADAPTER_ID, bound)),
+                        (IntFunction<ZenBpmExecutor>) slots -> new ZenBpmPlatformThreadExecutor(
+                                ADAPTER_ID, slots)),
                 Arguments.of("worker-threads: virtual",
-                        (IntFunction<ZenBpmExecutor>) bound -> new ZenBpmVirtualThreadExecutor(
-                                ADAPTER_ID, bound)));
+                        (IntFunction<ZenBpmExecutor>) slots -> new ZenBpmVirtualThreadExecutor(
+                                ADAPTER_ID, slots)));
     }
 
     /**
-     * Fills every handler thread with a handler which stays inside until the latch is counted down.
+     * Fills slots with handlers which stay inside until the latch is counted down.
      *
      * @return The names of the threads the handlers run on
      */
-    private static Set<String> takeEveryHandlerThread(
+    private static Set<String> takeEverySlot(
         final ZenBpmExecutor executor,
-        final int bound,
+        final int slots,
         final CountDownLatch release
     ) throws InterruptedException {
         final var names = ConcurrentHashMap.<String>newKeySet();
-        final var everyThreadTaken = new CountDownLatch(bound);
-        for (int job = 0; job < bound; job++) {
+        final var everySlotTaken = new CountDownLatch(slots);
+        for (int job = 0; job < slots; job++) {
             executor.execute(() -> {
-                recordThread(names, everyThreadTaken);
+                recordThread(names, everySlotTaken);
                 awaitQuietly(release);
             });
         }
-        assertTrue(everyThreadTaken.await(UNTIL_THE_EXECUTOR_COUNTS_AS_STUCK, TimeUnit.MILLISECONDS),
-                "the handlers took every thread");
+        assertTrue(everySlotTaken.await(UNTIL_THE_EXECUTOR_COUNTS_AS_STUCK, TimeUnit.MILLISECONDS),
+                "the handlers took the slots");
         return names;
     }
 
@@ -605,6 +827,14 @@ class ZenBpmExecutorTest {
         ran.countDown();
     }
 
+    private static void stayUntilBothAreInside(
+        final Set<String> names,
+        final CountDownLatch bothInside
+    ) {
+        recordThread(names, bothInside);
+        awaitQuietly(bothInside);
+    }
+
     private static void awaitQuietly(final CountDownLatch release) {
         try {
             // the handlers stay inside until the test lets them out, so what the test reads
@@ -615,6 +845,15 @@ class ZenBpmExecutorTest {
                     .currentThread()
                     .interrupt();
         }
+    }
+
+    /**
+     * Throws a checked exception from a method which does not declare it, as Lombok's
+     * <code>@SneakyThrows</code> does.
+     */
+    @SuppressWarnings("unchecked")
+    private static <E extends Exception> void throwSneakily(final Exception e) throws E {
+        throw (E) e;
     }
 
 }

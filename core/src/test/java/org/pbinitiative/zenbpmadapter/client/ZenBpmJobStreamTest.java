@@ -494,7 +494,7 @@ class ZenBpmJobStreamTest {
         stream.subscribe("module-a", "t1", Duration.ofMinutes(5), 4);
         final var call = engine.call(0);
         call.subscriptions(1);
-        timing.shutdown();
+        executor.shutdown();
 
         call.send(job(5, "t1"));
 
@@ -510,7 +510,7 @@ class ZenBpmJobStreamTest {
         stream.subscribe("module-a", "t1", Duration.ofMinutes(5), 4);
         final var call = engine.call(0);
         call.subscriptions(1);
-        timing.shutdown();
+        executor.shutdown();
 
         call.fail(Status.UNAVAILABLE);
 

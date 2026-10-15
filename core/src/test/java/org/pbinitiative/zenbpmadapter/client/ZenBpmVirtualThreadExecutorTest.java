@@ -22,8 +22,8 @@ import io.vanillabp.integration.test.utils.SuppressOutputExtension;
 
 /**
  * The executor of the virtual-thread mode. It runs each handler on a virtual thread of its own,
- * never more of them at once than the bound allows. The timing runs on threads of
- * its own. {@link ZenBpmExecutorTest} holds what both models promise.
+ * never more of them at once than there are slots, and the timing on threads of its own.
+ * {@link ZenBpmExecutorTest} holds what both models promise.
  */
 @ExtendWith(SuppressOutputExtension.class)
 class ZenBpmVirtualThreadExecutorTest {
@@ -82,7 +82,7 @@ class ZenBpmVirtualThreadExecutorTest {
     }
 
     @Test
-    @DisplayName("shutdown ends both halves")
+    @DisplayName("shutdown ends the handler and the timing threads")
     void shutdownEndsBothHalves() throws Exception {
         final var executor = new ZenBpmVirtualThreadExecutor("orders", 2);
 

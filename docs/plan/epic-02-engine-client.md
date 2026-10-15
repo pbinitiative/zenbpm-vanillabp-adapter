@@ -846,11 +846,13 @@ offer; the stream hands every job over on them and schedules its reconnects ther
 constructor runs `ProtobufRuntimeCheck` (S2.3.1), so building a factory refuses a protobuf runtime
 which cannot run the stream, before anything is contacted.
 
-*Note from S2.4.2, 2026-10-14.* The factory builds the executor with
+*Note from S2.4.2, 2026-10-15.* The factory builds the executor with
 `ZenBpmExecutor.of(adapterId, ZenBpmExecutionModel.resolve(adapterId, configuration))` and hands
-the stream `executor.timing()`. Building it starts no thread: both halves start theirs on first
-use. `close()` closes the stream before it shuts the executor down, since the stream hands its jobs
-over on the timing threads; how long it waits for the handlers in flight is `shutdown-grace` (S6.2.2).
+the stream `executor.timing()`. Building it starts no thread: both kinds start theirs on first use.
+The drain of S6.2.2 has already waited `shutdown-grace` for the handlers when `close()` closes the
+stream, so `close()` then calls `executor.shutdown()` and does not wait the grace again. The timing
+threads stop by themselves once the last handler returned and drop what is due later;
+`awaitTermination` waits for both. A receiver of `timing()` cannot shut it down.
 
 **Tests**
 
@@ -897,14 +899,16 @@ including the values which end the boot (`worker-threads: 0`, `virtual` with a b
 
 - [x] More submissions than slots block the submitter rather than queuing (the dispatcher will not
   submit without a slot, but the executor itself must not grow a queue either).
-  `ZenBpmExecutorTest#moreSubmissionsThanTheBoundBlockTheSubmitter`, for both models: with a bound
-  of two and both handlers inside, the third `execute` has not returned, its thread waits, and the
-  handler runs once a thread is back; never more than two ran at once.
+  `ZenBpmExecutorTest#moreSubmissionsThanSlotsBlockTheSubmitter`, for both models: with two slots
+  and both handlers inside, the third `execute` has not returned, its thread waits, and the handler
+  runs once a slot is back; never more than two ran at once. The dispatcher does not wait at all:
+  `#tryExecuteNeverWaits` gets `false` at once where every slot is taken (since the review answers
+  below).
 - [x] The timing threads are never used for a handler (assert by thread name in the test).
-  `#theTimingIsNotStarvedByBusyHandlers` runs timing tasks on `zenbpm-orders-timing-0` and `-1`
-  while every handler is inside on `zenbpm-orders-handler-N`;
-  `#aDispatcherWithSlotsRunsEveryJob` runs twenty jobs through one slot and finds every one on a
-  handler thread. `ZenBpmJobStreamTest` and `ZenBpmJobStreamIT` now take the executor's own timing
+  `#theTimingIsNotStarvedByBusyHandlers` holds two timing tasks inside at the same time, on
+  `zenbpm-orders-timing-0` and `-1`, while every handler is inside on `zenbpm-orders-handler-N`;
+  `#aDispatcherToldAboutFreedSlotsRunsEveryJob` runs forty jobs through two slots and finds every
+  one on a handler thread. `ZenBpmJobStreamTest` and `ZenBpmJobStreamIT` now take the executor's own timing
   threads, so their thread-name assertions hold for the adapter's threads, not for ones the tests
   name.
 
@@ -932,30 +936,98 @@ Where the code differs from the instructions:
   `execute(Runnable)`. So the gate which held a poll back while every slot was busy is gone with the
   hand-over: `max_active_jobs` takes its place (decision 9, and the executor row of
   `docs/analysis/03-template-assessment.md`).
-- **The submitter waits, in both models.** The criterion above asks for it. The executor counts the
-  handlers handed over and not yet returned in a semaphore of `bound` permits, taken in `execute`
-  before the handler is handed on and given back when it returned. Camunda 8's virtual model takes
+- **One count of slots, which the executor keeps (since the review answers below).** A slot is
+  taken before a handler is handed to the handler threads and given back once it returned.
+  `tryExecute(handler)` takes a free slot or answers `false` at once; `execute(handler)` waits for
+  one in the submitting thread, which the criterion above asks for, and checks for a shutdown every
+  100 ms while it waits (an interrupt refuses it, the interrupt kept). `onSlotFreed(listener)` tells
+  the dispatcher when it can hand over the next job. `tryAcquireSlot()` / `releaseSlot()` of the
+  instructions are gone, and so is a slot given back by the handler. Camunda 8's virtual model takes
   its permit inside the virtual thread, because the thread which submits there belongs to the
-  client; here it is the dispatcher's. The platform pool keeps a queue of `bound` places, the most
-  that can wait for a thread on its way back. A wait looks for a shutdown every 100 ms and is then
-  refused, as is a submitter which is interrupted (its interrupt kept).
-- **Slots and the bound are two counts.** `tryAcquireSlot()` / `releaseSlot()` count what the
-  dispatcher took (`getBusySlots()`, `getFreeSlots()`); `releaseSlot()` without a slot taken throws,
-  since it would raise the bound for good. The bound of `execute` holds for a caller without a slot
-  as well. The handler gives the slot back in its `finally`, while its thread is still on the way
-  back, so a submission with a slot in hand waits at most for that thread.
-- **A handler cannot submit a handler.** With every thread busy it would wait for the thread it
-  runs on, so `execute` on one of the executor's own handler threads throws
-  `IllegalStateException`. The dispatcher asks for the next job on a timing thread; note under
-  S6.1.1.
-- **An exception which escapes a handler is logged at ERROR** with the adapter id, and the thread
-  serves the next handler. Camunda 8 left it to the thread's default handler.
+  client; here the dispatcher's thread does not wait either, since it uses `tryExecute`. The platform
+  pool keeps a queue with one place per thread for the handler which arrives while the thread before
+  it is still on its way back; it takes memory only for what it holds.
+- **A handler cannot wait for a slot.** With every slot taken it would wait for the slot it holds
+  itself, so `execute` on one of the executor's own handler threads throws
+  `IllegalStateException`; `tryExecute` may be called there. Note under S6.1.1.
+- **An exception which escapes a handler is logged at ERROR** with the adapter id, a checked one
+  thrown sneakily included, and the thread serves the next handler. Camunda 8 left it to the
+  thread's default handler.
+- **The timing threads outlive the handlers (since the review answers below).** `shutdown()` takes
+  no new handler, and the timing threads stop once the last running handler returned, dropping
+  what is due later. Whoever receives `timing()` can neither resize it nor shut it down.
 - `getWaiting()` is gone: what waits for a slot is the dispatcher's queue, and nothing waits in the
   executor. `ZenBpmExecutor.of(adapterId, model)` builds the executor a model names, and
   `ZenBpmExecutionModel.resolve(adapterId, configuration)` hands on `getWorkerThreads()` and the raw
-  `getWorkerThreadsBound()`, as the instruction asks. Its default is
+  `getWorkerThreadsBound()`, as the instruction asks. The executor is no `java.util.concurrent.Executor`
+  any longer (since the review answers below): nothing hands it on as one, and a caller which knows
+  only that interface would be surprised by an `execute` which waits and refuses handler threads. Its default is
   `ZenBpmAdapterConfiguration.DEFAULT_WORKER_THREADS`, so the two cannot drift apart, and
   `#theModelRefusesWhatTheValidationRefuses` checks thirteen pairs of values: the model refuses
   exactly what the validation refuses. A number too large for an `int` is called too large, not a
   word. The thread names are `zenbpm-<id>-timing-N` and `zenbpm-<id>-handler-N`, counted from 0;
-  no thread starts before the first use. Notes added under S2.4.1, S6.1.1 and S11.1.1.
+  no thread starts before the first use. Notes added under S2.4.1, S6.1.1, S8.1.1 and S11.1.1.
+
+**Answers to two reviews, 2026-10-15.** Every finding was checked against the source and JDK 25,
+and each one which could be reproduced was first written as a test which failed on the reviewed
+commit `6e00ca9`: `execute(null)` accepted, a checked exception thrown sneakily costing its platform
+thread unlogged, a timing task due in an hour holding `awaitTermination` up, a try-with-resources
+on `timing()` shutting the timing threads down, a slot holder waiting a whole handler's runtime
+behind a handler without a slot, `worker-threads: 2147483647` ending in `OutOfMemoryError` (which
+took the whole test JVM down), and a handler handing work to the timing threads after `shutdown()`
+logged as a failed handler. That two timing threads run at once held already; only the test did not
+show it. Valid and fixed:
+
+- **One count of slots (the user's decision).** Slots and the handler limit were two counts, so a
+  dispatcher holding a slot could wait in `execute` on a timing thread for as long as a handler
+  which took no slot ran, and two such waits stopped the job stream's hand-over and reconnects. E8's
+  poller would have done just that. Now the slots are the limit, and the executor takes and gives
+  them back (above); `#tryExecuteNeverWaits` takes one slot with each method and finds the third
+  refused at once.
+- **The timing threads outlive the handlers (the user's decision).** `shutdown()` stopped both at
+  once, so a handler which handed its next job to the timing threads after it got a
+  `RejectedExecutionException` and an ERROR, and a lock renewal could not run. A delayed task kept
+  the timing threads, and so `awaitTermination`, waiting until it was due. Now they stop after the
+  last handler and drop what is due later (`#theTimingOutlivesTheHandlers`,
+  `#aDelayedTimingTaskDoesNotHoldTheShutdownUp`, which also fails where `awaitTermination` ignores
+  the timing threads). Nobody is told about a slot freed during a shutdown, and a listener refused
+  because of one is logged at DEBUG, not as an error. The S2.4.1 note waited `shutdown-grace` a
+  second time after the drain of S6.2.2 had; it no longer does.
+- `execute` and `tryExecute` refuse `null` at once, before they wait or take a slot.
+- A handler's checked exception thrown sneakily is caught and logged like any other
+  (`ZenBpmPlatformThreadExecutorTest#aSneakyCheckedExceptionKeepsTheThread`).
+- The platform pool's queue was an `ArrayBlockingQueue`, which allocates every place at once; it is
+  a `LinkedBlockingQueue` of the same capacity now (`#theLargestNumberOfThreadsWorks`).
+- `shutdownNow()` returned the handlers which never started as well, and running one marked the
+  calling thread as a handler thread for good. It returns the timing tasks only, and its Javadoc
+  says that a dropped handler's slot stays taken.
+- `timing()` refuses `shutdown`, `shutdownNow` and therefore `close` with
+  `UnsupportedOperationException` (`#theTimingThreadsStayWithTheExecutor`).
+- "Slots" and "bound" named one number twice; the executor speaks of slots everywhere now
+  (`getSlots()`, as the model's `slots()`). `ZenBpmExecutionModel.describe()` had no caller and is
+  gone; the story which logs the model can bring it back.
+- Tests: two timing tasks now wait for each other, so a single timing thread fails the test; the
+  handler of `#shutdownNowInterruptsAndHandsBack` waits on a latch instead of sleeping, and every
+  latch is released in `finally`; the dispatcher test records refusals and asserts there were none;
+  `assertNull` where it fits. The class comments of the two subclass tests are wrapped again.
+- Wording: the class comment says how jobs of several types wait with the dispatcher, the wait
+  "checks whether the executor is shutting down", and the sentence about the handler threads is no
+  longer inverted.
+
+Seen to fail, each restored afterwards: `null` taken by either method, only unchecked exceptions
+caught, the timing threads shut down or shut down at once by their receiver, delayed tasks kept,
+the timing threads stopped together with the handlers or while one still runs, nobody stopping
+them after a hand-over the shutdown overtook (`#aHandOverOvertakenByTheShutdownStillStopsTheTiming`,
+with handler threads which call `shutdown()` before they refuse), the listener told during a
+shutdown, its refusal logged as an error or its exception let through, `awaitTermination` ignoring
+the timing threads, `tryExecute` waiting or ignoring a shutdown, `execute` taking no slot, a slot
+kept after the handler or after a refusal, no guard on a handler thread, no check for a shutdown
+while waiting, the interrupt flag dropped, a cancelled task kept, the busy slots counted wrong, the
+`ArrayBlockingQueue` back, and a pool of one thread. After the answers `mvn clean install` builds
+green (`ZenBpmExecutorTest` 37 cases, `ZenBpmExecutionModelTest` 25,
+`ZenBpmPlatformThreadExecutorTest` 5, `ZenBpmVirtualThreadExecutorTest` 3, `ZenBpmJobStreamTest`
+38, `ZenBpmJobStreamIT` 2, `ZenBpmJobLockIT` 3), the coverage gate measures 100 % of 6,958
+instructions on both platforms, and `bin/check-deploy-safety.sh` passes both runs.
+
+Not changed: none of the findings was wrong. Copilot's recommendation to keep timing work which an
+in-flight handler still needs is what the shutdown above does.

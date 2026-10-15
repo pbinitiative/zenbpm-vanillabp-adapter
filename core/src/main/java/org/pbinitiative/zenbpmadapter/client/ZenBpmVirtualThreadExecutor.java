@@ -13,28 +13,28 @@ import java.util.concurrent.Executors;
  * virtual thread named <code>zenbpm-&lt;id&gt;-handler-N</code> per handler. The timing runs on
  * the platform threads which {@link ZenBpmExecutor} keeps for it.
  * <p>
- * A virtual thread per handler means no limit, so <code>worker-threads-bound</code> is the bound
- * which {@link ZenBpmExecutor} holds. It is taken before the virtual thread starts, so a submission
- * beyond it waits in the submitting thread. Camunda 8's adapter takes it inside the virtual thread
- * instead, because the thread which submits there belongs to the Camunda client. Here it is the
- * dispatcher's, which submits only with a slot in hand and so does not wait.
+ * A virtual thread per handler has no limit of its own, so the slots of {@link ZenBpmExecutor},
+ * as many as <code>worker-threads-bound</code> says, are the limit. A slot is taken before the
+ * virtual thread starts. Camunda 8's adapter takes its permit inside the virtual thread instead,
+ * because the thread which submits there belongs to the Camunda client, which must not wait. Here
+ * the dispatcher takes a slot with {@link #tryExecute(Runnable)}, which does not wait either.
  */
 public class ZenBpmVirtualThreadExecutor extends ZenBpmExecutor {
 
     /**
-     * Builds the virtual-thread half.
+     * Builds the virtual handler threads.
      *
      * @param adapterId The adapter id, used to name the threads
-     * @param bound How many handlers may run at the same time
+     * @param slots How many handlers may run at the same time
      */
     public ZenBpmVirtualThreadExecutor(
         final String adapterId,
-        final int bound
+        final int slots
     ) {
-        super(adapterId, bound, handlingHalf(adapterId));
+        super(adapterId, slots, handlerThreads(adapterId));
     }
 
-    private static ExecutorService handlingHalf(final String adapterId) {
+    private static ExecutorService handlerThreads(final String adapterId) {
         return Executors.newThreadPerTaskExecutor(Thread
                 .ofVirtual()
                 .name("zenbpm-%s-handler-".formatted(adapterId), 0)

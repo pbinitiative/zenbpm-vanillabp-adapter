@@ -39,7 +39,6 @@ class ZenBpmExecutionModelTest {
         assertFalse(model.virtual(), "the default does not use virtual threads");
         assertEquals(4, model.slots());
         assertEquals(model, ZenBpmExecutionModel.resolve(ADAPTER_ID, "  ", null), "a blank value is no value");
-        assertEquals("4 platform threads", model.describe());
     }
 
     @Test
@@ -68,7 +67,6 @@ class ZenBpmExecutionModelTest {
 
         assertTrue(model.virtual());
         assertEquals(16, model.slots());
-        assertEquals("virtual threads, bounded at 16", model.describe());
     }
 
     @Test

@@ -40,6 +40,12 @@ Contract: `TaskInvocationContext.getTaskEvent`, `WorkflowTaskInvoker.workflowTas
 An interval above zero but below one second polls the engine almost without pause: WARN at startup
 naming the key, as the configuration refuses only negative values.
 
+*Note from S2.4.2, 2026-10-15.* The poller runs on a timing thread, so it hands a notification to a
+handler slot with `ZenBpmExecutor.tryExecute`, which never waits, and not with `execute`, which
+waits for a slot and would hold the timing thread for as long as a handler runs. A notification
+which finds no free slot is treated like one which threw: its key is not added to the seen-set, and
+the next poll tries it again.
+
 **Tests**: `ZenBpmUserTaskPollerTest` (fake server: created once, canceled once, an exception retried,
 the bound, `PT0S` polls nothing and WARNs once, `PT0.5S` WARNs);
 Spring `ZenBpmUserTaskIT#userTaskCreatedIsNotifiedOnce`,
