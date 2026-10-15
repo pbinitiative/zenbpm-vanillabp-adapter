@@ -374,7 +374,7 @@ the same resolver shape on both platforms (`PeaFetchVariables` pattern). Every k
 the Quarkus overlay, or the startup fails on it.
 
 Startup validation, per configured id of type `zenbpm`: no `rest-address` and no other key without a
-default (`grpc-address`, `client-id`, `history-time-to-live`) -> WARN naming
+default (`grpc-address`, `client-id`, `history-time-to-live` at any level) -> WARN naming
 `vanillabp.adapters.<id>.rest-address`, the application boots, the adapter refuses work with the same
 message; a malformed address, a `grpc-address` which is not `host:port`, a blank `client-id` or a
 started configuration without `rest-address` -> the boot ends naming the key, unless the id is

@@ -24,5 +24,38 @@
       <artifactId>zenbpm-vanillabp-adapter-spring-boot</artifactId>
       <version>${project.version}</version>
     </dependency>
+    <!-- the persistence of the platform's JDBC outbox and delivery log -->
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-data-jpa</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>com.h2database</groupId>
+      <artifactId>h2</artifactId>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
+      <groupId>io.vanillabp</groupId>
+      <artifactId>test-utils</artifactId>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-test</artifactId>
+      <scope>test</scope>
+    </dependency>
+    <!-- the health support the platform's health indicator needs, which is optional there -->
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-health</artifactId>
+      <scope>test</scope>
+    </dependency>
+    <!-- a second adapter type, so an application can boot without any ZenBPM adapter id -->
+    <dependency>
+      <groupId>io.vanillabp</groupId>
+      <artifactId>bpms-double-spring-boot</artifactId>
+      <version>${adapter-platform.version}</version>
+      <scope>test</scope>
+    </dependency>
   </dependencies>
 </project>

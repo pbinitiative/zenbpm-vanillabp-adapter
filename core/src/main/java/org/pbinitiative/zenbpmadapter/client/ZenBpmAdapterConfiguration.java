@@ -9,8 +9,10 @@ import java.net.URISyntaxException;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.HexFormat;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.function.Supplier;
 import java.util.stream.Collectors;
@@ -63,7 +65,10 @@ import java.util.stream.Collectors;
  * </ul>
  * <code>retry-backoff</code> and <code>max-redeliveries</code> may also be set per workflow
  * module, workflow or task, <code>history-time-to-live</code> per workflow module or workflow.
- * This class holds their values at the adapter level only.
+ * This class holds their values at the adapter level. A value set at a lower level is handed in
+ * through {@link #addScopedValue(String, Duration)} or {@link #addScopedValue(String, Integer)},
+ * so the validation checks it at startup like the adapter's own; which level wins for a task is
+ * the platform's to resolve.
  * <p>
  * The platforms copy their own configuration classes into this one; it is not bound directly.
  * Some getters answer a primitive where the setter takes <code>null</code> for the default, so a
@@ -295,6 +300,18 @@ public class ZenBpmAdapterConfiguration {
     private int instanceCacheMaxEntries = DEFAULT_INSTANCE_CACHE_MAX_ENTRIES;
 
     private MessageStartLookup messageStartLookup = MessageStartLookup.REFUSE;
+
+    /**
+     * The durations set below the adapter level, keyed by their full property key, in the order
+     * they were handed in.
+     */
+    private final Map<String, Duration> scopedDurations = new LinkedHashMap<>();
+
+    /**
+     * The numbers set below the adapter level, keyed by their full property key, in the order
+     * they were handed in.
+     */
+    private final Map<String, Integer> scopedNumbers = new LinkedHashMap<>();
 
     // drawn once, so every call of clientIdInUse answers the same id for this adapter instance.
     // It keeps two nodes of one application apart, which is all it is for: it guards nothing
@@ -637,6 +654,45 @@ public class ZenBpmAdapterConfiguration {
     }
 
     /**
+     * Hands a duration set below the adapter level to the validation: a <code>retry-backoff</code>
+     * or a <code>history-time-to-live</code> of a workflow module, a workflow or a task. Like the
+     * adapter's own, it must not be negative, and a <code>history-time-to-live</code> handed in
+     * here counts as a started configuration, as the adapter's own does.
+     *
+     * @param propertyKey The full key as the application wrote it, e.g.
+     *            <code>vanillabp.workflow-modules.orders.adapters.zenbpm.retry-backoff</code>
+     * @param value The duration; <code>null</code>, where the level does not set the key, is
+     *            ignored
+     */
+    public void addScopedValue(
+        final String propertyKey,
+        final Duration value
+    ) {
+        if (value != null) {
+            scopedDurations.put(propertyKey, value);
+        }
+    }
+
+    /**
+     * Hands a number set below the adapter level to the validation: a
+     * <code>max-redeliveries</code> of a workflow module, a workflow or a task. Like the
+     * adapter's own, it must not be negative.
+     *
+     * @param propertyKey The full key as the application wrote it, e.g.
+     *            <code>vanillabp.workflow-modules.orders.adapters.zenbpm.max-redeliveries</code>
+     * @param value The number; <code>null</code>, where the level does not set the key, is
+     *            ignored
+     */
+    public void addScopedValue(
+        final String propertyKey,
+        final Integer value
+    ) {
+        if (value != null) {
+            scopedNumbers.put(propertyKey, value);
+        }
+    }
+
+    /**
      * Checks every key of this adapter instance. Called once per adapter id at startup (Spring
      * Boot) or build time (Quarkus), before anything contacts the engine.
      * <p>
@@ -735,11 +791,33 @@ public class ZenBpmAdapterConfiguration {
                             instanceCacheMaxEntries,
                             DEFAULT_INSTANCE_CACHE_MAX_ENTRIES));
         }
+        scopedDurations.forEach((
+            propertyKey,
+            value) -> {
+            if (value.isNegative()) {
+                valueDefects.add("%s is %s and must not be negative; without the key the level above applies"
+                        .formatted(propertyKey, value));
+            }
+        });
+        scopedNumbers.forEach((
+            propertyKey,
+            value) -> {
+            if (value < 0) {
+                valueDefects.add("%s is %d and must not be negative; without the key the level above applies"
+                        .formatted(propertyKey, value));
+            }
+        });
 
-        // the keys without a default are set only by somebody who configures this adapter. Beside
-        // them, or beside a value which cannot work, a missing address is no longer "not configured
-        // yet": the configuration was started and has to be finished
-        final var partlyConfigured = (grpcAddress != null) || (clientId != null) || (historyTimeToLive != null);
+        // a key without a default, at the adapter level or below it, is set only by somebody who
+        // configures this adapter. Beside one, or beside a value which cannot work, a missing address
+        // is no longer "not configured yet": the configuration was started and has to be finished.
+        // retry-backoff and max-redeliveries below the adapter level fall back to a default, so they
+        // do not count
+        final var historyTimeToLiveBelow = scopedDurations
+                .keySet()
+                .stream()
+                .anyMatch(propertyKey -> propertyKey.endsWith(".history-time-to-live"));
+        final var partlyConfigured = (grpcAddress != null) || (clientId != null) || (historyTimeToLive != null) || historyTimeToLiveBelow;
         if (restAddressMissing && (partlyConfigured || !valueDefects.isEmpty())) {
             connectionDefects.addFirst(
                     "%s is missing, but other keys of this adapter are set; it is the address of the engine's REST API, e.g. http://localhost:8080"

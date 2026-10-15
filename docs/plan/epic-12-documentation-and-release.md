@@ -35,6 +35,13 @@ testing), the decision log pointer, known deviations with the `GAPS.md` numbers 
 `DECISIONS.md` completed with every entry of the draft the code cites; `GAPS.md` completed;
 `UPGRADE.md` gets its first entry when something breaks.
 
+*Note from S3.1.1, 2026-10-15.* The `Configuration` page says the difference between the platforms
+for a misspelt key under `vanillabp.adapters.<id>.`: Spring Boot ignores it, so the adapter id
+stays unconfigured and the start warns about the key it misses
+(`ZenBpmStartupValidationBootTest#aMisspeltKeyIsIgnored`); Quarkus fails the start naming it
+(S3.2.1's `ZenBpmUnknownKeyTest`). Until the page exists, the javadoc of
+`VanillaBpZenBpmProperties` says it.
+
 **Acceptance criteria**: every claim names its test; a reviewer following the wiki alone boots an
 application against a fresh engine container.
 

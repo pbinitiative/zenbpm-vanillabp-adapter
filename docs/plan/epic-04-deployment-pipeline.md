@@ -81,6 +81,20 @@ a plain, a message and a timer start event plus a start event inside a sub-proce
 the fourth not); one expression per place; a message start named by an expression
 (`startMessagesAreKnown` false).
 
+*Note from S3.1.1, 2026-10-15.* `model.ZenBpmBpmnModel` and `ZenBpmProcessingContext` exist as
+empty final classes, because the deployment service of S3.1.1 names them as its type parameters
+(`getModelType()`, `getProcessContextType()`). This story turns `ZenBpmBpmnModel` into the record of
+instruction 1; whoever first fills the processing context does the same with it.
+
+*Note from the review of S3.1.1, 2026-10-15.* Not decided yet: what an id without clients (no
+`rest-address`, validated UNCONFIGURED) does with a workflow module which has BPMN files. In S3.1.1
+every step of the deployment service throws, and an id without clients throws its validation message
+first, so with the default `deployment-failure: fail` such an application ends its start at
+`readBpmn`. That conflicts with the rule that an unconfigured application boots and names the next
+key to set. Before `readBpmn` is built, decide whether an unconfigured id skips its deployment with
+the warning the startup report already holds, or ends the start naming `rest-address`, and test the
+choice with a workflow module that has BPMN files.
+
 **Acceptance criteria**
 
 - [ ] Every collection of the record is filled by a fixture and asserted.
