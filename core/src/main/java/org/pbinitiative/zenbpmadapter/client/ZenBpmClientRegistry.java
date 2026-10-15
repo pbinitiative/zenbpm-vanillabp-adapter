@@ -105,20 +105,31 @@ public class ZenBpmClientRegistry implements AutoCloseable {
     }
 
     /**
-     * Closes every factory. One which fails is logged, and the others are closed all the same.
+     * Closes every factory. One which fails is logged, and the others are closed all the same. An
+     * {@link Error} is thrown once every factory was closed, the first one with the later ones
+     * suppressed, because a factory passes it on, see {@link ZenBpmClientFactory#close()}.
      */
     @Override
     public void close() {
-        factories
-                .values()
-                .forEach(factory -> {
-                    try {
-                        factory.close();
-                    } catch (final RuntimeException e) {
-                        log.warn("ZenBPM[{}]: closing the clients failed; the other adapter ids are closed anyway",
-                                factory.getAdapterId(), e);
+        Error first = null;
+        for (final var factory : factories.values()) {
+            try {
+                factory.close();
+            } catch (final RuntimeException | Error e) {
+                log.warn("ZenBPM[{}]: closing the clients failed; the other adapter ids are closed anyway",
+                        factory.getAdapterId(), e);
+                if (e instanceof Error error) {
+                    if (first == null) {
+                        first = error;
+                    } else {
+                        first.addSuppressed(error);
                     }
-                });
+                }
+            }
+        }
+        if (first != null) {
+            throw first;
+        }
     }
 
 }

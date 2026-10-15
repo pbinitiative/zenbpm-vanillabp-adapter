@@ -299,6 +299,25 @@ class ZenBpmClientFactoryTest {
     }
 
     @Test
+    @DisplayName("A configuration changed after the clients were built does not keep the REST client open")
+    void aChangedConfigurationDoesNotKeepTheRestClientOpen(final CapturedOutput output) {
+        final var closed = new CopyOnWriteArrayList<String>();
+        final var factory = recordingFactory(closed);
+        factory
+                .configuration()
+                .setRestAddress("not an address");
+
+        factory.close();
+
+        assertAll(
+                () -> assertEquals(List.of("stream, executor running", "rest, executor shut down"), closed),
+                () -> assertTrue(output
+                        .getAllOfThisTest()
+                        .contains("ZenBPM[orders]: closing the REST client of the engine at http://localhost:8080"),
+                        output.getAllOfThisTest()));
+    }
+
+    @Test
     @DisplayName("Closing twice closes once")
     void closingTwiceClosesOnce() {
         final var closed = new CopyOnWriteArrayList<String>();

@@ -57,9 +57,9 @@ public final class ZenBpmHealth {
                     .with("address", addressWhereValid(configuration))
                     .build());
         }
-        final var address = configuration
-                .engineAddress()
-                .toString();
+        // the configuration is mutable: one changed after the clients were built must not make the
+        // check throw
+        final var address = addressWhereValid(configuration);
         try {
             final var readiness = factory
                     .rest()
@@ -109,7 +109,7 @@ public final class ZenBpmHealth {
     }
 
     // a rest-address the validation refuses is left out: it may carry a user, which does not
-    // belong on a health endpoint
+    // belong on a health endpoint, and an invalid one names no engine
     private static String addressWhereValid(final ZenBpmAdapterConfiguration configuration) {
         try {
             return configuration

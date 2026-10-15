@@ -127,6 +127,26 @@ class ZenBpmHealthTest {
     }
 
     @Test
+    @DisplayName("A 'rest-address' changed into an invalid one after the factory was built does not make the check throw")
+    void anAddressMadeInvalidLaterDoesNotThrow() {
+        engine.answers("GET", "/system/health/ready", 200, "{\"status\":\"UP\",\"reasons\":[]}");
+
+        try (var factory = factory(engine.address())) {
+            // a configuration bean is mutable, and a platform may bind it again while the
+            // application runs; the clients keep the address they were built with
+            factory
+                    .configuration()
+                    .setRestAddress("not an address");
+
+            final var health = ZenBpmHealth.check(factory);
+
+            assertAll(
+                    () -> assertEquals(AdapterHealth.Status.UP, health.status()),
+                    () -> assertEquals(Map.of("jobStream", "not opened yet"), health.details()));
+        }
+    }
+
+    @Test
     @DisplayName("A ready engine whose version was not read at startup is UP without it")
     void aReadyEngineWithoutAVersionIsUp() {
         engine.answers("GET", "/system/health/ready", 200, "{\"status\":\"UP\",\"reasons\":[]}");

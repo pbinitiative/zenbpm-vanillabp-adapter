@@ -5,6 +5,7 @@
  */
 package org.pbinitiative.zenbpmadapter.client;
 
+import java.net.URI;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.LinkedHashMap;
@@ -63,6 +64,12 @@ public class ZenBpmClientFactory implements AutoCloseable {
     private final ZenBpmJobStream stream;
 
     private final ZenBpmExecutor executor;
+
+    /**
+     * The engine's address as the clients were built with it; <code>null</code> where the
+     * factory has no clients. The configuration is mutable, so closing does not read it again.
+     */
+    private final URI engineAddress;
 
     /**
      * The workflow modules whose job types are subscribed right now, and per module the
@@ -174,6 +181,7 @@ public class ZenBpmClientFactory implements AutoCloseable {
         this.rest = rest;
         this.stream = stream;
         this.executor = executor;
+        this.engineAddress = rest == null ? null : configuration.engineAddress();
     }
 
     /**
@@ -356,8 +364,7 @@ public class ZenBpmClientFactory implements AutoCloseable {
             return;
         }
         closeEach(() -> stopWorkflowModulesWhichDidNotStop(notStopped), stream::close, executor::shutdown, () -> {
-            log.info("ZenBPM[{}]: closing the REST client of the engine at {}", adapterId, configuration
-                    .engineAddress());
+            log.info("ZenBPM[{}]: closing the REST client of the engine at {}", adapterId, engineAddress);
             rest.close();
         });
     }

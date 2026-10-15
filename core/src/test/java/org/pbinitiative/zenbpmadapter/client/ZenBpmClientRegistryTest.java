@@ -10,6 +10,7 @@ import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.util.Arrays;
 import java.util.List;
 import java.util.concurrent.CopyOnWriteArrayList;
 
@@ -114,6 +115,31 @@ class ZenBpmClientRegistryTest {
                         output.getAllOfThisTest()));
     }
 
+    @Test
+    @DisplayName("A factory which throws an Error while it closes does not keep the others open, and the first Error is thrown with the later ones")
+    void anErrorDoesNotKeepTheOtherFactoriesOpen(final CapturedOutput output) {
+        final var closed = new CopyOnWriteArrayList<String>();
+        final var orders = failingWithAnError("orders", closed, "orders' class loader is closed");
+        final var billing = closing("billing", closed, true);
+        final var shipping = failingWithAnError("shipping", closed, "shipping's class loader is closed");
+
+        final var failure = assertThrows(AssertionError.class, () -> new ZenBpmClientRegistry(List.of(orders,
+                billing, shipping)).close());
+
+        assertAll(
+                () -> assertEquals(List.of("orders", "billing", "shipping"), closed),
+                () -> assertEquals("orders' class loader is closed", failure.getMessage()),
+                () -> assertEquals(List.of("shipping's class loader is closed"), Arrays
+                        .stream(failure.getSuppressed())
+                        .map(Throwable::getMessage)
+                        .toList()),
+                () -> assertTrue(output
+                        .getAllOfThisTest()
+                        .contains(
+                                "ZenBPM[orders]: closing the clients failed; the other adapter ids are closed anyway"),
+                        output.getAllOfThisTest()));
+    }
+
     private static ZenBpmClientFactory unconfigured(final String adapterId) {
         return ZenBpmClientFactory.unconfigured(adapterId, new ZenBpmAdapterConfiguration(), "not configured");
     }
@@ -140,6 +166,22 @@ class ZenBpmClientRegistryTest {
                 if (failing) {
                     throw new IllegalStateException("the stream would not close");
                 }
+            }
+
+        };
+    }
+
+    private static ZenBpmClientFactory failingWithAnError(
+        final String adapterId,
+        final List<String> closed,
+        final String message
+    ) {
+        return new ZenBpmClientFactory(adapterId, new ZenBpmAdapterConfiguration(), "client", null, null, null) {
+
+            @Override
+            public void close() {
+                closed.add(adapterId);
+                throw new AssertionError(message);
             }
 
         };

@@ -921,11 +921,12 @@ threads stop by themselves once the last handler returned and drop what is due l
 **Implemented 2026-10-15.** `ZenBpmClientFactory`, `ZenBpmClientRegistry`, `ZenBpmEngineWait` and
 `ZenBpmEnvironmentInfo` in `client`, `ZenBpmHealth` in `health`. All but `ZenBpmEnvironmentInfo`
 are adapted from Camunda 8's classes and keep their licence (decision 17). `ZenBpmClientFactoryTest`
-(10 cases, 13 after the review, 15 after the re-review), `ZenBpmClientRegistryTest` (5, then 6),
-`ZenBpmEngineWaitTest` (15, then 23, then 24), `ZenBpmEnvironmentInfoTest` (8, then 10), `ZenBpmHealthTest` (9, then 11) and
-`ZenBpmEngineWaitIT` (2) are green; `ZenBpmClientFactoryIT` (1) came with the review. `mvn clean install` builds green
-with every integration test run and none skipped, the coverage gate measures 100 % of 8,148
-instructions on both platforms, and `bin/check-deploy-safety.sh` passes both runs.
+(10 cases; 13, 15 and 16 after the review, the re-review and CodeRabbit's review),
+`ZenBpmClientRegistryTest` (5; then 6 and 7), `ZenBpmEngineWaitTest` (15; then 23 and 24),
+`ZenBpmEnvironmentInfoTest` (8; then 10), `ZenBpmHealthTest` (9; then 11 and 12) and
+`ZenBpmEngineWaitIT` (2) are green; `ZenBpmClientFactoryIT` (1) came with the review. `mvn clean
+install` builds green with every integration test run and none skipped, the coverage gate measures
+100 % of 8,148 instructions on both platforms, and `bin/check-deploy-safety.sh` passes both runs.
 
 Seen to fail, each restored afterwards. In the factory: a REST call while it is built; the REST
 client closed before the stream, or the executor not shut down; the hooks run in the order they
@@ -1077,6 +1078,24 @@ hook object; an unconfigured factory taking no configuration; a known answer ref
 interrupted thread. `mvn clean install` builds green: core 428 unit tests and 34 integration tests,
 none skipped; the coverage gate measures 100 % of 8,544 instructions on both platforms, and
 `bin/check-deploy-safety.sh` passes both runs.
+
+**Changed after CodeRabbit's review of PR #22.** Two comments, both valid, each first reproduced by
+a test which failed:
+- `ZenBpmClientRegistry.close()` caught `RuntimeException` only, so an `Error` which a factory
+  passes on stopped the later factories from closing. It now closes every factory and throws the
+  first `Error` with the later ones suppressed
+  (`ZenBpmClientRegistryTest#anErrorDoesNotKeepTheOtherFactoriesOpen`).
+- The configuration is mutable, and a `rest-address` made invalid after the clients were built made
+  `ZenBpmHealth.check` throw before its `try`. It now leaves the address out instead
+  (`ZenBpmHealthTest#anAddressMadeInvalidLaterDoesNotThrow`). The same test found that the
+  factory's `close()` read the address from the configuration for its log line, just before
+  closing the REST client, so the client stayed open: the factory now keeps the address its clients
+  were built with (`ZenBpmClientFactoryTest#aChangedConfigurationDoesNotKeepTheRestClientOpen`).
+
+Seen to fail, each restored: an `Error` swallowed by the registry, later ones dropped, the health
+reading the address unguarded, and `close()` reading it from the configuration. `mvn clean install`
+builds green: core 431 unit tests and 34 integration tests, none skipped; the coverage gate measures
+100 % of 8,577 instructions on both platforms, and `bin/check-deploy-safety.sh` passes both runs.
 
 ### S2.4.2 Executor and execution model
 
