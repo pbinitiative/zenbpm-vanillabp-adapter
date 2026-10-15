@@ -100,9 +100,10 @@ classification can read, and so that a completion survives a stream reconnect.
 ## 3. Model handling (`core`, package `org.pbinitiative.zenbpmadapter.model`)
 
 The `BPMN` type parameter is `ZenBpmBpmnModel`: a record holding the `org.w3c.dom.Document`, the
-filename, the plain `bpmnProcessId`, and what was read off it (job-producing tasks as `BpmnTaskSpec`,
-user tasks, message names with and without a start event, timer start events, multi-instance elements
-with their nesting, end events, concurrent-token elements, FEEL identifiers). Reading is by local
+filename, the plain `bpmnProcessId`, and what was read off it (job-producing tasks as
+`BpmnTaskSpec`, user tasks, message names with and without a start event, every start event with its
+kind, multi-instance elements with their nesting and whether they name an `inputElement`, end
+events, concurrent-token elements, the model's expressions with their place). Reading is by local
 name in either extension namespace (`zeebe:` or `zenbpm:`); writing uses the `zenbpm` namespace,
 declared on the root once.
 
@@ -120,60 +121,97 @@ rewrite is idempotent and never overwrites what the modeller wrote (draft decisi
 3. **Task parameters**: for every job-producing task, one `zenbpm:ioMapping input` per name
    `taskParameterNames` reports (`source="=<name>" target="<name>"`), so the job carries exactly what a
    `@TaskParam` reads; nothing else, because the aggregate is loaded from the application's database.
-4. **Marker tasks** (draft decision 5): where `workflowEndedHandlerExists` for the process, a service
-   task `id="vanillabp__ended__<endEventId>"`, `zenbpm:taskDefinition type="<scoped
-   vanillabp__ended>"`, is inserted in front of every end event of the TOP-LEVEL process (none, error,
-   message, terminate), redirecting the end event's incoming flows to the task and adding one flow
-   task -> end event. Where a timer start event exists and the module declares a
-   `@WorkflowStartedByBpms` method or the core wants the aggregate built, a service task
-   `vanillabp__started__<startEventId>` with type `<scoped vanillabp__started>` is inserted right
-   after it. Both types are per PROCESS (they carry the process id, so one worker per process).
-   Marker elements are drawn with a `bpmndi:BPMNShape` copied from their neighbour so the engine's
-   diagram interchange stays valid.
+4. **Marker tasks** (decision 26), only in a process a workflow service claims
+   (`isClaimedByAWorkflowService`). Where `workflowEndedHandlerExists` for the process (it also
+   answers `true` when `release-on-workflow-end` is on), a service task
+   `id="vanillabp__ended__<endEventId>"`, `zenbpm:taskDefinition type="<scoped vanillabp__ended>"`,
+   is inserted in front of every end event of the TOP-LEVEL process (none, error, message,
+   terminate), redirecting the end event's incoming flows to the task and adding one flow task ->
+   end event. Where the process starts a workflow of its own (`startsAWorkflowOfItsOwn`), a service
+   task `vanillabp__started__<startEventId>` with type `<scoped vanillabp__started>` is inserted
+   right after EVERY start event of the top-level process: none, message and timer. Sub-processes
+   and event sub-processes get no marker, because ZenBPM runs them as child instances, and a called
+   process gets neither marker. Both types are per PROCESS (they carry the process id, so one worker
+   per process). Marker elements are drawn with a `bpmndi:BPMNShape` copied from their neighbour so
+   the engine's diagram interchange stays valid.
 5. **Unsupported constructs** are refused BEFORE deployment with a message naming file, process and
    element: signal events, conditional events, escalation events, script tasks, an instantiating
    receive task, a file with more than one executable process.
 
-`wireBpmn` makes the core calls: `validateTaskWiring` (service, send, business-rule-as-job tasks and
-message throw events as mandatory specs; user tasks as optional specs; a business rule task with
-`calledDecision` is engine-served and skipped), `reportConcurrentTokenElements`,
-`registerProcessVersions` (catalog per process), `unsharedWorkflowAggregatePaths` (FEEL identifiers of
-conditions, timers, collections, assignees), `workflowsShareTheWorkflowAggregate` for call activities
-(a called process on the same aggregate gets `zenbpm:in businessKey="=<id var>"` and an input mapping
-of the id variable injected; one on its own aggregate does not).
+`wireBpmn` returns at once for a process no workflow service claims (`isClaimedByAWorkflowService`):
+the core ends the start over such a process unless it is marked `implemented-externally`, and the
+adapter makes no call for it (platform decision 120). For a claimed process it makes the core calls,
+reading the model BEFORE its own rewrites add keys and mappings: `reportModelExpressions` (every `=`
+expression with its `ExpressionPlace`), `reportStartMessages` (the plain names of the message start
+events; an empty collection where there is none, and no call at all where a name is an expression),
+`validateBpmsInitiatedStarts` with EVERY start event, `validateTaskWiring` in its four-argument form
+(service, send, business-rule-as-job tasks and message throw events as mandatory specs with their
+`name`; user tasks as optional specs; a business rule task with `calledDecision` is engine-served
+and skipped), `multiInstanceElementNames` for every multi-instance element,
+`reportConcurrentTokenElements`, `reportCompensation` (nothing: compensation is refused) and
+`workflowsShareTheWorkflowAggregate` for call activities (a called process on the same aggregate
+gets `zenbpm:in businessKey="=<id var>"` and an input mapping of the id variable injected; one on
+its own aggregate does not). `unsharedWorkflowAggregatePaths` and
+`declaredTypesOfWorkflowAggregatePaths` are not called, as in the Camunda 8 adapter: a model
+expression reading an attribute the aggregate does not share fails at runtime as a FEEL error
+(deviation 14). The process version catalog (`registerProcessVersions`) comes with E10; until then
+nothing is registered, which the core reads as "not asked yet".
 
-`deployResources`: `ZenBpmEngineWait`, then `validateNoCollidingProcessIds`, then one `POST
-/v1/process-definitions` per file and one `POST /v1/dmn-resource-definitions` per DMN, then `GET
-/v1/process-definitions/{key}` per process to learn the version, `registerDeployedVersion`, and the
-`ZenBpmDeployedProcesses` record (scoped id, key, version, model as deployed) which serves the viewer
-and the ownership checks.
+`deployResources`: `ZenBpmEngineWait`, then `validateNoCollidingProcessIds` (before anything is
+sent), then one `POST /v1/process-definitions` per file and one `POST /v1/dmn-resource-definitions`
+per DMN, then `GET /v1/process-definitions/{key}` per process to learn the version,
+`registerDeployedVersion` (the core ends the start where the deployed version has a task without a
+method, platform decision 126), the identifier reports `reportIdentifiersTheBpmsAlreadyHolds` and
+`reportIdentifiersTheModelsDeclare` (a failed lookup never fails the deployment and is logged at
+debug), and the `ZenBpmDeployedProcesses` record (scoped id, key, version, model as deployed) which
+serves the viewer and the ownership checks.
+
+Name-clash mode (decision 24): ZenBPM has no tenant, so `by-adapter` cannot be served. It stays the
+default, as the platform's contract asks of a BPMS without isolation of its own, and is refused
+while deploying with `validateNativeIsolationSupported`, whose message names `use-prefix` and
+`none`. So every application configures the mode, once per adapter id
+(`vanillabp.adapters.<id>.name-clash-avoidance: use-prefix`) or per module or workflow.
 
 ## 4. Runtime flows
 
 ### 4.1 Starting a workflow
 
 Phase one: nothing but resolving the aggregate id and asserting the client is configured. Phase two:
-`POST /v1/process-instances {bpmnProcessId: scoped, businessKey: aggregateId, variables: shared values
-+ {<idName>: aggregateId}, historyTimeToLive: history-time-to-live if configured}`. The engine runs the
-instance synchronously, so the response may already say `completed`; nothing to do about it. A
-repeated dispatch is caught by `awarenessOfWorkflowForRedispatch` (business-key search); the residual
-duplicate window is the outbox's documented at-least-once.
+`POST /v1/process-instances {bpmnProcessId: scoped, businessKey: aggregateId, variables: shared
+values + {<idName>: aggregateId}, historyTimeToLive: history-time-to-live if configured}`. The
+engine runs the instance synchronously, so the response may already say `completed`; nothing to do
+about it. The response's `key` (as the root instance key, decision 28) and `version` go to
+`PhaseTwoRequest#reportStartedWorkflow`, so the core writes them into the start row. A repeated
+dispatch is caught by `awarenessOfWorkflowForRedispatch(scope, persistence, id, plannedAt)`: the
+business-key search with `createdFrom = plannedAt` (inclusive, milliseconds), no state filter; a
+`null` `plannedAt` counts every instance. The residual duplicate window is the outbox's documented
+at-least-once.
 
 ### 4.2 Locating a workflow (the probes)
 
-`awarenessOfWorkflow(scope, persistence, id)`:
+`awarenessOfWorkflow(scope, persistence, id, workflowId)` (decision 25):
 
-1. for each plain process id of the scope: `GET /v1/process-instances?businessKey=<id>&bpmnProcessId=<scoped>&size=1`;
+1. where the core hands a `workflowId` (from the start row, a task record or the election cache):
+   `GET /v1/process-instances/<workflowId>`; an `active` instance of one of the scope's scoped
+   process ids whose id variable or business key is `<id>` -> ACTIVE. Every other answer, a 404 and
+   a 502 (a key of another partition) included, falls through to step 2: the key may shorten a YES,
+   never turn a negative into UNKNOWN_TO_BPMS (`ADAPTER-AUTHORS.md` 4.1);
+2. for each plain process id of the scope: `GET /v1/process-instances?businessKey=<id>&bpmnProcessId=<scoped>&size=1`;
    an item -> `active|failed` = ACTIVE, `completed|terminated` = COMPLETED;
-2. if nothing and `<id>` parses as a long: `GET /v1/process-instances/<id>`; found and its
-   `bpmnProcessId` is one of the scope's scoped ids -> as above (this is how a BPMS-initiated
-   workflow, whose aggregate id IS its instance key, is found);
 3. nothing -> UNKNOWN_TO_BPMS; any I/O failure, timeout or 5xx -> BPMS_UNAVAILABLE.
+
+A workflow the engine started itself (a timer start, or a message start without a business key) has
+no business key, so step 1 is the only way to it. It works while the core still knows the instance
+key: the start row (`vanillabp.delivery.workflow-start-retention`, `P30D` by default, `0` keeps it,
+or `keep-workflow-start-while-aggregate-exists`), the open-task records, the election cache. E13.4
+removes the limit (GAPS 1).
 
 `awarenessOfTask` / `awarenessOfUserTask`: `GET /v1/jobs/{key}`; 404 -> UNKNOWN; then the job's
 instance through the cache; instance not in scope -> UNKNOWN; job `active` -> ACTIVE, `completed` or
 `terminated` -> COMPLETED; failure -> BPMS_UNAVAILABLE. `workflowVisibilityDelay()` = the configured
-`workflow-visibility-timeout` (default `PT2S`, poll `PT0.25S`).
+`workflow-visibility-timeout` (default `PT2S`, poll `PT0.25S`);
+`workflowVisibilityDelay(workflowId)` keeps that window too, because a follower may not see an
+instance the leader just created (GAPS 20).
 
 ### 4.3 Delivering a task
 
@@ -185,24 +223,41 @@ ZenBpmJobHandler, before invoking:
   queue starts with a full lock); while the handler runs, a timing thread extends every job-timeout / 2
 ZenBpmJobHandler:
   facts   = instanceCache.get(job.instance_key)              (GET /process-instances/{key} once)
-  context = TaskInvocationContext{ taskDefinition = plain(job.type), aggregateId = facts.businessKey
-            ?? facts.variables[idName], taskId = job.key, deliveryId = job.key, activationId = job.key,
-            processVersion = facts.version, adapterId, taskParameters = job.input_variables,
-            multiInstances = from parent chain, predatesDeployedVersion = facts.version < deployed }
+  context = TaskInvocationContext{ taskDefinition = plain(job.type), bpmnElementId = job.element_id,
+            taskKind = TASK, workflowId = root instance key (decision 28),
+            businessKey = facts.businessKey,
+            aggregateId = facts.businessKey ?? facts.variables[idName], taskId = job.key,
+            deliveryId = job.key, activationId = job.key, processVersion = facts.version, adapterId,
+            taskParameters = job.input_variables, multiInstances = from parent chain,
+            predatesDeployedVersion = facts.version < deployed }
   outcome = workflowTaskInvoker.invokeWorkflowTask(module, plainProcess, context)   (own transaction)
   COMPLETED           → PATCH /process-instances/{facts.key}/variables {shared values + id var}
                         POST /jobs/{key}/complete {same values}
-  BPMN_ERROR          → PATCH variables; POST /jobs/{key}/fail {errorCode: scoped code}
+  BPMN_ERROR          → PATCH variables; POST /jobs/{key}/fail {errorCode: scoped code,
+                        deliveryToken, clientId}
   COMPLETION_PENDING  → extend the lock by async-task-lock-renewal (default PT1H); when it lapses the
                         redelivery is answered from the record (COMPLETION_PENDING again) and renews
-  exception           → nothing sent but a lock extension by the backoff (retry-backoff, x2, max 5 min):
-                        the engine hands the job out again after exactly that time; attempts counted
-                        locally per job key; after max-redeliveries: POST /jobs/{key}/fail {} → incident
+  unknown workflow    → DeliveryOfAnUnknownWorkflowException: POST /jobs/{key}/fail {retries: 0,
+                        message, deliveryToken, clientId} → incident; WARN without stack trace
+  exception           → POST /jobs/{key}/fail {message, retryBackoff (if set), deliveryToken,
+                        clientId} (decision 27): no `retries`, so one attempt is spent; the engine
+                        hands the job out again after the backoff, and files an incident when no
+                        retry is left (`clientId` releases the stream's lock, `deliveryToken` makes
+                        a repeated request count once)
+then: workflowTaskInvoker.reportTasksTheBpmsNoLongerHas(module, plainProcess, context, probe)
 ```
 
 The `PATCH` before `complete` is what makes a gateway behind the task see the values (job outputs
 propagate only through output mappings, section 4 of the capability analysis). Both calls are
 idempotent: a repeated PATCH writes the same values, a repeated complete is answered 201.
+
+The core routes a delivery by the task definition AND the element id (platform decision 67), so
+`bpmnElementId` is always filled. It refuses a delivery whose business key is not the aggregate id
+(platform decision 69). The retries a job starts with come from the model's `zenbpm:taskDefinition
+retries` or the engine's `jobs.defaultRetries`. After the outcome was sent, the core asks the
+`ZenBpmOpenTaskProbe` (S6.1.3) about the other tasks it believes open in that workflow: `GET
+/v1/jobs/{key}`, 404 or `completed`/`terminated` = GONE, `active`/`failed` = STILL_THERE, anything
+else CANNOT_SAY. That is how `@TaskEvent CANCELED` reaches a service task the engine dropped.
 
 Every handler runs `load -> invoke -> save -> commit -> report`, at least once. `deliversTasksAtLeastOnce()`
 is `true`, and the delivery id is the job key. A second delivery while a handler still runs happens
@@ -212,40 +267,57 @@ aggregate, and the core names and counts the concurrent delivery.
 
 ### 4.4 Messages
 
-`CORRELATE_MESSAGE` phase one: the message is declared by a deployed model of the module and is not a
-start message (else: guiding failure where the application called). Phase two: `POST /v1/messages
-{messageName: scoped, correlationKey: correlationId ?? aggregateId, variables: shared values + id var}`.
-404 -> `PhaseTwoRetryLater(workflow-visibility-timeout)`: the outbox is the buffer the engine does
-not have, bounded by `vanillabp.outbox.block-after-attempts`. `START_WORKFLOW_BY_MESSAGE` publishes
-without a key and with the id variable; the instance has no business key (open question 1).
+`CORRELATE_MESSAGE` phase one: the message is declared by a deployed model of the module and is not
+a start message (else: guiding failure where the application called). Phase two: `POST /v1/messages
+{messageName: scoped, correlationKey: correlationId ?? aggregateId, variables: shared values + id
+var}`. 404 -> `PhaseTwoRetryLater(workflow-visibility-timeout)`, thrown only because nothing reached
+the engine: the outbox is the buffer the engine does not have. A retry-later counts no attempt; the
+entry is blocked after `vanillabp.outbox.wait-for-visibility-at-most`. `START_WORKFLOW_BY_MESSAGE`
+publishes without a key and with the id variable; `POST /v1/messages` returns no instance key, so
+phase two reports none. The `vanillabp__started` marker after the message start event (decision 26)
+reports the instance key to the core, which writes it into the start row. The instance itself has no
+business key (GAPS 1, E13.4); `message-start-lookup: scan` stays an opt-in for what the start row
+cannot cover until E13.4 lands.
 
 ### 4.5 Aggregate push
 
-`AGGREGATE_CHANGED` without a task: locate the workflow (probe), `PATCH .../{key}/variables`. With a
-task: `GET /v1/jobs/{taskId}` -> its `processInstanceKey` IS the scope the task runs in (a sub-process
-or multi-instance body is a child instance) -> `PATCH` that instance. No idempotency key, as the core
-defines it.
+`AGGREGATE_CHANGED` without a task: the instance named by `PhaseTwoRequest#workflowId()` (the start
+row) first, the business-key search second, then `PATCH .../{key}/variables`. With a task: `GET
+/v1/jobs/{taskId}` -> its `processInstanceKey` IS the scope the task runs in (a sub-process or
+multi-instance body is a child instance) -> `PATCH` that instance; `taskRecord()` lets the adapter
+skip a task a handler holds. No idempotency key, as the core defines it.
 
 ### 4.6 User tasks
 
-A ZenBPM user task is a job of type `zenbpm:taskDefinition type` (default `user-task-type`), which is
-the VanillaBP task definition. Notifications come from `ZenBpmUserTaskPoller` (one per adapter id,
-timing thread): every `user-task-poll-interval` it lists `GET /v1/jobs?jobType=<scoped>&state=active`
-and `state=terminated` per user-task type of the deployed modules, keeps a bounded seen-set per node,
-and invokes the core with `TaskEvent CREATED` resp. `CANCELED`, delivery id = `job.key + ":created"`
-resp. `":canceled"`. The delivery record makes a restarted node harmless. `COMPLETE_USER_TASK` /
-`CANCEL_USER_TASK` are the job commands. The stream is deliberately NOT subscribed to user-task types
-(decision 12): a lock would have to be renewed for the whole life of a user task, and a terminated
-job is never delivered, so polling is needed for `CANCELED` anyway.
+A ZenBPM user task is a job of type `zenbpm:taskDefinition type` (default `user-task-type`), which
+is the VanillaBP task definition. Notifications come from `ZenBpmUserTaskPoller` (one per adapter
+id, timing thread): every `user-task-poll-interval` it lists `GET
+/v1/jobs?jobType=<scoped>&state=active` and `state=terminated` per user-task type of the deployed
+modules, keeps a bounded seen-set per node, and invokes the core with `TaskEvent CREATED` resp.
+`CANCELED`, delivery id = `job.key + ":created"` resp. `":canceled"`. The delivery record makes a
+restarted node harmless. `COMPLETE_USER_TASK` / `CANCEL_USER_TASK` are the job commands. The stream
+is deliberately NOT subscribed to user-task types (decision 12): a lock would have to be renewed for
+the whole life of a user task, and a terminated job is never delivered, so polling is needed for
+`CANCELED` anyway. The context reports `taskKind = USER_TASK`. Because the poller already reports
+every canceled user task, the open-task probe of section 4.3 answers CANNOT_SAY for user-task
+definitions: the platform's contract forbids a second source for the same cancellation.
 
 ### 4.7 Workflow ended and BPMS-initiated start
 
 Both arrive as ordinary jobs of the marker tasks (section 3, step 4), served by two dedicated handlers:
-`ZenBpmWorkflowEndedHandler` (kind COMPLETED, `endEventId` from the marker's id, then complete the job
-so the instance ends) and `ZenBpmBpmsInitiatedStartHandler` (kind TIMER, `naturalIdentity` = instance
-key, `startInstant` = job `created_at`, variables = job input variables which the marker's input
-mappings copy from the start event's outputs; complete the job with the id variable plus the shared
-values of the built aggregate). A cancelled instance runs no marker: kind TERMINATED is never reported.
+
+- `ZenBpmWorkflowEndedHandler`: kind COMPLETED, `endEventId` from the marker's id, `workflowId` =
+  the root instance key (decision 28) and the business key; the core cancels the tasks it still
+  believes open in that workflow before `@WorkflowEnded` runs (platform decision 73). Then complete
+  the job so the instance ends. A canceled instance runs no marker, so kind CANCELED is never
+  reported.
+- `ZenBpmBpmsInitiatedStartHandler` (decision 25): the context carries the job's variables,
+  `nativeInstanceId` = the root instance key, the version, sync mode FULL and the instance's
+  business key where it has one; there is no start time and nothing derives an id.
+  `startWorkflowByBpms` builds the aggregate through the application's `@WorkflowStartedByBpms`
+  method, which names it; the handler writes `result.variables()` back with `PATCH
+  /v1/process-instances/{key}/variables` and completes the marker job. A redelivery, and the marker
+  of a workflow the application started itself, answer `created() == false`.
 
 ### 4.8 Shutdown
 
@@ -283,19 +355,18 @@ and are re-parked by whichever node receives them next.
 | `worker-threads` / `worker-threads-bound` | adapter | `4` / same | handler slots, `virtual` allowed |
 | `job-timeout` | adapter, module, workflow, task | `PT5M` | `lock_duration_ms` of the subscription; renewed at half while a handler runs; one value per job type, so conflicting task-level values of one type end the boot naming both |
 | `async-task-lock-renewal` | adapter | `PT1H` | how far an open asynchronous task's lock is extended; must stay below `vanillabp.delivery.retention` and at or below the engine's `jobManager.maxLockDurationMs` |
-| `retry-backoff` | adapter, module, workflow, task | `PT10S` | first backoff after a failed handler, applied as a lock extension; doubles up to `PT5M` |
-| `max-redeliveries` | adapter, module, workflow, task | `10` | after which a failing job is failed into an incident |
+| `retry-backoff` | adapter, module, workflow, task | none | the `retryBackoff` sent with a failure of a handler (decision 27); unset, the request leaves it out and the task definition's `retryBackoff` or the engine's `jobs.defaultRetryBackoff` applies; the number of attempts is the job's `retries` (model or engine default) |
 | `shutdown-grace` | adapter | `PT20S` | |
 | `workflow-visibility-timeout` | adapter | `PT2S` | `workflowVisibilityDelay()` and the retry-later window of a message |
 | `user-task-poll-interval` | adapter | `PT5S` | `PT0S` switches user-task notifications off with a WARN |
 | `history-time-to-live` | adapter, module, workflow | none (engine default) | sent with every start |
 | `instance-cache-max-entries` | adapter | `10000` | |
-| `name-clash-avoidance` | adapter, module, workflow | `use-prefix` (adapter default) | `by-adapter` is refused, `none` warns |
+| `name-clash-avoidance` | adapter, module, workflow | `by-adapter` (the platform's default) | refused while deploying, so every application sets `use-prefix` or `none` (decision 24); `none` warns |
 | `accept-unscoped-identifiers` | adapter, module | `false` | silences the `none` warning |
 | `shared-engine` | adapter | `false` | says that this id deliberately shares its engine with another id (a prefix migration); without it two ids on one `rest-address` end the boot |
-| `message-start-lookup` | adapter | `refuse` | `scan` enables the bounded client-side lookup of message-started workflows (GAPS 1) |
+| `message-start-lookup` | adapter | `start-row` (S7.1.2) | `scan` adds the bounded client-side lookup of message-started workflows for what the start row cannot cover (GAPS 1); an opt-in until E13.4 lands, then removed |
 | `message-start-lookup-max-instances` | adapter | `1000` | the bound of that scan |
-| `async-task-max-age-action` | adapter | `report` | `incident` fails an overdue asynchronous task's job so the engine raises an incident |
+| `async-task-max-age-action` | adapter | `report` | `incident` fails an overdue asynchronous task's job with `retries: 0`, so the engine raises an incident |
 | `deployment-failure` | adapter | `fail` | core key |
 
 Scoped keys resolve through the four levels of the configuration model, most specific first, with
@@ -352,7 +423,7 @@ org.pbinitiative.zenbpmadapter
   model/ZenBpmTaskParameters           input-mapping injection from taskParameterNames
   model/ZenBpmMarkerTasks              ended/started marker insertion incl. DI shapes
   model/ZenBpmUnsupportedConstructs    refusals before deployment
-  model/ZenBpmFeelIdentifiers          identifiers read by expressions, for the unshared-path check
+  model/ZenBpmModelExpressions         the model's expressions with their place, for the core
   deployment/ZenBpmDeploymentService   AdapterDeploymentService<ZenBpmBpmnModel, ZenBpmProcessingContext>
   deployment/ZenBpmDeployedProcesses   what this boot deployed per adapter id
   deployment/ZenBpmProcessVersions     CachingProcessVersionCatalog over GET /process-definitions
@@ -360,10 +431,11 @@ org.pbinitiative.zenbpmadapter
   processservice/ZenBpmProcessService  MigratableProcessService<A>: handler map, probes, viewer
   processservice/ZenBpmWorkflowViewer  definitions, XML, history
   processservice/ZenBpmSharedValues    shared values + id variable for every command
+  processservice/ZenBpmValueTypes      whatThisBpmsDoesWith: what a value type becomes in the engine
   wiring/JobDispatcher                 stream -> bounded queue -> slots
-  wiring/ZenBpmLockRenewal             renews locks of running handlers, parks async tasks, applies backoffs
+  wiring/ZenBpmLockRenewal             renews locks of running handlers, parks async tasks
   wiring/ZenBpmJobHandler              section 4.3
-  wiring/ZenBpmLocalRetry              per-job backoff and max-redeliveries
+  wiring/ZenBpmOpenTaskProbe           OpenTaskProbe: is a task the core believes open still there
   wiring/ZenBpmUserTaskPoller          section 4.6
   wiring/ZenBpmWorkflowEndedHandler    marker job -> WorkflowEndedInvoker
   wiring/ZenBpmBpmsInitiatedStartHandler marker job -> BpmsInitiatedStartInvoker

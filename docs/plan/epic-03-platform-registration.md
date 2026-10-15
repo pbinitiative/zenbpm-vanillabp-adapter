@@ -7,7 +7,8 @@ method which needs the engine still throws `UnsupportedOperationException("<meth
 later story")` (never a silent stub).
 
 **Done when.** The smoke tests of both platforms boot with zero, one and two adapter ids, and the
-guiding messages are asserted through `CapturedOutput`.
+guiding messages are asserted through `CapturedOutput`, in the block the platform's `StartupReport`
+writes at the end of the start.
 
 Templates: `camunda8-adapter/spring-boot` (announcement, `BeanRegistrar`, overlay) and
 `camunda7-adapter/spring-boot` (`applicationBean` helper); `camunda8-adapter/quarkus` and
@@ -33,7 +34,7 @@ always from the core properties.
    Nothing else in it.
 3. `client.VanillaBpZenBpmProperties` = `@ConfigurationProperties("vanillabp")` overlay with
    `adapters: Map<String, ZenBpmAdapterKeys>` (all keys of the architecture table) and the module and
-   workflow levels for the scoped keys (`retry-backoff`, `max-redeliveries`, `history-time-to-live`,
+   workflow levels for the scoped keys (`retry-backoff`, `history-time-to-live`,
    the module level of `accept-unscoped-identifiers`; `name-clash-avoidance` is the core's) with a
    resolver `retryBackoffFor(module, process, task, id)`
    etc. (four levels, most specific wins - copy `PeaFetchVariables`' resolver shape).
@@ -41,11 +42,16 @@ always from the core properties.
    `@EnableConfigurationProperties`, a `ZenBpmClientRegistry` bean built by iterating
    `MigrationAdapterProperties.adapterTypes()` for `zenbpm` ids (never the overlay's keys), running
    `ZenBpmAdapterConfiguration.validate` per id with `isNowhereFirst` and the deployment-failure
-   policy from the core properties. The result decides, the registry does not repeat the rule:
-   every `notices()` line at INFO; UNCONFIGURED logs the message at WARN; INCONSISTENT throws the
-   message where `endsTheBoot()`, else logs it at WARN and marks the factory unconfigured (only an
-   address or client id defect of a nowhere-first id with `warn` degrades; a number or duration
-   which cannot work always ends the boot); COMPLETE builds the factory. A `ZenBpmExecutor` per id
+   policy from the core properties. The result decides, the registry does not repeat the rule.
+   Findings go to the platform's `StartupReport` bean (a constructor parameter), with topic
+   `CONFIGURATION` and the scope `zenbpm adapter '<id>'`, never inside the text, so two ids with the
+   same finding fold into one entry: every `notices()` line as `notice`; UNCONFIGURED as `warn`;
+   INCONSISTENT throws the message where `endsTheBoot()`, because no factory can be built, else it
+   is a `warn` and the factory is marked unconfigured (only an address or client id defect of a
+   nowhere-first id with `warn` degrades; a number or duration which cannot work always ends the
+   boot); COMPLETE builds the factory. Where no `StartupReport` exists (a test building the registry
+   by hand), the findings go to the log at the same levels, as Camunda 8's
+   `Camunda8DeploymentService` does. A `ZenBpmExecutor` per id
    inside the factory. Application name from
    `spring.application.name`, default `application`.
 5. `processservice.ZenBpmAdapterProcessServiceConfiguration` importing `ZenBpmAdapterBeanRegistrar`
@@ -56,25 +62,40 @@ always from the core properties.
    skeletons in this story: constructor with `AdapterCollaborators`, `getAdapterId/Type`,
    `getModelType`/`getProcessContextType`, `checkHealth()` -> `ZenBpmHealth`,
    `VanillaBpParts.requireAdapterFitsPlatform(ZenBpmAdapter.ADAPTER_TYPE, ...)` in the constructor
-   of the deployment service (the platform replaced `AdapterPlatformVersion` on 2026-09-18); every
+   of the deployment service only, not of the process service (the platform replaced
+   `AdapterPlatformVersion` on 2026-09-18; Camunda 8 calls it in `Camunda8DeploymentService` alone);
+   the deployment service takes the `StartupReport` as Camunda 8's does; every
    pipeline and operation method throws the "later story" exception; `phaseOperations()` returns a
    map with a throwing handler per REQUIRED operation (the boot refuses a missing required one).
 6. `META-INF/spring/org.springframework.boot.autoconfigure.AutoConfiguration.imports` listing the
    three classes.
-7. `smoke-test` module: `SmokeTestApplication` (JPA H2 + gruelbox outbox as in Camunda 8's smoke
-   test, `NoPersistenceForTheSampleAggregate` pattern), a `META-INF/workflow-module`, no BPMN files.
+7. `smoke-test` module: `SmokeTestApplication` (JPA H2 with the platform's JDBC outbox, which is the
+   default since gruelbox left the platform, platform decision 102;
+   `NoPersistenceForTheSampleAggregate` pattern), a `META-INF/workflow-module`, no BPMN files. Every
+   workflow aggregate of the smoke and integration-test applications marks what it does not share
+   with `@NoSyncWithBPMS`, or its workflow sets
+   `vanillabp.workflow-modules.<m>.workflows.<p>.allow-full-sync-with-bpms: true`: an aggregate
+   which shares everything ends the start otherwise (`FullSyncCheck`, platform decision 66).
    Tests, all with `spring.autoconfigure.exclude` of the platform's `DeploymentAutoConfiguration` or an
    `ApplicationContextRunner` where the pipeline would otherwise run the stubs:
    - `ZenBpmAdapterDiscoveryTest`: id = type, both element beans present, registry knows the id;
    - `ZenBpmTwoAdapterIdsDiscoveryTest`: two ids, two of each bean, named after the ids;
-   - `ZenBpmStartupValidationBootTest`: unconfigured boots with the WARN naming
-     `vanillabp.adapters.<id>.rest-address` (CapturedOutput), and a use of the adapter fails with
-     the same message; inconsistent first-priority ends the boot naming the keys; an address
-     defect of a nowhere-first id with `deployment-failure: warn` boots degraded,
-     `worker-threads: 0` on the same id still ends the boot; a notice is logged once at INFO;
-     complete boots without a warning and logs the INFO line;
+   - `ZenBpmStartupValidationBootTest`: unconfigured boots with the warning naming
+     `vanillabp.adapters.<id>.rest-address` in the report block at the end of the start
+     (CapturedOutput, asserted by content under the heading `CONFIGURATION`), and a use of the
+     adapter fails with the same message; inconsistent first-priority ends the boot naming the
+     keys; an address defect of a nowhere-first id with `deployment-failure: warn` boots degraded,
+     `worker-threads: 0` on the same id still ends the boot; a notice appears once in the block;
+     complete boots with nothing in the block from this adapter; the deployment service's
+     `StartupReport` is the platform's bean (a test asks for it, because a broken wiring would
+     write the same lines to the log and nobody would notice);
    - `ZenBpmHealthBootTest`: actuator health shows the adapter UNKNOWN when unconfigured, DOWN
      against a closed port (bounded time).
+
+   The platform's BPMS double (`io.vanillabp:bpms-double-spring-boot`, S11.3.1) is worth trying in
+   place of the exclusion: if a test can let the pipeline run with the double as first adapter and
+   this adapter's stubs never reached, it tests more of the real boot. Keep the exclusion where it
+   cannot.
 
 *Note from S2.3.1, 2026-10-14.* `ProtobufRuntimeCheck.defect()` in `core` says why the
 application's protobuf runtime cannot run the job stream (older than the `protoc` of this build, or
@@ -87,7 +108,8 @@ runtime on the classpath or calls the check through a class loader which hides `
 
 - [ ] No bean of type `List<...>` is registered; the platform's `ObjectProvider` streams find both
   services per id.
-- [ ] Every message asserted by content, including the property key.
+- [ ] Every message asserted by content, including the property key, where the platform writes it:
+  in the `StartupReport` block, or in the exception which ends the boot.
 - [ ] A typo under `vanillabp.adapters.<id>.` is ignored by Spring (documented as the difference to
   Quarkus, where it fails).
 
@@ -106,10 +128,12 @@ runtime on the classpath or calls the check through a class loader which hides `
    EVERY key (adapter, module, workflow and task levels), never injected; read through
    `ConfigProvider.getConfig().unwrap(SmallRyeConfig.class).getConfigMapping(...)`. Producers:
    `ZenBpmClientProducer` (`@Singleton ZenBpmClientRegistry`, same validation as Spring, application
-   name from `quarkus.application.name`), `ZenBpmProcessServiceProducer`
-   (`List<MigratableProcessService<Object>>`), `ZenBpmDeploymentServiceProducer`
+   name from `quarkus.application.name`, the platform's `StartupReport` as a producer parameter),
+   `ZenBpmProcessServiceProducer` (`List<MigratableProcessService<Object>>`),
+   `ZenBpmDeploymentServiceProducer`
    (`List<AdapterDeploymentService<Object, Object>>`, collaborators via
-   `AdapterCollaboratorsSupport.collaborators(...)`), `ZenBpmStartupObserver` observing
+   `AdapterCollaboratorsSupport.collaborators(...)`, the `StartupReport` handed to each deployment
+   service), `ZenBpmStartupObserver` observing
    `StartupEvent` and touching the registry so validation runs before the platform's deployment
    runner. Note on versions: the root POM imports the Spring Boot BOM before the Quarkus BOM, so a
    library both manage (Jackson, Netty, SLF4J, ...) resolves to Spring Boot's version in the Quarkus
@@ -125,7 +149,8 @@ runtime on the classpath or calls the check through a class loader which hides `
    real native test is E11).
 3. Extension tests in `quarkus/deployment/src/test` with `QuarkusExtensionTest`, a workflow-module
    marker resource and `application.yaml` variants: `ZenBpmAdapterDiscoveryTest` (list beans with one
-   entry), `ZenBpmTwoAdapterIdsTest`, `ZenBpmStartupValidationTest` (unconfigured boots with WARN),
+   entry), `ZenBpmTwoAdapterIdsTest`, `ZenBpmStartupValidationTest` (unconfigured boots with the
+   warning in the `StartupReport` block),
    `ZenBpmInconsistentConfigurationTest` (boot fails naming the key), `ZenBpmUnknownKeyTest` (a typo
    `vanillabp.adapters.zenbpm.rest-adress` fails the startup with `SRCFG00050` - the assertion is that
    the failure names the key), `ZenBpmOverlayResolutionTest` (`retry-backoff` through all four levels).
@@ -156,6 +181,10 @@ saying that two ids deliberately sharing one engine are still allowed as long as
 `name-clash-avoidance` or in the modules they serve - which is what a prefix migration looks like -
 by setting `vanillabp.adapters.<id>.shared-engine: true` on the second (new key, adapter level,
 default false; validated to be set on at most all but one id of a group).
+
+`getAddressedSystem()` keeps its default (empty). It exists so that two adapter ids of DIFFERENT
+types on one system are refused (platform decision 129); no other adapter type works on a ZenBPM
+engine, so there is nothing to compare, and this per-type check stays the one which matters.
 
 **Tests**: `ZenBpmInstanceIdentityTest` (core), and one boot test per platform with two ids on the
 same address (fails) and with `shared-engine: true` (boots).

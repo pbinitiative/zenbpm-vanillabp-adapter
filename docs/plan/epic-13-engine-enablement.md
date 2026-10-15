@@ -6,19 +6,23 @@ after touching SQL, OpenAPI or protobuf; run `make test`, `make test-e2e`, `make
 review with the `zenbpm-code-review` skill; tests per the `zenbpm-e2e-tests` skill).
 
 **Ordering.** By value for the adapter: E13.1 (done 2026-09-23) and E13.4 remove the two limits a
-user meets first (the 30-second lock, the unfindable message-started workflow); E13.2, E13.3, E13.5, E13.6 make the
-adapter simpler; E13.7 to E13.10 are quality. Each feature names the adapter story it supersedes; the
-adapter keeps its fallback until the engine build carrying the change is the pinned one, then
-drops the fallback with an `UPGRADE.md` entry. It does not switch by the version `/system/status`
-reports: while the pin is a `main` build that version names the last release (decision 15).
+user meets first (the 30-second lock, the workflow the engine started which cannot be found once its
+start row is gone); E13.3 (done in the engine 2026-10-12, its twin is S6.2.1), E13.2, E13.5, E13.6
+and E13.14 make the adapter simpler; E13.7 to E13.10 are quality. Each feature names the adapter
+story it supersedes; the adapter keeps its fallback until the engine build carrying the change is
+the pinned one, then drops the fallback with an `UPGRADE.md` entry. It does not switch by the
+version `/system/status` reports: while the pin is a `main` build that version names the last
+release (decision 15).
 
 Every engine feature here is also an open question to the ZenBPM maintainers (open-questions 1-7),
-because a different shape may already be planned. Since the same organisation owns the engine and the
-adapter, the priorities the maintainers wrote next to those questions decide the order here, and the
-answers already given are: question 2 (lock and acknowledgement, E13.1) high, question 3 (retries,
-E13.3) medium with the retry strategy still open, question 1 (business key on message start, E13.4)
-nice to have, questions 5 and 6 (events, strict publish, E13.5/6/8) low, question 4 (propagate all,
-E13.2) leaning towards leaving the engine as it is.
+because a different shape may already be planned. Since the same organisation owns the engine and
+the adapter, the priorities the maintainers wrote next to those questions decide the order here, and
+the answers already given are: question 2 (lock and acknowledgement, E13.1) high, question 3
+(retries, E13.3) medium with the retry strategy still open, question 1 (business key on message
+start, E13.4) first nice to have and raised to medium on 2026-10-15 (decision 25 leaves the
+workflows the engine starts findable only through the start row without it), questions 5 and 6
+(events, strict publish, E13.5/6/8) low, question 4 (propagate all, E13.2) leaning towards leaving
+the engine as it is.
 
 **CI across the two repositories.** An engine change which serves the adapter is proven twice: by the
 engine's own E2E test in `test/e2e/`, and by the adapter's nightly `latest-engine` job (S11.6.1)
@@ -65,18 +69,34 @@ Full story with analysis, design, tests and acceptance criteria:
   `v1.9.0-rc1`. Was: implement `zenbpm:taskDefinition retries` (the TODO in `pkg/bpmn/engine.go`): a
   `fail` without an error code decrements retries and re-activates the job after an optional backoff
   (`retryBackoff` in the fail request); an incident only at zero.
-- [ ] **Adapter twin (supersedes S6.2.1):** `fail` with `retries` and `retryBackoff` like Camunda 8;
-  `ZenBpmLocalRetry` removed; decision 8 superseded.
+- [ ] **Adapter twin (is S6.2.1, rewritten as such; decision 27):** `fail` with `retries`,
+  `retryBackoff`, `message`, `deliveryToken` and `clientId` like Camunda 8 (without `clientId` the
+  lock stands whatever `retryBackoff` says); `ZenBpmRestClient.failJob` and `JobRef` gain the
+  fields; `ZenBpmLocalRetry` and `max-redeliveries` removed; decision 8 superseded by decision 27.
+  No re-pin: the pin `bdd795a3` carries the engine half.
 
-## E13.4 Findable message-started workflows
+## E13.4 Findable workflows the engine starts
 
-- [ ] **Engine:** one of (a) `businessKey` on `POST /v1/messages` applied to the instance a message
-  start creates, (b) `PATCH /v1/process-instances/{key}` accepting `businessKey` (the SQL upsert already
-  carries the column), (c) a variable filter `variables[name]=value` on `GET /v1/process-instances`
-  (a `json_extract` index). (a) is the smallest; (c) the most general. Optionally a uniqueness option
-  for the business key per definition (idempotent start).
-- [ ] **Adapter twin (supersedes S7.1.2):** `startWorkflowByMessage` sends the business key; the scan
-  mode and `message-start-lookup` are removed; GAPS 1 closed.
+**Priority: medium** (raised from "nice to have" on 2026-10-15). A workflow the engine starts
+itself, by timer or by a start message, carries no business key. Since the application names such a
+workflow (decision 25), the adapter finds it only through the instance key the start row hands to
+`awarenessOfWorkflow`, and only while that row is kept
+(`vanillabp.delivery.workflow-start-retention`, 30 days by default, or for good with `0`;
+`keep-workflow-start-while-aggregate-exists`). This item decides whether such workflows stay
+findable beyond the start row: in installations without a delivery log, in the moments between
+publishing a start message and its start marker, and for a start message sent a second time after a
+failure.
+
+- [ ] **Engine:** (b) first: `PATCH /v1/process-instances/{key}` accepting `businessKey` (the upsert
+  in `internal/sql/queries/process_instance.sql` already writes the column). Alternatively (a)
+  `businessKey` on `POST /v1/messages` applied to the instance a message start creates, ideally
+  answering the key of that instance; (c) a variable filter `variables[name]=value` on
+  `GET /v1/process-instances` (a `json_extract` index) is the most general. Optionally a uniqueness
+  option for the business key per definition (idempotent start).
+- [ ] **Adapter twin (supersedes the `scan` mode of S7.1.2):** with (b) the start marker of S9.3.1
+  writes the business key together with the variables of a workflow the application named, so the
+  business-key search finds every workflow; with (a) `startWorkflowByMessage` sends it as well. The
+  `scan` mode and `message-start-lookup-max-instances` are removed; GAPS 1 closed.
 
 ## E13.5 User-task lifecycle events
 
@@ -93,9 +113,12 @@ Full story with analysis, design, tests and acceptance criteria:
   notification a client can subscribe to (job-like, acknowledged), including `terminated`; (c) a
   cancellation notification for active jobs. The `EventExporter` in `pkg/bpmn/exporter` is the
   natural source.
-- [ ] **Adapter twin (supersedes S9.1.1, S9.2.1, S9.3.1 partly, S6.1.1's instance lookup):** activation
-  id = element instance key; no instance GET per job; markers replaced by subscriptions; `TERMINATED`
-  reported; `@TaskEvent CANCELED` for service tasks. Decision 5 superseded.
+- [ ] **Adapter twin (supersedes S9.1.1, S9.2.1, S9.3.1 partly, S6.1.1's instance lookup):**
+  activation id = element instance key; no instance GET per job; markers replaced by subscriptions,
+  so a start and an end cost no job any more; a canceled workflow reported with
+  `WorkflowEnd.Kind.CANCELED`; `@TaskEvent CANCELED` for a service task when it is canceled, instead
+  of at the next delivery of the same workflow or at the workflow's end, where S6.1.3 and the core
+  derive it today (platform decision 73). Decision 26 superseded.
 
 ## E13.7 Multi-instance variables
 
@@ -190,3 +213,17 @@ failed call into `zenerr.TechnicalError`. REST takes bodies up to 10 MiB
 (`internal/rest/middleware/openapi.go`). So no instance gets more than 4 MiB of variables through
 the API, and no job above that size reaches the job stream today. The stream takes jobs of any size
 all the same (S2.3.1).
+
+## E13.14 The root instance key on a job
+
+The adapter reports the root instance key of a task's own process as the workflow id (decision 28).
+A job inside an embedded sub-process, a multi-instance body or an event sub-process belongs to a
+child instance, and neither `WaitingJob` (`zenbpm.proto`) nor the job REST resource carries the
+root; `GET /v1/process-instances/{key}` only names the `parentProcessInstanceKey`. So the adapter
+walks up the parents and caches the walk (GAPS 22).
+
+- [ ] **Engine:** `root_process_instance_key` on `WaitingJob` and `rootProcessInstanceKey` on the
+  job REST resource: the top instance of the job's own process, stopping at a call activity (a
+  called process's instance is its own root here, as the adapter needs it). Priority: low to medium.
+- [ ] **Adapter twin (refines S6.1.1, S6.1.3, S9.2.1, S9.3.1):** read the key from the job instead
+  of walking `parentProcessInstanceKey`; GAPS 22 closed.

@@ -34,12 +34,19 @@ it rather than a callback the stream would need to know about.
 - [ ] **Depends on:** E10.
 
 Walk every message the adapter writes (grep for `log.warn`, `log.error`, `IllegalStateException`,
-`UnsupportedOperationException`) against the config-validation skill: names module, process, aggregate,
-attempted operation, exact property key, the way out; never a value which could be a secret. Each
-message gets a `CapturedOutput` assertion in an existing test or a new `ZenBpmMessagesTest`. Write the
-messages into the README section "Boot behavior" like Camunda 8 does.
+`UnsupportedOperationException`, and every finding handed to the platform's `StartupReport`)
+against the config-validation skill: names module, process, aggregate, attempted operation, exact
+property key, the way out; never a value which could be a secret. A finding of the start - a notice,
+a warning, a configuration the adapter refuses - goes through the `StartupReport` bean with its
+`StartupTopic` (`CONFIGURATION` for the adapter's own keys) and the adapter id as the scope, never
+inside the text (platform decisions 96 and 97); only what happens after the start is logged
+directly. Each message gets an assertion in an existing test or a new `ZenBpmMessagesTest`: a
+startup finding is asserted in the report block the core prints at the end of the start, a runtime
+message through `CapturedOutput`. Write the messages into the README section "Boot behavior" like
+Camunda 8 does.
 
-**Acceptance criteria**: every guiding message is asserted by content in a test.
+**Acceptance criteria**: every guiding message is asserted by content in a test; no startup finding
+of the adapter bypasses the `StartupReport`.
 
 ## S11.3.1 Election ITs
 
@@ -62,7 +69,10 @@ real engine.
 Module `quarkus/native-image-tests` (Camunda 8's shape, Netty version note applies): reflection
 registration for the generated protobuf classes and the Jackson records
 (`@RegisterForReflection` or a `ZenBpmNativeImageProcessor` producing `ReflectiveClassBuildItem`s),
-`grpc-netty-shaded` native configuration as Quarkus documents it. `ZenBpmNativeImageIT` runs deploy,
+`grpc-netty-shaded` native configuration as Quarkus documents it. The part descriptor
+`META-INF/vanillabp/adapter-zenbpm.properties` needs no registration of its own: the platform's
+Quarkus extension registers every `META-INF/vanillabp/*.properties` it finds in the application as a
+native-image resource. `ZenBpmNativeImageIT` runs deploy,
 start, task, message against the container from the native executable. Runs in CI on a schedule
 (nightly) like Camunda 8's line matrix, not per pull request.
 

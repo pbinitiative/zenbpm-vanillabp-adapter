@@ -13,6 +13,11 @@ ownership on 2026-09-13, against
 - `process-engine-api-adapter` at decision 8 / gap 22 (donor of the raw-XML utilities),
 - `zenbpm` working tree `b22f12c2` (`VERSION` 1.8.0, unreleased; last release v1.7.0).
 
+On 2026-10-15 the plan was re-checked against the adapter SPI as of platform decision 129
+(`adapter-platform-integration` `705ff131`, `camunda8-adapter` at its decision 78) and the engine
+pin `bdd795a3`, and corrected where the contract had changed: decisions 24 to 28, GAPS 22,
+deviation 14, the stories S6.1.3 and E13.14.
+
 Every statement about the engine names the file it was read from, so a later engine version can be
 re-checked file by file rather than re-analysed.
 
@@ -68,7 +73,7 @@ Four things were added to what was asked for, because the analysis made them una
 
 1. **An engine-enablement epic.** Ten features of the VanillaBP contract hit a limit of the engine
    itself (a fixed 30-second job lock and no lock extension - both solved by E13.1 on 2026-09-23 -,
-   no retries, no business key on message
+   no retries - solved by E13.3 on 2026-10-12 -, no business key on message
    starts, no variable filter, no listeners, no user-task lifecycle events, output propagation only
    through mappings, no authentication). Since the engine lives in this workspace, each limit is
    written up as a small engine change with the adapter story which consumes it. The adapter ships a
@@ -77,11 +82,19 @@ Four things were added to what was asked for, because the analysis made them una
    version-1 application whose running workflows a default has to keep finding. Refusing the SPI's
    default at every boot, as the Process-Engine-API adapter has to, would make every application
    configure the same line. This is a draft decision and an open question for the maintainer.
+   **Changed 2026-10-15:** the platform's contract now asks exactly that of a BPMS without isolation
+   of its own, so `by-adapter` stays the default and is refused while deploying; an application
+   configures one line per adapter id (decision 24, which supersedes decision 2).
 3. **Two lookups behind one probe.** The engine finds an instance by business key but never by
    variable, and an instance the engine starts itself (timer) or by message carries no business key.
    The workflow probe therefore asks by business key first and by instance key second, and the
    aggregate id of a BPMS-initiated workflow IS the instance key. The message-started workflow stays
-   the one case which needs the engine (open question 1).
+   the one case which needs the engine (open question 1). **Changed 2026-10-15:** the platform now
+   lets the application name such a workflow, and it hands the adapter the instance key it recorded
+   at the start. So the probe asks by that instance key first, which may only answer ACTIVE, and by
+   business key second; a start marker after every start event records the key of timer- and
+   message-started workflows alike (decisions 25, 26). Once the core no longer knows the key, the
+   probe cannot find such a workflow until E13.4 gives it a business key.
 4. **CI from the first commit, shaped by every epic.** The repository lives in an organisation other
    than the platform it builds against, so the pull-request workflow, the snapshot publication and the
    coverage pages exist before the first line of Java (E1, feature F1.3) and grow with the plan: Docker

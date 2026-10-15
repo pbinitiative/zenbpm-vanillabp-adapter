@@ -217,6 +217,18 @@ Where the code differs from the instructions:
   `2.0.0-20261013.173739-6`, contains `ZenBpmAdapterConfiguration` with its nested
   `ValidationResult` and `MessageStartLookup`. Both report pages answer HTTP 200.
 
+**Amended 2026-10-15.** Three of the keys change meaning with the adapter SPI of 2026-10-12:
+
+- `max-redeliveries` goes with the E13.3 twin (decision 27): the engine counts the retries itself.
+  `retry-backoff` stays, as the `retryBackoff` the adapter sends with a failure instead of backing
+  off locally.
+- `message-start-lookup` stays. `scan` stays an opt-in until E13.4 lands and is removed then. Its
+  default changes in S7.1.2, because the start markers of decision 26 record the instance key of a
+  message-started workflow.
+- The validation result is reported through the platform's `StartupReport` (topic
+  `CONFIGURATION`, the adapter id as scope, never inside the text) once E3 injects that bean, and no
+  longer logged by the adapter. The record and its three outcomes stay as they are.
+
 ---
 
 ## F2.2 REST client
@@ -403,6 +415,14 @@ On that commit (GitHub keeps run logs for 90 days, so what they showed is writte
   snapshot it published, `2.0.0-20261014.114013-8`, contains `ZenBpmRestClient`, both exceptions
   and the records of `client.api`. Both report pages answer HTTP 200 and show 0 of 4,537
   instructions missed.
+
+**Amended 2026-10-15.** E13.3 was already in the pinned engine `bdd795a3` when this story was
+built, and E6 settles how a failure works: the engine counts the retries (decision 27). So
+`failJob` gains what the pinned `POST /jobs/{jobKey}/fail` takes: `retries`, `retryBackoff`,
+`message`, `deliveryToken` and `clientId`. Without `clientId` the lock stands until it lapses,
+whatever `retryBackoff` says. `JobRef` gains `retries`, `retryAt` and `lastFailureMessage`, which
+the pinned `Job` carries. The E13.3 twin makes both changes, with contract tests against the pinned
+engine; nothing else of this story changes.
 
 ### S2.2.2 `ZenBpmErrors` - the one classification
 
@@ -831,12 +851,21 @@ run logs for 90 days, so what they showed is written here as well):
    remembered so a second module does not wait again.
 4. `ZenBpmHealth.check(factory)` -> `AdapterHealth`: unconfigured -> UNKNOWN with the missing key;
    200 -> UP with the engine version; 503 -> DOWN with the reasons; unreachable -> DOWN with the
-   exception's message; bounded by `request-timeout`; never throws.
-5. `ZenBpmEnvironmentInfo.logOnce(factory)`: one INFO line per adapter id naming REST address, gRPC
-   address, client id, engine version and commit (from `status()`) and the commit the adapter was
-   tested with (`zenbpm.engine` of `adapter-zenbpm.properties`), plus a WARN where the two commits
-   differ. Not a comparison of versions: while the pin is a `main` build, the engine's version names
-   the last release and is the same for every build since.
+   exception's message; bounded by `request-timeout`; never throws. Built with the factory methods
+   `AdapterHealth.up/down/unknown` and `AdapterHealth.detailsBuilder()`; since 2026-09-24 the
+   details keep the order they were added in.
+5. `ZenBpmEnvironmentInfo.logOnce(factory, startupReport)`: one INFO line per adapter id naming
+   REST address, gRPC address, client id, engine version and commit (from `status()`) and the
+   commit the adapter was tested with (`zenbpm.engine` of `adapter-zenbpm.properties`). Where the
+   two commits differ, that is a finding, so it goes to the platform's `StartupReport` as `warn`
+   with topic `INFRASTRUCTURE` and the scope `zenbpm adapter '<id>'`, never inside the text. The
+   INFO line stays a log line: the `StartupReport` javadoc keeps reports about the adapter doing its
+   work (which engine it reached) out of the block. Not a comparison of versions: while the pin is a
+   `main` build, the engine's version names the last release and is the same for every build since.
+   E3 hands the bean over; a test builds a small collecting `StartupReport` of its own.
+6. What stays in the log: the engine wait's progress lines of step 3. The block of the
+   `StartupReport` is written once, at the end of the start, which is too late for progress. The
+   wait's failure stays a thrown exception, because nothing after it can run.
 
 *Note from S2.3.1, 2026-10-14.* `ZenBpmJobStream(adapterId, configuration, clientId, executor)`
 takes the client id resolved, so the factory calls `configuration.clientIdInUse(adapterId,
@@ -867,6 +896,8 @@ threads stop by themselves once the last handler returned and drop what is due l
 - [ ] Building a factory for a complete configuration never opens a connection.
 - [ ] The wait's failure message names address, elapsed time, last answer and the property key.
 - [ ] Health never throws and returns within `request-timeout` + 1 s against a black-hole address.
+- [ ] A commit mismatch arrives as one `warn` of topic `INFRASTRUCTURE` in the `StartupReport`, with
+  the adapter id as its scope; the matching case reports nothing there.
 
 ### S2.4.2 Executor and execution model
 
