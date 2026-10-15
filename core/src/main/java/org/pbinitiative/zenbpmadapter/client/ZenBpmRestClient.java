@@ -135,11 +135,9 @@ public class ZenBpmRestClient implements AutoCloseable {
     ) {
         this.adapterId = adapterId;
         this.requestTimeout = configuration.getRequestTimeout();
-        final var restBase = configuration
-                .restBaseUri()
+        this.engineAddress = configuration
+                .engineAddress()
                 .toString();
-        this.engineAddress = restBase.substring(0,
-                restBase.length() - ZenBpmAdapterConfiguration.API_VERSION_PATH.length());
         this.http = HttpClient
                 .newBuilder()
                 .version(HttpClient.Version.HTTP_1_1)

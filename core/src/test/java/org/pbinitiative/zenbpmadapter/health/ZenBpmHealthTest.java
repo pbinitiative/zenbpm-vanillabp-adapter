@@ -79,6 +79,23 @@ class ZenBpmHealthTest {
     }
 
     @Test
+    @DisplayName("An adapter id without clients names its address where 'rest-address' is valid, and leaves out one which is not")
+    void anAdapterIdWithoutClientsNamesAValidAddress() {
+        final var valid = new ZenBpmAdapterConfiguration();
+        valid.setRestAddress("HTTP://ZenBPM:8080/v1");
+        final var withAUser = new ZenBpmAdapterConfiguration();
+        withAUser.setRestAddress("http://admin:secret@zenbpm:8080");
+
+        assertAll(
+                () -> assertEquals(Map.of("address", "http://zenbpm:8080"), ZenBpmHealth
+                        .check(ZenBpmClientFactory.unconfigured(ADAPTER_ID, valid, "boots degraded"))
+                        .details()),
+                () -> assertEquals(Map.of(), ZenBpmHealth
+                        .check(ZenBpmClientFactory.unconfigured(ADAPTER_ID, withAUser, "carries a user"))
+                        .details()));
+    }
+
+    @Test
     @DisplayName("A ready engine is UP, with the version and commit it reported at startup")
     void aReadyEngineIsUp() {
         engine.answers("GET", "/system/health/ready", 200, "{\"status\":\"UP\",\"reasons\":[]}");
@@ -93,10 +110,11 @@ class ZenBpmHealthTest {
             assertAll(
                     () -> assertEquals(AdapterHealth.Status.UP, health.status()),
                     () -> assertEquals("The engine reports ready", health.description()),
-                    () -> assertEquals(List.of("address", "versionAtStart", "commitAtStart"), List.copyOf(health
-                            .details()
-                            .keySet())),
-                    () -> assertEquals("%s/v1".formatted(engine.address()), health
+                    () -> assertEquals(List.of("address", "versionAtStart", "commitAtStart", "jobStream"), List
+                            .copyOf(health
+                                    .details()
+                                    .keySet())),
+                    () -> assertEquals(engine.address(), health
                             .details()
                             .get("address")),
                     () -> assertEquals("1.2.0", health
@@ -118,7 +136,8 @@ class ZenBpmHealthTest {
 
             assertAll(
                     () -> assertEquals(AdapterHealth.Status.UP, health.status()),
-                    () -> assertEquals(Map.of("address", "%s/v1".formatted(engine.address())), health.details()),
+                    () -> assertEquals(Map.of("address", engine.address(), "jobStream", "not opened yet"), health
+                            .details()),
                     () -> assertEquals(1, engine
                             .requests()
                             .size()));
@@ -139,7 +158,8 @@ class ZenBpmHealthTest {
                     () -> assertEquals(
                             "The engine reports not ready: no cluster leader elected; partition 2 is not initialized",
                             health.description()),
-                    () -> assertEquals(Map.of("address", "%s/v1".formatted(engine.address())), health.details()));
+                    () -> assertEquals(Map.of("address", engine.address(), "jobStream", "not opened yet"), health
+                            .details()));
         }
     }
 
@@ -168,9 +188,9 @@ class ZenBpmHealthTest {
                     () -> assertTrue(health
                             .description()
                             .startsWith(
-                                    "ZenBPM adapter 'orders': GET /system/health/ready got no answer (java.net.ConnectException"),
+                                    "GET /system/health/ready got no answer (java.net.ConnectException"),
                             health.description()),
-                    () -> assertEquals(List.of("address", "requestTimeout"), List.copyOf(health
+                    () -> assertEquals(List.of("address", "requestTimeout", "jobStream"), List.copyOf(health
                             .details()
                             .keySet())),
                     () -> assertEquals("PT1S", health
@@ -190,7 +210,7 @@ class ZenBpmHealthTest {
             assertAll(
                     () -> assertEquals(AdapterHealth.Status.DOWN, health.status()),
                     () -> assertEquals(
-                            "ZenBPM adapter 'orders': GET /system/health/ready was answered with status 500, X: boom",
+                            "GET /system/health/ready was answered with status 500, X: boom",
                             health.description()));
         }
     }
@@ -237,14 +257,57 @@ class ZenBpmHealthTest {
 
         final var health = ZenBpmHealth.check(factory);
 
-        assertEquals(AdapterHealth.Status.DOWN, health.status());
+        assertAll(
+                () -> assertEquals(AdapterHealth.Status.DOWN, health.status()),
+                () -> assertEquals("closed", health
+                        .details()
+                        .get("jobStream")));
+    }
+
+    @Test
+    @DisplayName("A ready engine whose job stream cannot connect is UP, and says that the stream is down")
+    void aReadyEngineWithAStreamDownSaysSo() throws IOException {
+        engine.answers("GET", "/system/health/ready", 200, "{\"status\":\"UP\",\"reasons\":[]}");
+        final var configuration = configuration(engine.address());
+        configuration.setGrpcAddress(closedPortAddress().substring("http://".length()));
+
+        try (var factory = new ZenBpmClientFactory(ADAPTER_ID, configuration, () -> "shop")) {
+            factory
+                    .stream()
+                    .subscribe("module", "type", Duration.ofMinutes(1), 1);
+
+            final var stream = assertTimeoutPreemptively(Duration.ofSeconds(10), () -> {
+                while (true) {
+                    final var state = ZenBpmHealth
+                            .check(factory)
+                            .details()
+                            .get("jobStream");
+                    if (state.startsWith("down since ")) {
+                        return state;
+                    }
+                    Thread.sleep(50);
+                }
+            });
+            assertAll(
+                    () -> assertEquals(AdapterHealth.Status.UP, ZenBpmHealth
+                            .check(factory)
+                            .status()),
+                    () -> assertTrue(
+                            stream.matches(
+                                    "down since \\d{4}-\\d\\d-\\d\\dT\\d\\d:\\d\\d:\\d\\dZ, \\d+ attempt\\(s\\)"),
+                            stream));
+        }
     }
 
     private static ZenBpmClientFactory factory(final String restAddress) {
+        return new ZenBpmClientFactory(ADAPTER_ID, configuration(restAddress), () -> "shop");
+    }
+
+    private static ZenBpmAdapterConfiguration configuration(final String restAddress) {
         final var configuration = new ZenBpmAdapterConfiguration();
         configuration.setRestAddress(restAddress);
         configuration.setRequestTimeout(REQUEST_TIMEOUT);
-        return new ZenBpmClientFactory(ADAPTER_ID, configuration, () -> "shop");
+        return configuration;
     }
 
     private static String closedPortAddress() throws IOException {

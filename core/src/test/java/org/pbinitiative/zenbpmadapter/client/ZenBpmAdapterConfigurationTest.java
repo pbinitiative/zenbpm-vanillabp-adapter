@@ -487,6 +487,14 @@ class ZenBpmAdapterConfigurationTest {
                 validation.notices().getFirst());
     }
 
+    @Test
+    @DisplayName("The engine's address is the REST address normalised, without '/v1'")
+    void theEngineAddressLeavesTheApiVersionOut() {
+        assertEquals(URI.create("http://zenbpm:8080"), configured("http://zenbpm:8080/v1/").engineAddress());
+        assertEquals(URI.create("http://zenbpm:80/engine"), configured("HTTP://ZenBPM/engine/").engineAddress());
+        assertEquals(URI.create("https://zenbpm:443"), configured("https://zenbpm").engineAddress());
+    }
+
     @ParameterizedTest
     @ValueSource(strings = {
             "/%76%31", "/v%31", "/v1/", "//v1//", "/proxy/%76%31/"
@@ -592,6 +600,7 @@ class ZenBpmAdapterConfigurationTest {
     void nothingIsDerivedFromAnUnusableAddress(final String restAddress) {
         final var configuration = configured(restAddress);
 
+        assertThrows(IllegalStateException.class, configuration::engineAddress);
         assertThrows(IllegalStateException.class, configuration::restBaseUri);
         assertThrows(IllegalStateException.class, configuration::instanceIdentity);
         assertThrows(IllegalStateException.class, configuration::grpcAddressInUse);

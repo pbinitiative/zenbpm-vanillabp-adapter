@@ -86,12 +86,13 @@ public final class ZenBpmEnvironmentInfo {
         } catch (final RuntimeException e) {
             log.warn(
                     "ZenBPM[{}]: the engine at {} did not say which version it runs, so whether it is the one this adapter was tested with (commit {}) is unknown: {}",
-                    adapterId, configuration.restBaseUri(), testedCommit, e.getMessage());
+                    adapterId, configuration.engineAddress(), testedCommit,
+                    ZenBpmErrors.withoutAdapterId(adapterId, e));
             return null;
         }
         log.info(
                 "ZenBPM[{}]: engine at {}, job stream at {} with client id '{}': version {}, commit {}, node(s) {}; this adapter was tested with engine commit {}",
-                adapterId, configuration.restBaseUri(), configuration.grpcAddressInUse(), factory.clientId(), status
+                adapterId, configuration.engineAddress(), configuration.grpcAddressInUse(), factory.clientId(), status
                         .version(),
                 status.commit(), String.join(", ", status.nodes()), testedCommit);
         if (!isTested(status.commit(), testedCommit)) {

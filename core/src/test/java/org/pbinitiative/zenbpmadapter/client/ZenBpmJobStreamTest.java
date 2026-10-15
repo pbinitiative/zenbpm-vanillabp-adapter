@@ -227,6 +227,34 @@ class ZenBpmJobStreamTest {
         assertEquals(1, occurrences(output.getAllOfThisTest(), "is down ("));
     }
 
+    @Test
+    @DisplayName("The state reads not opened yet, connecting, connected, down since, connected again and closed")
+    void theStateFollowsTheCall() {
+        assertEquals("not opened yet", stream.state());
+
+        stream.subscribe("module-a", "t1", Duration.ofMinutes(5), 4);
+        assertEquals("connecting", stream.state());
+        engine
+                .call(0)
+                .subscriptions(1);
+        eventually(() -> Optional
+                .of(stream.state())
+                .filter("connected"::equals));
+
+        engine.stop();
+        final var down = eventually(() -> Optional
+                .of(stream.state())
+                .filter(state -> state.startsWith("down since ")));
+        assertTrue(down.matches("down since \\d{4}-\\d\\d-\\d\\dT\\d\\d:\\d\\d:\\d\\dZ, \\d+ attempt\\(s\\)"), down);
+        engine.start();
+        eventually(() -> Optional
+                .of(stream.state())
+                .filter("connected"::equals));
+
+        stream.close();
+        assertEquals("closed", stream.state());
+    }
+
     /**
      * gRPC's channel has a backoff of its own, which grows towards two minutes and would hold the
      * stream's attempts back for that long. After three seconds of failures it already waits

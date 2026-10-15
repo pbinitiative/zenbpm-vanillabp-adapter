@@ -6,7 +6,9 @@
 package org.pbinitiative.zenbpmadapter.health;
 
 import org.pbinitiative.zenbpmadapter.ZenBpmAdapter;
+import org.pbinitiative.zenbpmadapter.client.ZenBpmAdapterConfiguration;
 import org.pbinitiative.zenbpmadapter.client.ZenBpmClientFactory;
+import org.pbinitiative.zenbpmadapter.client.ZenBpmErrors;
 
 import io.vanillabp.integration.adapter.spi.health.AdapterHealth;
 
@@ -24,9 +26,15 @@ import io.vanillabp.integration.adapter.spi.health.AdapterHealth;
  * <li>an engine out of reach, too slow or answering something else is DOWN, with what the REST
  * client reported.</li>
  * </ul>
- * The check ends within <code>request-timeout</code>, the deadline of every REST call, and never
- * throws. Every answer of an adapter id with clients names the engine's address, so an operator
- * can act without opening the configuration first.
+ * UP says that the engine answered ready over REST, not that jobs arrive: the job stream is a
+ * connection of its own, over gRPC, which a wrong <code>grpc-address</code> or a blocked port keeps
+ * down while REST works. So every answer of an adapter id with clients names where the stream
+ * stands, as <code>jobStream</code> (see {@link org.pbinitiative.zenbpmadapter.client.ZenBpmJobStream#state()}),
+ * and the engine's address, so an operator can act without opening the configuration first. An
+ * adapter id without clients names the address where <code>rest-address</code> is valid.
+ * <p>
+ * The check never throws, and ends within <code>request-timeout</code> and the quarter of a second
+ * the REST client gives a body which stopped arriving.
  */
 public final class ZenBpmHealth {
 
@@ -41,15 +49,16 @@ public final class ZenBpmHealth {
      */
     public static AdapterHealth check(final ZenBpmClientFactory factory) {
         final var adapterId = factory.getAdapterId();
+        final var configuration = factory.configuration();
         final var unconfigured = factory.unconfiguredMessage();
         if (unconfigured.isPresent()) {
             return AdapterHealth.unknown(adapterId, ZenBpmAdapter.ADAPTER_TYPE, unconfigured.get(), AdapterHealth
                     .detailsBuilder()
+                    .with("address", addressWhereValid(configuration))
                     .build());
         }
-        final var configuration = factory.configuration();
         final var address = configuration
-                .restBaseUri()
+                .engineAddress()
                 .toString();
         try {
             final var readiness = factory
@@ -64,6 +73,7 @@ public final class ZenBpmHealth {
                         AdapterHealth
                                 .detailsBuilder()
                                 .with("address", address)
+                                .with("jobStream", jobStream(factory))
                                 .build());
             }
             final var details = AdapterHealth
@@ -74,16 +84,39 @@ public final class ZenBpmHealth {
                     .ifPresent(status -> details
                             .with("versionAtStart", status.version())
                             .with("commitAtStart", status.commit()));
-            return AdapterHealth.up(adapterId, ZenBpmAdapter.ADAPTER_TYPE, "The engine reports ready", details.build());
+            return AdapterHealth.up(adapterId, ZenBpmAdapter.ADAPTER_TYPE, "The engine reports ready", details
+                    .with("jobStream", jobStream(factory))
+                    .build());
         } catch (final RuntimeException e) {
             // a call after the factory was closed included: a health endpoint has to answer
-            return AdapterHealth.down(adapterId, ZenBpmAdapter.ADAPTER_TYPE, e.getMessage(), AdapterHealth
-                    .detailsBuilder()
-                    .with("address", address)
-                    .with("requestTimeout", configuration
-                            .getRequestTimeout()
-                            .toString())
-                    .build());
+            return AdapterHealth.down(adapterId, ZenBpmAdapter.ADAPTER_TYPE,
+                    ZenBpmErrors.withoutAdapterId(adapterId, e),
+                    AdapterHealth
+                            .detailsBuilder()
+                            .with("address", address)
+                            .with("requestTimeout", configuration
+                                    .getRequestTimeout()
+                                    .toString())
+                            .with("jobStream", jobStream(factory))
+                            .build());
+        }
+    }
+
+    private static String jobStream(final ZenBpmClientFactory factory) {
+        return factory
+                .stream()
+                .state();
+    }
+
+    // a rest-address the validation refuses is left out: it may carry a user, which does not
+    // belong on a health endpoint
+    private static String addressWhereValid(final ZenBpmAdapterConfiguration configuration) {
+        try {
+            return configuration
+                    .engineAddress()
+                    .toString();
+        } catch (final IllegalStateException e) {
+            return null;
         }
     }
 

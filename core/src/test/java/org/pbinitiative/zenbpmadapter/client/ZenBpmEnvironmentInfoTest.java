@@ -20,6 +20,8 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.pbinitiative.zenbpmadapter.client.CollectedStartupReport.Finding;
 import org.pbinitiative.zenbpmadapter.client.api.EngineStatus;
 import org.pbinitiative.zenbpmadapter.test.EngineUnderTest;
@@ -80,7 +82,7 @@ class ZenBpmEnvironmentInfoTest {
                     () -> assertTrue(output
                             .getAllOfThisTest()
                             .contains(
-                                    "INFO  o.p.z.client.ZenBpmEnvironmentInfo - ZenBPM[orders]: engine at %s/v1, job stream at 127.0.0.1:9191 with client id 'node-7': version 1.2.0, commit %s, node(s) node-1, node-2; this adapter was tested with engine commit %s"
+                                    "INFO  o.p.z.client.ZenBpmEnvironmentInfo - ZenBPM[orders]: engine at %s, job stream at 127.0.0.1:9191 with client id 'node-7': version 1.2.0, commit %s, node(s) node-1, node-2; this adapter was tested with engine commit %s"
                                             .formatted(engine.address(), TESTED_SHORT_COMMIT, EngineUnderTest
                                                     .pinnedCommit())),
                             output.getAllOfThisTest()),
@@ -114,10 +116,13 @@ class ZenBpmEnvironmentInfoTest {
         }
     }
 
-    @Test
-    @DisplayName("A commit too short to tell anything apart is not taken for the tested one")
-    void aShortCommitIsNoMatch() {
-        engine.answers("GET", "/system/status", 200, status(""));
+    @ParameterizedTest
+    @ValueSource(ints = {
+            0, 6
+    })
+    @DisplayName("A beginning of the tested commit too short to tell commits apart is not taken for it")
+    void aShortCommitIsNoMatch(final int length) {
+        engine.answers("GET", "/system/status", 200, status(TESTED_SHORT_COMMIT.substring(0, length)));
 
         try (var factory = new ZenBpmClientFactory(ADAPTER_ID, configuration(), () -> "shop")) {
             ZenBpmEnvironmentInfo.logOnce(factory, report);
@@ -125,6 +130,18 @@ class ZenBpmEnvironmentInfoTest {
             assertEquals(1, report
                     .findings()
                     .size());
+        }
+    }
+
+    @Test
+    @DisplayName("The first seven characters of the tested commit, git's shortest form, are taken for it")
+    void sevenCharactersAreAMatch() {
+        engine.answers("GET", "/system/status", 200, status(TESTED_SHORT_COMMIT.substring(0, 7)));
+
+        try (var factory = new ZenBpmClientFactory(ADAPTER_ID, configuration(), () -> "shop")) {
+            ZenBpmEnvironmentInfo.logOnce(factory, report);
+
+            assertEquals(List.of(), report.findings());
         }
     }
 
@@ -174,7 +191,7 @@ class ZenBpmEnvironmentInfoTest {
                     () -> assertTrue(output
                             .getAllOfThisTest()
                             .contains(
-                                    "WARN  o.p.z.client.ZenBpmEnvironmentInfo - ZenBPM[orders]: the engine at %s/v1 did not say which version it runs, so whether it is the one this adapter was tested with (commit %s) is unknown: ZenBPM adapter 'orders': GET /system/status got no answer"
+                                    "WARN  o.p.z.client.ZenBpmEnvironmentInfo - ZenBPM[orders]: the engine at %s did not say which version it runs, so whether it is the one this adapter was tested with (commit %s) is unknown: GET /system/status got no answer"
                                             .formatted(configuration
                                                     .getRestAddress(), EngineUnderTest.pinnedCommit())),
                             output.getAllOfThisTest()));

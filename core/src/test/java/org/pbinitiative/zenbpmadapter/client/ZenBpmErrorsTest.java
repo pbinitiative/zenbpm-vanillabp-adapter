@@ -239,6 +239,18 @@ class ZenBpmErrorsTest {
         }
     }
 
+    @Test
+    @DisplayName("A message is given without the adapter id it starts with, and only that adapter id is left out")
+    void aMessageWithoutTheAdapterId() {
+        assertAll(
+                () -> assertEquals("GET /system/health/ready was answered with status 500", ZenBpmErrors
+                        .withoutAdapterId(ADAPTER_ID, refusal(500, "GET", "/system/health/ready"))),
+                () -> assertEquals("ZenBPM adapter 'billing': boom", ZenBpmErrors.withoutAdapterId(ADAPTER_ID,
+                        new IllegalStateException("ZenBPM adapter 'billing': boom"))),
+                () -> assertEquals("java.lang.NullPointerException", ZenBpmErrors.withoutAdapterId(ADAPTER_ID,
+                        new NullPointerException())));
+    }
+
     /**
      * Every row of the README's table, with the failures which stand for it. The first argument
      * is the row's first cell as the README writes it.

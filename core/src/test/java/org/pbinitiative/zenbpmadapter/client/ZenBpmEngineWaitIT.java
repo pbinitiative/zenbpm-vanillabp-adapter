@@ -4,13 +4,16 @@
  */
 package org.pbinitiative.zenbpmadapter.client;
 
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.pbinitiative.zenbpmadapter.client.ContractFixtures.eventually;
 
 import java.io.IOException;
 import java.net.InetAddress;
 import java.net.ServerSocket;
 import java.time.Duration;
+import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
 
@@ -20,6 +23,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.pbinitiative.zenbpmadapter.test.EngineUnderTest;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
+import io.vanillabp.integration.test.utils.CapturedOutput;
 import io.vanillabp.integration.test.utils.SuppressOutputExtension;
 
 /**
@@ -37,32 +41,34 @@ class ZenBpmEngineWaitIT {
     private static final String ADAPTER_ID = "wait";
 
     /**
-     * How long after the wait began the engine is started.
+     * How long after the wait began the engine is started at the earliest.
      */
     private static final Duration LATE = Duration.ofSeconds(3);
 
     @Test
     @DisplayName("The wait returns once an engine started after it began reports ready")
-    void theWaitReturnsForAnEngineStartedLate() throws Exception {
+    void theWaitReturnsForAnEngineStartedLate(final CapturedOutput output) throws Exception {
         try (var engine = new EngineUnderTest(); var relay = TcpRelay.to("localhost:1")) {
             relay.cut();
             final var configuration = new ZenBpmAdapterConfiguration();
             configuration.setRestAddress("http://%s".formatted(relay.address()));
-            final var startedLate = CompletableFuture.runAsync(() -> {
+
+            // closing the factory ends a wait which did not end by itself
+            try (var factory = new ZenBpmClientFactory(ADAPTER_ID, configuration, () -> "wait-it")) {
+                final var waiting = CompletableFuture.runAsync(() -> ZenBpmEngineWait.awaitReady(factory));
+                // the wait names itself before its first attempt
+                eventually(() -> output
+                        .getAllOfThisTest()
+                        .contains("ZenBPM[wait]: waiting up to") ? Optional.of(true) : Optional.empty());
+                Thread.sleep(LATE);
+                assertFalse(waiting.isDone(), "the wait ended before the engine was started");
+
                 engine.start();
                 relay.restoreTo(engine
                         .restAddress()
                         .substring("http://".length()));
-            }, CompletableFuture.delayedExecutor(LATE.toMillis(), TimeUnit.MILLISECONDS));
 
-            try (var factory = new ZenBpmClientFactory(ADAPTER_ID, configuration, () -> "wait-it")) {
-                final var waitStarted = System.nanoTime();
-                ZenBpmEngineWait.awaitReady(factory);
-                final var waited = Duration.ofNanos(System.nanoTime() - waitStarted);
-
-                startedLate.get(10, TimeUnit.SECONDS);
-                assertTrue(waited.compareTo(LATE) >= 0, "the wait returned after %s, before the engine was started"
-                        .formatted(waited));
+                waiting.get(2, TimeUnit.MINUTES);
                 assertTrue(factory
                         .rest()
                         .ready()

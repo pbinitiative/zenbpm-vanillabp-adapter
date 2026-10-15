@@ -6,7 +6,6 @@ package org.pbinitiative.zenbpmadapter.client;
 
 import static org.junit.jupiter.api.Assertions.assertAll;
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTimeoutPreemptively;
@@ -16,11 +15,14 @@ import static org.pbinitiative.zenbpmadapter.client.ContractFixtures.eventually;
 import java.io.IOException;
 import java.net.InetAddress;
 import java.net.ServerSocket;
+import java.net.Socket;
 import java.time.Duration;
 import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.regex.Pattern;
 
@@ -90,15 +92,15 @@ class ZenBpmEngineWaitTest {
             assertAll(
                     () -> assertEquals(10, asked.get()),
                     () -> assertTrue(printed.contains(
-                            "INFO  o.p.z.client.ZenBpmEngineWait - ZenBPM[orders]: waiting up to PT10M for the engine at %s/v1 to report ready"
+                            "INFO  o.p.z.client.ZenBpmEngineWait - ZenBPM[orders]: waiting up to PT10M for the engine at %s to report ready"
                                     .formatted(engine.address())),
                             printed),
                     () -> assertTrue(printed.contains(
-                            "ZenBPM[orders]: still waiting for the engine at %s/v1 to report ready".formatted(engine
+                            "ZenBPM[orders]: still waiting for the engine at %s to report ready".formatted(engine
                                     .address())),
                             printed),
                     () -> assertTrue(printed.contains("last answer: not ready (no cluster leader elected)"), printed),
-                    () -> assertTrue(printed.contains("ZenBPM[orders]: the engine at %s/v1 reported ready after"
+                    () -> assertTrue(printed.contains("ZenBPM[orders]: the engine at %s reported ready after"
                             .formatted(engine.address())), printed));
         }
     }
@@ -138,7 +140,7 @@ class ZenBpmEngineWaitTest {
 
             assertTrue(Pattern
                     .compile(Pattern.quote(
-                            "ZenBPM adapter 'orders': the engine at %s/v1 did not report ready within 'vanillabp.adapters.orders.startup-wait: PT0.3S' (waited PT0."
+                            "ZenBPM adapter 'orders': the engine at %s did not report ready within 'vanillabp.adapters.orders.startup-wait: PT0.3S' (waited PT0."
                                     .formatted(engine.address()))
                             + "\\d+S"
                             + Pattern.quote(
@@ -158,7 +160,7 @@ class ZenBpmEngineWaitTest {
             assertTrue(failure
                     .getMessage()
                     .contains(
-                            "The last answer was: ZenBPM adapter 'orders': GET /system/health/ready got no answer (java.net.ConnectException"),
+                            "The last answer was: GET /system/health/ready got no answer (java.net.ConnectException"),
                     failure.getMessage());
         }
     }
@@ -192,7 +194,7 @@ class ZenBpmEngineWaitTest {
                             .requests()
                             .size()),
                     () -> assertEquals(
-                            "ZenBPM adapter 'orders': the engine at %s/v1 refused the readiness request, and waiting longer ('vanillabp.adapters.orders.startup-wait: PT10M') cannot change an answer like that. It answered: ZenBPM adapter 'orders': GET /system/health/ready was answered with status 400, BAD: no such thing. Check 'vanillabp.adapters.orders.rest-address': it has to name the engine itself."
+                            "ZenBPM adapter 'orders': the engine at %s refused the readiness request, and waiting longer ('vanillabp.adapters.orders.startup-wait: PT10M') cannot change an answer like that. It answered: GET /system/health/ready was answered with status 400, BAD: no such thing. Check 'vanillabp.adapters.orders.rest-address': it has to name the engine itself."
                                     .formatted(engine.address()),
                             failure.getMessage()));
         }
@@ -247,8 +249,8 @@ class ZenBpmEngineWaitTest {
     }
 
     @Test
-    @DisplayName("A second workflow module of the adapter id fails at once where the wait failed")
-    void aSecondModuleFailsAtOnceAfterAFailedWait() {
+    @DisplayName("After a failed wait a later workflow module asks once, and fails at once where the engine is still not ready")
+    void aLaterModuleAsksOnceAfterAFailedWait() {
         engine.answers("GET", "/system/health/ready", 503, NOT_READY);
 
         try (var factory = factory(Duration.ofMillis(100))) {
@@ -257,17 +259,99 @@ class ZenBpmEngineWaitTest {
             final var asked = engine
                     .requests()
                     .size();
+
+            final var second = assertThrows(IllegalStateException.class, () -> ZenBpmEngineWait.awaitReady(factory,
+                    QUICK));
+            final var third = assertThrows(IllegalStateException.class, () -> ZenBpmEngineWait.awaitReady(factory,
+                    QUICK));
+
+            assertAll(
+                    () -> assertEquals(asked + 2, engine
+                            .requests()
+                            .size()),
+                    () -> assertEquals("%s Asked once more, it answered: not ready (no cluster leader elected)."
+                            .formatted(first.getMessage()), second.getMessage()),
+                    () -> assertSame(first, second.getCause()),
+                    () -> assertEquals(second.getMessage(), third.getMessage(), "the first failure is kept"),
+                    () -> assertSame(first, third.getCause()));
+        }
+    }
+
+    @Test
+    @DisplayName("An engine which became ready after a failed wait is taken by the next module, and asked no more")
+    void anEngineReadyAfterAFailedWaitIsTaken(final CapturedOutput output) {
+        engine.answers("GET", "/system/health/ready", 503, NOT_READY);
+
+        try (var factory = factory(Duration.ofMillis(100))) {
+            assertThrows(IllegalStateException.class, () -> ZenBpmEngineWait.awaitReady(factory, QUICK));
+            final var asked = engine
+                    .requests()
+                    .size();
+            engine.answers("GET", "/system/health/ready", 200, READY);
+
+            ZenBpmEngineWait.awaitReady(factory, QUICK);
+            ZenBpmEngineWait.awaitReady(factory, QUICK);
+
+            assertAll(
+                    () -> assertEquals(asked + 1, engine
+                            .requests()
+                            .size()),
+                    () -> assertTrue(output
+                            .getAllOfThisTest()
+                            .contains(
+                                    "ZenBPM[orders]: the engine at %s reported ready when it was asked once more after the wait had failed"
+                                            .formatted(engine.address())),
+                            output.getAllOfThisTest()));
+        }
+    }
+
+    @Test
+    @DisplayName("An answer no repetition changes is final: a later module asks nothing and fails with it")
+    void aRefusalIsFinal() {
+        engine.answers("GET", "/system/health/ready", 400, "{\"code\":\"BAD\",\"message\":\"no such thing\"}");
+
+        try (var factory = factory(A_LONG_WAIT)) {
+            final var first = assertThrows(IllegalStateException.class, () -> ZenBpmEngineWait.awaitReady(factory,
+                    QUICK));
             engine.answers("GET", "/system/health/ready", 200, READY);
 
             final var second = assertThrows(IllegalStateException.class, () -> ZenBpmEngineWait.awaitReady(factory,
                     QUICK));
 
             assertAll(
-                    () -> assertEquals(asked, engine
+                    () -> assertEquals(1, engine
                             .requests()
                             .size()),
                     () -> assertEquals(first.getMessage(), second.getMessage()),
                     () -> assertSame(first, second.getCause()));
+        }
+    }
+
+    @Test
+    @DisplayName("A refusal met when a later module asks once more is final as well")
+    void aRefusalAskedOnceMoreIsFinal() {
+        engine.answers("GET", "/system/health/ready", 503, NOT_READY);
+
+        try (var factory = factory(Duration.ofMillis(100))) {
+            assertThrows(IllegalStateException.class, () -> ZenBpmEngineWait.awaitReady(factory, QUICK));
+            engine.answers("GET", "/system/health/ready", 400, "{\"code\":\"BAD\",\"message\":\"no such thing\"}");
+            final var refused = assertThrows(IllegalStateException.class, () -> ZenBpmEngineWait.awaitReady(factory,
+                    QUICK));
+            final var asked = engine
+                    .requests()
+                    .size();
+
+            final var later = assertThrows(IllegalStateException.class, () -> ZenBpmEngineWait.awaitReady(factory,
+                    QUICK));
+
+            assertAll(
+                    () -> assertEquals(asked, engine
+                            .requests()
+                            .size()),
+                    () -> assertTrue(refused
+                            .getMessage()
+                            .contains("refused the readiness request"), refused.getMessage()),
+                    () -> assertSame(refused, later.getCause()));
         }
     }
 
@@ -289,24 +373,77 @@ class ZenBpmEngineWaitTest {
         });
 
         try (var factory = factory(A_LONG_WAIT)) {
-            final var first = CompletableFuture.runAsync(() -> ZenBpmEngineWait.awaitReady(factory, QUICK));
+            final var first = waiting(factory);
             eventually(() -> engine
                     .requests()
                     .isEmpty() ? Optional.empty() : Optional.of(true));
-            final var second = CompletableFuture.runAsync(() -> ZenBpmEngineWait.awaitReady(factory, QUICK));
-            Thread.sleep(300);
+            final var second = waiting(factory);
+            try {
+                eventually(() -> factory
+                        .engineWait().lock
+                        .hasQueuedThread(second.thread()) ? Optional.of(true) : Optional.empty());
+                assertEquals(1, engine
+                        .requests()
+                        .size(), "the second module asked the engine itself");
+            } finally {
+                answer.countDown();
+            }
+
             assertAll(
+                    () -> assertEquals(Optional.empty(), first.outcome(), "first"),
+                    () -> assertEquals(Optional.empty(), second.outcome(), "second"),
                     () -> assertEquals(1, engine
                             .requests()
-                            .size(), "the second module asked the engine itself"),
-                    () -> assertFalse(second.isDone(), "the second module returned while the first one still waited"));
+                            .size()));
+        }
+    }
 
-            answer.countDown();
-            first.get(5, TimeUnit.SECONDS);
-            second.get(5, TimeUnit.SECONDS);
-            assertEquals(1, engine
+    @Test
+    @DisplayName("A module which waits for another one's wait can be interrupted, and the other one's wait goes on")
+    void aModuleWaitingForAnotherOnesWaitCanBeInterrupted() throws Exception {
+        final var answer = new CountDownLatch(1);
+        engine.answers("GET", "/system/health/ready", exchange -> {
+            try {
+                answer.await(10, TimeUnit.SECONDS);
+            } catch (final InterruptedException e) {
+                Thread
+                        .currentThread()
+                        .interrupt();
+            }
+            FakeEngine.respond(exchange, 200, READY);
+        });
+
+        try (var factory = factory(A_LONG_WAIT)) {
+            final var first = waiting(factory);
+            eventually(() -> engine
                     .requests()
-                    .size());
+                    .isEmpty() ? Optional.empty() : Optional.of(true));
+            final var second = waiting(factory);
+            final Optional<Throwable> interrupted;
+            try {
+                eventually(() -> factory
+                        .engineWait().lock
+                        .hasQueuedThread(second.thread()) ? Optional.of(true) : Optional.empty());
+                second
+                        .thread()
+                        .interrupt();
+                interrupted = second.outcome();
+                assertTrue(first
+                        .thread()
+                        .isAlive(), "the first module's wait ended with the second one's interrupt");
+            } finally {
+                answer.countDown();
+            }
+
+            assertAll(
+                    () -> assertEquals(
+                            "ZenBPM adapter 'orders' was interrupted while it waited for the engine at %s to report ready."
+                                    .formatted(engine.address()),
+                            interrupted
+                                    .orElseThrow()
+                                    .getMessage()),
+                    () -> assertTrue(second.interruptedAfterwards(), "interrupt flag lost"),
+                    () -> assertEquals(Optional.empty(), first.outcome()));
         }
     }
 
@@ -364,9 +501,127 @@ class ZenBpmEngineWaitTest {
 
             final var failure = outcome.get(5, TimeUnit.SECONDS);
             assertEquals(
-                    "ZenBPM adapter 'orders' was interrupted while it waited for the engine at %s/v1 to report ready."
+                    "ZenBPM adapter 'orders' was interrupted while it waited for the engine at %s to report ready."
                             .formatted(engine.address()),
                     failure.getMessage());
+        }
+    }
+
+    @Test
+    @DisplayName("An interrupted wait is no answer of the engine: the next module waits on its own")
+    void anInterruptedWaitIsNotRemembered() {
+        engine.answers("GET", "/system/health/ready", 503, NOT_READY);
+
+        try (var factory = factory(A_LONG_WAIT)) {
+            final var first = waiting(factory, new Pacing(Duration.ofSeconds(30), Duration.ofSeconds(30)));
+            eventually(() -> engine
+                    .requests()
+                    .isEmpty() ? Optional.empty() : Optional.of(true));
+            first
+                    .thread()
+                    .interrupt();
+            assertTrue(first
+                    .outcome()
+                    .isPresent());
+            // ready only from the third request on: a module which merely asked once more would
+            // fail, one which waits on its own does not
+            final var asked = new AtomicInteger();
+            engine.answers("GET", "/system/health/ready", exchange -> FakeEngine.respond(exchange, asked
+                    .incrementAndGet() < 3 ? 503 : 200, asked.get() < 3 ? NOT_READY : READY));
+
+            ZenBpmEngineWait.awaitReady(factory, QUICK);
+
+            assertEquals(3, asked.get());
+        }
+    }
+
+    @Test
+    @DisplayName("Closing the factory ends a wait with its next attempt, and every later wait the same way")
+    void closingEndsTheWait() {
+        engine.answers("GET", "/system/health/ready", 503, NOT_READY);
+        final var factory = factory(A_LONG_WAIT);
+        final var first = waiting(factory);
+        eventually(() -> engine
+                .requests()
+                .isEmpty() ? Optional.empty() : Optional.of(true));
+
+        factory.close();
+
+        final var failure = first
+                .outcome()
+                .orElseThrow();
+        final var later = assertThrows(IllegalStateException.class, () -> ZenBpmEngineWait.awaitReady(factory, QUICK));
+        assertAll(
+                () -> assertEquals(
+                        "ZenBPM adapter 'orders': its clients were closed while it waited for the engine at %s to report ready, because the application stops."
+                                .formatted(engine.address()),
+                        failure.getMessage()),
+                () -> assertEquals(failure.getMessage(), later.getMessage()));
+    }
+
+    @Test
+    @DisplayName("A ready answer which arrives after the wait ran out is taken")
+    void aLateReadyAnswerIsTaken() {
+        engine.answers("GET", "/system/health/ready", exchange -> {
+            try {
+                Thread.sleep(400);
+            } catch (final InterruptedException e) {
+                Thread
+                        .currentThread()
+                        .interrupt();
+            }
+            FakeEngine.respond(exchange, 200, READY);
+        });
+
+        try (var factory = factory(Duration.ofMillis(100))) {
+            ZenBpmEngineWait.awaitReady(factory, QUICK);
+
+            assertEquals(1, engine
+                    .requests()
+                    .size());
+        }
+    }
+
+    @Test
+    @DisplayName("A failing wait takes up to startup-wait plus request-timeout: the attempt under way when it runs out ends at its own deadline")
+    void aFailingWaitEndsWithinStartupWaitAndRequestTimeout() throws IOException {
+        try (var blackHole = new ServerSocket(0, 50, InetAddress.getLoopbackAddress())) {
+            final var held = new CopyOnWriteArrayList<Socket>();
+            Thread
+                    .ofVirtual()
+                    .start(() -> {
+                        while (!blackHole.isClosed()) {
+                            try {
+                                held.add(blackHole.accept());
+                            } catch (final IOException e) {
+                                // closed
+                            }
+                        }
+                    });
+            final var startupWait = Duration.ofMillis(300);
+            final var requestTimeout = Duration.ofSeconds(1);
+
+            try (var factory = factory("http://127.0.0.1:%d".formatted(blackHole.getLocalPort()), startupWait,
+                    requestTimeout)) {
+                final var startedAt = System.nanoTime();
+                final var failure = assertTimeoutPreemptively(startupWait
+                        .plus(requestTimeout)
+                        .plusSeconds(1),
+                        () -> assertThrows(IllegalStateException.class, () -> ZenBpmEngineWait
+                                .awaitReady(factory, QUICK)));
+                final var took = Duration.ofNanos(System.nanoTime() - startedAt);
+
+                assertAll(
+                        () -> assertTrue(took.compareTo(requestTimeout) >= 0, took.toString()),
+                        () -> assertTrue(failure
+                                .getMessage()
+                                .contains("The last answer was: GET /system/health/ready got no answer within PT1S"),
+                                failure.getMessage()));
+            } finally {
+                for (final var socket : held) {
+                    socket.close();
+                }
+            }
         }
     }
 
@@ -378,11 +633,76 @@ class ZenBpmEngineWaitTest {
         final String restAddress,
         final Duration startupWait
     ) {
+        return factory(restAddress, startupWait, Duration.ofSeconds(2));
+    }
+
+    private static ZenBpmClientFactory factory(
+        final String restAddress,
+        final Duration startupWait,
+        final Duration requestTimeout
+    ) {
         final var configuration = new ZenBpmAdapterConfiguration();
         configuration.setRestAddress(restAddress);
         configuration.setStartupWait(startupWait);
-        configuration.setRequestTimeout(Duration.ofSeconds(2));
+        configuration.setRequestTimeout(requestTimeout);
         return new ZenBpmClientFactory(ADAPTER_ID, configuration, () -> "shop");
+    }
+
+    private static Waiting waiting(final ZenBpmClientFactory factory) {
+        return waiting(factory, QUICK);
+    }
+
+    /**
+     * A wait on a thread of its own, which a test can find queued at the lock and interrupt.
+     */
+    private static Waiting waiting(
+        final ZenBpmClientFactory factory,
+        final Pacing pacing
+    ) {
+        final var outcome = new CompletableFuture<Optional<Throwable>>();
+        final var interruptedAfterwards = new AtomicBoolean();
+        final var thread = Thread
+                .ofPlatform()
+                .start(() -> {
+                    try {
+                        ZenBpmEngineWait.awaitReady(factory, pacing);
+                        outcome.complete(Optional.empty());
+                    } catch (final RuntimeException e) {
+                        interruptedAfterwards.set(Thread
+                                .currentThread()
+                                .isInterrupted());
+                        outcome.complete(Optional.of(e));
+                    }
+                });
+        return new Waiting(thread, outcome, interruptedAfterwards);
+    }
+
+    /**
+     * A wait started by {@link #waiting(ZenBpmClientFactory, Pacing)}.
+     *
+     * @param thread The thread it runs on
+     * @param result What it ended with: empty where the engine was ready
+     * @param interrupted Whether the thread was still interrupted when the wait failed
+     */
+    private record Waiting(
+        Thread thread,
+        CompletableFuture<Optional<Throwable>> result,
+        AtomicBoolean interrupted
+    ) {
+
+        Optional<Throwable> outcome() {
+            try {
+                return result.get(5, TimeUnit.SECONDS);
+            } catch (final Exception e) {
+                throw new AssertionError("the wait did not end", e);
+            }
+        }
+
+        boolean interruptedAfterwards() {
+            outcome();
+            return interrupted.get();
+        }
+
     }
 
     private static String closedPortAddress() throws IOException {

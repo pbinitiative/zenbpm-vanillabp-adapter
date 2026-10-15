@@ -54,9 +54,13 @@ public class ZenBpmClientRegistry implements AutoCloseable {
     public ZenBpmClientFactory getFactory(final String adapterId) {
         final var factory = factories.get(adapterId);
         if (factory == null) {
+            final var configured = factories.isEmpty()
+                    ? "no id is configured with type '%s'".formatted(ZenBpmAdapter.ADAPTER_TYPE)
+                    : "the configured ids of type '%s' are '%s'".formatted(ZenBpmAdapter.ADAPTER_TYPE, String.join(
+                            "', '", factories.keySet()));
             throw new IllegalStateException(
-                    "No ZenBPM adapter with id '%s' is configured; the configured ids of type '%s' are '%s'. The ids come from 'vanillabp.adapters.<id>.type', so an unknown one is a defect of the wiring rather than of the configuration."
-                            .formatted(adapterId, ZenBpmAdapter.ADAPTER_TYPE, String.join("', '", factories.keySet())));
+                    "No ZenBPM adapter with id '%s' is configured; %s. The ids come from 'vanillabp.adapters.<id>.type', so an unknown one is a defect of the wiring rather than of the configuration."
+                            .formatted(adapterId, configured));
         }
         return factory;
     }

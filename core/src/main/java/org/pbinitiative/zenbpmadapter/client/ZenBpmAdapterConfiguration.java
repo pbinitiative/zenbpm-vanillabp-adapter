@@ -36,7 +36,8 @@ import java.util.stream.Collectors;
  * <li><code>request-timeout</code> (default {@value #DEFAULT_REQUEST_TIMEOUT_ISO}) - the
  * deadline of every REST call</li>
  * <li><code>startup-wait</code> (default {@value #DEFAULT_STARTUP_WAIT_ISO}) - how long the
- * first deployment waits for the engine to report ready</li>
+ * first deployment waits for the engine to report ready; a request under way when it runs out
+ * still ends at its own deadline, <code>request-timeout</code></li>
  * <li><code>worker-threads</code> (default {@value #DEFAULT_WORKER_THREADS}) - how many platform
  * threads run the handlers, or <code>virtual</code> for a virtual thread per handler</li>
  * <li><code>worker-threads-bound</code> (default {@value #DEFAULT_WORKER_THREADS}, only with
@@ -797,16 +798,18 @@ public class ZenBpmAdapterConfiguration {
     }
 
     /**
-     * The base of every REST call: <code>rest-address</code> normalised, with <code>/v1</code>
-     * appended unless it already ends with it. Normalised means a lower-cased scheme and host, an
-     * explicit port, a path without repeated or trailing slashes, and an escaped letter, digit or
-     * <code>-._~</code> written as itself (<code>%76%31</code> is <code>v1</code>); every other
-     * escape stays, so <code>%2F</code> never becomes a separator.
+     * The engine's address: <code>rest-address</code> normalised, without a <code>/v1</code> at
+     * its end. Normalised means a lower-cased scheme and host, an explicit port, a path without
+     * repeated or trailing slashes, and an escaped letter, digit or <code>-._~</code> written as
+     * itself (<code>%76%31</code> is <code>v1</code>); every other escape stays, so
+     * <code>%2F</code> never becomes a separator. The REST calls go below it under
+     * <code>/v1</code>, its operational endpoints such as the readiness probe under
+     * <code>/system</code>, and messages name the engine by it.
      *
-     * @return E.g. <code>http://zenbpm:8080/v1</code>
+     * @return E.g. <code>http://zenbpm:8080</code>
      * @throws IllegalStateException If <code>rest-address</code> is missing or malformed
      */
-    public URI restBaseUri() {
+    public URI engineAddress() {
         final var address = parsedRestAddress();
         final var scheme = address
                 .getScheme()
@@ -821,7 +824,18 @@ public class ZenBpmAdapterConfiguration {
                         .getHost()
                         .toLowerCase(Locale.ROOT),
                 port,
-                path.endsWith(API_VERSION_PATH) ? path : path + API_VERSION_PATH));
+                path.endsWith(API_VERSION_PATH) ? path.substring(0, path.length() - API_VERSION_PATH.length()) : path));
+    }
+
+    /**
+     * The base of every REST call: {@link #engineAddress()} with <code>/v1</code> appended, so
+     * <code>rest-address</code> may name it or leave it out.
+     *
+     * @return E.g. <code>http://zenbpm:8080/v1</code>
+     * @throws IllegalStateException If <code>rest-address</code> is missing or malformed
+     */
+    public URI restBaseUri() {
+        return URI.create(engineAddress() + API_VERSION_PATH);
     }
 
     /**

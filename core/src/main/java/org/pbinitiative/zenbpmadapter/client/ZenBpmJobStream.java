@@ -6,6 +6,7 @@ package org.pbinitiative.zenbpmadapter.client;
 
 import java.time.Duration;
 import java.time.Instant;
+import java.time.temporal.ChronoUnit;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -294,6 +295,34 @@ public class ZenBpmJobStream implements AutoCloseable {
      */
     public long reconnects() {
         return reconnects.get();
+    }
+
+    /**
+     * Where the stream stands now, in words for an operator, as the health check shows it:
+     * <ul>
+     * <li><code>not opened yet</code> before the first subscription;</li>
+     * <li><code>connecting</code> while the call is open and not yet taken by the engine;</li>
+     * <li><code>connected</code> once a job arrived on the call, or it stayed open after its
+     * connection was ready;</li>
+     * <li><code>down since &lt;instant&gt;, &lt;n&gt; attempt(s)</code> from a lost call until a
+     * new one is taken, the attempts counted as in the line which reports it back;</li>
+     * <li><code>closed</code> after {@link #close()}.</li>
+     * </ul>
+     *
+     * @return One of the above
+     */
+    public synchronized String state() {
+        if (closed) {
+            return "closed";
+        }
+        if (outage != null) {
+            return "down since %s, %d attempt(s)".formatted(outage.since.truncatedTo(ChronoUnit.SECONDS),
+                    outage.attempts);
+        }
+        if (call == null) {
+            return "not opened yet";
+        }
+        return call.established ? "connected" : "connecting";
     }
 
     /**

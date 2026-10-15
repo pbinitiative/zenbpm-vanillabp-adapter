@@ -10,6 +10,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTimeoutPreemptively;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.pbinitiative.zenbpmadapter.client.ContractFixtures.eventually;
 
@@ -20,15 +21,18 @@ import java.net.InetSocketAddress;
 import java.net.ServerSocket;
 import java.net.Socket;
 import java.time.Duration;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.pbinitiative.zenbpmadapter.client.ZenBpmClientFactory.WorkflowModuleShutdownRegistration;
 
 import io.grpc.inprocess.InProcessChannelBuilder;
 import io.vanillabp.integration.test.utils.CapturedOutput;
@@ -189,6 +193,78 @@ class ZenBpmClientFactoryTest {
     }
 
     @Test
+    @DisplayName("A hook may wait for the module's own stop, which removes the hook meanwhile")
+    void aHookMayWaitForTheModulesOwnStop() {
+        final var closed = new CopyOnWriteArrayList<String>();
+        final var factory = recordingFactory(closed);
+        final var registration = new AtomicReference<WorkflowModuleShutdownRegistration>();
+        registration.set(factory.workflowModuleStarted("billing", () -> {
+            // the module's own stop runs on another thread, and ends by removing its hook
+            final var ownStop = Thread
+                    .ofPlatform()
+                    .start(() -> registration
+                            .get()
+                            .close());
+            try {
+                ownStop.join(A_MOMENT.multipliedBy(5));
+            } catch (final InterruptedException e) {
+                Thread
+                        .currentThread()
+                        .interrupt();
+            }
+            closed.add(ownStop.isAlive() ? "billing: its own stop still waits" : "billing: stopped by itself");
+        }));
+
+        assertTimeoutPreemptively(Duration.ofSeconds(5), factory::close);
+
+        assertEquals(List.of("billing: stopped by itself", "stream, executor running", "rest, executor shut down"),
+                closed);
+    }
+
+    @Test
+    @DisplayName("A module which starts once closing began is refused, also while the hooks run, and nothing is left open")
+    void aModuleCannotStartOnceClosingBegan() {
+        final var factory = recordingFactory(new CopyOnWriteArrayList<>());
+        final var whileClosing = new AtomicReference<Throwable>();
+        factory.workflowModuleStarted("billing", () -> whileClosing.set(assertThrows(IllegalStateException.class,
+                () -> factory.workflowModuleStarted("shipping", () -> {
+                }))));
+
+        factory.close();
+        final var afterClosing = assertThrows(IllegalStateException.class, () -> factory.workflowModuleStarted("late",
+                () -> {
+                }));
+
+        assertAll(
+                () -> assertEquals(
+                        "ZenBPM adapter 'orders': workflow module 'shipping' cannot start, because the clients of the adapter id are closed or being closed while the application stops.",
+                        whileClosing
+                                .get()
+                                .getMessage()),
+                () -> assertEquals(
+                        "ZenBPM adapter 'orders': workflow module 'late' cannot start, because the clients of the adapter id are closed or being closed while the application stops.",
+                        afterClosing.getMessage()),
+                () -> assertEquals(Set.of(), factory.getOpenWorkflowModules()));
+    }
+
+    @Test
+    @DisplayName("A client which fails to close does not keep the others open, and the first failure is thrown with the later ones")
+    void aFailingCloseDoesNotKeepTheOthersOpen() {
+        final var closed = new CopyOnWriteArrayList<String>();
+        final var factory = recordingFactory(closed, true);
+
+        final var failure = assertThrows(IllegalStateException.class, factory::close);
+
+        assertAll(
+                () -> assertEquals(List.of("stream, executor running", "rest, executor shut down"), closed),
+                () -> assertEquals("the stream would not close", failure.getMessage()),
+                () -> assertEquals(List.of("the HTTP client would not close"), Arrays
+                        .stream(failure.getSuppressed())
+                        .map(Throwable::getMessage)
+                        .toList()));
+    }
+
+    @Test
     @DisplayName("Closing twice closes once")
     void closingTwiceClosesOnce() {
         final var closed = new CopyOnWriteArrayList<String>();
@@ -242,6 +318,17 @@ class ZenBpmClientFactoryTest {
      * with whether the executor was shut down at that moment.
      */
     private static ZenBpmClientFactory recordingFactory(final List<String> closed) {
+        return recordingFactory(closed, false);
+    }
+
+    /**
+     * A factory as {@link #recordingFactory(List)} builds it, whose stream and REST client throw
+     * where they are closed, if asked to.
+     */
+    private static ZenBpmClientFactory recordingFactory(
+        final List<String> closed,
+        final boolean failing
+    ) {
         final var configuration = configuration("http://localhost:8080");
         final var executor = ZenBpmExecutor.of(ADAPTER_ID, ZenBpmExecutionModel.DEFAULT);
         final var rest = new ZenBpmRestClient(ADAPTER_ID, configuration) {
@@ -250,6 +337,9 @@ class ZenBpmClientFactoryTest {
             public void close() {
                 closed.add("rest, executor %s".formatted(executor.isShutdown() ? "shut down" : "running"));
                 super.close();
+                if (failing) {
+                    throw new IllegalStateException("the HTTP client would not close");
+                }
             }
 
         };
@@ -261,6 +351,9 @@ class ZenBpmClientFactoryTest {
             public void close() {
                 closed.add("stream, executor %s".formatted(executor.isShutdown() ? "shut down" : "running"));
                 super.close();
+                if (failing) {
+                    throw new IllegalStateException("the stream would not close");
+                }
             }
 
         };

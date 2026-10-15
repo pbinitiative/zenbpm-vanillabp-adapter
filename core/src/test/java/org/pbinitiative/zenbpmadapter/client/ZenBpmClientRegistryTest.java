@@ -53,6 +53,18 @@ class ZenBpmClientRegistryTest {
     }
 
     @Test
+    @DisplayName("An adapter id asked of a registry without any says that none is configured")
+    void anEmptyRegistrySaysSo() {
+        try (var registry = new ZenBpmClientRegistry(List.of())) {
+            final var failure = assertThrows(IllegalStateException.class, () -> registry.getFactory("orders"));
+
+            assertEquals(
+                    "No ZenBPM adapter with id 'orders' is configured; no id is configured with type 'zenbpm'. The ids come from 'vanillabp.adapters.<id>.type', so an unknown one is a defect of the wiring rather than of the configuration.",
+                    failure.getMessage());
+        }
+    }
+
+    @Test
     @DisplayName("Two adapter ids share an engine where their addresses name the same one, however they are spelled")
     void adapterIdsShareAnEngineByItsIdentity() {
         final var a = configured("a", "http://ZenBPM:8080");
