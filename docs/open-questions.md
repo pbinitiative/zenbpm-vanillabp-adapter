@@ -28,6 +28,13 @@ creates (smallest change), and consider `PATCH /v1/process-instances/{key}` acce
 
 **ZenBPM maintainers answer:** Nice to have.
 
+**Raised 2026-10-15 to medium priority**, `PATCH /v1/process-instances/{key}` accepting
+`businessKey` first, `businessKey` on `POST /v1/messages` (answering with the started instance's
+key) as the alternative. The gap widened when VanillaBP's adapter SPI changed: a workflow the engine
+starts by a timer has no business key either, because the application names it now (decision 25).
+Meanwhile the start marker records the instance key of every such workflow in the application's
+start row (decision 26), which is enough while that row lives; GAPS 1 lists what it does not reach.
+
 ### 2. Can the job lock be configured per subscription, and can a worker extend or acknowledge it?
 
 **Found.** `jobLockDuration = 30 s` and `maxActiveJobsPerClient = 10` are constants
@@ -65,6 +72,10 @@ incident after `max-redeliveries` (E6 S6.2.1, decision 8).
 
 **Story:** [`engine-enablement/E13.3-job-retries-with-backoff.md`](engine-enablement/E13.3-job-retries-with-backoff.md) (2026-09-19); the strategy is its section 4.1, the one default to decide its section 9.1.
 
+**Implemented (2026-10-12):** engine commit `bc3384b3`, contained in the adapter's pin `bdd795a3`.
+The "Plan meanwhile" above holds until the adapter twin: it fails a thrown handler at the engine
+with retries and backoff, and the local retry goes (decision 27, which supersedes decision 8).
+
 ### 4. Is there a way to propagate job outputs without output mappings?
 
 **Found.** `PropagateOnlyMappedOutputs` drops every completion variable of a task without
@@ -92,6 +103,11 @@ end (with the kind), job termination and user-task lifecycle, sourced from the e
 instance. E13.5, E13.6.
 
 **ZenBPM maintainers answer:** Low priority.
+
+**Decided 2026-10-15:** a marker follows every start event of the top-level process (none, message,
+timer) and precedes every end event (decision 26, which supersedes decision 5), because VanillaBP
+now expects to hear about every start of a workflow. `TERMINATED` no longer exists: a workflow ends
+`COMPLETED` or `CANCELED`, and one cancelled at the engine still reports nothing.
 
 ### 6. Can a message publication refuse the fallback to a start subscription, and can messages be buffered?
 
@@ -161,6 +177,11 @@ There are none on ZenBPM, and `by-adapter` cannot be served at all. **Recommenda
 decision 2; alternatively keep `by-adapter` as the default and let every ZenBPM application fail its
 first boot with the two ways out, as the PEA adapter does.
 
+**Decided 2026-10-15: the alternative.** VanillaBP's contract for adapters now says that a BPMS
+without an isolation of its own keeps `by-adapter` as the default and refuses it while deploying. So
+every application states `use-prefix` or `none`, one line per adapter id (decision 24, which
+supersedes draft decision 2).
+
 ### 11. Marker service tasks which change the model's topology
 
 Decision 5 inserts service tasks before end events and after timer start events. It changes what a
@@ -170,12 +191,20 @@ a CDC consumer (reads another product's tables). **Recommendation:** accept for 
 mark decision 5 as superseded by E13.6 when the engine offers notifications, and name the markers on
 the wiki's Deviations page.
 
+**2026-10-15:** decision 26 replaces decision 5 and puts a marker after every start event of the
+top-level process, not only after timer starts, so the model gains one task per start event as well.
+
 ### 12. `message-start-lookup: scan` as an opt-in
 
 A client-side scan of active instances is the kind of thing VanillaBP avoids (decision 19 of the
 platform: a start asks for numbers). Here it runs per probe, not per boot, and is bounded.
 **Recommendation:** ship it opt-in with a WARN naming the bound, or refuse `startWorkflowByMessage`
 entirely until E13.4 lands. The plan ships the opt-in.
+
+**Decided 2026-10-15:** `scan` stays an opt-in until E13.4 lands, and is removed then. The start
+markers of decision 26 record the instance key of a message-started workflow, so S7.1.2 no longer
+has to refuse such a start by default; the scan only covers what that record does not reach (GAPS
+1).
 
 ### 13. Repository, organisation, coordinates and licence
 
@@ -216,6 +245,9 @@ there, under MIT or Apache 2.0, would settle it for the copies and for the code 
 adapters recognises them (`request-timeout`, `startup-wait`, `worker-threads`, `shutdown-grace`,
 `retry-backoff` are identical on purpose).
 
+**2026-10-15:** `max-redeliveries` goes with the E13.3 twin (decision 27), and
+`message-start-lookup-max-instances` with the scan once E13.4 lands.
+
 ### 15. Two things the core could offer every remote adapter
 
 Not needed for this plan, but seen while mapping: (a) the instance-facts cache with a bounded LRU and
@@ -223,6 +255,9 @@ a "miss is not cached" rule, and (b) the local retry with backoff and a maximum 
 are written in Camunda 8 and again here. If a third remote adapter comes, both are candidates for
 `migration-adapter` support classes. **Recommendation:** note it in the platform's backlog, do nothing
 now.
+
+**2026-10-15:** (b) is gone from this adapter: since E13.3 the engine retries a failed job itself
+(decision 27).
 
 ### 16. How the CI reads VanillaBP's snapshot artifacts
 

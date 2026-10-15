@@ -1,12 +1,14 @@
 # Draft `DECISIONS.md` of `zenbpm-vanillabp-adapter`
 
-These are the entries the plan expects the repository to carry once its stories are done. Numbers are
-handed out here so stories can already say `see decision 5 in the repository's DECISIONS.md`; the
-ZenBPM maintainers, who own this repository, confirm or strike an entry before the story which first
-cites it is merged (open question 10 names the one the VanillaBP project should hear about).
+These are the entries the plan expects the repository to carry once its stories are done. Numbers
+are handed out here so stories can already say `see decision 5 in the repository's DECISIONS.md`;
+the ZenBPM maintainers, who own this repository, confirm or strike an entry before the story which
+first cites it is merged (open question 10 names the one the VanillaBP project should hear about).
 Entries 16 and 17 were added when the ownership was settled on 2026-09-13. The form follows the
 other adapters: a decision earns a number when several places rely on it, an entry is superseded and
-never edited.
+never edited. Entries 24 to 28 were added on 2026-10-15, after VanillaBP's adapter SPI had changed
+under the plan; the numbers 18 to 23 are taken by entries the repository's `DECISIONS.md` added on
+its own.
 
 ### 1. The adapter is native, and the Camunda 8 adapter is its template
 
@@ -19,6 +21,8 @@ What is borrowed from the PEA adapter is the raw-XML handling, because a model t
 artifact would tie this adapter to Camunda for no reason.
 
 ### 2. The default name-clash mode is `use-prefix`, and `by-adapter` is refused
+
+**Superseded by decision 24 (2026-10-15).**
 
 ZenBPM has no tenant or namespace, so `by-adapter` cannot be served. Every other adapter defaults to
 `by-adapter` because version 1 deployed into a tenant named after the workflow module and an application
@@ -53,6 +57,8 @@ a catch element is refused rather than rewritten, see GAPS 4.
 
 ### 5. Lifecycle notifications are marker service tasks, because the engine has no listeners
 
+**Superseded by decision 26 (2026-10-15).**
+
 ZenBPM offers neither execution listeners nor an event stream. Where the application wants to hear
 that a workflow ended, a service task of the adapter's own is inserted in front of every end event of
 the top-level process; where a timer starts a workflow and an aggregate has to be built, one is inserted
@@ -64,6 +70,8 @@ number of instances and cannot name the end event; a CDC consumer was rejected b
 database rows of another product's schema.
 
 ### 6. The aggregate id is the business key AND a variable; a BPMS-initiated workflow's id is its instance key
+
+**Superseded by decision 25 (2026-10-15).**
 
 The engine finds an instance by `businessKey` and never by a variable, so the aggregate id travels as
 the business key with every start the application makes. It travels as a variable named after the
@@ -85,6 +93,8 @@ output mapping per shared attribute was rejected: which attributes are shared de
 class and its annotations, not on the model.
 
 ### 8. A failed handler is not failed at the engine, because the engine has no retries
+
+**Superseded by decision 27 (2026-10-15).**
 
 `POST /jobs/{key}/fail` without an error code creates an incident at once. A handler which threw is
 therefore not reported. Instead the adapter extends the job's lock by the backoff (`retry-backoff`,
@@ -180,3 +190,78 @@ MIT project as long as the licence text and the attributions travel with the cod
 file keeps its original header, `LICENSE-APACHE-2.0` holds the licence text, and `NOTICE` names the two
 origins. A file written from scratch carries the MIT header. Which is which is decided when the file is
 created and never changed afterwards, because the origin of a file is a fact and not a preference.
+
+### 24. `by-adapter` stays the default and is refused while deploying
+
+Supersedes decision 2. VanillaBP's contract for adapters now says what a BPMS without an isolation
+of its own does about the default: it keeps `by-adapter` and refuses it while deploying, with
+`scoping.validateNativeIsolationSupported(...)`, whose message names `use-prefix` and `none` as the
+two ways out. ZenBPM has no tenant and no namespace, so that is its case, and the Process-Engine-API
+adapter does the same. Making `use-prefix` the default instead would let an application which moves
+to ZenBPM from another adapter end up with prefixed identifiers without anybody choosing them. The
+price is one line per adapter id, for example `vanillabp.adapters.zenbpm.name-clash-avoidance:
+use-prefix`, which may also be set per workflow module or workflow. The boot message names that
+line, and the wiki says so on the first page an application reads.
+
+### 25. The aggregate id is the business key AND a variable; a workflow the engine starts is named by the application
+
+Supersedes decision 6. The first half stands: the engine finds an instance by `businessKey` and
+never by a variable, so the aggregate id travels as the business key with every start the
+application makes, and as a variable named after the aggregate's id attribute, which the injected
+correlation keys read. The second half fell with the SPI: nothing derives an id from the instance
+key any more. The marker job of decision 26 builds the context (the instance's variables, the
+instance key as `nativeInstanceId`, the version, sync mode `FULL`, and the instance's business key
+where it has one) and calls `startWorkflowByBpms`. The application's method builds and names the
+aggregate, the adapter writes `result.variables()` into the instance with `PATCH
+/v1/process-instances/{key}/variables`, and only then completes the marker job, so a redelivery
+finds the name and answers `created() == false`. Such a workflow is found later through the instance
+key the core hands to `awarenessOfWorkflow` as its fourth argument (from the start row, a task
+record or the election cache). That key may only shorten an `ACTIVE` answer: any other state, a
+`404` and a `502` fall through to the business-key search, and the key never turns an answer into
+`UNKNOWN_TO_BPMS`. A crash between the commit of the aggregate and the PATCH lets the redelivery
+build a second aggregate, unless the application's id is deterministic; Camunda 8 has the same
+window.
+
+### 26. Lifecycle notifications are marker service tasks after every start event and before every end event
+
+Supersedes decision 5. The engine still has no listeners, so markers stay. What changed is the
+contract: VanillaBP expects to hear about EVERY start of a workflow, plain and message starts
+included, because a workflow somebody started past VanillaBP needs an aggregate as much as a
+timer-started one. So a `vanillabp__started` marker follows every start event (none, message, timer)
+of the TOP-LEVEL process, wherever `startsAWorkflowOfItsOwn` says the process starts a workflow of
+its own. Sub-processes and event sub-processes get none, because the engine runs them as child
+instances, and a called process gets neither marker. `vanillabp__ended` goes in front of every end
+event of the top-level process wherever `workflowEndedHandlerExists` answers yes, which it also does
+when `vanillabp.delivery.release-on-workflow-end` is on. Every start event is reported to
+`validateBpmsInitiatedStarts`, those of called processes included, so the core can refuse a start
+the engine fires by itself where no aggregate could be built. A workflow ends `COMPLETED` or
+`CANCELED`. For the application's own start, the marker finds the name already there and `created()
+== false` is the normal answer. The cost is one job, one transaction and one variable update per
+started workflow, the same price VanillaBP names for Camunda 8.
+
+### 27. A failed handler is failed at the engine, with retries and backoff
+
+Supersedes decision 8. Since E13.3 (engine commit `bc3384b3`, contained in the pinned `bdd795a3`)
+the engine counts retries and waits a backoff, like Camunda 8. A handler which threw is therefore
+reported with `POST /v1/jobs/{key}/fail` carrying `message`, `deliveryToken`, the stream's
+`clientId` and, where configured, `retryBackoff`, but no `retries`: the engine reads that as "one
+less than now". Without `clientId` the engine keeps the lock and ignores the backoff. The local retry of `ZenBpmLocalRetry` and the setting `max-redeliveries` go. A
+delivery for a workflow this application does not own (`DeliveryOfAnUnknownWorkflowException`) is
+failed with `retries: 0` and the exception's message, and logged as a WARN without a stack trace: an
+operator sees an incident naming the reason at once. That is stricter than Camunda 8, which counts
+such a service-task job down like any other failure, and it is chosen on purpose, because no retry
+can make the workflow known.
+
+### 28. The workflow id is the root instance key of the task's own process
+
+The adapter reports one workflow id per workflow: in `TaskInvocationContext.getWorkflowId`, in
+`WorkflowEndedContext.getWorkflowId`, through `reportStartedWorkflow` and as the start marker's
+`nativeInstanceId`. VanillaBP finds the open tasks of a workflow by that id and cancels them when
+the workflow ends, so all of them must name the same value. The engine runs an embedded sub-process,
+a multi-instance body and an event sub-process as child instances, so a job's own
+`processInstanceKey` is often not the workflow's. The adapter therefore walks up
+`parentProcessInstanceKey` to the root, and stops at a call activity: a task of a called process
+names the called instance, because VanillaBP cancels the open tasks of exactly that instance when it
+ends (platform decision 124). The open-task probe resolves the root the same way before it compares.
+The job carries no root key (GAPS 22), so the walk is cached in the instance cache of S5.2.1 until
+E13.14 puts `rootProcessInstanceKey` on the job.

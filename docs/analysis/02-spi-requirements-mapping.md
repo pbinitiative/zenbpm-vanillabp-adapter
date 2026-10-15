@@ -16,6 +16,7 @@ ZenBPM offers for it, the verdict and the design the adapter takes. The verdicts
 | Version guard descriptor | - | SUPPORTED | `META-INF/vanillabp/adapter-zenbpm.properties` with `part.version`, `part.artifact` and `platform.version`, which the platform's `VanillaBpParts` reads, plus the engine commit the tests ran against |
 | `checkHealth()` | `GET /system/health/ready` | SUPPORTED | READY -> UP, 503 -> DOWN with reasons, unconfigured -> UNKNOWN |
 | Authentication of the adapter against the engine | none exists | MISSING | no `auth.*` keys in the first release; the wiki says a proxy has to do it (engine-enablement E13.9) |
+| `StartupReport` (what a start found, platform decisions 96, 97) | - | SUPPORTED | the bean is injected on both platforms; configuration findings go through it with `StartupTopic.CONFIGURATION` and the adapter id as scope, not into the log |
 
 ## B. Deployment pipeline
 
@@ -24,13 +25,18 @@ ZenBPM offers for it, the verdict and the design the adapter takes. The verdicts
 | `readBpmn` -> one entry per executable process | one process per file; parsing by local name | SUPPORTED | DOM parse (borrowed from PEA), refuse a file with more than one executable process with a guiding message |
 | `prepareBpmn` rewrites the model once per FILE | XML in, XML out | SUPPORTED | context remembers rewritten filenames |
 | Scoping (`use-prefix`) of process ids, messages, errors, task types, decision ids, `calledElement` | identifiers are plain strings | SUPPORTED | `ZenBpmScoping` = PEA's DOM rewrite plus `zenbpm:calledDecision` and `zenbpm:calledElement@processId` |
-| `by-adapter` scoping | no tenant | MISSING | refused via `validateNativeIsolationSupported`; adapter default is `use-prefix` (draft decision 2) |
+| `by-adapter` scoping | no tenant | MISSING | stays the default, as the contract asks of a BPMS without isolation, and is refused while deploying via `validateNativeIsolationSupported`, whose message names `use-prefix` and `none`; every application configures one of them (decision 24) |
 | `deployResources` one deployment per module | one file per request; `200` = unchanged | SUPPORTED | one POST per BPMN file, one per DMN file, all before `startWorkflowProcessing`; a partial failure ends the boot naming the file |
 | `registerDeployedVersion` also when nothing changed | `200` returns the existing key; `GET .../{key}` returns `version` | SUPPORTED | one GET per file after deployment |
-| Wiring validation (`validateTaskWiring`) for service, send, business-rule (job), receive? | `zenbpm:taskDefinition type`; a business rule task with `calledDecision` is engine-served | SUPPORTED | spec per job-producing task; user tasks as optional specs |
+| Wiring validation (`validateTaskWiring`, four arguments) for service, send, business-rule (job), receive? | `zenbpm:taskDefinition type`; a business rule task with `calledDecision` is engine-served | SUPPORTED | for claimed processes only (`isClaimedByAWorkflowService`, platform decision 120); spec per job-producing task with its `name`; user tasks as optional specs |
+| `reportStartMessages`, `validateBpmsInitiatedStarts` | message and timer start events are in the model | SUPPORTED | the plain start-message names once per claimed process (no call where a name is an expression); EVERY start event, of called processes too, to `validateBpmsInitiatedStarts` |
+| `reportModelExpressions` | FEEL expressions on flows, timers, multi-instance elements, correlation keys, mappings, decision inputs | SUPPORTED | every `=` expression with its `ExpressionPlace`, read before the adapter's own rewrites |
+| `multiInstanceElementNames`, `reportCompensation` | `inputElement` on multi-instance elements; no compensation | SUPPORTED | asked for every multi-instance element; compensation is refused, so nothing to report |
 | `workflowTaskCompletesAsynchronously` refusal | every job stays open until completed | SUPPORTED | nothing to refuse |
 | `reportConcurrentTokenElements` | model readable | SUPPORTED | parallel/inclusive forks, parallel multi-instance, non-interrupting boundary and event sub-processes |
-| `unsharedWorkflowAggregatePaths` | FEEL expressions on flows, timers, collections, assignees | SUPPORTED | extract identifiers with a conservative FEEL name scanner |
+| `unsharedWorkflowAggregatePaths`, `declaredTypesOfWorkflowAggregatePaths` | FEEL expressions on flows, timers, collections, assignees | NOT USED | not called, as in the Camunda 8 adapter; an expression reading an attribute the aggregate does not share fails at runtime (deviation 14) |
+| Identifier reports (`reportIdentifiersTheBpmsAlreadyHolds`, `reportIdentifiersTheModelsDeclare`, `identifiersOfVersion`) | `GET /v1/process-definitions?bpmnProcessId=`; no resource name or owner on a definition; the DMN list has no decision-id filter | PARTIAL | after the deploy; what counts as "held elsewhere" is settled in S4.3.2; a failed lookup never fails the deployment (debug only) |
+| `whatThisBpmsDoesWith(Class, ValueDirection)` | numbers are float64 in the engine | SUPPORTED | `ZenBpmValueTypes`: Strings, Booleans, enums, `Integer`, `Short` and `Byte` survive; `Long`, `BigInteger` and `BigDecimal` are `changed` (S2.2.1: `2^53+1` comes back as `2^53`); `Double` and `Float` are decided against S2.2.1's `1000.0 -> 1000`; the rest `cannotSay` |
 | DMN deployment (`readDmn`) with scoped decision ids | `POST /v1/dmn-resource-definitions`; `zenbpm:calledDecision decisionId` | SUPPORTED | `DmnDecisionIds` from the core for the file, own rewrite for the task |
 | `startWorkflowProcessing` / `stopWorkflowProcessing` | one `JobStream` per client id, subscribe/unsubscribe per job type | SUPPORTED | one stream per adapter id shared by all modules; per module a set of job types |
 
@@ -38,24 +44,25 @@ ZenBPM offers for it, the verdict and the design the adapter takes. The verdicts
 
 | Operation | Phase one (asks) | Phase two (acts) | Verdict |
 |---|---|---|---|
-| `START_WORKFLOW` | nothing (a start has nothing to check) | `POST /v1/process-instances {bpmnProcessId (scoped), businessKey = aggregate id, variables = shared values + id variable, historyTimeToLive}` | SUPPORTED; idempotency only through the redispatch probe (business-key search) |
-| `START_WORKFLOW_BY_MESSAGE` | model check: the message is a start event of a deployed model of the module | `POST /v1/messages` without key, variables incl. id variable | PARTIAL: the instance gets no business key, so it is not findable by the probe (engine-gated, E13.4). Fallback: client-side scan of active instances of the process by the id variable, bounded and warned |
-| `COMPLETE_TASK` / `CANCEL_TASK` | pre-commit `GET /v1/jobs/{key}` = active, scope check through the instance | `PATCH variables` then `POST .../complete`, resp. `POST .../fail {errorCode}` | SUPPORTED; already completed -> 201 = success; 404 = gone = success with WARN |
+| `START_WORKFLOW` | nothing (a start has nothing to check) | `POST /v1/process-instances {bpmnProcessId (scoped), businessKey = aggregate id, variables = shared values + id variable, historyTimeToLive}`; `reportStartedWorkflow(key, version)` | SUPPORTED; idempotency only through the redispatch probe (business-key search) |
+| `START_WORKFLOW_BY_MESSAGE` | the core refuses a message which starts no process of the service (`reportStartMessages`) | `POST /v1/messages` without key, variables incl. id variable; the engine answers no instance key, so nothing is reported here | PARTIAL: the instance gets no business key (engine-gated, E13.4). The start marker reports the instance key, which the core writes into the start row, and the probe finds the workflow through it (decision 25). `message-start-lookup: scan` stays an opt-in for what the start row cannot cover |
+| `COMPLETE_TASK` / `CANCEL_TASK` | pre-commit `GET /v1/jobs/{key}` = active, scope check through the instance; a gone task throws `TaskNotFoundException` | `PATCH variables` then `POST .../complete`, resp. `POST .../fail {errorCode}` | SUPPORTED; already completed -> 201 = success; 404 = gone = success with WARN |
 | `COMPLETE_USER_TASK` / `CANCEL_USER_TASK` | same, the user task IS a job | same | SUPPORTED (ZenBPM can cancel a user task by BPMN error, unlike Camunda 8) |
 | `CORRELATE_MESSAGE` | model check like Camunda 8 (declared message, and NOT also a start message - see gap) | `POST /v1/messages {name scoped, correlationKey = correlationId ?? aggregate id, variables}`; 404 -> `PhaseTwoRetryLater` | SUPPORTED with a deviation: no buffering, the outbox is the buffer |
 | `SEND_SIGNAL` | - | - | MISSING: not in the map (`PhaseOperationNotSupported`) |
-| `AGGREGATE_CHANGED` | probe | global: `PATCH /v1/process-instances/{key}/variables`; task-scoped: the same on the job's own `processInstanceKey` (sub-process and multi-instance bodies ARE child instances) | SUPPORTED |
+| `AGGREGATE_CHANGED` | probe | global: the instance of `PhaseTwoRequest#workflowId()` first, else the probe, then `PATCH /v1/process-instances/{key}/variables`; task-scoped: the same on the job's own `processInstanceKey` (sub-process and multi-instance bodies ARE child instances) | SUPPORTED |
 | `isPhaseTwoFailureRepeatable` | - | permanent: HTTP 400, 413, 415, `NumberFormatException` on a key; repeated: 404 (retry-later), 409, 500, 502, timeouts | SUPPORTED |
 
 ## D. Probes (the election)
 
 | Probe | ZenBPM | Verdict | Design |
 |---|---|---|---|
-| `awarenessOfWorkflow` | `GET /v1/process-instances?businessKey=<id>&bpmnProcessId=<scoped>` (+ `GET /v1/process-instances/{key}` where the id is a snowflake key) | SUPPORTED | ACTIVE for `active\|failed`, COMPLETED for `completed\|terminated`, UNKNOWN for an empty page, BPMS_UNAVAILABLE for I/O and 5xx; scope = the processes of the `WorkflowScope`, scoped |
-| `awarenessOfWorkflowForRedispatch` | same query | SUPPORTED | honest query, so the default delegation holds; a failed query is BPMS_UNAVAILABLE, never ACTIVE |
+| `awarenessOfWorkflow` (four arguments) | `GET /v1/process-instances/{workflowId}` where the core hands one; `GET /v1/process-instances?businessKey=<id>&bpmnProcessId=<scoped>` | SUPPORTED | the key answers ACTIVE only; any other answer, 404 and 502 fall through to the business-key search (decision 25). ACTIVE for `active\|failed`, COMPLETED for `completed\|terminated`, UNKNOWN for an empty page, BPMS_UNAVAILABLE for I/O and 5xx; scope = the processes of the `WorkflowScope`, scoped |
+| `awarenessOfWorkflowForRedispatch` (with `plannedAt`) | business-key search with `createdFrom` (inclusive) | SUPPORTED | the four-argument form is implemented: instances created at or after `plannedAt`, no state filter; a failed query is BPMS_UNAVAILABLE, never ACTIVE |
 | `awarenessOfTask` / `awarenessOfUserTask` | `GET /v1/jobs/{key}` then the instance for the scope | SUPPORTED | non-advancing read; a job of another scope is UNKNOWN |
-| `canLocateWorkflows` | true | SUPPORTED | - |
-| `workflowVisibilityDelay` | leader reads its own writes; followers lag by replication | PARTIAL | `workflow-visibility-timeout`, default `PT2S`, polled every 250 ms |
+| `canLocateWorkflows` | true | SUPPORTED | a workflow without a business key is located only while the core knows its instance key (GAPS 1) |
+| `workflowVisibilityDelay`, `workflowVisibilityDelay(workflowId)` | leader reads its own writes; followers lag by replication | PARTIAL | `workflow-visibility-timeout`, default `PT2S`, polled every 250 ms, for both forms |
+| `OpenTaskProbe` (`reportTasksTheBpmsNoLongerHas`, platform decision 74) | `GET /v1/jobs/{key}` | SUPPORTED | after every delivery (S6.1.3): 404 or `completed`/`terminated` = GONE, `active`/`failed` = STILL_THERE, anything else CANNOT_SAY; user-task definitions CANNOT_SAY while the poller reports their cancellation |
 | `deliversTasksAtLeastOnce` | redelivery after the lock lapses, on a leader change, after a stream reconnect | SUPPORTED | `true`; delivery id = job key |
 | `openTaskCount` | `GET /v1/jobs?...` has `totalCount`, no filter by process id | PARTIAL | answered through `GET /v1/process-definitions/{key}/statistics` per known definition key, `null` where the module deployed nothing |
 
@@ -66,13 +73,17 @@ ZenBPM offers for it, the verdict and the design the adapter takes. The verdicts
 | `getTaskDefinition` | `WaitingJob.type` | SUPPORTED | unscoped through `plainTaskDefinition` |
 | `getWorkflowAggregateId` | not on the job | PARTIAL | `GET /v1/process-instances/{instance_key}` once per instance key, cached (`ZenBpmInstanceCache`); business key first, id variable second |
 | `getTaskId` | `WaitingJob.key` | SUPPORTED | |
+| `getBpmnElementId` | `WaitingJob.element_id` | SUPPORTED | the core routes by it (platform decision 67) |
+| `getWorkflowId` | `WaitingJob.process_instance_key`; no root key on the job | PARTIAL | the root instance key of the task's own process, walked up the parents and stopping at a call activity (decision 28); engine-gated E13.14 for the root key on the job |
+| `getTaskKind`, `getBusinessKey` | the instance's business key | SUPPORTED | `TASK` for jobs, `USER_TASK` for user tasks; the business key from the instance cache (the core refuses a key which is not the aggregate id, platform decision 69) |
+| `DeliveryOfAnUnknownWorkflowException` (platform decision 99) | `fail` with `retries` and `message` | SUPPORTED | the job is failed with `retries: 0` and the core's message, so an incident names it; WARN without stack trace (decision 27) |
 | `getDeliveryId` / `getActivationId` | job key / `element_instance_key` (REST only, not on the stream) | SUPPORTED / PARTIAL | delivery = job key; activation = job key until the stream carries the element instance key (E13.6) |
 | `getProcessVersion`, `predatesDeployedVersion` | instance carries `version` | SUPPORTED | from the instance cache |
 | `getTaskParameter` | job input variables exist only with input mappings | PARTIAL | the adapter injects `zenbpm:ioMapping input` per `@TaskParam` name reported by `taskParameterNames`, so the job carries exactly what is read |
 | `getMultiInstances` | iteration = child instance; input element as variable; index from history; no total | PARTIAL | element from the child instance's variables; index and total from `GET .../child-processes` of the parent, cached per parent (engine-gated E13.7 for a cheaper answer) |
 | Complete with shared values | variables reach the scope only via output mappings | SUPPORTED with a twist | `PATCH variables` on the job's instance, then `complete` with the same values; both idempotent |
 | BPMN error | `fail {errorCode}` | SUPPORTED | unmatched code = incident, documented |
-| Technical failure | no retries | PARTIAL | do NOT `fail`; extend the job's lock by the backoff (`retry-backoff`, exponential, bounded) so the engine hands it out again after exactly that time, count attempts locally per job key; after `max-redeliveries` fail the job so an incident names it (engine-gated E13.3) |
+| Technical failure | job retries with backoff (E13.3, in the pinned engine since `bc3384b3`) | SUPPORTED | `fail` without an error code, with `message`, `retryBackoff` (`retry-backoff`), `deliveryToken` and `clientId`: the engine spends one attempt, hands the job out again after the backoff and files an incident when none is left (decision 27) |
 | Handler longer than the lock | lock per subscription (`lock_duration_ms`), extension relative to now (E13.1, shipped) | SUPPORTED | subscription lock = `job-timeout` (default `PT5M`, four levels); a timing thread extends the lock of a running handler at half the job timeout; a leader change still redelivers (documented residual) |
 | Asynchronous task (`@TaskId`) staying open | lock extension up to `jobManager.maxLockDurationMs` (24 h by default) | SUPPORTED | after COMPLETION_PENDING extend the lock by `async-task-lock-renewal` (default `PT1H`); the next delivery after it lapses is answered from the delivery record and renews again (Camunda 8's shape) |
 | `stopWorkflowProcessing` drains | closing the stream releases the client's locks at once | SUPPORTED | unsubscribe, wait `shutdown-grace` for handlers, never `fail` while shutting down; the factory closes the stream last, which hands the open jobs back to the engine |
@@ -83,9 +94,9 @@ ZenBPM offers for it, the verdict and the design the adapter takes. The verdicts
 |---|---|---|---|
 | `@TaskEvent CREATED` for user tasks | a job of the user task's type; a stream subscription would deliver it once per lock and cannot report its termination | PARTIAL | poll `GET /v1/jobs?jobType=&state=active` at `user-task-poll-interval` (default `PT5S`), seen-set per node, delivery record as the net; engine-gated E13.5 |
 | `@TaskEvent CANCELED` for user tasks | poll `state=terminated` | PARTIAL | same poller, `terminated` jobs |
-| `@TaskEvent CANCELED` for service tasks | nobody is told | MISSING | deviation, like Camunda 8 |
-| `@WorkflowEnded` | no listener, no event stream | MISSING natively | model rewrite: a marker service task (`vanillabp__ended`) is inserted before every end event of the top-level process where a handler exists; kind COMPLETED only, end event id known, terminated instances report nothing; engine-gated E13.6 |
-| BPMS-initiated start (timer) | no listener | MISSING natively | model rewrite: a marker service task after every timer start event; natural identity = instance key, so the aggregate id IS the instance key and the probe finds it by key; variables of the start reach the core through injected input mappings |
+| `@TaskEvent CANCELED` for service tasks | nobody is told | PARTIAL | derived by the core: the open-task probe after every delivery (S6.1.3), and the end marker, after which the core cancels the open tasks of the workflow (platform decision 73); a task canceled while nothing else of its workflow is delivered is not reported |
+| `@WorkflowEnded` | no listener, no event stream | MISSING natively | model rewrite: a marker service task (`vanillabp__ended`) is inserted before every end event of the top-level process where `workflowEndedHandlerExists`; kind COMPLETED only, end event id known, canceled instances report nothing; `workflowId` and business key reported; engine-gated E13.6 |
+| BPMS-initiated start (none, message, timer) | no listener | MISSING natively | model rewrite: a marker service task after every start event of the top-level process (decision 26). The application's `@WorkflowStartedByBpms` method builds and names the aggregate; the adapter writes the name back into the instance and reports the instance key, which the core keeps in the start row. Such a workflow has no business key, so the probe finds it through that instance key (decision 25); the start of a workflow the application started itself answers `created() == false` |
 | BPMS-initiated start (signal, conditional) | do not exist | n/a | rejected by the engine at deployment; the adapter says so before deploying |
 | Instantiating receive task | exists | MISSING | refused at deployment: an instance without an aggregate |
 

@@ -15,17 +15,23 @@ Wiki (`zenbpm-vanillabp-adapter.wiki`): `Home` (getting started per platform, mi
 job lock the adapter sizes by `job-timeout` and renews, and the leader-change residual, the engine version tested), `Configuration` (every key of the architecture table
 with level and default; the BPMN model for ZenBPM: `zenbpm:taskDefinition type` names the task
 definition, user tasks by type, no correlation key has to be modelled, what reaches the engine;
-keeping workflow modules apart: `use-prefix` default, `none`; timeouts and worker settings; boot
+keeping workflow modules apart: `by-adapter` stays the default and is refused while deploying, so
+every application chooses `use-prefix` or `none` - one line per adapter id, e.g.
+`vanillabp.adapters.zenbpm.name-clash-avoidance: use-prefix` (decision 24); `Home` says so too,
+because it is the first thing an application runs into; timeouts and worker settings; boot
 behaviour; what an operator gets to see), `Deviations` (from
 `architecture/03-deviations-and-gaps.md`, each entry linking the README section), `Engine-APIs`
 (every REST endpoint and the stream the adapter uses, when and why, what it never calls - the page
 to hand to whoever puts a proxy in front), `_Footer`.
 
 README: status, supported engine version (tested, not newer), coordinates, configuration, behaviour
-per section of the C8 README structure with ZenBPM's facts (deployment, two-phase start, the probes
-and the two lookups, task processing with PATCH-then-complete, the lock and the slots, failures and
-incidents, messages without buffering, user-task polling, markers, versions, viewer, testing), the
-decision log pointer, known deviations with the `GAPS.md` numbers, building, test coverage.
+per section of the C8 README structure with ZenBPM's facts (deployment, two-phase start, the probes:
+the instance key from the start row, which may only confirm an active workflow, then the
+business-key search, decision 25; the start marker and what it costs, decision 26; task processing
+with PATCH-then-complete, the lock and the slots, failures, retries and incidents, decision 27; the
+workflow id, decision 28; messages without buffering, user-task polling, markers, versions, viewer,
+testing), the decision log pointer, known deviations with the `GAPS.md` numbers (GAPS 1, 5, 6, 9,
+11, 15 and 22 as the draft now reads them; deviation 14), building, test coverage.
 `DECISIONS.md` completed with every entry of the draft the code cites; `GAPS.md` completed;
 `UPGRADE.md` gets its first entry when something breaks.
 

@@ -82,7 +82,8 @@ after the first survey because the design depends on them; everything else was r
   `output_variables`, `assignee`.
 - REST `GET /v1/jobs?jobType=&state=&processInstanceKey=&assignee=` is a plain query: **no lock, no
   state change, no long poll**. REST `Job` carries no `bpmnProcessId`, definition key or version, no
-  headers, no deadline, no business key; `retries` is in the schema but never populated.
+  headers, no deadline, no business key; `retries` is in the schema but never populated (since
+  2026-10-12, E13.3 commit `bc3384b3`, it is: see the retries bullet below).
 - gRPC `JobStream`: subscribe per `job_type`; the partition leader polls
   `GetWaitingJobs` (`state = 1 AND type IN (...) AND key NOT IN (distributed)`,
   `internal/sql/queries/job.sql`) and round-robins to subscribed clients. Payload
@@ -111,12 +112,17 @@ after the first survey because the design depends on them; everything else was r
   task: `PropagateOnlyMappedOutputs` returns an empty map where the task has no output mapping
   (`pkg/bpmn/runtime/varholder.go:107`, `pkg/bpmn/jobs_api.go:285`). Catching events use
   `PropagateMappedOutputsOrAll` instead and do propagate everything.
-- `POST /v1/jobs/{key}/fail {errorCode?, variables?}` -> 204. With an `errorCode` the engine searches
-  boundary error events and error event sub-processes up the scope chain (a catch without `errorRef`
-  catches all) and continues there; without one, or with no catcher, the job becomes `failed`, an
-  **incident** is created and the instance turns `failed`. There is no `message` field on REST.
+- `POST /v1/jobs/{key}/fail {errorCode?, variables?}` -> 204. With an `errorCode` the engine
+  searches boundary error events and error event sub-processes up the scope chain (a catch without
+  `errorRef` catches all) and continues there; without one, or with no catcher, the job becomes
+  `failed`, an **incident** is created and the instance turns `failed`. There is no `message` field
+  on REST. (Since 2026-10-12, E13.3 commit `bc3384b3`, which the adapter's pin `bdd795a3` contains:
+  the request also takes `retries`, `retryBackoff`, `message`, `deliveryToken` and `clientId`;
+  without an error code a failure spends one attempt, and only the last one raises the incident.)
 - **Retries are not implemented (verified: `pkg/bpmn/engine.go` "TODO: Implement Headers as worker
-  parameters and Retries")**. A technical failure the worker cannot recover from is either left to the
+  parameters and Retries")** - true at `b22f12c2`; implemented since 2026-10-12 by E13.3 (commit
+  `bc3384b3`): `zenbpm:taskDefinition retries`, the engine default `jobs.defaultRetries` (1), and a
+  backoff per failure. A technical failure the worker cannot recover from is either left to the
   lock's redelivery (or brought back earlier by extending the lock by a short duration) or escalated
   by `fail`, which is an incident. `POST /v1/incidents/{key}/resolve`
   re-activates the job.
@@ -124,7 +130,8 @@ after the first survey because the design depends on them; everything else was r
 
 ## 5. BPMN dialect
 
-- Job type = `zenbpm:taskDefinition type`; `retries` parsed and ignored. User tasks default to type
+- Job type = `zenbpm:taskDefinition type`; `retries` parsed and ignored (used since E13.3, commit
+  `bc3384b3`). User tasks default to type
   `user-task-type` (`pkg/bpmn/model/bpmn20/activities.go`).
 - Two extension namespaces are accepted, `http://zenbpm.pbinitiative.org/1.0` and Camunda's
   `http://camunda.org/schema/zeebe/1.0` (`pkg/xmlutil/content.go`); parsing goes by local name, so
@@ -185,7 +192,9 @@ after the first survey because the design depends on them; everything else was r
 1. ~~Job lock 30 s, not extendable, 10 active jobs per client~~ - solved by E13.1 (commit `071460cc`):
    the lock is configurable per subscription and extendable, the cap is per job type. What remains:
    the lock lives in memory on the partition leader, so a leader change redelivers every open job.
-2. No retries: `fail` without an error code is an incident at once.
+2. ~~No retries: `fail` without an error code is an incident at once~~ - solved by E13.3 (commit
+   `bc3384b3`, contained in the adapter's pin `bdd795a3`): a failure without an error code spends
+   one of the job's retries and comes back after a backoff; the incident comes with the last one.
 3. Job completion variables reach the process scope only through output mappings.
 4. A message nobody waits for is refused with 404 and lost; an unmatched correlation key may start a
    new instance where the same message name has a start event.
