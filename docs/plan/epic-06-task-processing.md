@@ -58,6 +58,31 @@ sections 3.3 and 5, `TaskInvocationContext` javadoc.
    (5 attempts, 50 ms doubling, bounded by the remaining lock read from `lock_until`), stop at once
    while the module shuts down.
 
+*Note from S2.4.2, 2026-10-15.* The executor counts the slots itself, so instruction 3's
+`executor.releaseSlot()` in `finally` does not exist: a slot is taken by `executor.tryExecute(handler)`
+and given back by the executor once the handler returned. `tryExecute` never waits; it answers
+`false` where every slot is taken, and throws `RejectedExecutionException` once the executor shuts
+down. So the dispatcher keeps the jobs which wait for a slot, and nothing queues in the executor.
+`executor.onSlotFreed(listener)` tells the dispatcher on the handler thread, right after the slot
+came back, that it can hand over the next job; the listener may call `tryExecute` directly, as
+`ZenBpmExecutorTest#aDispatcherToldAboutFreedSlotsRunsEveryJob` does. It is not called once the
+executor shuts down. The dispatcher puts a job `tryExecute` refused back BEFORE it looks for a free
+slot once more, and tries again where it finds one: a slot which comes free meanwhile is then seen
+either by that look or by its listener. Giving up before the job is back can leave it beside a free
+slot with nobody to hand it over (`#aJobPutBackAfterARefusalIsNotStranded`, against the test's
+`WaitingJobs`, which shows the rule in a few lines). `execute(handler)` waits for a slot and is
+refused on a handler thread and on a timing thread. After `shutdown()` the timing threads keep
+running until the last handler returned, so the lock renewal of a running handler still has them.
+An exception which escapes a handler is logged at ERROR by the executor, and its thread serves the
+next one; an `Error` is logged and passed on.
+
+*Found by a review of S2.4.2, 2026-10-15.* With several job types up to types x slots jobs wait in
+the dispatcher, and where handlers run long a waiting job's lock can lapse before its handler
+starts: the renewal of instruction 2 then gets `409`, and the engine may have handed the job out
+again. Decision 9 accepts that second delivery. Still, the dispatcher should not start a handler
+for a job whose `lock_until` has passed, but drop it and leave it to the engine to hand it out
+again; the retry budget of instruction 4 reads the same `lock_until`.
+
 *Found by S2.2.2, 2026-10-14.* `isGoneJob` reads calls under `/v1/jobs/{key}` only, so it does not
 catch the `PATCH` of instruction 3. Read in the engine's code at `bdd795a3` (not measured):
 `UpdateProcessInstanceVariables` answers `409` for an instance which is neither active nor failed,
