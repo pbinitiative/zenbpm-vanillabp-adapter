@@ -1079,3 +1079,20 @@ up without its second look. After the answers `mvn clean install` builds green
 7, `ZenBpmVirtualThreadExecutorTest` 3, `ZenBpmJobStreamTest` 38, `ZenBpmJobStreamIT` 2,
 `ZenBpmJobLockIT` 3), the coverage gate measures 100 % of 7,032 instructions on both platforms, and
 `bin/check-deploy-safety.sh` passes both runs. Not changed: none of the findings was wrong.
+
+**Done 2026-10-15**, merged to `main` as `18e15ec` (pull request #18). On that commit (GitHub keeps
+run logs for 90 days, so what they showed is written here as well):
+
+- `Checks`, run
+  [38708643232](https://github.com/pbinitiative/zenbpm-vanillabp-adapter/actions/runs/38708643232):
+  green on both JDKs. `bin/check-engine-copies.sh` reported both copies as the engine's files of
+  `bdd795a3...`. `ZenBpmExecutorTest` ran 50 tests, `ZenBpmExecutionModelTest` 27,
+  `ZenBpmPlatformThreadExecutorTest` 7, `ZenBpmVirtualThreadExecutorTest` 3, `ZenBpmJobStreamIT` 2
+  and `ZenBpmJobLockIT` 3, none skipped. The gate measured 100 % on both platforms, of 7,032
+  instructions on JDK 25 and 7,028 on JDK 21.
+- `Publish snapshots`, run
+  [38708643091](https://github.com/pbinitiative/zenbpm-vanillabp-adapter/actions/runs/38708643091):
+  green, with the same test counts, none skipped. The core snapshot it published,
+  `2.0.0-20261015.085130-14`, contains `ZenBpmExecutionModel`, `ZenBpmExecutor` (with its
+  `TimingThreads`), `ZenBpmPlatformThreadExecutor` and `ZenBpmVirtualThreadExecutor`, and it holds
+  no test class. Both report pages answer HTTP 200 and show 0 of 7,032 instructions missed.
