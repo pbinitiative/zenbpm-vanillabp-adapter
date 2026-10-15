@@ -11,6 +11,12 @@ is complete first, the registration stories are thin and the SPI stories never t
 its job on the stream and complete it over REST against the container, and every status code the
 engine can answer is classified in one place.
 
+**E2 done 2026-10-15**, with S2.4.1 merged to `main` as `b3e49d2` (pull request #22), the last of
+its stories. The criterion holds on GitHub: `ZenBpmClientFactoryIT` builds the clients through the
+factory, waits for the pinned engine, deploys a model, starts an instance, receives its job on the
+stream and completes it over REST, in both the check and the publication of that commit; the status
+codes are classified in `ZenBpmErrors` alone (S2.2.2). See S2.4.1 below.
+
 Reference implementations to read before starting: `Camunda8AdapterConfiguration`,
 `Camunda8ClientFactory`, `Camunda8ClientFactoryRegistry`, `Camunda8StartupValidation`,
 `Camunda8Errors`, `Camunda8ClusterWait`, `Camunda8Health`, `Camunda8Executor`,
@@ -1096,6 +1102,28 @@ Seen to fail, each restored: an `Error` swallowed by the registry, later ones dr
 reading the address unguarded, and `close()` reading it from the configuration. `mvn clean install`
 builds green: core 431 unit tests and 34 integration tests, none skipped; the coverage gate measures
 100 % of 8,577 instructions on both platforms, and `bin/check-deploy-safety.sh` passes both runs.
+
+**Done 2026-10-15**, merged to `main` as `b3e49d2` (pull request #22, after two reviews, a
+re-review and CodeRabbit's review). On that commit (GitHub keeps run logs for 90 days, so what they
+showed is written here as well):
+
+- `Checks`, run
+  [38764463540](https://github.com/pbinitiative/zenbpm-vanillabp-adapter/actions/runs/38764463540):
+  green on both JDKs. `bin/check-engine-copies.sh` reported both copies as the engine's files of
+  `bdd795a3...`. `ZenBpmClientFactoryTest` ran 16 tests, `ZenBpmClientRegistryTest` 7,
+  `ZenBpmEngineWaitTest` 24, `ZenBpmEnvironmentInfoTest` 10, `ZenBpmHealthTest` 12,
+  `ZenBpmEngineWaitIT` 2 and `ZenBpmClientFactoryIT` 1, none skipped (core: 431 unit tests and 34
+  integration tests). The gate measured 100 % on both platforms, of 8,577 instructions on JDK 25 and
+  8,573 on JDK 21.
+- `Publish snapshots`, run
+  [38764463212](https://github.com/pbinitiative/zenbpm-vanillabp-adapter/actions/runs/38764463212):
+  green, with the same test counts, none skipped. The core snapshot it published,
+  `2.0.0-20261015.155451-18`, contains `ZenBpmClientFactory` (with `Registration`,
+  `WorkflowModuleShutdown` and `WorkflowModuleShutdownRegistration`), `ZenBpmClientRegistry`,
+  `ZenBpmEngineWait` (with `Memory`, `Pacing` and `Refused`), `ZenBpmEnvironmentInfo` and
+  `health/ZenBpmHealth`, names `zenbpm.engine=bdd795a399b6484d062d52ac90c0d0725cb0ad91` in its part
+  descriptor, and holds no test class. Both report pages answer HTTP 200 and show 0 of 8,577
+  instructions missed.
 
 ### S2.4.2 Executor and execution model
 
