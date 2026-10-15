@@ -98,6 +98,15 @@ public record ZenBpmExecutionModel(
                 ? null
                 : workerThreads.trim();
         final var isVirtual = VIRTUAL_WORKER_THREADS.equalsIgnoreCase(configured);
+        // a value which is no number is the first defect to name, as the startup validation does:
+        // with it, a bound beside it is not what has to change
+        if (!isVirtual && (configured != null)) {
+            try {
+                Integer.parseInt(configured);
+            } catch (final NumberFormatException e) {
+                throw new IllegalStateException(unparseable(adapterId, configured), e);
+            }
+        }
 
         if (!isVirtual && (workerThreadsBound != null)) {
             throw new IllegalStateException("""
@@ -132,12 +141,7 @@ public record ZenBpmExecutionModel(
             return DEFAULT;
         }
 
-        final int threads;
-        try {
-            threads = Integer.parseInt(configured);
-        } catch (final NumberFormatException e) {
-            throw new IllegalStateException(unparseable(adapterId, configured), e);
-        }
+        final var threads = Integer.parseInt(configured);
         if (threads < 1) {
             throw new IllegalStateException("""
                     ZenBPM adapter '%s' has '%s: %d'. An adapter without a handler thread runs no \

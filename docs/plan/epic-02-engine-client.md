@@ -947,12 +947,14 @@ Where the code differs from the instructions:
   client; here the dispatcher's thread does not wait either, since it uses `tryExecute`. The platform
   pool keeps a queue with one place per thread for the handler which arrives while the thread before
   it is still on its way back; it takes memory only for what it holds.
-- **A handler cannot wait for a slot.** With every slot taken it would wait for the slot it holds
-  itself, so `execute` on one of the executor's own handler threads throws
-  `IllegalStateException`; `tryExecute` may be called there. Note under S6.1.1.
+- **Neither a handler nor a timing thread can wait for a slot.** With every slot taken a handler
+  would wait for the slot it holds itself, and a timing thread would hold the job stream back for as
+  long as a handler runs, so `execute` on either throws `IllegalStateException`; `tryExecute` may
+  be called there (the timing threads since the second answers below). Note under S6.1.1.
 - **An exception which escapes a handler is logged at ERROR** with the adapter id, a checked one
-  thrown sneakily included, and the thread serves the next handler. Camunda 8 left it to the
-  thread's default handler.
+  thrown sneakily included, and the thread serves the next handler. An `Error` is logged with the
+  adapter id as well and then passed on, so its thread ends (since the second answers below).
+  Camunda 8 left all of it to the thread's default handler.
 - **The timing threads outlive the handlers (since the review answers below).** `shutdown()` takes
   no new handler, and the timing threads stop once the last running handler returned, dropping
   what is due later. Whoever receives `timing()` can neither resize it nor shut it down.
@@ -1031,3 +1033,49 @@ instructions on both platforms, and `bin/check-deploy-safety.sh` passes both run
 
 Not changed: none of the findings was wrong. Copilot's recommendation to keep timing work which an
 in-flight handler still needs is what the shutdown above does.
+
+**Answers to two re-reviews, 2026-10-15.** The same two reviewers read `c87ceca`. Every finding
+was checked against the source, and each was first written as a test which failed on that commit;
+the one which shows the dispatcher's rule failed once the rule was taken out of the test's
+dispatcher. Valid and fixed:
+
+- **`shutdownNow()` lost the timing tasks it promises to hand back** (both reviews). It interrupted
+  the handlers before it stopped the timing threads, and a handler which ended in between gave the
+  last slot back and stopped them the orderly way, which drops what is due later. The first clean
+  build of one reviewer failed on it. `shutdownNow()` now marks itself before the shutdown flag,
+  and a handler which sees the one sees the other and leaves the timing threads alone.
+  `#shutdownNowKeepsTheTimingTasksOfAHandlerEndingMeanwhile` forces the moment with handler threads
+  whose `shutdownNow` returns only after the handler ended. Measured on the side, 600 runs per
+  model of the real executors: 7 of 1,200 lost the task before, none after.
+- **The dispatcher shown to E6 could strand a job.** It took a job, was refused, and put the job
+  back without looking again; a slot freed in between had its listener find nothing. The test's
+  dispatcher is now `WaitingJobs`, which puts the job back before it looks for a free slot again,
+  and `#aJobPutBackAfterARefusalIsNotStranded` opens that window on purpose. The rule is in the
+  Javadoc of `onSlotFreed` and in the S6.1.1 note.
+- A listener's checked exception thrown sneakily escaped the log and cost its platform thread; the
+  listener's catch takes every `Exception` now, as the handler's does.
+- An `Error` of a handler reached only the JVM's default handler, without the adapter id; it is
+  logged with it and passed on.
+- `execute` on a timing thread waited for a slot and held every reconnect back meanwhile; it is
+  refused there now with a message which names `tryExecute`, as on a handler thread.
+- An interrupted submitter was refused although a slot was free, with a message saying it had
+  waited; a free slot is taken at once now, and the interrupt is kept.
+- The model named the bound first where `worker-threads` was a word beside a bound; it names the
+  word first, as the validation does (a fourteenth pair in `#theModelRefusesWhatTheValidationRefuses`).
+- `awaitTermination` failed with `ArithmeticException` for a timeout beyond about 292 years; it
+  counts any such timeout as the longest one.
+- Tests: `#theTimingIsNotStarvedByBusyHandlers` asserted the test's own latch where it meant the busy
+  slots; the sneaky thrower is one shared `SneakyThrow`; `onSlotFreed` says it replaces a listener
+  set before.
+- Recorded for E6 rather than fixed here: a job which waits in the dispatcher can see its lock lapse
+  before its handler starts; note under S6.1.1. Decision 9 accepts the second delivery that follows.
+
+Seen to fail, each restored afterwards: `shutdownNow()` not marked for the handlers, a listener's
+catch for unchecked exceptions only, an `Error` not logged or swallowed, no guard on a timing
+thread or the timing threads not remembered, no free slot taken before the wait, the timeout not
+counted as the longest one, the model checking the bound before the word, and `WaitingJobs` giving
+up without its second look. After the answers `mvn clean install` builds green
+(`ZenBpmExecutorTest` 50 cases, `ZenBpmExecutionModelTest` 27, `ZenBpmPlatformThreadExecutorTest`
+7, `ZenBpmVirtualThreadExecutorTest` 3, `ZenBpmJobStreamTest` 38, `ZenBpmJobStreamIT` 2,
+`ZenBpmJobLockIT` 3), the coverage gate measures 100 % of 7,032 instructions on both platforms, and
+`bin/check-deploy-safety.sh` passes both runs. Not changed: none of the findings was wrong.

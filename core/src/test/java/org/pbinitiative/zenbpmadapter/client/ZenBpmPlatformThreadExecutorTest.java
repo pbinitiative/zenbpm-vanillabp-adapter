@@ -89,7 +89,7 @@ class ZenBpmPlatformThreadExecutorTest {
     void aSneakyCheckedExceptionKeepsTheThread() throws Exception {
         final var executor = new ZenBpmPlatformThreadExecutor("orders", 1);
         try {
-            executor.execute(() -> throwSneakily(new IOException("checked failure")));
+            executor.execute(() -> SneakyThrow.sneakily(new IOException("checked failure")));
             final var name = new AtomicReference<String>();
             final var ran = new CountDownLatch(1);
             executor.execute(() -> {
@@ -101,6 +101,59 @@ class ZenBpmPlatformThreadExecutorTest {
 
             assertTrue(ran.await(UNTIL_THE_EXECUTOR_COUNTS_AS_STUCK, TimeUnit.MILLISECONDS));
             assertEquals("zenbpm-orders-handler-0", name.get(), "the same thread serves the next handler");
+        } finally {
+            executor.shutdownNow();
+        }
+    }
+
+    @Test
+    @DisplayName("A listener of freed slots which throws a checked exception sneakily does not cost the thread")
+    void aSneakyListenerKeepsTheThread() throws Exception {
+        final var executor = new ZenBpmPlatformThreadExecutor("orders", 1);
+        try {
+            final var told = new CountDownLatch(1);
+            executor.onSlotFreed(() -> {
+                told.countDown();
+                SneakyThrow.sneakily(new IOException("listener failure"));
+            });
+            executor.execute(() -> {
+            });
+            assertTrue(told.await(UNTIL_THE_EXECUTOR_COUNTS_AS_STUCK, TimeUnit.MILLISECONDS));
+            final var name = new AtomicReference<String>();
+            final var ran = new CountDownLatch(1);
+            executor.execute(() -> {
+                name.set(Thread
+                        .currentThread()
+                        .getName());
+                ran.countDown();
+            });
+
+            assertTrue(ran.await(UNTIL_THE_EXECUTOR_COUNTS_AS_STUCK, TimeUnit.MILLISECONDS));
+            assertEquals("zenbpm-orders-handler-0", name.get(), "the same thread serves the next handler");
+        } finally {
+            executor.shutdownNow();
+        }
+    }
+
+    @Test
+    @DisplayName("An Error thrown by a handler is passed on, so its thread ends and another one takes over")
+    void anErrorEndsItsThread() throws Exception {
+        final var executor = new ZenBpmPlatformThreadExecutor("orders", 1);
+        try {
+            executor.execute(() -> {
+                throw new StackOverflowError("too deep");
+            });
+            final var name = new AtomicReference<String>();
+            final var ran = new CountDownLatch(1);
+            executor.execute(() -> {
+                name.set(Thread
+                        .currentThread()
+                        .getName());
+                ran.countDown();
+            });
+
+            assertTrue(ran.await(UNTIL_THE_EXECUTOR_COUNTS_AS_STUCK, TimeUnit.MILLISECONDS));
+            assertEquals("zenbpm-orders-handler-1", name.get(), "the Error was not swallowed");
         } finally {
             executor.shutdownNow();
         }
@@ -133,15 +186,6 @@ class ZenBpmPlatformThreadExecutorTest {
                 "both halves terminate");
         assertTrue(executor.isShutdown());
         assertTrue(executor.isTerminated());
-    }
-
-    /**
-     * Throws a checked exception from a method which does not declare it, as Lombok's
-     * <code>@SneakyThrows</code> does.
-     */
-    @SuppressWarnings("unchecked")
-    private static <E extends Exception> void throwSneakily(final Exception e) throws E {
-        throw (E) e;
     }
 
 }

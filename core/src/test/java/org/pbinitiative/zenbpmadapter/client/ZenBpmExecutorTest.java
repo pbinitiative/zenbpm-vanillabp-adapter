@@ -15,12 +15,15 @@ import static org.pbinitiative.zenbpmadapter.client.ContractFixtures.eventually;
 
 import java.io.IOException;
 import java.time.Duration;
+import java.util.Deque;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentLinkedDeque;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.ThreadPoolExecutor;
@@ -180,7 +183,7 @@ class ZenBpmExecutorTest {
             // let the second one in
             assertTrue(bothInside.await(UNTIL_THE_EXECUTOR_COUNTS_AS_STUCK, TimeUnit.MILLISECONDS),
                     "two timing tasks ran at the same time while every handler was inside");
-            assertEquals(1, release.getCount(), "the handlers were still inside");
+            assertEquals(slots, executor.getBusySlots(), "the handlers were still inside");
             assertEquals(Set.of("zenbpm-orders-timing-0", "zenbpm-orders-timing-1"), timingThreads);
             assertTrue(handlerThreads
                     .stream()
@@ -202,38 +205,24 @@ class ZenBpmExecutorTest {
         final var executor = executionModel.apply(slots);
         try {
             final var jobs = 40;
-            final var waiting = new AtomicInteger(jobs);
             final var done = new CountDownLatch(jobs);
             final var running = new AtomicInteger();
             final var peak = new AtomicInteger();
             final var handlerThreads = ConcurrentHashMap.<String>newKeySet();
-            final var refusals = new CopyOnWriteArrayList<Throwable>();
-            // the way the dispatcher is meant to work: it takes the next job only with a free
-            // slot, and it is told on the handler thread when a slot became free again
-            final Runnable dispatch = () -> {
-                try {
-                    while (waiting.getAndDecrement() > 0) {
-                        if (!executor.tryExecute(() -> {
-                            peak.accumulateAndGet(running.incrementAndGet(), Math::max);
-                            recordThread(handlerThreads, done);
-                            running.decrementAndGet();
-                        })) {
-                            break;
-                        }
-                    }
-                    waiting.incrementAndGet();
-                } catch (final RuntimeException e) {
-                    refusals.add(e);
-                }
-            };
-            executor.onSlotFreed(dispatch);
+            final var dispatcher = new WaitingJobs(executor, () -> {
+            });
+            executor.onSlotFreed(dispatcher::dispatch);
 
-            executor
-                    .timing()
-                    .execute(dispatch);
+            for (int job = 0; job < jobs; job++) {
+                dispatcher.add(() -> {
+                    peak.accumulateAndGet(running.incrementAndGet(), Math::max);
+                    recordThread(handlerThreads, done);
+                    running.decrementAndGet();
+                });
+            }
 
             assertTrue(done.await(UNTIL_THE_EXECUTOR_COUNTS_AS_STUCK, TimeUnit.MILLISECONDS), "every job ran");
-            assertEquals(List.of(), refusals, "no hand-over was refused");
+            assertEquals(List.of(), dispatcher.refusals, "no hand-over was refused");
             assertTrue(peak.get() <= slots, "never more handlers at once than there are slots");
             assertTrue(handlerThreads
                     .stream()
@@ -242,6 +231,40 @@ class ZenBpmExecutorTest {
                     .of(executor.getFreeSlots())
                     .filter(free -> free == slots));
         } finally {
+            executor.shutdownNow();
+        }
+    }
+
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("executionModels")
+    @DisplayName("A job put back after a refusal runs although its slot came free before it was back")
+    void aJobPutBackAfterARefusalIsNotStranded(
+        final String model,
+        final IntFunction<ZenBpmExecutor> executionModel
+    ) throws Exception {
+        final var executor = executionModel.apply(1);
+        final var release = new CountDownLatch(1);
+        try {
+            final var listenerDone = new CountDownLatch(1);
+            // the window the rule of the dispatcher closes: the only slot comes free, and its
+            // listener finds nothing waiting, while the refused job is still on its way back
+            final var dispatcher = new WaitingJobs(executor, () -> {
+                release.countDown();
+                awaitQuietly(listenerDone);
+            });
+            executor.onSlotFreed(() -> {
+                dispatcher.dispatch();
+                listenerDone.countDown();
+            });
+            assertTrue(executor.tryExecute(() -> awaitQuietly(release)));
+            final var second = new CountDownLatch(1);
+
+            dispatcher.add(second::countDown);
+
+            assertTrue(second.await(UNTIL_THE_EXECUTOR_COUNTS_AS_STUCK, TimeUnit.MILLISECONDS),
+                    "the job ran once it was back, although no slot was freed after that");
+        } finally {
+            release.countDown();
             executor.shutdownNow();
         }
     }
@@ -303,7 +326,7 @@ class ZenBpmExecutorTest {
             executor.execute(() -> {
                 throw new IllegalArgumentException("broken handler");
             });
-            executor.execute(() -> throwSneakily(new IOException("checked failure")));
+            executor.execute(() -> SneakyThrow.sneakily(new IOException("checked failure")));
             final var next = new CountDownLatch(1);
             executor.execute(next::countDown);
 
@@ -355,6 +378,136 @@ class ZenBpmExecutorTest {
         } finally {
             executor.shutdownNow();
         }
+    }
+
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("executionModels")
+    @DisplayName("A listener of freed slots which throws a checked exception sneakily is logged")
+    void aSneakyListenerIsLogged(
+        final String model,
+        final IntFunction<ZenBpmExecutor> executionModel,
+        final CapturedOutput output
+    ) throws Exception {
+        final var executor = executionModel.apply(1);
+        try {
+            executor.onSlotFreed(() -> SneakyThrow.sneakily(new IOException("listener failure")));
+            executor.execute(() -> {
+            });
+
+            eventually(() -> Optional
+                    .of(output.getAllOfThisTest())
+                    .filter(printed -> printed.contains("ZenBPM[orders]: the listener of freed slots threw"))
+                    .filter(printed -> printed.contains("java.io.IOException: listener failure")));
+        } finally {
+            executor.shutdownNow();
+        }
+    }
+
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("executionModels")
+    @DisplayName("A handler which throws an Error is logged with the adapter id, and the Error goes on")
+    void aHandlerErrorIsLoggedAndGoesOn(
+        final String model,
+        final IntFunction<ZenBpmExecutor> executionModel,
+        final CapturedOutput output
+    ) throws Exception {
+        final var executor = executionModel.apply(1);
+        try {
+            executor.execute(() -> {
+                throw new StackOverflowError("too deep");
+            });
+            final var next = new CountDownLatch(1);
+            executor.execute(next::countDown);
+
+            assertTrue(next.await(UNTIL_THE_EXECUTOR_COUNTS_AS_STUCK, TimeUnit.MILLISECONDS), "the slot came back");
+            eventually(() -> Optional
+                    .of(output.getAllOfThisTest())
+                    .filter(printed -> printed.contains("ZenBPM[orders]: a handler threw"))
+                    .filter(printed -> printed.contains("java.lang.StackOverflowError: too deep")));
+        } finally {
+            executor.shutdownNow();
+        }
+    }
+
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("executionModels")
+    @DisplayName("A timing thread cannot wait for a slot, but it may try for one")
+    void aTimingThreadCannotWaitForASlot(
+        final String model,
+        final IntFunction<ZenBpmExecutor> executionModel
+    ) throws Exception {
+        final var executor = executionModel.apply(1);
+        try {
+            final var waiting = executor
+                    .timing()
+                    .submit(() -> {
+                        executor.execute(() -> {
+                        });
+                        return null;
+                    });
+            final var trying = executor
+                    .timing()
+                    .submit(() -> executor.tryExecute(() -> {
+                    }));
+
+            final var refusal = assertThrows(ExecutionException.class, () -> waiting
+                    .get(UNTIL_THE_EXECUTOR_COUNTS_AS_STUCK, TimeUnit.MILLISECONDS));
+            assertInstanceOf(IllegalStateException.class, refusal.getCause());
+            assertTrue(refusal
+                    .getCause()
+                    .getMessage()
+                    .contains("use tryExecute there"),
+                    refusal
+                            .getCause()
+                            .getMessage());
+            assertTrue(trying.get(UNTIL_THE_EXECUTOR_COUNTS_AS_STUCK, TimeUnit.MILLISECONDS));
+        } finally {
+            executor.shutdownNow();
+        }
+    }
+
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("executionModels")
+    @DisplayName("An interrupted submitter which finds a free slot is not refused, and keeps its interrupt")
+    void anInterruptedSubmitterWithAFreeSlotIsServed(
+        final String model,
+        final IntFunction<ZenBpmExecutor> executionModel
+    ) throws Exception {
+        final var executor = executionModel.apply(1);
+        try {
+            final var ran = new CountDownLatch(1);
+            final var interrupted = new AtomicReference<Boolean>();
+            final var submitter = Thread
+                    .ofPlatform()
+                    .start(() -> {
+                        Thread
+                                .currentThread()
+                                .interrupt();
+                        executor.execute(ran::countDown);
+                        interrupted.set(Thread
+                                .currentThread()
+                                .isInterrupted());
+                    });
+
+            submitter.join(UNTIL_THE_EXECUTOR_COUNTS_AS_STUCK);
+            assertTrue(ran.await(UNTIL_THE_EXECUTOR_COUNTS_AS_STUCK, TimeUnit.MILLISECONDS), "nothing was waited for");
+            assertTrue(interrupted.get(), "the interrupt is kept");
+        } finally {
+            executor.shutdownNow();
+        }
+    }
+
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("executionModels")
+    @DisplayName("A wait for the end with a timeout of a thousand years answers")
+    void aVeryLongWaitForTheEndAnswers(
+        final String model,
+        final IntFunction<ZenBpmExecutor> executionModel
+    ) throws Exception {
+        final var executor = executionModel.apply(1);
+        executor.shutdown();
+
+        assertTrue(executor.awaitTermination(Duration.ofDays(365L * 1000)));
     }
 
     @ParameterizedTest(name = "{0}")
@@ -727,6 +880,53 @@ class ZenBpmExecutorTest {
     }
 
     @Test
+    @DisplayName("shutdownNow hands back the timing tasks although the last handler ended during the call")
+    void shutdownNowKeepsTheTimingTasksOfAHandlerEndingMeanwhile() throws Exception {
+        // handler threads whose shutdownNow returns only after the interrupted handler ended, the
+        // moment in which the handler gave its slot back while the timing threads still ran
+        final var handlerThreads = new ThreadPoolExecutor(1, 1, 0, TimeUnit.MILLISECONDS, new LinkedBlockingQueue<>()) {
+
+            @Override
+            public List<Runnable> shutdownNow() {
+                final var pending = super.shutdownNow();
+                try {
+                    awaitTermination(UNTIL_THE_EXECUTOR_COUNTS_AS_STUCK, TimeUnit.MILLISECONDS);
+                } catch (final InterruptedException e) {
+                    Thread
+                            .currentThread()
+                            .interrupt();
+                }
+                return pending;
+            }
+
+        };
+        final var executor = new ZenBpmExecutor("now", 1, handlerThreads) {
+        };
+        final var started = new CountDownLatch(1);
+        final var neverReleased = new CountDownLatch(1);
+        try {
+            executor.execute(() -> {
+                started.countDown();
+                awaitQuietly(neverReleased);
+            });
+            assertTrue(started.await(UNTIL_THE_EXECUTOR_COUNTS_AS_STUCK, TimeUnit.MILLISECONDS));
+            final var dueLater = executor
+                    .timing()
+                    .schedule(() -> {
+                    }, 1, TimeUnit.HOURS);
+
+            final var pending = executor.shutdownNow();
+
+            assertEquals(0, executor.getBusySlots(), "the handler ended during the call");
+            assertEquals(1, pending.size(), "the timing task due in an hour");
+            assertFalse(dueLater.isCancelled(), "handed back, not cancelled by an orderly stop");
+        } finally {
+            neverReleased.countDown();
+            executor.shutdownNow();
+        }
+    }
+
+    @Test
     @DisplayName("Building an executor starts no thread, the first use does")
     void buildingStartsNoThread() throws Exception {
         // an adapter id of its own, so no thread of another test is counted
@@ -848,12 +1048,56 @@ class ZenBpmExecutorTest {
     }
 
     /**
-     * Throws a checked exception from a method which does not declare it, as Lombok's
-     * <code>@SneakyThrows</code> does.
+     * The dispatcher's rule in miniature: a job is taken only with a free slot, and a job refused
+     * one is put back BEFORE the dispatcher looks for a free slot once more. A slot which comes free
+     * meanwhile is then either seen by that look, or its listener, which runs after the slot is back,
+     * sees the job.
      */
-    @SuppressWarnings("unchecked")
-    private static <E extends Exception> void throwSneakily(final Exception e) throws E {
-        throw (E) e;
+    static final class WaitingJobs {
+
+        final List<Throwable> refusals = new CopyOnWriteArrayList<>();
+
+        private final ZenBpmExecutor executor;
+
+        private final Deque<Runnable> jobs = new ConcurrentLinkedDeque<>();
+
+        private final Runnable afterARefusal;
+
+        /**
+         * @param afterARefusal What runs between a refusal and the job put back, for a test which
+         *            opens that window
+         */
+        WaitingJobs(
+            final ZenBpmExecutor executor,
+            final Runnable afterARefusal
+        ) {
+            this.executor = executor;
+            this.afterARefusal = afterARefusal;
+        }
+
+        void add(final Runnable job) {
+            jobs.addLast(job);
+            dispatch();
+        }
+
+        void dispatch() {
+            try {
+                Runnable job;
+                while ((job = jobs.pollFirst()) != null) {
+                    if (executor.tryExecute(job)) {
+                        continue;
+                    }
+                    afterARefusal.run();
+                    jobs.addFirst(job);
+                    if (executor.getFreeSlots() == 0) {
+                        return;
+                    }
+                }
+            } catch (final RuntimeException e) {
+                refusals.add(e);
+            }
+        }
+
     }
 
 }

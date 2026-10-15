@@ -152,6 +152,18 @@ class ZenBpmExecutionModelTest {
     }
 
     @Test
+    @DisplayName("A word beside a bound is called a word, the defect the validation reports too")
+    void aWordBesideABoundIsCalledAWord() {
+        final var exception = assertThrows(IllegalStateException.class, () -> ZenBpmExecutionModel
+                .resolve(ADAPTER_ID, "many", 2));
+
+        assertTrue(exception
+                .getMessage()
+                .contains("'vanillabp.adapters.orders.worker-threads: many', which is neither a number nor"),
+                exception.getMessage());
+    }
+
+    @Test
     @DisplayName("A bound below one ends the boot naming the property")
     void boundBelowOneFails() {
         final var exception = assertThrows(IllegalStateException.class, () -> ZenBpmExecutionModel
@@ -211,6 +223,7 @@ class ZenBpmExecutionModelTest {
                 Arguments.of("0", null),
                 Arguments.of("-1", null),
                 Arguments.of("many", null),
+                Arguments.of("many", 2),
                 Arguments.of("99999999999", null),
                 Arguments.of("4", 4),
                 Arguments.of(null, 2),

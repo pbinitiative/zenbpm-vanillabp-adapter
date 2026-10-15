@@ -8,6 +8,8 @@ package org.pbinitiative.zenbpmadapter.client;
 import java.time.Duration;
 import java.util.List;
 import java.util.Objects;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.RejectedExecutionException;
@@ -67,6 +69,8 @@ public abstract class ZenBpmExecutor {
      */
     static final Duration LOOK_FOR_A_SHUTDOWN_AGAIN = Duration.ofMillis(100);
 
+    private static final Duration LONGEST_WAIT = Duration.ofNanos(Long.MAX_VALUE);
+
     private static final String SHUTS_DOWN = "ZenBPM[%s]: the adapter shuts down, so the handler is not run";
 
     private final String adapterId;
@@ -88,6 +92,13 @@ public abstract class ZenBpmExecutor {
     private volatile Runnable slotFreed;
 
     private volatile boolean shuttingDown;
+
+    /**
+     * Set by {@link #shutdownNow()} before {@link #shuttingDown}, so a handler which sees the one
+     * sees the other and leaves the timing threads to it: an orderly stop of its own would drop
+     * the timing tasks which <code>shutdownNow</code> hands back.
+     */
+    private volatile boolean stoppingNow;
 
     /**
      * Builds the timing threads and the slots which every execution model has.
@@ -169,7 +180,14 @@ public abstract class ZenBpmExecutor {
     /**
      * Who is told that a slot became free. It is called on the handler thread right after the
      * handler returned and its slot was given back, but not once the executor shuts down. It must
-     * not wait; it may call {@link #tryExecute(Runnable)}. An exception it throws is logged.
+     * not wait; it may call {@link #tryExecute(Runnable)}. An exception it throws is logged. A
+     * listener set before is replaced.
+     * <p>
+     * A dispatcher which keeps jobs for later puts a job <code>tryExecute</code> refused back
+     * BEFORE it looks for a free slot once more, and tries again where it finds one. A slot which
+     * comes free meanwhile is then either seen by that look, or its listener, which runs after the
+     * slot is back, sees the job. The other way round, a job can wait beside a free slot with
+     * nobody left to hand it over.
      *
      * @param listener Called once per freed slot
      */
@@ -204,9 +222,11 @@ public abstract class ZenBpmExecutor {
      *
      * @param handler The handler
      * @throws RejectedExecutionException Where the executor shuts down, also while the submission
-     *             waits, or where the submitting thread is interrupted while it waits
+     *             waits, or where the submitting thread is interrupted while it waits for a slot
      * @throws IllegalStateException Where it is called on one of this executor's handler threads,
-     *             which could wait for itself; {@link #tryExecute(Runnable)} may be called there
+     *             which could wait for itself, or on one of its timing threads, which would hold
+     *             every reconnect and hand-over back; {@link #tryExecute(Runnable)} may be called
+     *             there
      */
     public void execute(final Runnable handler) {
         Objects.requireNonNull(handler, "handler");
@@ -214,6 +234,11 @@ public abstract class ZenBpmExecutor {
             throw new IllegalStateException("""
                     ZenBPM[%s]: a handler waited for a slot of the threads it runs on, which can wait \
                     for itself where every slot is taken; use tryExecute there""".formatted(adapterId));
+        }
+        if (timing.runsOn(Thread.currentThread())) {
+            throw new IllegalStateException("""
+                    ZenBPM[%s]: a timing thread waited for a slot, which holds the job stream back for \
+                    as long as a handler runs; use tryExecute there""".formatted(adapterId));
         }
         waitForAFreeSlot();
         handOver(handler);
@@ -237,6 +262,7 @@ public abstract class ZenBpmExecutor {
      * @return The timing tasks which never ran
      */
     public List<Runnable> shutdownNow() {
+        stoppingNow = true;
         shuttingDown = true;
         handling.shutdownNow();
         return timing.endNow();
@@ -263,18 +289,25 @@ public abstract class ZenBpmExecutor {
     /**
      * Waits for the handler threads and then the timing threads to end after a shutdown.
      *
-     * @param timeout How long to wait at most, for both together
+     * @param timeout How long to wait at most, for both together; anything beyond about 292 years
+     *            counts as that long
      * @return Whether both ended in time
      * @throws InterruptedException Where the waiting thread is interrupted
      */
     public boolean awaitTermination(final Duration timeout) throws InterruptedException {
-        final var deadline = System.nanoTime() + timeout.toNanos();
-        final var handlersEnded = handling.awaitTermination(timeout.toNanos(), TimeUnit.NANOSECONDS);
-        final var remaining = Math.max(0, deadline - System.nanoTime());
+        final var timeoutNanos = timeout.compareTo(LONGEST_WAIT) >= 0 ? Long.MAX_VALUE : timeout.toNanos();
+        final var start = System.nanoTime();
+        final var handlersEnded = handling.awaitTermination(timeoutNanos, TimeUnit.NANOSECONDS);
+        final var remaining = Math.max(0, timeoutNanos - (System.nanoTime() - start));
         return timing.awaitTermination(remaining, TimeUnit.NANOSECONDS) && handlersEnded;
     }
 
     private void waitForAFreeSlot() {
+        // a free slot is taken at once, so a submitter which happens to be interrupted is not
+        // refused for a wait it never had
+        if (freeSlots.tryAcquire()) {
+            return;
+        }
         try {
             while (!freeSlots.tryAcquire(LOOK_FOR_A_SHUTDOWN_AGAIN.toNanos(), TimeUnit.NANOSECONDS)) {
                 if (shuttingDown) {
@@ -309,6 +342,10 @@ public abstract class ZenBpmExecutor {
             // Exception, not only RuntimeException: a handler can throw a checked one sneakily,
             // and it would end a platform thread unlogged
             log.error("ZenBPM[{}]: a handler threw", adapterId, e);
+        } catch (final Error e) {
+            // logged with the adapter id, and not swallowed: the thread ends, and the JVM decides
+            log.error("ZenBPM[{}]: a handler threw", adapterId, e);
+            throw e;
         } finally {
             freeSlots.release();
             if (shuttingDown) {
@@ -328,7 +365,8 @@ public abstract class ZenBpmExecutor {
             listener.run();
         } catch (final RejectedExecutionException e) {
             log.debug("ZenBPM[{}]: a freed slot is not used, because the adapter shuts down", adapterId, e);
-        } catch (final RuntimeException e) {
+        } catch (final Exception e) {
+            // Exception, as for a handler: a listener can throw a checked one sneakily as well
             log.error("ZenBPM[{}]: the listener of freed slots threw", adapterId, e);
         }
     }
@@ -336,10 +374,11 @@ public abstract class ZenBpmExecutor {
     /**
      * Stops the timing threads where the executor shuts down and no slot is taken.
      * {@link #shutdown()}, every handler which returns and every hand-over refused by the handler
-     * threads call it, so whichever comes last finds both true.
+     * threads call it, so whichever comes last finds both true. After {@link #shutdownNow()} it does
+     * nothing, since that stops the timing threads itself and hands back what they still held.
      */
     private void stopTheTimingOnceNoHandlerRuns() {
-        if (shuttingDown && (freeSlots.availablePermits() == slots)) {
+        if (shuttingDown && !stoppingNow && (freeSlots.availablePermits() == slots)) {
             timing.end();
         }
     }
@@ -353,9 +392,19 @@ public abstract class ZenBpmExecutor {
 
         private final String adapterId;
 
+        private final Set<Thread> threads;
+
         private TimingThreads(final String adapterId) {
-            super(TIMING_THREADS, named(adapterId));
+            this(adapterId, ConcurrentHashMap.newKeySet());
+        }
+
+        private TimingThreads(
+            final String adapterId,
+            final Set<Thread> threads
+        ) {
+            super(TIMING_THREADS, named(adapterId, threads));
             this.adapterId = adapterId;
+            this.threads = threads;
             // a reconnect cancelled by a closing stream leaves nothing behind
             setRemoveOnCancelPolicy(true);
             // a check due later, like the stream's, must not hold the end of the adapter up
@@ -372,6 +421,10 @@ public abstract class ZenBpmExecutor {
             throw refusal();
         }
 
+        private boolean runsOn(final Thread thread) {
+            return threads.contains(thread);
+        }
+
         private void end() {
             super.shutdown();
         }
@@ -386,11 +439,15 @@ public abstract class ZenBpmExecutor {
                             .formatted(adapterId));
         }
 
-        private static ThreadFactory named(final String adapterId) {
+        private static ThreadFactory named(
+            final String adapterId,
+            final Set<Thread> threads
+        ) {
             final var nextThread = new AtomicInteger();
             return runnable -> {
                 final var thread = new Thread(runnable, "zenbpm-%s-timing-%d"
                         .formatted(adapterId, nextThread.getAndIncrement()));
+                threads.add(thread);
                 // daemon, like the handler threads: a shutdown which forgot this executor must not
                 // keep the JVM up
                 thread.setDaemon(true);
