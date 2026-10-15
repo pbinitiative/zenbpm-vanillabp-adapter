@@ -192,6 +192,13 @@ Fixed after the review, each with a mutant seen to fail and restored afterwards:
   answers is `ZenBpmHealthTest`'s.
 - The open question of an unconfigured id with BPMN files went to S4.1.1 as a note.
 
+The first CI run of the pull request failed in
+`ZenBpmStartupValidationBootTest#aCompleteAdapterIdBootsSilently`: on a JVM running on UTC, as on
+the runners, the platform reports a missing `vanillabp.outbox.housekeeping.zone` in the
+`CONFIGURATION` section, which the test expects empty. Reproduced locally with `TZ=Etc/UTC`. The
+smoke application now names the zone, and the smoke tests pass under `Etc/UTC` and
+`Europe/Vienna`.
+
 Seen to fail, each restored afterwards (29 of 30 mutants). In the startup validation: a result which
 ends the start only warned, an unconfigured id not warned, the notices dropped, the protobuf runtime
 never asked and always asked, the factories not closed where a later one or the registry fails, a

@@ -1,3 +1,7 @@
 spring:
   application:
     name: smoke-test
+vanillabp:
+  outbox:
+    housekeeping:
+      zone: UTC

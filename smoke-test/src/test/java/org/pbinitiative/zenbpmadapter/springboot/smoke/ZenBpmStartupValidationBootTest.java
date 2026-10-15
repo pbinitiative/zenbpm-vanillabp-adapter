@@ -167,6 +167,10 @@ class ZenBpmStartupValidationBootTest {
         }
     }
 
+    /**
+     * The smoke application names <code>vanillabp.outbox.housekeeping.zone</code>, because the
+     * platform reports a missing zone in the same section wherever the JVM runs on UTC, as on CI.
+     */
     @Test
     @DisplayName("A complete adapter id boots with nothing in the block, its client id starts with the application's name, and a use of it says that it is not built yet")
     void aCompleteAdapterIdBootsSilently(final CapturedOutput output) {
