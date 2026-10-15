@@ -14,8 +14,8 @@
   `zenbpm-vanillabp-adapter-quarkus`, `zenbpm-vanillabp-adapter-quarkus-deployment`,
   `zenbpm-vanillabp-adapter-engine-test-support`; version `${revision}` = `2.0.0-SNAPSHOT`, Java 21,
   Spring Boot 4.1.x and Quarkus 3.39.x as managed by `adapter-platform-integration`. The VanillaBP
-  platform artifacts (`io.vanillabp:*`, still `2.0.0-SNAPSHOT`) are read from VanillaBP's GitHub
-  Packages, which needs a token in CI (S1.3.1).
+  platform artifacts (`io.vanillabp:*`, still `2.0.0-SNAPSHOT`) are read from the snapshot
+  repository of Maven Central, which the root POM names and which needs no login (S1.3.1).
 - Licence: MIT for the repository. Code copied and adapted from `camunda8-adapter` and
   `process-engine-api-adapter` is Apache 2.0 and keeps its licence: the copied files carry their
   original header, `NOTICE` names both origins with a pointer to the Apache licence text kept as
@@ -32,8 +32,9 @@
   `071460cc`, which the task delivery requires; decision 15, open question 9), written as two
   properties: `zenbpm.commit` and `zenbpm.image` = the digest of the `dev` image built from that
   commit (`ghcr.io/pbinitiative/zenbpm@sha256:...`, because `dev` moves with every push). Filtered
-  into `core/src/main/resources/META-INF/vanillabp/adapter-zenbpm.properties` (`adapter.version`,
-  `platform.version`, `zenbpm.engine` = the commit) and into the test resource
+  into `core/src/main/resources/META-INF/vanillabp/adapter-zenbpm.properties` (`part.version`,
+  `part.artifact`, `platform.version` for the platform's `VanillaBpParts`, `zenbpm.engine` = the
+  commit) and into the test resource
   `zenbpm-engine.properties` (`engine.image=${zenbpm.image}`). Before the first release the pin
   becomes an engine release tag (S12.4.1). The API contract the adapter is written against is the
   copy `core/src/main/zenbpm/api.yaml` and `core/src/main/proto/zenbpm.proto` taken from the pinned
@@ -60,7 +61,7 @@ zenbpm-vanillabp-adapter/
                                     coverage reports to GitHub Pages)
                                   nightly.yaml (E11: pinned engine plus the engine's latest image, native image)
                                   release.yaml (E12: tag -> release build, publication, wiki version table)
-                                  settings.xml for reading io.vanillabp snapshots from VanillaBP's GitHub Packages
+                                  settings.xml with the server publish-snapshots.yaml deploys to
   renovate.json                   own configuration (config:recommended); the engine image and pin move together
   NOTICE, LICENSE-APACHE-2.0      attribution of the code adapted from the Apache-2.0 VanillaBP adapters
 ```

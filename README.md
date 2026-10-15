@@ -130,15 +130,11 @@ Where the status says less than it seems:
 
 ## Building
 
-The build depends on two repositories of the VanillaBP project, which have to be in the local Maven
-repository first, in this order:
-
-1. [`spi-for-java`](https://github.com/vanillabp/spi-for-java) (`mvn install`)
-2. [`adapter-platform-integration`](https://github.com/vanillabp/adapter-platform-integration)
-   (`./mvnw install`)
-
-Both are `2.0.0-SNAPSHOT` and VanillaBP publishes their snapshots to its GitHub Packages, so instead
-of building them they can be resolved from there with a GitHub token which may read packages. Then:
+The build depends on two repositories of the VanillaBP project,
+[`spi-for-java`](https://github.com/vanillabp/spi-for-java) and
+[`adapter-platform-integration`](https://github.com/vanillabp/adapter-platform-integration). Both
+are `2.0.0-SNAPSHOT`, and VanillaBP publishes their snapshots to the snapshot repository of Maven
+Central, which the root POM names and which needs no login. So nothing has to be built first:
 
 ```bash
 mvn install
@@ -214,10 +210,11 @@ before Maven Central, so without it every release dependency is first looked up 
 and refused: measured on 2026-10-06, resolving this adapter from an empty local repository took six
 minutes with 1,317 such refusals, and one minute without them.
 
-The adapter builds on VanillaBP's own snapshots, which live in VanillaBP's GitHub Packages in the
-same way. Until VanillaBP 2.0 is released, a consumer needs those two registries as well, with the
-same server credentials and releases switched off, see `.github/workflows/settings.xml` for their
-addresses.
+The adapter builds on VanillaBP's own snapshots, which live in the snapshot repository of Maven
+Central, `https://central.sonatype.com/repository/maven-snapshots/`. It asks for no token, and the
+adapter's published POMs name it. A consumer whose build does not read the repositories of its
+dependencies, one behind a mirror for example, adds it itself, with snapshots switched on and
+releases switched off, the way the root `pom.xml` of this repository does.
 
 ## Contributing
 
@@ -230,17 +227,10 @@ run got as far as writing test or coverage reports, they are attached to the run
 `test-reports` (`test-reports-java-21` for the run on Java 21). A build which stops earlier, at
 Spotless or the compiler, has none, and its log is the place to read.
 
-The build reads the VanillaBP snapshots from VanillaBP's GitHub Packages, which asks for
-credentials even for public packages, and only accepts a classic personal access token. The two
-repository secrets which carry them are `VANILLABP_PACKAGES_USER` (a GitHub user name) and
-`VANILLABP_PACKAGES_TOKEN` (a classic token of that user with `read:packages` and nothing else);
-`.github/workflows/settings.xml` reads them, and only the build step gets them. They are one
-maintainer's token today, so they are replaced when that maintainer leaves or the token expires.
-A classic token cannot be limited to one organisation: it reads every package its owner can read,
-private ones of other organisations included. So it should come from an account which belongs to as
-few organisations as possible, ideally to none. A pull request from a fork gets no
-repository secrets; its run builds `spi-for-java` and `adapter-platform-integration` from the head
-of their default branch instead, which takes a few minutes longer.
+The build reads the VanillaBP snapshots from the snapshot repository of Maven Central, which needs
+no login. So a pull request from a fork builds exactly like one from this repository, and the
+workflows need no secret of their own: `publish-snapshots.yaml` deploys with the workflow's
+`GITHUB_TOKEN`.
 
 ## Test coverage
 

@@ -49,28 +49,14 @@ jobs:
       # under the anonymous rate limit; this workflow runs once per push to main, which stays
       # far below it.
       #
-      # This workflow only runs on main, never for a fork, so the token reading the VanillaBP
-      # snapshots has to be there. Without it the build below would fail on the first VanillaBP
-      # dependency with a message about a 401, which says nothing about the cause.
-      - name: Make sure the package token is there
-        env:
-          USER: "${{ secrets.VANILLABP_PACKAGES_USER }}"
-          TOKEN: "${{ secrets.VANILLABP_PACKAGES_TOKEN }}"
-        run: |
-          if [ -z "$USER" ] || [ -z "$TOKEN" ]; then
-            echo "::error::The repository secrets VANILLABP_PACKAGES_USER and VANILLABP_PACKAGES_TOKEN are missing. Set them under Settings > Secrets and variables > Actions to a GitHub user name and a classic token of that user with 'read:packages', see the README, section 'Contributing'."
-            exit 1
-          fi
       # One 'mvn deploy' builds, tests and gates everything, and uploads only at the end: the
       # root POM sets 'deployAtEnd', so a red coverage gate in the last module leaves nothing
-      # published. The two VanillaBP secrets read the platform's snapshots, GITHUB_TOKEN writes
-      # this repository's (server 'github' in settings.xml). The VanillaBP secrets reach this
-      # step only; the GITHUB_TOKEN otherwise goes to actions/checkout alone, which does not
-      # keep it (persist-credentials: false).
+      # published. The VanillaBP snapshots are read from Maven Central without a login (the
+      # root POM names the repository); GITHUB_TOKEN writes this repository's own (server
+      # 'github' in settings.xml). It reaches this step and actions/checkout alone, which
+      # does not keep it (persist-credentials: false).
       - name: Build, test and publish the snapshots
         env:
-          VANILLABP_PACKAGES_USER: "${{ secrets.VANILLABP_PACKAGES_USER }}"
-          VANILLABP_PACKAGES_TOKEN: "${{ secrets.VANILLABP_PACKAGES_TOKEN }}"
           GITHUB_TOKEN: "${{ secrets.GITHUB_TOKEN }}"
         run: mvn -s "$GITHUB_WORKSPACE/.github/workflows/settings.xml"
           --batch-mode --no-transfer-progress --update-snapshots deploy

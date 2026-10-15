@@ -6,9 +6,10 @@ documents every adapter carries, and can start the ZenBPM engine from a test.
 
 **Why first.** Every later story adds tests which need the coverage gate, the Spotless rules, the
 container helper and a green pull-request check; adding those later means touching every module
-twice. And because the repository builds against `io.vanillabp:*` snapshots which live in ANOTHER
-organisation's GitHub Packages, the CI's access to them is the first thing which can fail, so it is
-proven before any Java exists.
+twice. And because the repository builds against `io.vanillabp:*` snapshots which ANOTHER
+organisation publishes (in its GitHub Packages when E1 was built, on Maven Central since 2026-10-09,
+see S1.3.1), the CI's access to them is the first thing which can fail, so it is proven before any
+Java exists.
 
 **Done when.** `mvn install` is green in the new repo, the pull-request workflow is green on GitHub,
 snapshots and coverage pages are published from `main`, the local workspace builds it after the
@@ -83,6 +84,13 @@ which holds it.
    ```
 
    S1.2.1 adds `zenbpm.engine=${zenbpm.commit}` together with the pin.
+
+   **Amended 2026-10-15.** The platform stopped reading `adapter.version` on 2026-09-18: its
+   `VanillaBpParts` reads `part.version`, `part.artifact` and `platform.version`
+   (`ADAPTER-AUTHORS.md` section 2.1). With the old key the descriptor counts as incomplete, and the
+   platform warns that it cannot tell whether adapter and platform belong together.
+   The file now carries the three keys, and `PartDescriptorTest` asks the platform's own check
+   about the descriptor of the build.
 
 5. `core/src/main/java/org/pbinitiative/zenbpmadapter/ZenBpmAdapter.java` with `ADAPTER_TYPE =
    "zenbpm"` and a javadoc saying what the type means (the id defaults to it).
@@ -268,6 +276,15 @@ for 90 days, so what each run showed is written here as well):
 
 The ruleset on `main` (created 2026-10-04) requires `build` and a pull request.
 
+**Amended 2026-10-15.** Since 2026-10-09 VanillaBP publishes the snapshots of `spi-for-java` and
+`adapter-platform-integration` to the snapshot repository of Maven Central
+(`https://central.sonatype.com/repository/maven-snapshots/`), which anybody reads without a login,
+and no longer to its GitHub Packages; the last snapshots there are of 2026-10-09. So the root POM
+names the Central snapshot repository, `settings.xml` keeps only the server `publish-snapshots.yaml`
+deploys with, and the package token, the from-source path for forks and the two repository secrets
+`VANILLABP_PACKAGES_USER` and `VANILLABP_PACKAGES_TOKEN` are gone. The instructions and the evidence
+above describe the state of 2026-10-05 and stay as they were.
+
 ### S1.3.2 Snapshot publication and coverage pages
 
 - [ ] **Depends on:** S1.3.1.
@@ -348,6 +365,10 @@ the adapter's three artifacts came from its own registry, the VanillaBP ones fro
 no parent POM of the adapter was needed. The snippet had the repository's releases switched on,
 which made Maven ask GitHub Packages for every release dependency first (1,317 refused lookups, six
 minutes); with releases switched off, as the README now shows, the same resolve took one minute.
+
+**Amended 2026-10-15.** The step which checked the two VanillaBP secrets is gone, and the deploy
+reads the VanillaBP snapshots from Maven Central (see the amendment of S1.3.1). A consumer now needs
+the adapter's own registry and the Central snapshot repository, which asks for no token.
 
 ---
 

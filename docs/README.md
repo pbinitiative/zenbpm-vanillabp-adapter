@@ -38,10 +38,12 @@ re-checked file by file rather than re-analysed.
 | every decision of `architecture/02-design-decisions.md`, the gaps, the configuration keys | the adapter SPI (`adapter-platform-integration`) and its `ADAPTER-AUTHORS.md` |
 | the engine changes of the engine-enablement epic (same maintainers, same organisation) | the workspace superproject with its `.claude/skills/` (still saying the ZenBPM adapter is built on the PEA adapter; corrected only in the local workspace, no pull request planned) |
 | CI, releases, wiki at `pbinitiative/zenbpm-vanillabp-adapter.wiki`, coverage pages | the `blueprints` repository (a `-Pzenbpm` profile is a pull request there) and the wiki page `BPMS-adapters` which lists adapters |
-| the code copied from `camunda8-adapter` and `process-engine-api-adapter` (Apache 2.0), which keeps its notices | the `2.0.0-SNAPSHOT` platform artifacts the build reads from VanillaBP's GitHub Packages |
+| the code copied from `camunda8-adapter` and `process-engine-api-adapter` (Apache 2.0), which keeps its notices | the `2.0.0-SNAPSHOT` platform artifacts the build reads from the snapshot repository of Maven Central |
 
 The last row is why CI is part of the plan from the first story: a build in a foreign organisation
-needs a token to read VanillaBP's snapshots, and that has to work before any code exists.
+depends on snapshots another project publishes, and that has to work before any code exists. Until
+2026-10-09 VanillaBP published them to its GitHub Packages, which needed a token; since then they
+are on Maven Central, which needs none.
 
 ## Vocabulary used throughout
 

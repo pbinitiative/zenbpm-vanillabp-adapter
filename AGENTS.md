@@ -20,8 +20,8 @@ this adapter cannot do what it asks, the gap belongs in [`GAPS.md`](./GAPS.md).
 
 ## Building
 
-`spi-for-java` and `adapter-platform-integration` have to be in the local Maven repository first,
-built from the VanillaBP repositories or resolved from VanillaBP's GitHub Packages. Then:
+The `spi-for-java` and `adapter-platform-integration` snapshots are resolved from the snapshot
+repository of Maven Central, which the root POM names; nothing has to be built first. Then:
 
 ```bash
 mvn install                   # install alone: it runs every phase verify has
