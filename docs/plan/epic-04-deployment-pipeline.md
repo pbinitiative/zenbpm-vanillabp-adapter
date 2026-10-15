@@ -351,6 +351,16 @@ call-activity injection both ways.
    every boot, so (a) is recommended. Either way a failed query never fails the deployment: it is
    logged at DEBUG, as `ADAPTER-AUTHORS.md` asks.
 
+*Note from S2.4.1, 2026-10-15.* Step 1 is `ZenBpmEngineWait.awaitReady(factory)`, followed at once
+by `ZenBpmEnvironmentInfo.logOnce(factory, startupReport)`: no other story calls the second, and
+it has to run while the startup report still takes findings. Both remember their answer in the
+factory, so a second module neither waits nor asks again. After a failed wait a later module does
+not wait `startup-wait` again: it asks once, bounded by `request-timeout`, takes an engine which
+became ready meanwhile, and otherwise fails at once with the first failure as its cause. A refusal
+no repetition changes is final; an interrupt is not remembered. A factory closed while the
+application stops ends every later wait the same way, at its first attempt. The INFO line and the engine's version for the health check come from that one
+call.
+
 `ZenBpmDeployedProcesses` (per adapter id, shared by both services through a registry like PEA's):
 `scopedIdsOf(module)`, `keyOf(module, plainProcessId)`, `versionOf(...)`, `xmlOf(key)`,
 `ownsScopedProcessId(module, scopedId)`.
@@ -399,8 +409,20 @@ the factory hook which stops leftover modules on `close()`.
 unsubscribe on stop; the Spring `ZenBpmDeploymentIT` gains a case which starts an instance over REST
 and asserts the WARN about the unhandled type (proves the subscription reached the engine).
 
+*Note from the review of S2.4.1, 2026-10-15.* Register the factory hook
+(`factory.workflowModuleStarted(module, hook)`) before the first `subscribe`, and close the
+registration after the last `unsubscribe`. Once the factory's `close()` began, `workflowModuleStarted`
+throws an `IllegalStateException` naming the module, because nothing would run the hook; registering
+first means such a module has subscribed nothing. The hook runs without a lock of the factory held,
+so it may wait for the module's own stop. The factory's WARN about a module it had to stop ends with
+"on both platforms the lifecycle stops the modules first": that sentence is a promise about this
+story's wiring, so the criterion below proves it.
+
 **Acceptance criteria**
 
+- [ ] Stopping the application stops every started module before its factory closes: a boot test
+  per platform (Spring Boot and Quarkus) stops a context with a started module and finds no WARN of
+  the factory about a module it had to stop.
 - [ ] A module which deployed nothing subscribes nothing and starts without touching the engine.
 - [ ] No job type of a process nobody claims is subscribed.
 - [ ] Types shared by two modules under `none` stay subscribed until the second module stops.

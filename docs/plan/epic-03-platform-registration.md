@@ -104,6 +104,18 @@ factory is built, and end the boot with its message where it answers one; a boot
 runtime on the classpath or calls the check through a class loader which hides `RuntimeVersion`, as
 `ProtobufRuntimeCheckTest` does. The stream's constructor runs it again as a backstop.
 
+*Note from S2.4.1, 2026-10-15.* For a COMPLETE result the registry gets
+`new ZenBpmClientFactory(id, configuration, applicationName)`, which builds the executor, the job
+stream and the REST client itself and contacts nothing. For UNCONFIGURED, and for an INCONSISTENT
+result which does not end the boot, it gets `ZenBpmClientFactory.unconfigured(id, configuration,
+result.message())`: every client of it throws that message, and `ZenBpmHealth.check` answers
+UNKNOWN with it. The configuration is never `null` there (`unconfigured` refuses it): an id which
+sets nothing but its type gets a configuration with every key unset. `new ZenBpmClientRegistry(factories)` takes them as a list in the order of the ids
+and refuses two of one id. Where it refuses, the factories built for it are not closed by
+anybody, and each has started its HTTP client's thread: close them before the boot ends, unless
+each factory is a bean of its own which the container closes. `checkHealth()` is
+`ZenBpmHealth.check(registry.getFactory(id))` in package `org.pbinitiative.zenbpmadapter.health`. The registry bean's `close()` closes every factory.
+
 **Acceptance criteria**
 
 - [ ] No bean of type `List<...>` is registered; the platform's `ObjectProvider` streams find both

@@ -29,6 +29,15 @@ it rather than a callback the stream would need to know about.
 *Note from S2.4.2, 2026-10-15.* The two slot gauges read `ZenBpmExecutor.getBusySlots()` and
 `getFreeSlots()`: the slots of handlers which run or were handed over, and the rest.
 
+*Note from the review of S2.4.1, 2026-10-15.* The health check is UP where the engine answers ready
+over REST, whatever the job stream does: a wrong `grpc-address`, a TLS mismatch or a blocked gRPC
+port leaves REST working and delivers no job. The health names the stream's state as the detail
+`jobStream` (`ZenBpmJobStream.state()`: `not opened yet`, `connecting`, `connected`, `down since
+<instant>, <n> attempt(s)`, `closed`), so an operator sees it. Whether a stream which has been down
+longer than some bound turns the health DOWN was left to this epic: it is a stronger contract, and it
+needs a bound which is either a new key or a fixed value. Decide it with the meters and document it
+in the README's health section.
+
 ## S11.2.1 Startup-message review
 
 - [ ] **Depends on:** E10.

@@ -27,7 +27,7 @@ import com.sun.net.httpserver.HttpServer;
  * A request nothing was told for is answered with status 418, which no call of the client
  * expects, so it fails the test.
  */
-final class FakeEngine implements AutoCloseable {
+public final class FakeEngine implements AutoCloseable {
 
     private final HttpServer server;
 
@@ -50,7 +50,7 @@ final class FakeEngine implements AutoCloseable {
      *
      * @return The server
      */
-    static FakeEngine started() {
+    public static FakeEngine started() {
         try {
             final var server = HttpServer.create(new InetSocketAddress(InetAddress.getLoopbackAddress(), 0), 0);
             // one thread per request, so an answer which takes its time does not hold up the next
@@ -70,7 +70,7 @@ final class FakeEngine implements AutoCloseable {
      *
      * @return The loopback address as a literal, e.g. <code>http://127.0.0.1:41234</code>
      */
-    String address() {
+    public String address() {
         return "http://%s:%d".formatted(
                 server
                         .getAddress()
@@ -89,7 +89,7 @@ final class FakeEngine implements AutoCloseable {
      * @param status The status
      * @param body The body, <code>null</code> for none
      */
-    void answers(
+    public void answers(
         final String method,
         final String path,
         final int status,
@@ -118,7 +118,7 @@ final class FakeEngine implements AutoCloseable {
      *
      * @return The requests
      */
-    List<Request> requests() {
+    public List<Request> requests() {
         return List.copyOf(requests);
     }
 
@@ -218,7 +218,7 @@ final class FakeEngine implements AutoCloseable {
      *            none
      * @param body The body, empty where there is none
      */
-    record Request(
+    public record Request(
         String method,
         String path,
         String query,

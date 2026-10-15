@@ -176,6 +176,28 @@ public final class ZenBpmErrors {
     }
 
     /**
+     * What a failure says, without the adapter id every message of this client starts with: for
+     * a sentence which names the adapter id already, such as the failure of the engine wait, or
+     * an answer which carries it beside the text, such as a health.
+     *
+     * @param adapterId The adapter id
+     * @param throwable The failure
+     * @return Its message without a leading <code>ZenBPM adapter '&lt;id&gt;': </code>; the
+     *         failure itself where it has no message
+     */
+    public static String withoutAdapterId(
+        final String adapterId,
+        final Throwable throwable
+    ) {
+        final var message = throwable.getMessage();
+        if (message == null) {
+            return throwable.toString();
+        }
+        final var prefix = "ZenBPM adapter '%s': ".formatted(adapterId);
+        return message.startsWith(prefix) ? message.substring(prefix.length()) : message;
+    }
+
+    /**
      * The failure in the chain of causes which answers every question, <code>null</code> where
      * none does. That is the first exception of this client, wherever it is in the chain, so a
      * timeout or a <code>NumberFormatException</code> wrapped around it does not hide it. Where the
