@@ -351,6 +351,13 @@ call-activity injection both ways.
    every boot, so (a) is recommended. Either way a failed query never fails the deployment: it is
    logged at DEBUG, as `ADAPTER-AUTHORS.md` asks.
 
+*Note from S2.4.1, 2026-10-15.* Step 1 is `ZenBpmEngineWait.awaitReady(factory)`, followed at once
+by `ZenBpmEnvironmentInfo.logOnce(factory, startupReport)`: no other story calls the second, and
+it has to run while the startup report still takes findings. Both remember their answer in the
+factory, so a second module neither waits nor asks again, and after a failed wait a second module
+fails at once with the first one's message instead of waiting `startup-wait` again. The INFO line
+and the engine's version for the health check come from that one call.
+
 `ZenBpmDeployedProcesses` (per adapter id, shared by both services through a registry like PEA's):
 `scopedIdsOf(module)`, `keyOf(module, plainProcessId)`, `versionOf(...)`, `xmlOf(key)`,
 `ownsScopedProcessId(module, scopedId)`.

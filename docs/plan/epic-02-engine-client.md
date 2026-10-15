@@ -893,11 +893,90 @@ threads stop by themselves once the last handler returned and drop what is due l
 
 **Acceptance criteria**
 
-- [ ] Building a factory for a complete configuration never opens a connection.
-- [ ] The wait's failure message names address, elapsed time, last answer and the property key.
-- [ ] Health never throws and returns within `request-timeout` + 1 s against a black-hole address.
-- [ ] A commit mismatch arrives as one `warn` of topic `INFRASTRUCTURE` in the `StartupReport`, with
+- [x] Building a factory for a complete configuration never opens a connection.
+  `ZenBpmClientFactoryTest#buildingContactsNothing` builds one against a fake REST engine and a port
+  which counts the connections it takes: 300 ms later neither saw anything. The same test then
+  makes one REST call and one subscription and sees both arrive, so the two counters do count.
+- [x] The wait's failure message names address, elapsed time, last answer and the property key.
+  `ZenBpmEngineWaitTest#aWaitWhichRunsOutSaysEverything` matches the whole message: the engine's
+  address, `'vanillabp.adapters.orders.startup-wait: PT0.3S'`, the time waited, the last answer
+  (`not ready (no cluster leader elected)`) and the keys to correct or raise.
+  `ZenBpmEngineWaitIT#aShortWaitAgainstAClosedPortFails` fails after `PT2S` against a closed port
+  and names the key, and `#theWaitReturnsForAnEngineStartedLate` returns once the pinned engine,
+  started 3 s after the wait began, reports ready.
+- [x] Health never throws and returns within `request-timeout` + 1 s against a black-hole address.
+  `ZenBpmHealthTest#anEngineWhichNeverAnswersIsDownInTime` points the check at a port which takes
+  the connection and never answers. With `request-timeout: PT1S` the check returns DOWN within the
+  two seconds `assertTimeoutPreemptively` allows, naming `got no answer within PT1S`. A connection
+  which never opens ends the same way, because the REST client bounds the whole call by the same
+  deadline. `#aClosedFactoryIsDown` holds that a call which throws is DOWN, not an exception.
+- [x] A commit mismatch arrives as one `warn` of topic `INFRASTRUCTURE` in the `StartupReport`, with
   the adapter id as its scope; the matching case reports nothing there.
+  `ZenBpmEnvironmentInfoTest#anotherCommitIsOneWarning` finds exactly that one finding, with scope
+  `zenbpm adapter 'orders'` and a text which does not name the adapter id;
+  `#oneLineNamesTheEnvironment` and `#theCommitIsComparedIgnoringCase` find nothing reported for the
+  tested commit.
+
+**Implemented 2026-10-15.** `ZenBpmClientFactory`, `ZenBpmClientRegistry`, `ZenBpmEngineWait` and
+`ZenBpmEnvironmentInfo` in `client`, `ZenBpmHealth` in `health`. All but `ZenBpmEnvironmentInfo`
+are adapted from Camunda 8's classes and keep their licence (decision 17). `ZenBpmClientFactoryTest`
+(10 cases), `ZenBpmClientRegistryTest` (5), `ZenBpmEngineWaitTest` (15), `ZenBpmEnvironmentInfoTest`
+(8), `ZenBpmHealthTest` (9) and `ZenBpmEngineWaitIT` (2) are green. `mvn clean install` builds green
+with every integration test run and none skipped, the coverage gate measures 100 % of 8,148
+instructions on both platforms, and `bin/check-deploy-safety.sh` passes both runs.
+
+Seen to fail, each restored afterwards. In the factory: a REST call while it is built; the REST
+client closed before the stream, or the executor not shut down; the hooks run in the order they
+were registered, a failing hook not caught, a hook not removed, the hooks run after the stream was
+closed, or no WARN about them; a second `close()` closing again; a client handed out without its
+configuration. In the wait: a permanent answer waited out, a ready engine asked again, a failed
+wait not remembered, a second module asking the engine itself instead of waiting for the first one,
+a line on every attempt, the interrupt flag dropped, a pause running past the end of the wait, and
+a wait which never ends. In the environment info: every commit taken for the tested one, a commit
+of fewer than seven characters taken for one, the case compared, the engine asked twice, a failed
+status call let through, another topic, and an adapter id without clients asked. In the health
+check: a failure let through, an adapter id without clients reported as anything but UNKNOWN, an
+engine which is not ready reported UP, the version left out. In the registry: two factories of one
+adapter id accepted, the addresses compared as written, an adapter id sharing an engine with
+itself or with one without clients, and a failing factory keeping the others open. A wait which
+never ends used to hold the build up instead of failing it: `ZenBpmEngineWaitTest` now carries a
+class-wide `@Timeout(30)`, and the two tests which time an end use `assertTimeoutPreemptively`.
+
+Where the code differs from the instructions:
+
+- **The factory builds its executor and takes the application name.** The constructor is
+  `ZenBpmClientFactory(adapterId, configuration, applicationName)`, as the notes of S2.3.1 and
+  S2.4.2 ask, not `(adapterId, configuration, executor)`. An adapter id which is not configured, or
+  boots degraded, gets `ZenBpmClientFactory.unconfigured(adapterId, configuration, message)`. That
+  factory builds nothing, and `rest()`, `stream()`, `executor()` and `clientId()` throw the message
+  of the validation, which E3 and E5 rely on. The job stream is built before the REST client,
+  because the stream is what refuses an unfit protobuf runtime, and the HTTP client starts a thread
+  of its own when it is built. Note under S3.1.1.
+- **`close()` order**: the modules which did not stop (WARN, newest hook first), the stream,
+  `executor.shutdown()` without a second grace, the REST client.
+- **Health takes the version from startup (the user's decision).** `/system/health/ready` names no
+  version, and `/system/status` is the engine's diagnostic endpoint, not its readiness contract. A
+  second call would allow twice `request-timeout`. So the check asks `ready()` alone and names the
+  version and commit `ZenBpmEnvironmentInfo` read at startup, as `versionAtStart` and
+  `commitAtStart`; they are left out where that read did not happen. An adapter id which boots
+  degraded is UNKNOWN like an unconfigured one, with its validation message.
+- **The commits are compared by prefix.** The engine reports its commit shortened to twelve
+  characters (`shortCommitIDLength` in `internal/rest/system_status.go` at `bdd795a3`). So a commit
+  is the tested one where it has at least seven characters and is the beginning of the pin,
+  ignoring case, the rule `EngineUnderTestIT` uses. A `status()` call which fails is logged at WARN
+  and reports nothing.
+- **The wait remembers a failure as well.** A second module of the adapter id fails at once with the
+  first one's message, the first failure as its cause. Under `deployment-failure: warn` the start
+  goes on after a failed wait, and every further module would otherwise wait `startup-wait` again.
+  A second module which arrives during the wait waits for its answer and asks nothing itself.
+  `startup-wait: PT0S` asks once. The last pause ends with the wait, so the last attempt is made when
+  the wait runs out.
+- **`ZenBpmEngineWaitIT` starts the engine behind a relay.** Testcontainers knows the mapped port
+  only once the container runs, so the wait asks a `TcpRelay` on a port of its own, which refuses
+  connections until the engine runs, and is pointed at it then.
+- **Nothing called `ZenBpmEnvironmentInfo.logOnce`**: note under S4.3.2, which now calls it right
+  after the wait.
+- `FakeEngine` is public, because `ZenBpmHealthTest` lives in package `health`.
 
 ### S2.4.2 Executor and execution model
 
