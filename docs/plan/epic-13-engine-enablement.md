@@ -60,7 +60,9 @@ Full story with analysis, design, tests and acceptance criteria:
 Full story with analysis, design, tests and acceptance criteria:
 [`../engine-enablement/E13.3-job-retries-with-backoff.md`](../engine-enablement/E13.3-job-retries-with-backoff.md).
 
-- [ ] **Engine:** implement `zenbpm:taskDefinition retries` (the TODO in `pkg/bpmn/engine.go`): a
+- [x] **Engine:** done - commit `bc3384b3` ("#246 - Implement Job-Level Retry Mechanism for Engine
+  Executions", pull request #862, 2026-10-12), contained in the adapter's pin `bdd795a3` and in
+  `v1.9.0-rc1`. Was: implement `zenbpm:taskDefinition retries` (the TODO in `pkg/bpmn/engine.go`): a
   `fail` without an error code decrements retries and re-activates the job after an optional backoff
   (`retryBackoff` in the fail request); an incident only at zero.
 - [ ] **Adapter twin (supersedes S6.2.1):** `fail` with `retries` and `retryBackoff` like Camunda 8;

@@ -59,8 +59,8 @@
 
   <!-- Where the snapshots of main go: this repository's GitHub Packages registry, written by
        .github/workflows/publish-snapshots.yaml with the workflow's own token (server 'github' in
-       .github/workflows/settings.xml). The flatten plugin takes it out of the published POM,
-       because where we deploy is nothing a consumer can act on. -->
+       .github/workflows/settings.xml, the only thing that file holds). The flatten plugin takes
+       it out of the published POM, because where we deploy is nothing a consumer can act on. -->
   <distributionManagement>
     <snapshotRepository>
       <id>github</id>
@@ -195,6 +195,25 @@
       </dependency>
     </dependencies>
   </dependencyManagement>
+
+  <!-- Where the VanillaBP snapshots this adapter builds against come from: VanillaBP publishes
+       spi-for-java and adapter-platform-integration to the snapshot repository of Maven
+       Central, which anybody reads without a login, a pull request from a fork included.
+       Releases are switched off here, so a release dependency is never looked up in it; they
+       come from Maven Central itself. -->
+  <repositories>
+    <repository>
+      <releases>
+        <enabled>false</enabled>
+      </releases>
+      <snapshots>
+        <enabled>true</enabled>
+      </snapshots>
+      <id>central-snapshots</id>
+      <name>Maven Central snapshots</name>
+      <url>https://central.sonatype.com/repository/maven-snapshots/</url>
+    </repository>
+  </repositories>
 
   <build>
     <!-- Both licence texts and the NOTICE go into META-INF/ of every jar and every sources

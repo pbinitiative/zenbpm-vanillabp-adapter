@@ -234,6 +234,10 @@ published release on Maven Central) is planned, so a foreign organisation's CI d
 one person's token. Until then, the secrets are rotated when that person leaves, and the README's
 "Contributing" section names them.
 
+**Answered 2026-10-15 by the VanillaBP project's own change:** since 2026-10-09 both repositories
+publish their snapshots to the snapshot repository of Maven Central, which anybody reads without a
+login. The root POM names that repository, and the PAT and the two secrets are no longer used.
+
 ### 17. Where releases are published
 
 The Java client of the engine is on Maven Central under `org.pbinitiative.zenbpm`, so the namespace and

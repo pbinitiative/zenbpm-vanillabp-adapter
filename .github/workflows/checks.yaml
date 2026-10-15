@@ -67,43 +67,13 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      # The VanillaBP snapshots live in VanillaBP's GitHub Packages, see settings.xml. The
-      # classic token reading them can read every package its owner can, so it is handed
-      # to the one step which resolves dependencies and to no other. This step only says
-      # whether it is there. A pull request from a fork gets no repository secrets, so
-      # there it is missing, and the next step builds the snapshots from source instead.
-      - name: Find out whether the package token is there
-        id: packages
-        env:
-          TOKEN: "${{ secrets.VANILLABP_PACKAGES_TOKEN }}"
-        run: echo "token=$([ -n "$TOKEN" ] && echo present || echo missing)" >> "$GITHUB_OUTPUT"
-      # Without the token, the two VanillaBP repositories this one builds against are
-      # public, so their snapshots are built from the head of their default branch into
-      # the local repository, which is what a contributor does on their own machine. That
-      # head can be newer than the published snapshot; a fork's pull request is then
-      # checked against the newer one, and the run with the token after the merge against
-      # the published one. The tests are skipped: they are those repositories' business.
-      - name: Build the VanillaBP snapshots from source (no package token)
-        if: ${{ steps.packages.outputs.token == 'missing' }}
-        run: |
-          git clone --quiet --depth 1 https://github.com/vanillabp/spi-for-java.git "$RUNNER_TEMP/spi-for-java"
-          git clone --quiet --depth 1 https://github.com/vanillabp/adapter-platform-integration.git "$RUNNER_TEMP/adapter-platform-integration"
-          mvn -f "$RUNNER_TEMP/spi-for-java/pom.xml" --batch-mode --no-transfer-progress install -DskipTests
-          cd "$RUNNER_TEMP/adapter-platform-integration" && ./mvnw --batch-mode --no-transfer-progress install -DskipTests
       # 'install' and not 'install verify': install already runs every phase verify has,
-      # and naming both walks the lifecycle twice. GitHub Packages is only asked where the
-      # token is there; without it the snapshots built above are in the local repository.
+      # and naming both walks the lifecycle twice. The VanillaBP snapshots come from the
+      # snapshot repository of Maven Central the root POM names, which needs no login, so a
+      # pull request from a fork builds the same way. '--update-snapshots' asks for the
+      # newest of them even where the restored Maven cache already holds an older one.
       - name: Build and test
-        env:
-          VANILLABP_PACKAGES_USER: "${{ secrets.VANILLABP_PACKAGES_USER }}"
-          VANILLABP_PACKAGES_TOKEN: "${{ secrets.VANILLABP_PACKAGES_TOKEN }}"
-        run: |
-          if [ -n "$VANILLABP_PACKAGES_TOKEN" ]; then
-            packages=(-s "$GITHUB_WORKSPACE/.github/workflows/settings.xml" --update-snapshots)
-          else
-            packages=()
-          fi
-          mvn "${packages[@]}" --batch-mode --no-transfer-progress install
+        run: mvn --batch-mode --no-transfer-progress --update-snapshots install
       # What a failing test printed is in its report, and Surefire's last line in the log
       # is never the interesting one. The coverage reports explain a red gate. A build
       # which fails before any test ran (Spotless, compilation) has nothing to upload,
@@ -122,8 +92,8 @@ jobs:
           if-no-files-found: warn
 
   # The workflows are excluded from Spotless and nothing else reads them before they run.
-  # A typo in an 'if:' shows only on the run which takes that branch, and the fork path
-  # above never runs on a maintainer's pull request.
+  # A typo in an 'if:' shows only on the run which takes that branch, and
+  # publish-snapshots.yaml never runs on a pull request at all.
   workflow-lint:
     runs-on: ubuntu-latest
     timeout-minutes: 10

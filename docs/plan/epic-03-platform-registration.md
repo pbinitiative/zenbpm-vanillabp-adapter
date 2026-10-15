@@ -55,9 +55,10 @@ always from the core properties.
    `AdapterBeanRegistrarSupport.collaborators(supplierContext, adapterId)`. Both core classes exist as
    skeletons in this story: constructor with `AdapterCollaborators`, `getAdapterId/Type`,
    `getModelType`/`getProcessContextType`, `checkHealth()` -> `ZenBpmHealth`,
-   `AdapterPlatformVersion.requireCompatiblePlatform` in the constructor; every pipeline and
-   operation method throws the "later story" exception; `phaseOperations()` returns a map with a
-   throwing handler per REQUIRED operation (the boot refuses a missing required one).
+   `VanillaBpParts.requireAdapterFitsPlatform(ZenBpmAdapter.ADAPTER_TYPE, ...)` in the constructor
+   of the deployment service (the platform replaced `AdapterPlatformVersion` on 2026-09-18); every
+   pipeline and operation method throws the "later story" exception; `phaseOperations()` returns a
+   map with a throwing handler per REQUIRED operation (the boot refuses a missing required one).
 6. `META-INF/spring/org.springframework.boot.autoconfigure.AutoConfiguration.imports` listing the
    three classes.
 7. `smoke-test` module: `SmokeTestApplication` (JPA H2 + gruelbox outbox as in Camunda 8's smoke

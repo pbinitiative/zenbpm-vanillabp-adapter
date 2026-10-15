@@ -1,82 +1,19 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!--
-  Where CI reads the VanillaBP artifacts this repository builds against.
+  The credentials publish-snapshots.yaml deploys with, and nothing else.
 
-  Until VanillaBP 2.0.0 is released to Maven Central, spi-for-java and
-  adapter-platform-integration publish their snapshots to a GitHub Packages registry of
-  their own, in the vanillabp organisation. GitHub Packages asks for credentials even for
-  a public package, and its Maven registry accepts only a CLASSIC personal access token,
-  never a fine-grained one. So the servers below read the repository secrets
-  VANILLABP_PACKAGES_USER and VANILLABP_PACKAGES_TOKEN: a GitHub user name and a classic
-  token of that user carrying 'read:packages' and nothing else. Any GitHub account works.
+  The server 'github' is the one 'distributionManagement' of the root POM names:
+  publish-snapshots.yaml uploads this repository's own snapshots to pbinitiative's GitHub
+  Packages with the workflow's GITHUB_TOKEN, which needs no secret of ours.
 
-  One entry per VanillaBP repository rather than a 'vanillabp/*' wildcard: this is the form
-  the VanillaBP adapters' own CI uses. Add a repository when a build here starts to
-  resolve an artifact it publishes.
-
-  The server 'github' is the other direction: publish-snapshots.yaml uploads this
-  repository's own snapshots to pbinitiative's GitHub Packages ('distributionManagement'
-  of the root POM) with the workflow's GITHUB_TOKEN, which needs no secret of ours.
+  Reading needs no settings. The VanillaBP snapshots this repository builds against come from
+  the snapshot repository of Maven Central, which the root POM names and which asks for no
+  login.
 -->
 <settings xmlns="http://maven.apache.org/SETTINGS/1.0.0"
           xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
           xsi:schemaLocation="http://maven.apache.org/SETTINGS/1.0.0 http://maven.apache.org/xsd/settings-1.0.0.xsd">
-    <activeProfiles>
-        <activeProfile>github</activeProfile>
-    </activeProfiles>
-    <profiles>
-        <profile>
-            <id>github</id>
-            <repositories>
-                <repository>
-                    <id>central</id>
-                    <url>https://repo1.maven.org/maven2</url>
-                    <snapshots>
-                        <enabled>false</enabled>
-                    </snapshots>
-                    <releases>
-                        <enabled>true</enabled>
-                    </releases>
-                </repository>
-                <!-- what the adapter plugs into: vanillabp-adapter-spi, the Spring Boot and
-                     Quarkus integrations, and io.vanillabp:test-utils for the tests -->
-                <repository>
-                    <id>vanillabp-adapter-platform-integration</id>
-                    <url>https://maven.pkg.github.com/vanillabp/adapter-platform-integration</url>
-                    <snapshots>
-                        <enabled>true</enabled>
-                    </snapshots>
-                    <releases>
-                        <enabled>false</enabled>
-                    </releases>
-                </repository>
-                <!-- io.vanillabp:spi-for-java, the interfaces an application programs against
-                     and the adapter serves -->
-                <repository>
-                    <id>vanillabp-spi-for-java</id>
-                    <url>https://maven.pkg.github.com/vanillabp/spi-for-java</url>
-                    <snapshots>
-                        <enabled>true</enabled>
-                    </snapshots>
-                    <releases>
-                        <enabled>false</enabled>
-                    </releases>
-                </repository>
-            </repositories>
-        </profile>
-    </profiles>
-
     <servers>
-        <server>
-            <id>vanillabp-adapter-platform-integration</id>
-            <username>${env.VANILLABP_PACKAGES_USER}</username>
-            <password>${env.VANILLABP_PACKAGES_TOKEN}</password>
-        </server>
-        <server>
-            <id>vanillabp-spi-for-java</id>
-            <username>${env.VANILLABP_PACKAGES_USER}</username>
-            <password>${env.VANILLABP_PACKAGES_TOKEN}</password>
-        </server>
         <!-- used for 'mvn deploy' by the root POM's distributionManagement -->
         <server>
             <id>github</id>
