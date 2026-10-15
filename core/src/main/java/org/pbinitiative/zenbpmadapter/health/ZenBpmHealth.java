@@ -33,7 +33,7 @@ import io.vanillabp.integration.adapter.spi.health.AdapterHealth;
  * and the engine's address, so an operator can act without opening the configuration first. An
  * adapter id without clients names the address where <code>rest-address</code> is valid.
  * <p>
- * The check never throws, and ends within <code>request-timeout</code> and the quarter of a second
+ * The check never throws, and ends within <code>request-timeout</code> + 0.25 s. The 0.25 s is what
  * the REST client gives a body which stopped arriving.
  */
 public final class ZenBpmHealth {

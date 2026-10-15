@@ -29,10 +29,9 @@ import lombok.extern.slf4j.Slf4j;
  * <li>when <code>startup-wait</code> is used up, with a message naming the address, the time
  * waited, the last answer and the key to raise. <code>startup-wait</code> limits when an attempt
  * is started, not how long it runs: an attempt under way when it runs out ends at its own deadline,
- * <code>request-timeout</code>, and a ready engine is taken whenever it answers. So a wait which
- * fails takes up to <code>startup-wait</code> plus one request: <code>request-timeout</code>, and
- * the quarter of a second the REST client gives a body which stopped arriving. A wait of zero
- * asks once;</li>
+ * <code>request-timeout</code>, and a ready engine is taken whenever it answers. So a failing wait
+ * takes at most <code>startup-wait</code> + <code>request-timeout</code> + 0.25 s. The 0.25 s is
+ * what the REST client gives a body which stopped arriving. A wait of zero asks once;</li>
  * <li>at once, where the engine answers something no repetition changes (see
  * {@link ZenBpmErrors#permanentFailure(Throwable)});</li>
  * <li>at once where the thread is interrupted, and with the next attempt where the factory of
@@ -91,6 +90,10 @@ public final class ZenBpmEngineWait {
                 .configuration()
                 .engineAddress();
         final var memory = factory.engineWait();
+        // a known answer is not refused to a thread which happens to be interrupted
+        if (memory.ready) {
+            return;
+        }
         try {
             memory.lock.lockInterruptibly();
         } catch (final InterruptedException e) {
@@ -114,7 +117,7 @@ public final class ZenBpmEngineWait {
         final URI address,
         final Memory memory,
         final Pacing pacing,
-        final Supplier<Readiness> ask
+        final Supplier<Readiness> readiness
     ) {
         if (memory.ready) {
             return;
@@ -125,9 +128,9 @@ public final class ZenBpmEngineWait {
         }
         try {
             if (earlier == null) {
-                waitUntilReady(factory, address, pacing, ask);
+                waitUntilReady(factory, address, pacing, readiness);
             } else {
-                askOnceMore(factory, address, earlier, ask);
+                askOnceMore(factory, address, earlier, readiness);
             }
             memory.ready = true;
         } catch (final Refused refused) {
@@ -147,7 +150,7 @@ public final class ZenBpmEngineWait {
         final ZenBpmClientFactory factory,
         final URI address,
         final Pacing pacing,
-        final Supplier<Readiness> ask
+        final Supplier<Readiness> readiness
     ) {
         final var adapterId = factory.getAdapterId();
         final var startupWait = factory
@@ -158,7 +161,7 @@ public final class ZenBpmEngineWait {
         var loggedAt = startedAt;
         while (true) {
             final var attemptStartedAt = System.nanoTime();
-            final var answer = whatTheEngineAnswered(factory, address, ask);
+            final var answer = whyNotReady(factory, address, readiness);
             if (answer.isEmpty()) {
                 log.info("ZenBPM[{}]: the engine at {} reported ready after {}", adapterId, address, timeSince(
                         startedAt));
@@ -189,9 +192,9 @@ public final class ZenBpmEngineWait {
         final ZenBpmClientFactory factory,
         final URI address,
         final RuntimeException earlier,
-        final Supplier<Readiness> ask
+        final Supplier<Readiness> readiness
     ) {
-        final var answer = whatTheEngineAnswered(factory, address, ask);
+        final var answer = whyNotReady(factory, address, readiness);
         if (answer.isPresent()) {
             throw new IllegalStateException("%s Asked once more, it answered: %s.".formatted(earlier.getMessage(),
                     answer.get()), earlier);
@@ -203,16 +206,17 @@ public final class ZenBpmEngineWait {
     /**
      * One attempt.
      *
-     * @return Empty where the engine is ready, else what it answered or what the call failed with
+     * @return Why the engine is not ready: what it answered, or what the call failed with; empty
+     *         where it is ready
      * @throws IllegalStateException Where the engine answered something no repetition changes,
      *             or where the factory was closed
      */
-    private static Optional<String> whatTheEngineAnswered(
+    private static Optional<String> whyNotReady(
         final ZenBpmClientFactory factory,
         final URI address,
-        final Supplier<Readiness> ask
+        final Supplier<Readiness> readiness
     ) {
-        final var answer = ask(factory, address, ask);
+        final var answer = whatTheEngineSays(factory, address, readiness);
         // a closed REST client fails every call at once, and no wait changes that
         if (answer.isPresent() && factory.isClosed()) {
             throw new IllegalStateException(
@@ -222,20 +226,20 @@ public final class ZenBpmEngineWait {
         return answer;
     }
 
-    private static Optional<String> ask(
+    private static Optional<String> whatTheEngineSays(
         final ZenBpmClientFactory factory,
         final URI address,
-        final Supplier<Readiness> ask
+        final Supplier<Readiness> readiness
     ) {
         final var adapterId = factory.getAdapterId();
         try {
-            final var readiness = ask.get();
-            if (readiness.ready()) {
+            final var answer = readiness.get();
+            if (answer.ready()) {
                 return Optional.empty();
             }
-            return Optional.of(readiness
+            return Optional.of(answer
                     .reasons()
-                    .isEmpty() ? "not ready" : "not ready (%s)".formatted(String.join("; ", readiness.reasons())));
+                    .isEmpty() ? "not ready" : "not ready (%s)".formatted(String.join("; ", answer.reasons())));
         } catch (final RuntimeException e) {
             if (ZenBpmErrors.permanentFailure(e)) {
                 throw new Refused(
@@ -341,9 +345,10 @@ public final class ZenBpmEngineWait {
         final ReentrantLock lock = new ReentrantLock();
 
         /**
-         * Whether the engine reported ready once.
+         * Whether the engine reported ready once. Written holding {@link #lock}, and read without
+         * it as well.
          */
-        private boolean ready;
+        private volatile boolean ready;
 
         /**
          * What the first wait failed with, <code>null</code> where none failed.

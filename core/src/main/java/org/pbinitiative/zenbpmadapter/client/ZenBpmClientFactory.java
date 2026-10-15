@@ -34,11 +34,11 @@ import lombok.extern.slf4j.Slf4j;
  * <p>
  * The workflow modules register a hook while their job types are subscribed. On every path of the
  * platforms the module stops itself before the factory is closed. Where that did not happen,
- * {@link #close()} runs the hooks first and says so at WARN, because a stream closed under a
- * module's open subscriptions hands its jobs to the next client at once, while the module's
- * handlers may still be running them. The hooks run without a lock of the factory held, so a hook
- * may wait for the module's own stop, which removes its hook meanwhile. A module which starts once
- * {@link #close()} began is refused, because nothing would stop it.
+ * {@link #close()} runs the hooks first and logs a WARN. The reason: a stream closed under open
+ * subscriptions hands their jobs to another client at once, while the module's handlers may still
+ * run them. The hooks run without a lock of the factory held, so a hook may wait for the module's
+ * own stop, which removes its hook meanwhile. A module which starts once {@link #close()} began is
+ * refused, because nothing would stop it.
  * <p>
  * Each field has an accessor of its own and no Lombok getter on the class, see decision 13 in the
  * repository's DECISIONS.md.
@@ -65,10 +65,11 @@ public class ZenBpmClientFactory implements AutoCloseable {
     private final ZenBpmExecutor executor;
 
     /**
-     * The workflow modules whose job types are subscribed right now, and per module the hooks
-     * which stop them, in the order they were registered. Guarded by <code>this</code>.
+     * The workflow modules whose job types are subscribed right now, and per module the
+     * registrations of the hooks which stop them, in the order they were registered. Guarded by
+     * <code>this</code>.
      */
-    private final Map<String, List<WorkflowModuleShutdown>> openWorkflowModules = new LinkedHashMap<>();
+    private final Map<String, List<Registration>> openWorkflowModules = new LinkedHashMap<>();
 
     /**
      * What the engine wait of this adapter id found. A lock of its own, not <code>this</code>, so a
@@ -181,7 +182,8 @@ public class ZenBpmClientFactory implements AutoCloseable {
      * message.
      *
      * @param adapterId The adapter id
-     * @param configuration The configuration as the platform read it
+     * @param configuration The configuration as the platform read it, never <code>null</code>:
+     *            an adapter id which sets nothing but its type has one with every key unset
      * @param message The message of the validation, which names the keys to set or correct
      * @return The factory
      */
@@ -190,8 +192,8 @@ public class ZenBpmClientFactory implements AutoCloseable {
         final ZenBpmAdapterConfiguration configuration,
         final String message
     ) {
-        return new ZenBpmClientFactory(adapterId, configuration, Objects.requireNonNull(message,
-                "message"), null, null, null, null);
+        return new ZenBpmClientFactory(adapterId, Objects.requireNonNull(configuration, "configuration"), Objects
+                .requireNonNull(message, "message"), null, null, null, null);
     }
 
     /**
@@ -298,7 +300,8 @@ public class ZenBpmClientFactory implements AutoCloseable {
      *
      * @param workflowModuleId The workflow module
      * @param shutdown How to stop it where the factory is closed before it stopped itself
-     * @return What removes this hook again once the module stopped
+     * @return What removes this hook again once the module stopped: one registration per call,
+     *         also where one hook object is registered twice
      * @throws IllegalStateException Where {@link #close()} began: nothing would run the hook
      */
     public synchronized WorkflowModuleShutdownRegistration workflowModuleStarted(
@@ -312,10 +315,11 @@ public class ZenBpmClientFactory implements AutoCloseable {
                     "ZenBPM adapter '%s': workflow module '%s' cannot start, because the clients of the adapter id are closed or being closed while the application stops."
                             .formatted(adapterId, workflowModuleId));
         }
+        final var registration = new Registration(workflowModuleId, shutdown);
         openWorkflowModules
                 .computeIfAbsent(workflowModuleId, module -> new ArrayList<>())
-                .add(shutdown);
-        return () -> removeShutdownHook(workflowModuleId, shutdown);
+                .add(registration);
+        return registration;
     }
 
     /**
@@ -331,13 +335,14 @@ public class ZenBpmClientFactory implements AutoCloseable {
      * Stops what the factory built, in this order: the workflow modules which did not stop
      * themselves (logged at WARN), the job stream, the executor and the REST client. The executor
      * takes no new handler and does not wait for the running ones: the platform's drain waited
-     * <code>shutdown-grace</code> for them already. Where one of them fails to close, the others
-     * are closed all the same, and the first failure is thrown with the later ones suppressed.
-     * Closing twice does nothing the second time.
+     * <code>shutdown-grace</code> for them already. Where one of them fails, an {@link Error}
+     * included, the others are closed all the same, and the first failure is thrown with the
+     * later ones suppressed. Closing twice does nothing the second time, and a second
+     * <code>close()</code> on another thread does not wait for the first one to finish.
      */
     @Override
     public void close() {
-        final Map<String, List<WorkflowModuleShutdown>> notStopped;
+        final Map<String, List<Registration>> notStopped;
         synchronized (this) {
             if (closed) {
                 return;
@@ -346,11 +351,11 @@ public class ZenBpmClientFactory implements AutoCloseable {
             notStopped = new LinkedHashMap<>(openWorkflowModules);
             openWorkflowModules.clear();
         }
-        stopWorkflowModulesWhichDidNotStop(notStopped);
         if (!isConfigured()) {
+            closeEach(() -> stopWorkflowModulesWhichDidNotStop(notStopped));
             return;
         }
-        closeEach(stream::close, executor::shutdown, () -> {
+        closeEach(() -> stopWorkflowModulesWhichDidNotStop(notStopped), stream::close, executor::shutdown, () -> {
             log.info("ZenBPM[{}]: closing the REST client of the engine at {}", adapterId, configuration
                     .engineAddress());
             rest.close();
@@ -381,7 +386,7 @@ public class ZenBpmClientFactory implements AutoCloseable {
      * @param logging Answers what the engine reported, or <code>null</code> where it did not
      *            answer
      */
-    void onceTheEnvironmentIsLogged(final Supplier<EngineStatus> logging) {
+    void logTheEnvironmentOnce(final Supplier<EngineStatus> logging) {
         if (environmentLogged.compareAndSet(false, true)) {
             engineStatusAtStart = logging.get();
         }
@@ -393,23 +398,22 @@ public class ZenBpmClientFactory implements AutoCloseable {
         }
     }
 
-    private synchronized void removeShutdownHook(
-        final String workflowModuleId,
-        final WorkflowModuleShutdown shutdown
-    ) {
-        final var hooks = openWorkflowModules.get(workflowModuleId);
-        if (hooks == null) {
+    // by identity: a registration removes itself and no other, also where another one holds the
+    // same hook object
+    private synchronized void removeShutdownHook(final Registration registration) {
+        final var registrations = openWorkflowModules.get(registration.workflowModuleId);
+        if (registrations == null) {
             return;
         }
-        hooks.remove(shutdown);
-        if (hooks.isEmpty()) {
-            openWorkflowModules.remove(workflowModuleId);
+        registrations.removeIf(registered -> registered == registration);
+        if (registrations.isEmpty()) {
+            openWorkflowModules.remove(registration.workflowModuleId);
         }
     }
 
     // the backstop: a module the platform did not stop is stopped here, while the stream and the
     // REST client are still open, so its handlers can still complete what they run
-    private void stopWorkflowModulesWhichDidNotStop(final Map<String, List<WorkflowModuleShutdown>> pending) {
+    private void stopWorkflowModulesWhichDidNotStop(final Map<String, List<Registration>> pending) {
         if (pending.isEmpty()) {
             return;
         }
@@ -425,7 +429,7 @@ public class ZenBpmClientFactory implements AutoCloseable {
             Collections.reverse(hooks);
             hooks.forEach(hook -> {
                 try {
-                    hook.stopWorkflowProcessing();
+                    hook.shutdown.stopWorkflowProcessing();
                 } catch (final Exception e) {
                     log.warn(
                             "ZenBPM[{}]: stopping workflow module '{}' failed while the clients were being closed; they are closed anyway",
@@ -435,14 +439,15 @@ public class ZenBpmClientFactory implements AutoCloseable {
         });
     }
 
-    // each step runs whether or not the one before it failed, so a stream which fails to close
-    // does not keep the executor and the HTTP client open
+    // each step runs whether or not the one before it failed, so a hook or a stream which fails
+    // does not keep the executor and the HTTP client open. An Error included: a class loader closed
+    // under the drain throws NoClassDefFoundError while the application stops
     private static void closeEach(final Runnable... steps) {
-        RuntimeException first = null;
+        Throwable first = null;
         for (final var step : steps) {
             try {
                 step.run();
-            } catch (final RuntimeException e) {
+            } catch (final RuntimeException | Error e) {
                 if (first == null) {
                     first = e;
                 } else {
@@ -450,8 +455,11 @@ public class ZenBpmClientFactory implements AutoCloseable {
                 }
             }
         }
+        if (first instanceof RuntimeException failure) {
+            throw failure;
+        }
         if (first != null) {
-            throw first;
+            throw (Error) first;
         }
     }
 
@@ -472,8 +480,8 @@ public class ZenBpmClientFactory implements AutoCloseable {
     }
 
     /**
-     * What removes a registered hook. Closing it removes that hook and no other, so several hooks
-     * can share one workflow module.
+     * What removes a registered hook. Closing it removes that registration and no other, so
+     * several hooks can share one workflow module, and one hook object can be registered twice.
      */
     @FunctionalInterface
     public interface WorkflowModuleShutdownRegistration extends AutoCloseable {
@@ -483,6 +491,31 @@ public class ZenBpmClientFactory implements AutoCloseable {
          */
         @Override
         void close();
+
+    }
+
+
+    /**
+     * One call of {@link #workflowModuleStarted}: its own object, so it is removed by identity.
+     */
+    private final class Registration implements WorkflowModuleShutdownRegistration {
+
+        private final String workflowModuleId;
+
+        private final WorkflowModuleShutdown shutdown;
+
+        private Registration(
+            final String workflowModuleId,
+            final WorkflowModuleShutdown shutdown
+        ) {
+            this.workflowModuleId = workflowModuleId;
+            this.shutdown = shutdown;
+        }
+
+        @Override
+        public void close() {
+            removeShutdownHook(this);
+        }
 
     }
 

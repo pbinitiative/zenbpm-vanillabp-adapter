@@ -32,6 +32,7 @@ import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.pbinitiative.zenbpmadapter.client.ZenBpmClientFactory.WorkflowModuleShutdown;
 import org.pbinitiative.zenbpmadapter.client.ZenBpmClientFactory.WorkflowModuleShutdownRegistration;
 
 import io.grpc.inprocess.InProcessChannelBuilder;
@@ -265,6 +266,39 @@ class ZenBpmClientFactoryTest {
     }
 
     @Test
+    @DisplayName("A hook which throws an Error does not keep the clients open, and the Error is thrown")
+    void aHookWhichThrowsAnErrorDoesNotKeepTheClientsOpen() {
+        final var closed = new CopyOnWriteArrayList<String>();
+        final var factory = recordingFactory(closed);
+        factory.workflowModuleStarted("billing", () -> {
+            throw new AssertionError("the drain broke hard");
+        });
+
+        final var failure = assertThrows(AssertionError.class, factory::close);
+
+        assertAll(
+                () -> assertEquals("the drain broke hard", failure.getMessage()),
+                () -> assertEquals(List.of("stream, executor running", "rest, executor shut down"), closed));
+    }
+
+    @Test
+    @DisplayName("A registration removes its own hook and no other, also where one hook object is registered twice and closed twice")
+    void aRegistrationRemovesItsOwnHookOnly() {
+        final var closed = new CopyOnWriteArrayList<String>();
+        final var factory = recordingFactory(closed);
+        final WorkflowModuleShutdown hook = () -> closed.add("billing");
+        final var adapter = factory.workflowModuleStarted("billing", hook);
+        factory.workflowModuleStarted("billing", hook);
+
+        adapter.close();
+        adapter.close();
+
+        assertEquals(Set.of("billing"), factory.getOpenWorkflowModules());
+        factory.close();
+        assertEquals(List.of("billing", "stream, executor running", "rest, executor shut down"), closed);
+    }
+
+    @Test
     @DisplayName("Closing twice closes once")
     void closingTwiceClosesOnce() {
         final var closed = new CopyOnWriteArrayList<String>();
@@ -299,12 +333,15 @@ class ZenBpmClientFactoryTest {
     }
 
     @Test
-    @DisplayName("A factory without clients needs the message which says why")
-    void aFactoryWithoutClientsNeedsTheMessage() {
+    @DisplayName("A factory without clients needs the message which says why, and the configuration")
+    void aFactoryWithoutClientsNeedsTheMessageAndTheConfiguration() {
         final var configuration = new ZenBpmAdapterConfiguration();
 
-        assertThrows(NullPointerException.class, () -> ZenBpmClientFactory.unconfigured(ADAPTER_ID, configuration,
-                null));
+        assertAll(
+                () -> assertEquals("message", assertThrows(NullPointerException.class, () -> ZenBpmClientFactory
+                        .unconfigured(ADAPTER_ID, configuration, null)).getMessage()),
+                () -> assertEquals("configuration", assertThrows(NullPointerException.class,
+                        () -> ZenBpmClientFactory.unconfigured(ADAPTER_ID, null, "configure me")).getMessage()));
     }
 
     private static ZenBpmAdapterConfiguration configuration(final String restAddress) {

@@ -109,9 +109,12 @@ runtime on the classpath or calls the check through a class loader which hides `
 stream and the REST client itself and contacts nothing. For UNCONFIGURED, and for an INCONSISTENT
 result which does not end the boot, it gets `ZenBpmClientFactory.unconfigured(id, configuration,
 result.message())`: every client of it throws that message, and `ZenBpmHealth.check` answers
-UNKNOWN with it. `new ZenBpmClientRegistry(factories)` takes them as a list in the order of the ids
-and refuses two of one id. `checkHealth()` is `ZenBpmHealth.check(registry.getFactory(id))` in
-package `org.pbinitiative.zenbpmadapter.health`. The registry bean's `close()` closes every factory.
+UNKNOWN with it. The configuration is never `null` there (`unconfigured` refuses it): an id which
+sets nothing but its type gets a configuration with every key unset. `new ZenBpmClientRegistry(factories)` takes them as a list in the order of the ids
+and refuses two of one id. Where it refuses, the factories built for it are not closed by
+anybody, and each has started its HTTP client's thread: close them before the boot ends, unless
+each factory is a bean of its own which the container closes. `checkHealth()` is
+`ZenBpmHealth.check(registry.getFactory(id))` in package `org.pbinitiative.zenbpmadapter.health`. The registry bean's `close()` closes every factory.
 
 **Acceptance criteria**
 

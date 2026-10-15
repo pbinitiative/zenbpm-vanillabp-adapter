@@ -921,8 +921,8 @@ threads stop by themselves once the last handler returned and drop what is due l
 **Implemented 2026-10-15.** `ZenBpmClientFactory`, `ZenBpmClientRegistry`, `ZenBpmEngineWait` and
 `ZenBpmEnvironmentInfo` in `client`, `ZenBpmHealth` in `health`. All but `ZenBpmEnvironmentInfo`
 are adapted from Camunda 8's classes and keep their licence (decision 17). `ZenBpmClientFactoryTest`
-(10 cases, 13 after the review), `ZenBpmClientRegistryTest` (5, then 6), `ZenBpmEngineWaitTest`
-(15, then 23), `ZenBpmEnvironmentInfoTest` (8, then 10), `ZenBpmHealthTest` (9, then 11) and
+(10 cases, 13 after the review, 15 after the re-review), `ZenBpmClientRegistryTest` (5, then 6),
+`ZenBpmEngineWaitTest` (15, then 23, then 24), `ZenBpmEnvironmentInfoTest` (8, then 10), `ZenBpmHealthTest` (9, then 11) and
 `ZenBpmEngineWaitIT` (2) are green; `ZenBpmClientFactoryIT` (1) came with the review. `mvn clean install` builds green
 with every integration test run and none skipped, the coverage gate measures 100 % of 8,148
 instructions on both platforms, and `bin/check-deploy-safety.sh` passes both runs.
@@ -981,14 +981,14 @@ Where the code differs from the instructions:
   otherwise wait `startup-wait` again. So after a failed wait a later module asks once, bounded by
   `request-timeout`: it takes an engine which became ready meanwhile, and otherwise fails at once
   with the first failure as its cause. A refusal no repetition changes is final, and nobody asks
-  again. An interrupt, or a factory closed while the application stops, is no answer of the engine
-  and is not remembered. A second module which arrives during the wait waits for its answer and asks
+  again. An interrupt is no answer of the engine and is not remembered. A factory closed while the
+  application stops ends every later wait the same way, at its first attempt. A second module which arrives during the wait waits for its answer and asks
   nothing itself; it waits on a lock, so it can be interrupted. `startup-wait: PT0S` asks once. The
   last pause ends with the wait, so the last attempt is made when the wait runs out.
   `startup-wait` limits when an attempt starts, not how long it runs: an attempt under way when it
   runs out ends at its own deadline, and a ready answer is taken whenever it comes. So a failing
-  wait takes up to `startup-wait` plus one request: `request-timeout`, and the quarter of a second
-  the REST client gives a body which stopped arriving.
+  wait takes at most `startup-wait` + `request-timeout` + 0.25 s. The 0.25 s is what the REST
+  client gives a body which stopped arriving.
 - **`ZenBpmEngineWaitIT` starts the engine behind a relay.** Testcontainers knows the mapped port
   only once the container runs, so the wait asks a `TcpRelay` on a port of its own, which refuses
   connections until the engine runs, and is pointed at it then.
@@ -1047,6 +1047,35 @@ check was removed rather than kept.
 `mvn clean install` builds green after the changes: core 425 unit tests and 34 integration tests,
 none skipped, `ZenBpmClientFactoryIT` and both `ZenBpmEngineWaitIT` cases among them against
 Docker; the coverage gate measures 100 % of 8,481 instructions on both platforms, and
+`bin/check-deploy-safety.sh` passes both runs.
+
+**Changed after the re-review of 2026-10-15.** Four minor points and six nits, each verified, the
+four minor ones first reproduced by a test which failed:
+- A hook which threw an `Error` skipped the cleanup, and a second `close()` could not repair it. The
+  hooks are now the first step of the cleanup, which catches `Error` as well and throws the first
+  failure with the later ones suppressed
+  (`ZenBpmClientFactoryTest#aHookWhichThrowsAnErrorDoesNotKeepTheClientsOpen`).
+- A registration removed its hook by `equals`, so closing one registration twice removed another
+  registration of the same hook object. Each call of `workflowModuleStarted` now hands out its own
+  registration, removed by identity (`#aRegistrationRemovesItsOwnHookOnly`).
+- The plan said that a failure caused by closing the factory is not remembered. It is; nothing can
+  tell, because every wait of a closed factory ends at its first attempt. The sentences here and
+  under S4.3.2 are corrected.
+- `unconfigured(id, null, message)` let `ZenBpmHealth.check` throw a `NullPointerException`. It now
+  refuses a `null` configuration
+  (`#aFactoryWithoutClientsNeedsTheMessageAndTheConfiguration`); the S3.1.1 note says so.
+- Nits: a thread which is interrupted gets an answer the adapter id has already instead of a
+  failure (`ZenBpmEngineWaitTest#aKnownAnswerIsNotFailedByAnInterrupt`); the javadoc of `close()`
+  says that a second `close()` on another thread does not wait for the first; clearer names
+  (`logTheEnvironmentOnce`, `whyNotReady`, `whatTheEngineSays`) and sentences; the S3.1.1 note says
+  to close the factories where the registry refuses them; `ZenBpmClientFactoryIT` also finds
+  `jobStream: down since ...` once the engine stopped.
+
+Seen to fail, each restored: the cleanup not catching an `Error`, or swallowing it; the hooks run
+before the cleanup instead of as its first step; a registration removing every registration of its
+hook object; an unconfigured factory taking no configuration; a known answer refused to an
+interrupted thread. `mvn clean install` builds green: core 428 unit tests and 34 integration tests,
+none skipped; the coverage gate measures 100 % of 8,544 instructions on both platforms, and
 `bin/check-deploy-safety.sh` passes both runs.
 
 ### S2.4.2 Executor and execution model

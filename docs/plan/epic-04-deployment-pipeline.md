@@ -357,8 +357,8 @@ it has to run while the startup report still takes findings. Both remember their
 factory, so a second module neither waits nor asks again. After a failed wait a later module does
 not wait `startup-wait` again: it asks once, bounded by `request-timeout`, takes an engine which
 became ready meanwhile, and otherwise fails at once with the first failure as its cause. A refusal
-no repetition changes is final; an interrupt, or a factory closed while the application stops, is
-not remembered. The INFO line and the engine's version for the health check come from that one
+no repetition changes is final; an interrupt is not remembered. A factory closed while the
+application stops ends every later wait the same way, at its first attempt. The INFO line and the engine's version for the health check come from that one
 call.
 
 `ZenBpmDeployedProcesses` (per adapter id, shared by both services through a registry like PEA's):

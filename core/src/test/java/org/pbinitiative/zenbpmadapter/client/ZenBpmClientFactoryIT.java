@@ -100,6 +100,12 @@ class ZenBpmClientFactoryIT {
                 engine.stop();
                 final var down = ZenBpmHealth.check(factory);
                 assertEquals(AdapterHealth.Status.DOWN, down.status(), down::toString);
+                eventually(() -> Optional
+                        .ofNullable(ZenBpmHealth
+                                .check(factory)
+                                .details()
+                                .get("jobStream"))
+                        .filter(state -> state.startsWith("down since ")));
             }
         }
     }

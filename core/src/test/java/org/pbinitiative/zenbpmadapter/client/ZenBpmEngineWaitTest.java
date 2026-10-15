@@ -234,6 +234,28 @@ class ZenBpmEngineWaitTest {
     }
 
     @Test
+    @DisplayName("An interrupted thread is not refused an answer the adapter id has already, and stays interrupted")
+    void aKnownAnswerIsNotFailedByAnInterrupt() {
+        engine.answers("GET", "/system/health/ready", 200, READY);
+
+        try (var factory = factory(A_LONG_WAIT)) {
+            ZenBpmEngineWait.awaitReady(factory, QUICK);
+
+            Thread
+                    .currentThread()
+                    .interrupt();
+            try {
+                ZenBpmEngineWait.awaitReady(factory, QUICK);
+            } finally {
+                assertTrue(Thread.interrupted(), "interrupt flag lost");
+            }
+            assertEquals(1, engine
+                    .requests()
+                    .size());
+        }
+    }
+
+    @Test
     @DisplayName("A second workflow module of the adapter id does not ask again once the engine was ready")
     void aSecondModuleDoesNotAskAgain() {
         engine.answers("GET", "/system/health/ready", 200, READY);

@@ -56,7 +56,7 @@ public final class ZenBpmEnvironmentInfo {
         if (!factory.isConfigured()) {
             return;
         }
-        factory.onceTheEnvironmentIsLogged(() -> log(factory, startupReport));
+        factory.logTheEnvironmentOnce(() -> log(factory, startupReport));
     }
 
     /**
