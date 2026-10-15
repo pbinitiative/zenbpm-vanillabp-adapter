@@ -107,6 +107,11 @@ in the platform's `migration-adapter` runtime artifact, not in the SPI, so the t
 activity: definitions list both, XML of both resolves, history of the parent names the child context and
 the child's history resolves through it).
 
+*Note from S3.1.1, 2026-10-15.* `ZenBpmProcessService` overrides the three viewer methods with the
+refusal of the skeleton (the validation message of an id without clients, otherwise "implemented in a
+later story"), because the SPI's defaults would call the API one the BPMS cannot serve. This story
+replaces the three overrides and removes their rows from `ZenBpmProcessServiceTest#calls`.
+
 **Acceptance criteria**
 
 - [ ] The native definition id is the `processDefinitionKey`; the core namespaces it.

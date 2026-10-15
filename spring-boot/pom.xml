@@ -52,7 +52,9 @@
         <groupId>org.apache.maven.plugins</groupId>
         <artifactId>maven-compiler-plugin</artifactId>
         <configuration>
-          <!-- the metadata an IDE reads to complete and explain the keys of the overlay -->
+          <!-- the metadata an IDE reads for the overlay: it names the two maps vanillabp.adapters and
+               vanillabp.workflow-modules only, because Spring's metadata format does not describe the
+               keys inside a map value; those are documented in the javadoc of ZenBpmAdapterKeys -->
           <annotationProcessorPaths combine.children="append">
             <path>
               <groupId>org.springframework.boot</groupId>

@@ -151,7 +151,10 @@ each factory is a bean of its own which the container closes. `checkHealth()` is
 `ZenBpmAdapterBeanRegistrar` and `processservice.ZenBpmAdapterProcessServiceConfiguration`,
 `client.ZenBpmClientAutoConfiguration`, the overlay `client.VanillaBpZenBpmProperties` with
 `client.ZenBpmAdapterKeys`, the three classes in the auto-configuration imports, and the
-configuration processor's metadata. `core`: `client.ZenBpmStartupValidation` (what both platforms
+configuration processor, whose metadata names the two maps `vanillabp.adapters` and
+`vanillabp.workflow-modules` only: Spring's metadata format does not describe the keys inside a map
+value, so the keys are documented in the javadoc of `ZenBpmAdapterKeys` and, under S12.1.1, on the
+wiki. `core`: `client.ZenBpmStartupValidation` (what both platforms
 do at startup), `deployment.ZenBpmDeploymentService` and `processservice.ZenBpmProcessService` as
 skeletons, the empty type parameters `model.ZenBpmBpmnModel` and `ZenBpmProcessingContext`, and
 `ZenBpmAdapterConfiguration.addScopedValue`. The Spring Boot classes are adapted from Camunda 8's
@@ -159,14 +162,35 @@ and keep their licence (decision 17); the root POM's licence comment now says th
 jar ships adapted classes too. `smoke-test`: `SmokeTestApplication` on JPA and H2 with the
 platform's JDBC outbox, `@NoSyncWithBPMS` on its aggregate, workflow module `smoke-app` without
 BPMN files. Tests: `ZenBpmStartupValidationTest` (13), `ZenBpmDeploymentServiceTest` (7),
-`ZenBpmProcessServiceTest` (5), two new cases in `ZenBpmAdapterConfigurationTest`,
+`ZenBpmProcessServiceTest` (5), three new cases and two new rows in `ZenBpmAdapterConfigurationTest`,
 `VanillaBpZenBpmPropertiesTest` (8), `ZenBpmAdapterDiscoveryTest` (5),
 `ZenBpmTwoAdapterIdsDiscoveryTest` (2), `ZenBpmWithoutAdapterIdsBootTest` (1),
-`ZenBpmStartupValidationBootTest` (8) and `ZenBpmHealthBootTest` (2). `mvn clean install` builds
-green with every integration test run and none skipped (core 458 unit and 34 integration tests,
-Spring Boot 8, smoke test 18, coverage gate 29); the gate measures 100 % of 10,054 instructions for
-Spring Boot and 100 % of 9,250 for Quarkus, which so far is the core alone, and
-`bin/check-deploy-safety.sh` passes both runs (13 files deployed, nothing after a red gate).
+`ZenBpmStartupValidationBootTest` (8) and `ZenBpmHealthBootTest` (2). After the fixes of the
+review below, `mvn clean install` on OpenJDK 25.0.2 builds green with every integration test run
+and none skipped (core 461 unit and 34 integration tests, Spring Boot 8, smoke test 18, coverage gate
+29); the gate measures 100 % of 10,112 instructions for Spring Boot and 100 % of 9,308 for Quarkus,
+which so far is the core alone, and `bin/check-deploy-safety.sh` passes both runs (13 files
+deployed, nothing after a red gate). The figures first recorded here, 10,054 and 9,250, came from a
+build of a tree before its last edit; a clean build of the first commit measures 10,050 and 9,246.
+
+Fixed after the review, each with a mutant seen to fail and restored afterwards:
+
+- A `history-time-to-live` of a workflow module or a workflow counts as a started configuration,
+  as the adapter's own does, so without `rest-address` it makes the id inconsistent instead of
+  unconfigured. A scoped `retry-backoff` or `max-redeliveries` does not, because each falls back to
+  a default (`ZenBpmAdapterConfigurationTest`: two rows of
+  `aStartedConfigurationWithoutAnAddressIsInconsistent` and
+  `aScopedKeyWithADefaultDoesNotStartTheConfiguration`; the mutants "no scoped key counts" and
+  "every scoped key counts" each fail).
+- `ZenBpmProcessService` overrides the three methods of the viewer/history API, which kept the
+  SPI's defaults and so said that the BPMS cannot serve the API, with the refusal of the skeleton
+  (`ZenBpmProcessServiceTest#calls`; deleting one override fails both refusal tests). Note under
+  S10.3.1.
+- `ZenBpmWithoutAdapterIdsBootTest` starts the application inside the test, so "says nothing" reads
+  the output of its own start and not that of a cached context.
+- The closed-port health test is named for what it shows; the bound of an engine which never
+  answers is `ZenBpmHealthTest`'s.
+- The open question of an unconfigured id with BPMN files went to S4.1.1 as a note.
 
 Seen to fail, each restored afterwards (29 of 30 mutants). In the startup validation: a result which
 ends the start only warned, an unconfigured id not warned, the notices dropped, the protobuf runtime

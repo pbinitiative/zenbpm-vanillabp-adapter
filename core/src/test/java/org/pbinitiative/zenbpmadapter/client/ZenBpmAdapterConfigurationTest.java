@@ -642,6 +642,22 @@ class ZenBpmAdapterConfigurationTest {
     }
 
     @Test
+    @DisplayName("A retry-backoff or max-redeliveries below the adapter level, without a REST address, leaves the adapter id not configured yet: both fall back to a default")
+    void aScopedKeyWithADefaultDoesNotStartTheConfiguration() {
+        final var configuration = new ZenBpmAdapterConfiguration();
+        configuration.addScopedValue(
+                "vanillabp.workflow-modules.shop.workflows.Order.tasks.ship.adapters.orders.retry-backoff",
+                Duration.ofSeconds(5));
+        configuration.addScopedValue(
+                "vanillabp.workflow-modules.shop.workflows.Order.tasks.ship.adapters.orders.max-redeliveries", 3);
+
+        final var validation = configuration.validate(ADAPTER_ID, false, false);
+
+        assertEquals(Kind.UNCONFIGURED, validation.kind());
+        assertFalse(validation.endsTheBoot());
+    }
+
+    @Test
     @DisplayName("A level which does not set a key, or sets zero, is no defect")
     void anUnsetOrZeroScopedValueIsNoDefect() {
         final var configuration = configured("http://localhost:8080");
@@ -782,7 +798,15 @@ class ZenBpmAdapterConfigurationTest {
                         (Consumer<ZenBpmAdapterConfiguration>) c -> c.setGrpcAddress("zenbpm:9090")),
                 Arguments.of("client-id", (Consumer<ZenBpmAdapterConfiguration>) c -> c.setClientId("orders-node-1")),
                 Arguments.of("history-time-to-live",
-                        (Consumer<ZenBpmAdapterConfiguration>) c -> c.setHistoryTimeToLive(Duration.ofDays(30))));
+                        (Consumer<ZenBpmAdapterConfiguration>) c -> c.setHistoryTimeToLive(Duration.ofDays(30))),
+                Arguments.of("history-time-to-live of a workflow module",
+                        (Consumer<ZenBpmAdapterConfiguration>) c -> c.addScopedValue(
+                                "vanillabp.workflow-modules.shop.adapters.orders.history-time-to-live",
+                                Duration.ofDays(30))),
+                Arguments.of("history-time-to-live of a workflow",
+                        (Consumer<ZenBpmAdapterConfiguration>) c -> c.addScopedValue(
+                                "vanillabp.workflow-modules.shop.workflows.Order.adapters.orders.history-time-to-live",
+                                Duration.ofDays(30))));
     }
 
     static Stream<Arguments> connectionDefects() {

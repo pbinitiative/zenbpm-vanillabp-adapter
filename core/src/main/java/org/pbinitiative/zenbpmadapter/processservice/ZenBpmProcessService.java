@@ -4,8 +4,10 @@
  */
 package org.pbinitiative.zenbpmadapter.processservice;
 
+import java.io.InputStream;
 import java.util.Collections;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 
 import org.pbinitiative.zenbpmadapter.client.ZenBpmClientFactory;
@@ -17,6 +19,8 @@ import io.vanillabp.integration.adapter.spi.WorkflowAwareness;
 import io.vanillabp.integration.adapter.spi.WorkflowScope;
 import io.vanillabp.integration.spi.AggregatePersistenceAware;
 import io.vanillabp.integration.spi.PhaseOperation;
+import io.vanillabp.spi.process.ProcessDefinition;
+import io.vanillabp.spi.process.WorkflowHistory;
 
 /**
  * What the core asks of one ZenBPM adapter id at runtime: one instance per configured adapter
@@ -24,7 +28,8 @@ import io.vanillabp.integration.spi.PhaseOperation;
  * <p>
  * This version of the adapter answers who it is and nothing about the engine yet. It serves every
  * operation the core requires of each adapter, so the core accepts it while the application
- * starts, and every handler and every probe throws: where the adapter id has no clients, the
+ * starts, and every handler, every probe and every method of the viewer/history API throws:
+ * where the adapter id has no clients, the
  * message of its validation, which names the keys to set; otherwise an
  * {@link UnsupportedOperationException} which says that the call is not built yet. Nothing pretends
  * to have done the work. The operations a BPMS may lack, sending a signal and telling the BPMS about
@@ -129,6 +134,42 @@ public class ZenBpmProcessService<A> implements MigratableProcessService<A> {
         final String taskId
     ) {
         throw notBuiltYet("asking for user task '%s'".formatted(taskId));
+    }
+
+    // the aggregate id is the application's business key, so no message of the three viewer
+    // methods repeats it, like the probes
+    @Override
+    public List<ProcessDefinition> getProcessDefinitions(
+        final String workflowModuleId,
+        final String bpmnProcessId,
+        final AggregatePersistenceAware<A> aggregatePersistence,
+        final Object workflowAggregateId,
+        final String historyContext
+    ) {
+        throw notBuiltYet("listing the process definitions of workflow '%s' of workflow module '%s'".formatted(
+                bpmnProcessId, workflowModuleId));
+    }
+
+    @Override
+    public InputStream getBpmnXml(
+        final String workflowModuleId,
+        final String bpmnProcessId,
+        final String processDefinitionId
+    ) {
+        throw notBuiltYet("reading the BPMN XML of process definition '%s' of workflow module '%s'".formatted(
+                processDefinitionId, workflowModuleId));
+    }
+
+    @Override
+    public WorkflowHistory getWorkflowHistory(
+        final String workflowModuleId,
+        final String bpmnProcessId,
+        final AggregatePersistenceAware<A> aggregatePersistence,
+        final Object workflowAggregateId,
+        final String historyContext
+    ) {
+        throw notBuiltYet("reading the history of workflow '%s' of workflow module '%s'".formatted(bpmnProcessId,
+                workflowModuleId));
     }
 
     // an adapter id without clients answers with the message of its validation, which names the

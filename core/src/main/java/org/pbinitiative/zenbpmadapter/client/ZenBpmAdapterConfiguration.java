@@ -656,7 +656,8 @@ public class ZenBpmAdapterConfiguration {
     /**
      * Hands a duration set below the adapter level to the validation: a <code>retry-backoff</code>
      * or a <code>history-time-to-live</code> of a workflow module, a workflow or a task. Like the
-     * adapter's own, it must not be negative.
+     * adapter's own, it must not be negative, and a <code>history-time-to-live</code> handed in
+     * here counts as a started configuration, as the adapter's own does.
      *
      * @param propertyKey The full key as the application wrote it, e.g.
      *            <code>vanillabp.workflow-modules.orders.adapters.zenbpm.retry-backoff</code>
@@ -807,10 +808,16 @@ public class ZenBpmAdapterConfiguration {
             }
         });
 
-        // the keys without a default are set only by somebody who configures this adapter. Beside
-        // them, or beside a value which cannot work, a missing address is no longer "not configured
-        // yet": the configuration was started and has to be finished
-        final var partlyConfigured = (grpcAddress != null) || (clientId != null) || (historyTimeToLive != null);
+        // a key without a default, at the adapter level or below it, is set only by somebody who
+        // configures this adapter. Beside one, or beside a value which cannot work, a missing address
+        // is no longer "not configured yet": the configuration was started and has to be finished.
+        // retry-backoff and max-redeliveries below the adapter level fall back to a default, so they
+        // do not count
+        final var historyTimeToLiveBelow = scopedDurations
+                .keySet()
+                .stream()
+                .anyMatch(propertyKey -> propertyKey.endsWith(".history-time-to-live"));
+        final var partlyConfigured = (grpcAddress != null) || (clientId != null) || (historyTimeToLive != null) || historyTimeToLiveBelow;
         if (restAddressMissing && (partlyConfigured || !valueDefects.isEmpty())) {
             connectionDefects.addFirst(
                     "%s is missing, but other keys of this adapter are set; it is the address of the engine's REST API, e.g. http://localhost:8080"

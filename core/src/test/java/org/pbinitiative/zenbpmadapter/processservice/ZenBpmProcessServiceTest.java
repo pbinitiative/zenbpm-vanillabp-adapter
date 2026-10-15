@@ -82,7 +82,7 @@ class ZenBpmProcessServiceTest {
     }
 
     @Test
-    @DisplayName("Every handler and every probe refuses with the message of the validation where the adapter id has no clients")
+    @DisplayName("Every handler, probe and viewer method refuses with the message of the validation where the adapter id has no clients")
     void anAdapterIdWithoutClientsRefusesWithItsValidationMessage() {
         final var processService = new ZenBpmProcessService<Object>("orders", unconfigured("orders"), TestCollaborators
                 .of("orders"));
@@ -93,7 +93,7 @@ class ZenBpmProcessServiceTest {
     }
 
     @Test
-    @DisplayName("Every handler and every probe of a configured adapter id says that it is not built yet, and what it was asked to do")
+    @DisplayName("Every handler, probe and viewer method of a configured adapter id says that it is not built yet, and what it was asked to do")
     void aConfiguredAdapterIdSaysThatTheCallIsNotBuiltYet() {
         try (var factory = configured("orders")) {
             final var processService = new ZenBpmProcessService<Object>("orders", factory, TestCollaborators.of(
@@ -113,12 +113,15 @@ class ZenBpmProcessServiceTest {
                     () -> assertEquals(List.of(
                             "ZenBPM adapter 'orders': asking for task 'task-1' is implemented in a later story",
                             "ZenBPM adapter 'orders': asking for the workflow of an aggregate is implemented in a later story",
-                            "ZenBPM adapter 'orders': asking for user task 'task-2' is implemented in a later story"),
-                            messages.subList(messages.size() - 3, messages.size())));
+                            "ZenBPM adapter 'orders': asking for user task 'task-2' is implemented in a later story",
+                            "ZenBPM adapter 'orders': listing the process definitions of workflow 'Order' of workflow module 'shop' is implemented in a later story",
+                            "ZenBPM adapter 'orders': reading the BPMN XML of process definition 'definition-1' of workflow module 'shop' is implemented in a later story",
+                            "ZenBPM adapter 'orders': reading the history of workflow 'Order' of workflow module 'shop' is implemented in a later story"),
+                            messages.subList(messages.size() - 6, messages.size())));
         }
     }
 
-    // both phases of every handler, then the three probes
+    // both phases of every handler, then the three probes, then the three viewer methods
     private static Stream<Runnable> calls(final ZenBpmProcessService<Object> processService) {
         final var handlers = processService
                 .phaseOperations()
@@ -131,7 +134,10 @@ class ZenBpmProcessServiceTest {
         return Stream.concat(handlers, Stream.of(
                 () -> processService.awarenessOfTask(null, "order-1", "task-1"),
                 () -> processService.awarenessOfWorkflow(null, null, "order-1"),
-                () -> processService.awarenessOfUserTask(null, "order-1", "task-2")));
+                () -> processService.awarenessOfUserTask(null, "order-1", "task-2"),
+                () -> processService.getProcessDefinitions("shop", "Order", null, "order-1", null),
+                () -> processService.getBpmnXml("shop", "Order", "definition-1"),
+                () -> processService.getWorkflowHistory("shop", "Order", null, "order-1", null)));
     }
 
     private static ZenBpmClientFactory unconfigured(final String adapterId) {

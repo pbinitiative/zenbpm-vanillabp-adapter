@@ -29,8 +29,9 @@ import io.vanillabp.integration.test.utils.SuppressOutputExtension;
 
 /**
  * What the health endpoint of a Spring Boot application says about a ZenBPM adapter id, without an
- * engine: an adapter id which is not configured is UNKNOWN, and an engine nothing answers for is
- * DOWN within the request timeout.
+ * engine: an adapter id which is not configured is UNKNOWN, and an address nothing listens on is
+ * DOWN. That an engine which takes the connection and never answers is DOWN within the request
+ * timeout is shown in core, by the tests of <code>ZenBpmHealth</code>.
  */
 @ExtendWith(SuppressOutputExtension.class)
 class ZenBpmHealthBootTest {
@@ -53,8 +54,8 @@ class ZenBpmHealthBootTest {
     }
 
     @Test
-    @DisplayName("An engine nothing answers for is DOWN within the request timeout, naming the address and the job stream")
-    void anEngineNothingAnswersForIsDown() {
+    @DisplayName("An address nothing listens on is DOWN, naming the address, the request timeout and the job stream")
+    void anAddressNothingListensOnIsDown() {
         final var address = "http://localhost:%d".formatted(OneFreePortPerJvm.getPort());
         try (var context = run("vanillabp.prioritized-adapters=zenbpm", "vanillabp.adapters.zenbpm.rest-address="
                 + address, "vanillabp.adapters.zenbpm.request-timeout=PT1S")) {
