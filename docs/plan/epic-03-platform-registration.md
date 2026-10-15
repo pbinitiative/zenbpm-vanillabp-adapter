@@ -199,6 +199,32 @@ the runners, the platform reports a missing `vanillabp.outbox.housekeeping.zone`
 smoke application now names the zone, and the smoke tests pass under `Etc/UTC` and
 `Europe/Vienna`.
 
+**Done 2026-10-15**, merged to `main` as `cbd4ca2` (pull request #24, after two reviews and
+CodeRabbit's review). On that commit (GitHub keeps run logs for 90 days, so what they showed is
+written here as well):
+
+- `Checks`, run
+  [38792709690](https://github.com/pbinitiative/zenbpm-vanillabp-adapter/actions/runs/38792709690):
+  green on both JDKs. `bin/check-engine-copies.sh` reported both copies as the engine's files of
+  `bdd795a3...`. `ZenBpmStartupValidationTest` ran 13 tests, `ZenBpmDeploymentServiceTest` 7,
+  `ZenBpmProcessServiceTest` 5, `ZenBpmAdapterConfigurationTest` 99, `VanillaBpZenBpmPropertiesTest`
+  8, `ZenBpmAdapterDiscoveryTest` 5, `ZenBpmTwoAdapterIdsDiscoveryTest` 2,
+  `ZenBpmWithoutAdapterIdsBootTest` 1, `ZenBpmStartupValidationBootTest` 8 and
+  `ZenBpmHealthBootTest` 2, none skipped (core: 461 unit tests and 34 integration tests; Spring Boot
+  8, smoke test 18, coverage gate 29). The gate measured 100 % on both platforms: of 10,112
+  instructions for Spring Boot and 9,308 for Quarkus on JDK 25, of 10,108 and 9,304 on JDK 21.
+- `Publish snapshots`, run
+  [38792709442](https://github.com/pbinitiative/zenbpm-vanillabp-adapter/actions/runs/38792709442):
+  green, with the same test counts, none skipped. The core snapshot it published,
+  `2.0.0-20261015.191756-20`, contains `client/ZenBpmStartupValidation` (with `Validated`),
+  `deployment/ZenBpmDeploymentService`, `processservice/ZenBpmProcessService`,
+  `model/ZenBpmBpmnModel` and `ZenBpmProcessingContext`, and holds no test class. The Spring Boot
+  snapshot of the same build holds the announcement, the registrar, the two configurations, the
+  overlay with its nested classes and `ZenBpmAdapterKeys`, the three configurations in its
+  auto-configuration imports, the configuration metadata, and `LICENSE`, `LICENSE-APACHE-2.0` and
+  `NOTICE`. Both report pages answer HTTP 200 and show 0 of 10,112 (Spring Boot) and 0 of 9,308
+  (Quarkus) instructions missed.
+
 Seen to fail, each restored afterwards (29 of 30 mutants). In the startup validation: a result which
 ends the start only warned, an unconfigured id not warned, the notices dropped, the protobuf runtime
 never asked and always asked, the factories not closed where a later one or the registry fails, a
