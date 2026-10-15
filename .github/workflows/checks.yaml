@@ -55,14 +55,15 @@ jobs:
       - name: Check the engine copies against the pinned commit
         if: ${{ matrix.check == 'build' }}
         run: bin/check-engine-copies.sh
-      # No settings.xml of setup-java's: its server 'github' matches the deploy repository of
-      # the root POM, and Maven warns about credentials a check which deploys nothing never uses.
+      # setup-java always writes a settings.xml with a server 'github', which matches the
+      # deploy repository of the root POM, and Maven warns about credentials a check which
+      # deploys nothing never uses. So the file goes where Maven does not look for it.
       - uses: actions/setup-java@v6
         with:
           java-version: ${{ matrix.java }}
           distribution: temurin
           cache: maven
-          overwrite-settings: false
+          settings-path: ${{ runner.temp }}/setup-java
       # logs out again at the end of the job, so the credentials do not stay on the runner
       - name: Log in to the GitHub container registry
         uses: docker/login-action@v4
