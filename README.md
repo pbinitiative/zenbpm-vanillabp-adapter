@@ -18,9 +18,12 @@ documented in the [VanillaBP wiki](https://github.com/vanillabp/adapter-platform
 
 ## Status
 
-**Skeleton.** The repository builds, measures coverage per platform and gates on it, but the
-adapter does nothing yet. What is built next, and in which order, is the implementation plan in
-[`docs/`](docs/README.md).
+**Under construction.** On Spring Boot the adapter registers one process service and one deployment
+service per adapter id of type `zenbpm`, validates the configuration of each id while the
+application starts and answers the platform's health check; the smoke tests in `smoke-test` boot it
+with no, one and two adapter ids. It deploys nothing and runs no task yet: every step which needs
+the engine throws an exception which says that it is not built yet. Quarkus has nothing yet. What is
+built next, and in which order, is the implementation plan in [`docs/`](docs/README.md).
 
 ## Modules
 

@@ -620,6 +620,44 @@ class ZenBpmAdapterConfigurationTest {
                 .add("three"));
     }
 
+    @Test
+    @DisplayName("A negative value below the adapter level ends the boot naming its full key, also where the adapter id could degrade")
+    void aNegativeScopedValueIsAValueDefect() {
+        final var configuration = configured("http://localhost:8080");
+        configuration.addScopedValue("vanillabp.workflow-modules.shop.adapters.orders.retry-backoff",
+                Duration.ofSeconds(-1));
+        configuration.addScopedValue(
+                "vanillabp.workflow-modules.shop.workflows.Order.tasks.ship.adapters.orders.max-redeliveries", -1);
+
+        final var validation = configuration.validate(ADAPTER_ID, true, true);
+
+        assertEquals(Kind.INCONSISTENT, validation.kind());
+        assertTrue(validation.endsTheBoot());
+        assertTrue(validation
+                .message()
+                .contains(
+                        "  - vanillabp.workflow-modules.shop.adapters.orders.retry-backoff is PT-1S and must not be negative; without the key the level above applies\n"
+                                + "  - vanillabp.workflow-modules.shop.workflows.Order.tasks.ship.adapters.orders.max-redeliveries is -1 and must not be negative; without the key the level above applies\n"),
+                validation.message());
+    }
+
+    @Test
+    @DisplayName("A level which does not set a key, or sets zero, is no defect")
+    void anUnsetOrZeroScopedValueIsNoDefect() {
+        final var configuration = configured("http://localhost:8080");
+        configuration.addScopedValue("vanillabp.workflow-modules.shop.adapters.orders.retry-backoff", (Duration) null);
+        configuration.addScopedValue("vanillabp.workflow-modules.shop.adapters.orders.max-redeliveries",
+                (Integer) null);
+        configuration.addScopedValue(
+                "vanillabp.workflow-modules.shop.workflows.Order.adapters.orders.history-time-to-live", Duration.ZERO);
+        configuration.addScopedValue("vanillabp.workflow-modules.shop.workflows.Order.adapters.orders.max-redeliveries",
+                0);
+
+        assertEquals(Kind.COMPLETE, configuration
+                .validate(ADAPTER_ID, false, false)
+                .kind());
+    }
+
     static Stream<Arguments> defects() {
         return Stream.of(
                 defect("rest-address", "localhost:8080", "needs the scheme http or https, as in http://localhost:8080",

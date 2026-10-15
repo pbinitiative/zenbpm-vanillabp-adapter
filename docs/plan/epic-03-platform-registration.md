@@ -118,12 +118,113 @@ each factory is a bean of its own which the container closes. `checkHealth()` is
 
 **Acceptance criteria**
 
-- [ ] No bean of type `List<...>` is registered; the platform's `ObjectProvider` streams find both
-  services per id.
-- [ ] Every message asserted by content, including the property key, where the platform writes it:
+- [x] No bean of type `List<...>` is registered; the platform's `ObjectProvider` streams find both
+  services per id. `ZenBpmAdapterDiscoveryTest#thePlatformFindsTheElementBeans` finds the one
+  process service and the one deployment service of id `zenbpm` through the platform's streams and
+  no bean of type `List` with `zenbpm` in its name; `ZenBpmTwoAdapterIdsDiscoveryTest` finds two of
+  each, named after `zenbpm-new` and `zenbpm-old`, and a factory with clients per id.
+- [x] Every message asserted by content, including the property key, where the platform writes it:
   in the `StartupReport` block, or in the exception which ends the boot.
-- [ ] A typo under `vanillabp.adapters.<id>.` is ignored by Spring (documented as the difference to
-  Quarkus, where it fails).
+  `ZenBpmStartupValidationBootTest` runs the whole start, deployment included, and cuts the
+  `CONFIGURATION` section out of the block at its end (`StartupBlock`): the unconfigured id stands
+  there under `zenbpm adapter 'zenbpm'` with `'vanillabp.adapters.zenbpm.rest-address' is missing`,
+  and the adapter's own START_WORKFLOW handler then fails with the same message; the degraded id
+  `old` (nowhere first, `deployment-failure: warn`, an `ftp://` address) stands there with
+  `vanillabp.adapters.old.rest-address` and `boots DEGRADED`; the `/v1` notice stands there once and
+  nowhere else in the log; a complete id leaves no `CONFIGURATION` section and no line with its
+  scope, derives its client id from `spring.application.name` (`smoke-test-zenbpm-...`), and its
+  handler says `phase one of START_WORKFLOW is implemented in a later story`. The start ends with
+  the message, read from the root cause, for a first-priority id with an `ftp://` address (naming
+  `vanillabp.adapters.zenbpm.rest-address` and why it cannot degrade), for `worker-threads: 0` on
+  the degradable id (naming `vanillabp.adapters.old.worker-threads`) and for a negative
+  `retry-backoff` at task level (naming the full key the application wrote).
+  `ZenBpmHealthBootTest` holds the health side: UNKNOWN with the message naming `rest-address`, and
+  DOWN within the 5 s `assertTimeoutPreemptively` allows against a port nothing listens on, with
+  `request-timeout: PT1S`, the address and the job stream's state in the details.
+- [x] A typo under `vanillabp.adapters.<id>.` is ignored by Spring (documented as the difference to
+  Quarkus, where it fails). `ZenBpmStartupValidationBootTest#aMisspeltKeyIsIgnored` boots with
+  `rest-adress` set and finds the warning about the missing `rest-address` in the block. The
+  javadoc of `VanillaBpZenBpmProperties` says so until the wiki's `Configuration` page exists (note
+  under S12.1.1).
+
+**Implemented 2026-10-15.** `spring-boot`: `ZenBpmAdapterConfiguration` (the announcement),
+`ZenBpmAdapterBeanRegistrar` and `processservice.ZenBpmAdapterProcessServiceConfiguration`,
+`client.ZenBpmClientAutoConfiguration`, the overlay `client.VanillaBpZenBpmProperties` with
+`client.ZenBpmAdapterKeys`, the three classes in the auto-configuration imports, and the
+configuration processor's metadata. `core`: `client.ZenBpmStartupValidation` (what both platforms
+do at startup), `deployment.ZenBpmDeploymentService` and `processservice.ZenBpmProcessService` as
+skeletons, the empty type parameters `model.ZenBpmBpmnModel` and `ZenBpmProcessingContext`, and
+`ZenBpmAdapterConfiguration.addScopedValue`. The Spring Boot classes are adapted from Camunda 8's
+and keep their licence (decision 17); the root POM's licence comment now says that the Spring Boot
+jar ships adapted classes too. `smoke-test`: `SmokeTestApplication` on JPA and H2 with the
+platform's JDBC outbox, `@NoSyncWithBPMS` on its aggregate, workflow module `smoke-app` without
+BPMN files. Tests: `ZenBpmStartupValidationTest` (13), `ZenBpmDeploymentServiceTest` (7),
+`ZenBpmProcessServiceTest` (5), two new cases in `ZenBpmAdapterConfigurationTest`,
+`VanillaBpZenBpmPropertiesTest` (8), `ZenBpmAdapterDiscoveryTest` (5),
+`ZenBpmTwoAdapterIdsDiscoveryTest` (2), `ZenBpmWithoutAdapterIdsBootTest` (1),
+`ZenBpmStartupValidationBootTest` (8) and `ZenBpmHealthBootTest` (2). `mvn clean install` builds
+green with every integration test run and none skipped (core 458 unit and 34 integration tests,
+Spring Boot 8, smoke test 18, coverage gate 29); the gate measures 100 % of 10,054 instructions for
+Spring Boot and 100 % of 9,250 for Quarkus, which so far is the core alone, and
+`bin/check-deploy-safety.sh` passes both runs (13 files deployed, nothing after a red gate).
+
+Seen to fail, each restored afterwards (29 of 30 mutants). In the startup validation: a result which
+ends the start only warned, an unconfigured id not warned, the notices dropped, the protobuf runtime
+never asked and always asked, the factories not closed where a later one or the registry fails, a
+failing close not kept with the failure, a missing configuration not refused with its message. In
+the configuration: a negative scoped duration or number accepted, a scoped value not kept, a `null`
+one kept. In the deployment service: the check of the platform integration left out (an isolating
+class loader serves a descriptor built against platform 99.0.0, and also loads `VanillaBpParts`,
+which judges a part once per class loader), the factory or the collaborators of another id accepted,
+the validation message not used. In the process service: the same two wiring checks, the operations
+a BPMS may lack served too, the map of handlers changeable, the validation message not used. In the
+Spring module: the priority or the `warn` policy ignored, the startup report not handed to the
+validation or to the deployment service, the application's name not read, the module level not
+validated, the task level not asked, one adapter key not copied. One mutant survived and is
+equivalent: reading the ids from `adapterTypes()` instead of `adapterIdsOfType("zenbpm")` changes
+nothing, because the platform's validation adds a section for every id it derives, an id named only
+in `prioritized-adapters` included, before the registry reads the properties.
+`ZenBpmAdapterDiscoveryTest` configures exactly such an id.
+
+Where the code differs from the instructions:
+
+- **The smoke tests run the whole start (the user's decision).** The platform writes the block of
+  the `StartupReport` only at the end of its deployment (`SpringBootDeploymentService.start()`), so
+  with `DeploymentAutoConfiguration` excluded every finding of this adapter would vanish unseen. A
+  workflow module without BPMN files makes the core skip the adapter for it (one `BPMN MODELS`
+  warning), and none of the refusing steps is reached, so no test needs the exclusion or the BPMS
+  double as first adapter.
+- **The validation lives in `core`.** `ZenBpmStartupValidation.registryOf` holds everything
+  instruction 4 lists, so S3.2.1 calls the same method (note there). It validates every id before
+  it ends the start and names every id which ends it in one exception, builds no factory where the
+  start ends, asks the protobuf runtime only where a factory with clients is built (an application
+  whose ids have no clients runs no job stream, and the stream checks again when one is configured),
+  and closes the factories it built where a later one or the registry fails.
+- **The overlay models the sixteen keys of the core configuration (the user's decision).** The
+  table's other keys arrive with the stories which read them, the module level of
+  `accept-unscoped-identifiers` with S4.2.1. `max-redeliveries` is scoped like `retry-backoff`,
+  because the core configuration says it is; `history-time-to-live` has the module and workflow
+  levels. Every value below the adapter level goes through the startup validation
+  (`addScopedValue`), so a negative one ends the start naming its key, and
+  `VanillaBpZenBpmPropertiesTest` fails where the overlay misses a setter of the core configuration.
+- **Two ids never fold into one entry.** Every message names the keys of its own id, so the texts
+  of two ids differ; what folds is the same finding of one id reported twice. The texts stay as
+  they are, because the same text is thrown at the first use of the adapter.
+- **The deployment service gets the `StartupReport` through a setter**, as Camunda 8's does; the
+  registry bean takes it as an `ObjectProvider` parameter and logs where there is none.
+- **No ids, one id, two ids.** With the ZenBPM adapter the only adapter type on the classpath, the
+  core derives the id `zenbpm` where nothing is configured, so "zero ids" needs a second type: the
+  platform's BPMS double is a test dependency of `smoke-test`, and `ZenBpmWithoutAdapterIdsBootTest`
+  configures only it. With two types on the classpath the platform refuses an application which
+  configures nothing, so every smoke test names its ids; the derived id is covered by naming it only
+  in `prioritized-adapters`.
+- **A use of the adapter** is its START_WORKFLOW handler, which the platform calls, not
+  `ProcessService.startWorkflow`: the smoke application has neither a transaction around the call
+  nor a persistence of its aggregate.
+- **The type parameters** `ZenBpmBpmnModel` and `ZenBpmProcessingContext` exist as empty classes
+  named after the architecture's class map (note under S4.1.1). The refusals read
+  `ZenBPM adapter '<id>': <what was asked> is implemented in a later story`, and an id without
+  clients refuses with its validation message first.
 
 ## F3.2 Quarkus
 
@@ -170,6 +271,27 @@ each factory is a bean of its own which the container closes. `checkHealth()` is
 *Note from S2.3.1, 2026-10-14.* The protobuf runtime is checked at build time here: a build
 step of `ZenBpmIntegrationProcessor` calls `ProtobufRuntimeCheck.defect()` on the application's
 build class path and fails the build with its message where it answers one.
+
+*Note from S3.1.1, 2026-10-15.* What Spring Boot does with the configuration lives in `core`, so
+"same validation as Spring" means one call: `ZenBpmStartupValidation.registryOf(ids,
+configurationOf, firstPriorityAnywhere, deploymentFailureWarns, applicationName, startupReport)`. It
+validates every id, reports notices and warnings under `CONFIGURATION` with the scope `zenbpm
+adapter '<id>'`, throws one exception naming every id whose configuration ends the start, asks the
+protobuf runtime only where a factory with clients is built, and closes the factories it built where
+a later one or the registry fails. The ids are
+`MigrationAdapterProperties.adapterIdsOfType("zenbpm")`, the call which also decides the ids the
+beans are registered for. On the validated properties `adapterTypes()` names the same ids, the ones
+the core derives included, because the validation adds a section for each of them (a mutation test
+of S3.1.1 showed it), so this is one rule for both places, not a fix. The overlay models exactly the
+keys of `ZenBpmAdapterConfiguration` (sixteen) plus `retry-backoff` and `max-redeliveries` at
+module, workflow and task level and `history-time-to-live` at module and workflow level; every value
+below the adapter level is handed to the validation with `addScopedValue(fullPropertyKey, value)`,
+so a negative one ends the start naming the key where it was written. The other keys of the
+architecture table arrive with the stories which read them, the module level of
+`accept-unscoped-identifiers` with S4.2.1 (user's decision 2026-10-15). The Spring smoke tests run
+the whole start, deployment included, because the block is written only by the deployment's end of
+the start; on Quarkus the block comes after `startWorkflowProcessing`, and a workflow module without
+BPMN files reaches no step of the adapter there either.
 
 **Acceptance criteria**
 

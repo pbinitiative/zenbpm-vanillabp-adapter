@@ -81,6 +81,11 @@ a plain, a message and a timer start event plus a start event inside a sub-proce
 the fourth not); one expression per place; a message start named by an expression
 (`startMessagesAreKnown` false).
 
+*Note from S3.1.1, 2026-10-15.* `model.ZenBpmBpmnModel` and `ZenBpmProcessingContext` exist as
+empty final classes, because the deployment service of S3.1.1 names them as its type parameters
+(`getModelType()`, `getProcessContextType()`). This story turns `ZenBpmBpmnModel` into the record of
+instruction 1; whoever first fills the processing context does the same with it.
+
 **Acceptance criteria**
 
 - [ ] Every collection of the record is filled by a fixture and asserted.

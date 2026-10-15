@@ -1,0 +1,3 @@
+org.pbinitiative.zenbpmadapter.springboot.ZenBpmAdapterConfiguration
+org.pbinitiative.zenbpmadapter.springboot.client.ZenBpmClientAutoConfiguration
+org.pbinitiative.zenbpmadapter.springboot.processservice.ZenBpmAdapterProcessServiceConfiguration
