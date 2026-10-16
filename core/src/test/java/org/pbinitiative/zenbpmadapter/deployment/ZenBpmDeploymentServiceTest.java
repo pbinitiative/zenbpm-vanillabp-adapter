@@ -565,6 +565,37 @@ class ZenBpmDeploymentServiceTest {
     }
 
     @Test
+    @DisplayName("A claimed process gets the input mappings of its jobs inside multi-instance bodies once, however often its file is prepared; a process nobody claims gets none")
+    void aClaimedProcessGetsItsTaskParameterMappingsOnce() throws IOException {
+        final String text;
+        try (var file = getClass().getResourceAsStream("/models/task-parameters.bpmn")) {
+            text = new String(file.readAllBytes(), StandardCharsets.UTF_8);
+        }
+        final var claimed = new ZenBpmDeploymentService("orders", withoutClients("orders"), TestCollaborators.of(
+                "orders", TestScoping.of(NameClashAvoidance.NONE), TestWiring
+                        .claiming("Orders")
+                        .withTaskParameters("ship", "weight")
+                        .wiring()));
+        final var unclaimed = new ZenBpmDeploymentService("orders", withoutClients("orders"), TestCollaborators.of(
+                "orders", TestScoping.of(NameClashAvoidance.NONE), TestWiring
+                        .claiming()
+                        .wiring()));
+        final var model = read(claimed, "task-parameters.bpmn", text);
+        final var modelNobodyClaims = read(unclaimed, "task-parameters.bpmn", text);
+
+        final var context = claimed.prepareBpmn("shop", null, "task-parameters.bpmn", "Orders", model);
+        claimed.prepareBpmn("shop", context, "task-parameters.bpmn", "Orders", model);
+        unclaimed.prepareBpmn("shop", null, "task-parameters.bpmn", "Orders", modelNobodyClaims);
+
+        assertAll(
+                () -> assertEquals(List.of("weight", "orderId"), inputTargetsOf(model, "EveryParcel")),
+                () -> assertEquals(List.of("orderId"), inputTargetsOf(model, "NotifyEveryCustomer")),
+                () -> assertTrue(read(unclaimed, "task-parameters.bpmn", text)
+                        .document()
+                        .isEqualNode(modelNobodyClaims.document())));
+    }
+
+    @Test
     @DisplayName("Every step after preparing refuses with the message of the validation where the adapter id has no clients")
     void anAdapterIdWithoutClientsRefusesWithItsValidationMessage() {
         final var deploymentService = new ZenBpmDeploymentService("orders", withoutClients("orders"), TestCollaborators
@@ -732,6 +763,27 @@ class ZenBpmDeploymentServiceTest {
             keys.add(((Element) subscriptions.item(index)).getAttribute("correlationKey"));
         }
         return keys;
+    }
+
+    private static List<String> inputTargetsOf(
+        final ZenBpmBpmnModel model,
+        final String elementId
+    ) {
+        final var targets = new ArrayList<String>();
+        final var inputs = model
+                .document()
+                .getElementsByTagNameNS("*", "input");
+        for (var index = 0; index < inputs.getLength(); ++index) {
+            final var input = (Element) inputs.item(index);
+            final var element = (Element) input
+                    .getParentNode()
+                    .getParentNode()
+                    .getParentNode();
+            if (elementId.equals(element.getAttribute("id"))) {
+                targets.add(input.getAttribute("target"));
+            }
+        }
+        return targets;
     }
 
     private static String messageNameOf(final ZenBpmBpmnModel model) {

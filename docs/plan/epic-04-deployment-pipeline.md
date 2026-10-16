@@ -729,7 +729,7 @@ fails `ZenBpmCorrelationKeysTest` unless named otherwise:
 
 ### S4.2.3 Task-parameter input mappings
 
-- [ ] **Depends on:** S4.2.1.
+- [x] **Depends on:** S4.2.1.
 
 **Instructions**
 
@@ -762,10 +762,78 @@ parameter calls is needed there whatever the decision for plain elements is.
 document (the context guard), and `ZenBpmRestClientContractIT`-style check in S4.3.2 that a job of
 such a task carries the variable.
 
+*Fit check, 2026-10-16, decided by the Implementor.* Checked against `main` with S4.2.1 and S4.2.2,
+the SPI (`taskParameterNames`, `extensionTaskParameterNames`: "pass the element id first, then the
+task definition, and fetch the union"), Camunda 8's `fetchVariablesOf`, which asks
+`taskParameterNames` with the element id AND the task definition and adds the aggregate id, and
+the engine at `bdd795a3`, its source and a scratch Go program running its in-memory engine. Open
+question 2 was left to this fit check; four things did not fit:
+
+1. **Open question 2: where mappings matter.** The scratch program read the variables of the jobs
+   the engine created for an instance started with `orderId` and `items`. A plain service task, and
+   one inside a plain sub-process, got every variable of the scope without any mapping. A parallel
+   and a sequential multi-instance service task got `{item}` alone, and `orderId` only with an input
+   mapping on the task. A task inside a multi-instance sub-process got `orderId: null` from an input
+   mapping on the task, because the engine evaluates it in the body's scope, which holds the item
+   only; it got `o-1` from the same mapping on the sub-process. Options: map every job element (the
+   story as written), map nothing and drop the promise, or map where the engine needs it. Decided:
+   only a job element inside a multi-instance body gets mappings, and they go where the engine
+   evaluates them: on the element itself where it is a multi-instance element, and on every
+   multi-instance sub-process around it (S4.2.2 proved that two nested ones both need it). A plain
+   element gets nothing, so a model without a multi-instance body stays as it was written, and the
+   criterion holds for both: outside a body the engine's copy carries a name, inside one the
+   mappings do. The rationale of the story ("input variables are EMPTY without input mappings")
+   holds inside a body only.
+2. **The aggregate id travels with the names.** Inside a body a job carries no variable it is not
+   given, and a workflow the engine started (decision 25) can be named by its aggregate id variable
+   only, so the id is part of the names, as Camunda 8 fetches it with every job.
+3. **The item is not mapped.** The name an enclosing element's `inputElement` gives is the item the
+   engine sets itself; a mapping of it would read the scope around the element, where it is not.
+   How an iteration's item reaches a job inside a nested body is a question of E9's multi-instance
+   support, not of this story: a job of an inner multi-instance element gets its own item only.
+4. **How a name is written.** The scratch program evaluated `=order-id`, `=order id` and `=if` as
+   the variables of those names, and failed on a name in backticks; a source without `=` is taken
+   literally. So every mapping is `source="=<name>" target="<name>"`, whatever the name.
+
+The `ZenBpmRestClientContractIT`-style check that a job of such a task carries the variable belongs
+to S4.3.2, which deploys; until then the criterion is held by the model and by the scratch program
+above.
+
 **Acceptance criteria**
 
 - [ ] A `@TaskParam` name reaches the job, inside a multi-instance body as well; so does a name only
-  an extension's method reads.
+  an extension's method reads. Open until batch 3, where S4.3.2 deploys and a job is read from the
+  engine. What holds today: the model carries the mappings the engine needs
+  (`ZenBpmTaskParametersTest`: the names of the methods, by element id and by task definition, and
+  of the extensions, with the aggregate id, into a multi-instance task and into every
+  multi-instance sub-process around a job; nothing for a job outside a body, whose names the
+  engine copies from its scope), and the scratch program of the fit check showed the engine hand a
+  job exactly these names: everything of the scope outside a body, the item and the mapped names
+  inside one.
+
+**Implemented 2026-10-16.** Core: `model.ZenBpmTaskParameters.apply(model, module, wiring)`, called
+by `prepareBpmn` once per file for a claimed process, after the correlation keys; it uses
+`ZenBpmInputMappings` of S4.2.2, so a target the modeller maps is left and the inputs stand in
+front of the outputs. The README and the architecture say what is built, and S9.4.1 has a note on
+the items of outer iterations. Tests: `ZenBpmTaskParametersTest` (5) with the fixture
+`models/task-parameters.bpmn`, and `ZenBpmDeploymentServiceTest#aClaimedProcessGetsItsTaskParameterMappingsOnce`
+(now 30 cases): a second preparation of the same file adds nothing, a process nobody claims stays as
+it was written. `TZ=Etc/UTC mvn clean install` on OpenJDK 25.0.2 builds green with every
+integration test run and none skipped (core 581 unit and 34 integration tests, Spring Boot 9, smoke
+test 28, Quarkus runtime 9, Quarkus deployment 38, coverage gate 35). The gate measures 100 % of
+14,840 instructions for Spring Boot and 100 % of 14,714 for Quarkus on the first full build, and
+`bin/check-deploy-safety.sh` passes both runs.
+
+Seen to fail, each restored afterwards (11 of 11 mutants), against a green unmutated run. Each
+fails `ZenBpmTaskParametersTest` unless named otherwise:
+- a job outside every body mapped; a multi-instance task not mapping into itself; only the
+  innermost body around a job mapped;
+- the names not asked by the task definition, by the element id, or of the extensions; the
+  aggregate id not mapped; the items mapped; the aggregate id's name asked for every job;
+- `prepareBpmn` without the task parameters, or writing them into a process nobody claims: each
+  fails `ZenBpmDeploymentServiceTest`.
+
+**F4.2 built 2026-10-16** on the branch `feature/f4.2-rewriting`, one commit per story, not pushed.
 
 ---
 

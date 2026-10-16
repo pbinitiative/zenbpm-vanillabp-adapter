@@ -125,9 +125,12 @@ rewrite is idempotent and never overwrites what the modeller wrote (draft decisi
    a start event gets none. A message which starts a workflow of the module and which a claimed
    workflow waits for is refused with a guiding message (the engine's fallback from an unmatched
    key to the start subscription would start a second workflow on a correlation, see GAPS 4).
-3. **Task parameters**: for every job-producing task, one `zenbpm:ioMapping input` per name
-   `taskParameterNames` reports (`source="=<name>" target="<name>"`), so the job carries exactly what a
-   `@TaskParam` reads; nothing else, because the aggregate is loaded from the application's database.
+3. **Task parameters** (`ZenBpmTaskParameters`, claimed processes only): for every job-producing
+   task inside a multi-instance body, one `ioMapping input` per name `taskParameterNames` (by
+   element id and task definition) and `extensionTaskParameterNames` report, plus the aggregate id
+   (`source="=<name>" target="<name>"`), on the task where it is a multi-instance element and on
+   every multi-instance sub-process around it; the items and the targets the modeller maps are left
+   out. A job anywhere else gets a copy of its scope's variables from the engine and needs none.
 4. **Marker tasks** (decision 26), only in a process a workflow service claims
    (`isClaimedByAWorkflowService`). Where `workflowEndedHandlerExists` for the process (it also
    answers `true` when `release-on-workflow-end` is on), a service task

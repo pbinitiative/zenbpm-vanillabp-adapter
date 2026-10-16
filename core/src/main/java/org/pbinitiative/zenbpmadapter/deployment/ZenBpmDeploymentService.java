@@ -18,6 +18,7 @@ import org.pbinitiative.zenbpmadapter.model.ZenBpmBpmnModel;
 import org.pbinitiative.zenbpmadapter.model.ZenBpmCorrelationKeys;
 import org.pbinitiative.zenbpmadapter.model.ZenBpmModelReader;
 import org.pbinitiative.zenbpmadapter.model.ZenBpmScoping;
+import org.pbinitiative.zenbpmadapter.model.ZenBpmTaskParameters;
 import org.pbinitiative.zenbpmadapter.model.ZenBpmUnsupportedConstructs;
 
 import io.vanillabp.integration.adapter.spi.AdapterCollaborators;
@@ -261,7 +262,8 @@ public class ZenBpmDeploymentService implements AdapterDeploymentService<ZenBpmB
      * file again, it refuses a message used both to start a workflow of the module and as one a
      * claimed workflow waits for, scopes the identifiers of the file, see {@link ZenBpmScoping}, and,
      * in a process a workflow service claims, writes the correlation keys, see
-     * {@link ZenBpmCorrelationKeys}.
+     * {@link ZenBpmCorrelationKeys}, and the input mappings which carry what the methods read into
+     * multi-instance bodies, see {@link ZenBpmTaskParameters}.
      *
      * @param workflowModuleId The workflow module of the process
      * @param existingContext The context of the module's earlier processes, <code>null</code> for
@@ -400,6 +402,7 @@ public class ZenBpmDeploymentService implements AdapterDeploymentService<ZenBpmB
         final var wiring = collaborators.workflowTaskWiring();
         ZenBpmCorrelationKeys.apply(model, () -> wiring.resolveWorkflowAggregateIdName(workflowModuleId,
                 bpmnProcessId));
+        ZenBpmTaskParameters.apply(model, workflowModuleId, wiring);
     }
 
     // the platform checks the mode of the workflow module, but a workflow may set a mode of its

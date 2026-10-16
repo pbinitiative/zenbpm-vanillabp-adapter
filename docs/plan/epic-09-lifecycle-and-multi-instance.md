@@ -180,6 +180,12 @@ active), `total` = `parent.variables[inputCollection]` size (a FEEL expression c
 only the bare-variable case, else `null` with a DEBUG line). The map is keyed by the multi-instance
 element's id (from the model, remembered per process while wiring), outermost first.
 
+*Note from S4.2.3, 2026-10-16.* Inside a multi-instance body a job carries the item of its own
+iteration, the input mappings S4.2.2 and S4.2.3 write (the aggregate id and the `@TaskParam` names)
+and nothing else; the item of an outer iteration is not among them, and neither is a variable of
+the workflow which no mapping names (proven with the engine's in-memory runtime at `bdd795a3`; see
+the fit check of S4.2.3). So the job's variables cannot replace the walk up the parent chain above.
+
 **Tests**: `ZenBpmMultiInstanceTest` (fake server with a parent and three children);
 `ZenBpmLifecycleIT#theIterationIsReported` (`multi-instance.bpmn`: parallel MI sub-process over three
 ids with a service task binding `@MultiInstanceElement`, `@MultiInstanceIndex`, `@MultiInstanceTotal`).
