@@ -50,9 +50,12 @@ the platform: a task nothing serves ends the start, the start events, the start 
 expressions the modeller wrote and the elements which give a workflow a second token are reported,
 a method which wants the item of an iteration whose element names none ends the start, and a
 process called on the same aggregate from inside a multi-instance body gets the aggregate id
-carried into that body. It deploys nothing and runs no task yet: every later step
-throws an exception which says that it is not built yet, or, for an adapter id without clients, the
-message of its validation, which names the key to set. What is built next, and in which order, is
+carried into that body. Then the files are deployed, one request per file, once the engine answers
+ready; a file the pipeline left as it was written reaches the engine as its bytes, a file the engine
+refuses ends the start with the engine's reason, and the version of every process is reported to the
+platform, also where the engine kept an unchanged file. An adapter id without clients ends the start
+there with the message of its validation, which names the key to set. It runs no task yet: starting
+the workflow processing throws an exception which says that it is not built yet. What is built next, and in which order, is
 the implementation plan in [`docs/`](docs/README.md).
 
 ## Modules

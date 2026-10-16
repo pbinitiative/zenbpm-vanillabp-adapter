@@ -17,6 +17,7 @@ import java.util.Set;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Supplier;
 
+import org.pbinitiative.zenbpmadapter.ZenBpmDeployedProcesses;
 import org.pbinitiative.zenbpmadapter.client.api.EngineStatus;
 
 import lombok.extern.slf4j.Slf4j;
@@ -88,6 +89,11 @@ public class ZenBpmClientFactory implements AutoCloseable {
      * Whether the engine's version and commit were logged, or are being logged.
      */
     private final AtomicBoolean environmentLogged = new AtomicBoolean();
+
+    /**
+     * What the deployments of this start brought to the engine.
+     */
+    private final ZenBpmDeployedProcesses deployedProcesses = new ZenBpmDeployedProcesses();
 
     /**
      * What the engine reported about itself when it was asked at startup.
@@ -288,6 +294,17 @@ public class ZenBpmClientFactory implements AutoCloseable {
     public ZenBpmExecutor executor() {
         requireConfigured();
         return executor;
+    }
+
+    /**
+     * What the deployments of this start brought to the engine of this adapter id, which every
+     * service of the adapter id reads through this factory. It needs no client, so an adapter id
+     * without clients has one as well, which stays empty.
+     *
+     * @return The deployed processes
+     */
+    public ZenBpmDeployedProcesses deployedProcesses() {
+        return deployedProcesses;
     }
 
     /**

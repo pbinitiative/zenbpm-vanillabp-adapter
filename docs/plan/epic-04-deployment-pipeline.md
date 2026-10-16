@@ -480,10 +480,14 @@ the module level, and once with `false` on the module overriding `true` on the a
 
 **Acceptance criteria**
 
-- [ ] The rewritten XML deploys to the container (asserted in S4.3.2's IT under `use-prefix`).
-  Open until batch 3: nothing is deployed before S4.3.2. What holds today is the rewrite itself,
-  `ZenBpmScopingTest#usePrefixScopesWhatTheEngineResolvesAcrossFiles`, which compares the whole
-  rewritten `models/scoping.bpmn` with the file prefixed by hand.
+- [x] The rewritten XML deploys to the container (asserted in S4.3.2's IT under `use-prefix`).
+  `ZenBpmScopingTest#usePrefixScopesWhatTheEngineResolvesAcrossFiles` compares the whole rewritten
+  `models/scoping.bpmn` with the file prefixed by hand. *Closed by S4.3.2, 2026-10-17:*
+  `ZenBpmDeploymentServiceIT#theFileRewrittenUnderUsePrefixDeploys` reads, prepares, wires and
+  deploys `models/scoping.bpmn` and a DMN file under `use-prefix` to the pinned engine: the engine
+  holds one definition under `scoping-it__Orders`, version 1, whose BPMN carries the job type
+  `scoping-it__Orders__charge` and the called decision `scoping-it__rating`, and the version is
+  registered. In the clean build of S4.3.2 (core 39 integration tests, none skipped).
 - [x] Nothing configured -> the boot ends with the core's message naming `use-prefix`, `none` and
   the key, because `by-adapter` is the default and ZenBPM cannot serve it.
   `ZenBpmStartupValidationBootTest#nothingConfiguredEndsTheStartNamingBothWaysOut` (Spring Boot)
@@ -685,13 +689,16 @@ question, which serialises.
 **Acceptance criteria**
 
 - [x] `Camunda8`-style version-1 models with modelled keys deploy byte-identically apart from namespace
-  declarations. `ZenBpmDeploymentServiceTest#aVersion1ModelWithItsKeysStaysAsItWasWritten` prepares
+  declarations. *Closed by S4.3.2, 2026-10-17, without the exception for namespace declarations:*
+  `ZenBpmDeploymentServiceIT#aVersion1ModelDeploysByteForByte` deploys `models/version-1.bpmn` for a
+  claimed process under `none` to the pinned engine, and the BPMN the engine hands back equals the
+  file byte for byte (a mutant which writes every document out fails it). A file the pipeline left as
+  it was written is deployed as its bytes (`model.ZenBpmModelWriter`, fit-check item 3 of S4.3.2). `ZenBpmDeploymentServiceTest#aVersion1ModelWithItsKeysStaysAsItWasWritten` prepares
   `models/version-1.bpmn` (the shape the Camunda Modeler exports for Camunda 8, a key on each of
   its two messages) for a claimed process under `none`: the document stays equal to the file, and
   the platform is asked nothing but whether the process is claimed.
   `ZenBpmCorrelationKeysTest#aFileWithEveryKeyModelledIsLeftAsItIs` holds the same for the rewrite
-  alone. That the serialised bytes are the same is open until S4.3.2 serialises and deploys (batch
-  3).
+  alone.
 
 **Implemented 2026-10-16.** Core: the reader gives `messageStarts`, `messageCatches` and
 `enclosingMultiInstances`; `model.ZenBpmCorrelationKeys.apply(model, aggregateIdName)` writes the
@@ -807,9 +814,16 @@ above.
 
 **Acceptance criteria**
 
-- [ ] A `@TaskParam` name reaches the job, inside a multi-instance body as well; so does a name only
-  an extension's method reads. Open until batch 3, where S4.3.2 deploys and a job is read from the
-  engine. What holds today: the model carries the mappings the engine needs
+- [x] A `@TaskParam` name reaches the job, inside a multi-instance body as well; so does a name only
+  an extension's method reads. *Closed by S4.3.2, 2026-10-17:*
+  `ZenBpmDeploymentServiceIT#aTaskParameterReachesAJobInsideAMultiInstanceBody` deploys
+  `models/task-parameters.bpmn` under `use-prefix` with a method reading `customerName` by the task
+  definition `ship` and an extension's method reading `trackingSystem` by the element id `Ship`,
+  starts an instance on the pinned engine and completes its jobs over REST up to the body: the job of
+  `Ship`, inside the multi-instance sub-process, carries `customerName`, `trackingSystem` and
+  `orderId` (and `address`, the modeller's mapping), and not the workflow's `parcels`; the job of
+  the multi-instance send task carries its item and `orderId`. What holds besides: the model carries
+  the mappings the engine needs
   (`ZenBpmTaskParametersTest`: the names of the methods, by element id and by task definition, and
   of the extensions, with the aggregate id, into a multi-instance task and into every
   multi-instance sub-process around a job; nothing for a job outside a body, whose names the
@@ -1150,7 +1164,7 @@ Seen to fail, each restored afterwards (25 of 25 mutants), against a green unmut
 
 ### S4.3.2 Deploy resources and report versions
 
-- [ ] **Depends on:** S4.3.1, S2.4.1.
+- [x] **Depends on:** S4.3.1, S2.4.1.
 
 **Instructions**
 
@@ -1223,11 +1237,149 @@ call.
 - `#theDeclaredIdentifiersAreReported`: every scoped identifier of the fixture in
   `reportIdentifiersTheModelsDeclare`; a failing definition search leaves the deployment green.
 
+*Fit check, 2026-10-17, decided by the Implementor.* Checked against `main` with S4.3.1, all of
+`ADAPTER-AUTHORS.md` (sections 2.1, 3.1 on the identifier reports, 3.2 on `registerDeployedVersion`
+and 8), the SPI of the snapshot the build resolves, the platform's `DeploymentService` and
+`DeployedProcessVersionsCheck` (`f9505797`), Camunda 8's `deployResources` and
+`Camunda8IdentifiersTheClusterHolds`, and the engine at `bdd795a3`: its source, and its pinned image,
+run as a scratch container. The notes of S4.1.1 and S2.4.1 fit as written: step 1 is
+`ZenBpmEngineWait.awaitReady(factory)` and then `ZenBpmEnvironmentInfo.logOnce(factory,
+startupReport)`, nothing catches what the wait throws for an adapter id without clients, and the boot
+tests of the S4.1.1 decision hold that. GAPS 4 and 23, which the F4.2 stories cite, are in `GAPS.md`.
+Seven things did not fit or were left open:
+
+1. **Open question 3: what the engine held before.** Asked of the source, not assumed: the REST
+   handler deploys every BPMN file under the constant resource name `process.bpmn`
+   (`internal/rest/server.go`, `const resourceName = "process.bpmn"`), and a process definition
+   carries key, version, process id, name, version tag and BPMN, but no owner. So the marker Camunda
+   8 uses, the resource name of this application's own files, does not exist: an earlier version of
+   this application and a definition of another application look alike. (b) would warn about the
+   application's own older versions at every boot. The plan's (a) said "report an empty
+   collection", which the SPI reads as "asked, and the engine holds none of it"; silence is what
+   says "not asked". Decided: (a) without the call, `reportIdentifiersTheBpmsAlreadyHolds` is not
+   called, and the limit is the new GAPS 24. `reportIdentifiersTheModelsDeclare` is called once per
+   module after the deployment, with what the scoping read (`ZenBpmScoping.apply` hands it back) and
+   the decision ids of the DMN files.
+2. **Which identifiers the models declare.** The story names `BPMN_PROCESS_ID` among them. The SPI
+   says process ids have their own check (`validateNoCollidingProcessIds`), and Camunda 8 reports
+   none. Decided: message names, error and escalation codes, task definitions (of tasks and user tasks,
+   with their process) and decision ids, in every mode, the files of processes nobody claims
+   included, because the whole file is deployed. A called process or decision is declared by another
+   file and not reported here. Reading the decision ids means reading every DMN file as XML, so a DMN
+   file which is no XML now ends `readDmn` in every mode, not only under `use-prefix`.
+3. **"Byte-identical" needs the bytes.** The engine stores and returns what it was sent: the
+   scratch container answered `bpmnData` equal to the deployed `version-1.bpmn` byte for byte, and
+   answered a second deployment of the same bytes with `200` and the same key. Writing a DOM back
+   out does not give the file: a scratch Java program showed the serializer dropping the line breaks
+   between attributes and sorting the namespace declarations. Options: always serialise (the engine
+   compares content after normalising the format, so versions would not move, but no file would
+   reach the engine as it was written), or send the file's own bytes where nothing was changed.
+   Decided: the model keeps the bytes it was read from (`ZenBpmBpmnModel#content`), and
+   `model.ZenBpmModelWriter` sends them where the document still equals a fresh read of them, and
+   otherwise writes the document out with DOM Load and Save (UTF-8, no indentation, no
+   `standalone`).
+4. **`aDeployedVersionWithoutAMethodEndsTheStart` cannot pass before E10.** The platform runs the
+   check of the version this boot deployed (platform decision 126) only for processes with a
+   registered `ProcessVersionCatalog`: `DeployedProcessVersionsCheck#check` walks
+   `registeredCatalogs`, and the catalog is E10's (instruction 11 of S4.3.1). Decided:
+   `registerDeployedVersion` is called for every deployed process, the unchanged ones included, and
+   the test moves to S10.1.1 with a note there.
+5. **Where the Spring integration test lives.** The architecture puts the Spring integration tests
+   into `spring-boot`, and a Maven module of its own would need its own report wiring. Decided: the
+   test application, its workflow module `deploy-it` and `ZenBpmDeploymentIT` are test sources of
+   `spring-boot`, run by failsafe against the pinned image. The test asserts what the engine holds and
+   what the start logged: with S4.3.2 alone the start then ends at `startWorkflowProcessing`, the
+   step not built yet, and S4.3.3 turns it into a booted application.
+6. **The Quarkus pipeline test** asserts the parse by "a log line the reader writes at DEBUG"; the
+   reader writes none. Decided: the INFO line `wireBpmn` writes per process (as Camunda 8 does)
+   proves that reading, preparing and wiring ran on Quarkus; the start then ends in the engine wait
+   naming the address and `startup-wait`. The `warn` case of criterion 2 runs on Quarkus with an
+   address nothing listens on, because a booted Quarkus test runs its class in the application's own
+   class loader, where no server of the test can be started; the refusal with the engine's reason is
+   held on Quarkus with `fail`, and with `warn` on Spring Boot.
+7. **`ZenBpmDeployedProcesses` is kept by the client factory** of the adapter id, as Camunda 8
+   keeps its deployed processes in its client factory: both services of an adapter id hold that
+   factory, so no registry of its own is needed.
+
+The order of instruction 2 stays as S4.2.1 built it: the collision check runs first, before the
+engine wait, because it needs no engine. A file the engine refuses as it is (`ZenBpmErrors.permanentFailure`,
+so `400`, `413` or `415`, read in one place as decision 10 asks) ends the deployment with the
+engine's answer, naming file, workflow module and process; any other failure names the address the
+file did not reach. Files are sent one by one in the order they were prepared, BPMN before DMN; a
+refusal stops before the next file.
+
 **Acceptance criteria**
 
-- [ ] Version is registered on an unchanged deployment as well.
-- [ ] A rejected file ends the boot naming file, process and the engine's reason; with
+- [x] Version is registered on an unchanged deployment as well.
+  Against the pinned engine, `ZenBpmDeploymentServiceIT#anUnchangedFileKeepsItsVersion` deploys a
+  file twice and a changed copy once: `registerDeployedVersion` with `1`, `1` and `2`, and the engine
+  holds two versions. Booted on Spring Boot, `ZenBpmDeploymentIT#aWorkflowModuleWithBpmnAndDmnDeploys`
+  deploys the module `deploy-it` (one BPMN and one DMN file, `use-prefix`) three times: version 1, the
+  same file again kept as version 1 "(unchanged)", a changed file version 2; the engine holds the
+  process under `deploy-it__DeployIt` and the decision `deploy-it__rating` in one DMN resource
+  definition (unchanged at the second and third start). `ZenBpmDeployingTest#everyFileIsDeployedAndItsVersionRegistered`
+  holds the order of the requests (ready, status, the file, its definition, the DMN file), the
+  version registered, what `ZenBpmDeployedProcesses` remembers, the INFO line and the declared
+  identifiers reported.
+- [x] A rejected file ends the boot naming file, process and the engine's reason; with
   `deployment-failure: warn` on a nowhere-first id the application boots degraded.
+  `ZenBpmDeploymentServiceIT#aFileTheEngineRefusesEndsTheDeployment`: the pinned engine refuses a
+  call activity whose `version` is no number, and the whole message names file, workflow module,
+  process and the engine's reason. `ZenBpmDeployingTest#aRejectedModelNamesTheFile` (nothing after
+  the refused file is sent, no version registered), `#aRejectedDecisionNamesTheFile`,
+  `#anotherFailureNamesTheFileAndTheAddress`. Booted against a server standing in for the engine
+  which refuses every file: `ZenBpmRefusedFileBootTest` on Spring Boot ends the start with that
+  message, and with `warn` on an adapter id behind the BPMS double the application boots and the
+  log holds the refusal; `ZenBpmRefusedFileTest` on Quarkus ends the start with that message, and
+  `ZenBpmDeploymentFailureWarnTest` boots Quarkus with `warn` where the deployment fails (an address
+  nothing listens on, fit-check item 6). `ZenBpmDeploymentPipelineTest` shows the pipeline running on
+  Quarkus up to the engine wait.
+
+**Implemented 2026-10-17.** Core: `ZenBpmDeploymentService.deployResources` waits for the engine,
+logs its version once, deploys every BPMN file (`model.ZenBpmModelWriter`: the bytes as read where
+nothing was changed) and every DMN file, registers the version of every process, remembers it in
+the new `ZenBpmDeployedProcesses` of the client factory, logs one INFO line per module and reports
+the identifiers the files declare; `ZenBpmBpmnModel` keeps the bytes it was read from;
+`ZenBpmScoping.apply` hands back the plain identifiers; `readDmn` keeps the decision ids and reads
+every DMN file as XML. `GAPS.md` has GAPS 24; the README and the architecture say what is built;
+S10.1.1 has the note of fit-check item 4. Tests: `ZenBpmDeployingTest` (5, against `FakeEngine`),
+`ZenBpmModelWriterTest` (2), `ZenBpmDeployedProcessesTest` (1), two more cases in
+`ZenBpmModelReaderTest` (now 22) and `ZenBpmScopingTest` (now 8), `ZenBpmDeploymentServiceTest`
+(still 31: the non-XML DMN case holds in every mode now), the Docker tests
+`ZenBpmDeploymentServiceIT` (5, core) and `ZenBpmDeploymentIT` (1, `spring-boot`, with the test
+application `DeployItApplication` and the workflow module `deploy-it` in its test sources), the boot
+tests `ZenBpmRefusedFileBootTest` (2, Spring Boot), `ZenBpmRefusedFileTest`,
+`ZenBpmDeploymentFailureWarnTest` and `ZenBpmDeploymentPipelineTest` (Quarkus), with a
+`StandInEngine` in each platform's test sources;
+`ZenBpmStartupValidationBootTest#noneIsWarnedAboutWhileTheModuleIsPrepared` now ends in the engine
+wait. `TZ=Etc/UTC mvn clean install` on OpenJDK 25.0.2 builds green with every integration test run
+and none skipped (core 612 unit and 39 integration tests, Spring Boot 9 and 1 integration test,
+smoke test 32, Quarkus runtime 9, Quarkus deployment 43, coverage gate 35). The gate measures 100 %
+of 16,233 instructions for Spring Boot and 100 % of 16,107 for Quarkus, and
+`bin/check-deploy-safety.sh` passes both runs (13 files deployed, nothing after a red gate). The
+first full build failed once in `ZenBpmJobStreamTest#aConnectionNobodyAnswersIsNoReturn`, whose
+`TcpRelay` binds the port it cut a moment before again ("Address already in use"); the test and the
+relay are not touched by this story, and the next two full builds passed it.
+
+Seen to fail, each restored afterwards (21 of 21 mutants in core, against a green unmutated run;
+one of them was first written wrong, still reporting the identifiers, and was replaced by one which
+drops the call). Each fails `ZenBpmDeployingTest` unless named otherwise:
+- an unchanged file written out, a rewritten one sent as its bytes (each also
+  `ZenBpmModelWriterTest`); the model's bytes handed out for writing (`ZenBpmModelReaderTest`);
+- the engine not waited for; its version not logged; the version not registered; the deployed
+  process not remembered; a definition not found by key; the DMN files not deployed; the declared
+  identifiers not reported;
+- a refusal treated as any other failure, and any failure as a refusal;
+- the files not kept while preparing; the identifiers of the scoping dropped; the decision ids not
+  remembered, or read only under `use-prefix` (`ZenBpmDeploymentServiceTest`);
+- message names, error codes, escalation codes or task definitions not declared, empty values
+  declared (`ZenBpmScopingTest`, the first two also `ZenBpmDeployingTest`).
+Installed and booted, or against the engine: wiring logging nothing fails
+`ZenBpmDeploymentPipelineTest` on Quarkus (so its check of the log runs); a refusal treated as any
+other failure fails `ZenBpmRefusedFileBootTest` on Spring Boot and `ZenBpmRefusedFileTest` on
+Quarkus (a first run of the Spring half was void: the install skipped no integration test, failed
+on the mutant, and left the unmutated core in place; repeated with `-DskipITs`); every file written
+out fails `ZenBpmDeploymentServiceIT#aVersion1ModelDeploysByteForByte`.
 
 ### S4.3.3 Start and stop processing (skeleton)
 

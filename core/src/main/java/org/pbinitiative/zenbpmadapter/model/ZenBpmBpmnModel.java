@@ -29,6 +29,8 @@ import io.vanillabp.spi.service.BpmsStartTrigger;
  *
  * @param filename The name of the file the process was read from
  * @param document The file, which the pipeline rewrites and deploys
+ * @param content The bytes the file was read from, which are deployed where the pipeline changes
+ *            nothing, see {@link ZenBpmModelWriter}
  * @param bpmnProcessId The id of the process as the modeller wrote it
  * @param tasks The elements which make the engine create a job a worker serves, user tasks
  *            excepted: service, send and business rule tasks and the intermediate throw and end
@@ -72,6 +74,7 @@ import io.vanillabp.spi.service.BpmsStartTrigger;
 public record ZenBpmBpmnModel(
     String filename,
     Document document,
+    byte[] content,
     String bpmnProcessId,
     List<BpmnTaskSpec> tasks,
     List<BpmnTaskSpec> userTasks,
@@ -90,9 +93,10 @@ public record ZenBpmBpmnModel(
 ) {
 
     /**
-     * Copies every collection, so a model stays what was read.
+     * Copies every collection and the bytes, so a model stays what was read.
      */
     public ZenBpmBpmnModel {
+        content = content.clone();
         tasks = List.copyOf(tasks);
         userTasks = List.copyOf(userTasks);
         catchMessages = inOrder(catchMessages);
@@ -106,6 +110,16 @@ public record ZenBpmBpmnModel(
         messageStarts = List.copyOf(messageStarts);
         messageCatches = List.copyOf(messageCatches);
         enclosingMultiInstances = Collections.unmodifiableMap(new LinkedHashMap<>(enclosingMultiInstances));
+    }
+
+    /**
+     * The bytes the file was read from, as a copy.
+     *
+     * @return The bytes
+     */
+    @Override
+    public byte[] content() {
+        return content.clone();
     }
 
     /**

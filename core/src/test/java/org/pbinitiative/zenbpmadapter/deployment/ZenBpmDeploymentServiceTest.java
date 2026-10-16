@@ -55,6 +55,8 @@ import io.vanillabp.integration.adapter.spi.AdapterCollaborators;
 import io.vanillabp.integration.adapter.spi.BpmnParseException;
 import io.vanillabp.integration.adapter.spi.NameClashAvoidance;
 import io.vanillabp.integration.adapter.spi.NameClashAvoidanceSupport;
+import io.vanillabp.integration.adapter.spi.NameClashAvoidanceSupport.ModelIdentifier;
+import io.vanillabp.integration.adapter.spi.NameClashAvoidanceSupport.ScopedIdentifierKind;
 import io.vanillabp.integration.adapter.spi.health.AdapterHealth;
 import io.vanillabp.integration.adapter.spi.workflowtask.WorkflowTaskWiring;
 import io.vanillabp.integration.spi.startup.StartupReport;
@@ -411,7 +413,7 @@ class ZenBpmDeploymentServiceTest {
     }
 
     @Test
-    @DisplayName("A DMN file is kept for the deployment: under use-prefix with the ids of its decisions and the references to them scoped by the workflow module, otherwise as it was read")
+    @DisplayName("A DMN file is kept for the deployment: under use-prefix with the ids of its decisions and the references to them scoped by the workflow module, otherwise as it was read; the plain ids of its decisions are remembered")
     void aDmnFileIsKeptWithItsDecisionIdsScoped() {
         final var prefixing = new ZenBpmDeploymentService("orders", withoutClients("orders"), TestCollaborators.of(
                 "orders", TestScoping.of(NameClashAvoidance.USE_PREFIX)));
@@ -434,22 +436,32 @@ class ZenBpmDeploymentServiceTest {
                         .get("rating-as-read.dmn"), StandardCharsets.UTF_8)),
                 () -> assertEquals(List.of("rating.dmn", "rating-as-read.dmn"), List.copyOf(context
                         .decisions()
-                        .keySet())));
+                        .keySet())),
+                () -> assertEquals(List.of(
+                        new ModelIdentifier(ScopedIdentifierKind.DMN_DECISION_ID, "rating", null),
+                        new ModelIdentifier(ScopedIdentifierKind.DMN_DECISION_ID, "risk", null)),
+                        List.copyOf(context.declaredIdentifiers())));
     }
 
     @Test
-    @DisplayName("A DMN file which is no XML ends reading it under use-prefix, naming file and workflow module")
-    void aDmnFileWhichIsNoXmlIsRefusedWhereItsIdsAreScoped() {
-        final var deploymentService = new ZenBpmDeploymentService("orders", withoutClients("orders"), TestCollaborators
-                .of("orders", TestScoping.of(NameClashAvoidance.USE_PREFIX)));
+    @DisplayName("A DMN file which is no XML ends reading it in every mode, naming file and workflow module, because the ids of its decisions are reported")
+    void aDmnFileWhichIsNoXmlIsRefusedInEveryMode() {
+        assertAll(Stream
+                .of(NameClashAvoidance.USE_PREFIX, NameClashAvoidance.NONE)
+                .map(mode -> () -> {
+                    final var deploymentService = new ZenBpmDeploymentService("orders", withoutClients(
+                            "orders"), TestCollaborators.of("orders", TestScoping.of(mode)));
 
-        final var failure = assertThrows(IllegalStateException.class, () -> deploymentService.readDmn("shop",
-                new ZenBpmProcessingContext("shop"), "rating.dmn", new ByteArrayInputStream("no xml"
-                        .getBytes(StandardCharsets.UTF_8))));
+                    final var failure = assertThrows(IllegalStateException.class, () -> deploymentService.readDmn(
+                            "shop", new ZenBpmProcessingContext("shop"), "rating.dmn", new ByteArrayInputStream(
+                                    "no xml".getBytes(StandardCharsets.UTF_8))));
 
-        assertTrue(failure
-                .getMessage()
-                .startsWith("DMN file 'rating.dmn' of workflow module 'shop' cannot be read: "), failure.getMessage());
+                    assertTrue(failure
+                            .getMessage()
+                            .startsWith("DMN file 'rating.dmn' of workflow module 'shop' cannot be read: "),
+                            failure
+                                    .getMessage());
+                }));
     }
 
     @Test
@@ -637,22 +649,18 @@ class ZenBpmDeploymentServiceTest {
     }
 
     @Test
-    @DisplayName("Every step after wiring of a configured adapter id says that it is not built yet, and what it was asked to do")
+    @DisplayName("Starting the workflow processing of a configured adapter id says that it is not built yet, and what it was asked to do")
     void aConfiguredAdapterIdSaysThatTheStepIsNotBuiltYet() {
         try (var registry = new ZenBpmClientRegistry(List.of(configured("orders", "http://localhost:8080")))) {
             final var deploymentService = new ZenBpmDeploymentService("orders", registry, TestCollaborators.of(
                     "orders", TestScoping.of(NameClashAvoidance.USE_PREFIX)));
 
-            final var messages = steps()
-                    .stream()
-                    .map(step -> assertThrows(UnsupportedOperationException.class, () -> step.accept(
-                            deploymentService)).getMessage())
-                    .toList();
+            final var failure = assertThrows(UnsupportedOperationException.class, () -> deploymentService
+                    .startWorkflowProcessing("shop", null));
 
-            assertEquals(List.of(
-                    "ZenBPM adapter 'orders': deploying workflow module 'shop' is implemented in a later story",
-                    "ZenBPM adapter 'orders': starting the workflow processing of workflow module 'shop' is implemented in a later story"),
-                    messages);
+            assertEquals(
+                    "ZenBPM adapter 'orders': starting the workflow processing of workflow module 'shop' is implemented in a later story",
+                    failure.getMessage());
         }
     }
 

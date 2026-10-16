@@ -141,7 +141,8 @@ class ZenBpmStartupValidationBootTest {
     @DisplayName("A workflow module with BPMN files under name-clash-avoidance 'none' is warned about while it is prepared, naming the alternatives of ZenBPM")
     void noneIsWarnedAboutWhileTheModuleIsPrepared(final CapturedOutput output) {
         final var failure = rootOf(assertThrows(Exception.class, () -> run("vanillabp.prioritized-adapters=zenbpm",
-                "vanillabp.adapters.zenbpm.rest-address=http://localhost:8080",
+                "vanillabp.adapters.zenbpm.rest-address=http://localhost:1",
+                "vanillabp.adapters.zenbpm.startup-wait=PT0S",
                 "vanillabp.adapters.zenbpm.name-clash-avoidance=none",
                 "vanillabp.adapters.zenbpm.resources-location=%s".formatted(WITH_BPMN))
                 .close()));
@@ -151,9 +152,9 @@ class ZenBpmStartupValidationBootTest {
                 () -> assertTrue(log.contains(
                         "Workflow module 'smoke-app' is deployed to ZenBPM (adapter 'zenbpm') with name-clash-avoidance 'none'."),
                         log),
-                () -> assertEquals(
-                        "ZenBPM adapter 'zenbpm': deploying workflow module 'smoke-app' is implemented in a later story",
-                        failure.getMessage()));
+                () -> assertTrue(failure
+                        .getMessage()
+                        .contains("http://localhost:1"), failure.getMessage()));
     }
 
     @Test

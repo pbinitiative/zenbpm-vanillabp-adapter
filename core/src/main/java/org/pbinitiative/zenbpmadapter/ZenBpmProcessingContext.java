@@ -4,6 +4,7 @@
  */
 package org.pbinitiative.zenbpmadapter;
 
+import java.util.Collection;
 import java.util.Collections;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
@@ -14,6 +15,8 @@ import java.util.Set;
 
 import org.pbinitiative.zenbpmadapter.model.ZenBpmBpmnModel;
 import org.pbinitiative.zenbpmadapter.model.ZenBpmCorrelationKeys;
+
+import io.vanillabp.integration.adapter.spi.NameClashAvoidanceSupport.ModelIdentifier;
 
 /**
  * What the deployment pipeline of this adapter collects about one workflow module, from its first
@@ -47,6 +50,10 @@ public final class ZenBpmProcessingContext {
     private final Map<String, String> awaitedMessages = new LinkedHashMap<>();
 
     private final Map<String, WiredProcess> wiredProcesses = new LinkedHashMap<>();
+
+    private final Map<String, ZenBpmBpmnModel> bpmnFiles = new LinkedHashMap<>();
+
+    private final Set<ModelIdentifier> declaredIdentifiers = new LinkedHashSet<>();
 
     /**
      * The context of one workflow module, built for its first BPMN process.
@@ -111,6 +118,46 @@ public final class ZenBpmProcessingContext {
      */
     public List<String> processes() {
         return List.copyOf(processes.keySet());
+    }
+
+    /**
+     * Keeps a BPMN file of the workflow module for its deployment, with the model the pipeline
+     * rewrites. A file is kept once, whatever number of processes it holds.
+     *
+     * @param model The model of the file
+     */
+    public void addBpmnFile(final ZenBpmBpmnModel model) {
+        bpmnFiles.putIfAbsent(model.filename(), model);
+    }
+
+    /**
+     * The BPMN files of the workflow module, in the order they were prepared.
+     *
+     * @return The model of each file, by the name of the file
+     */
+    public Map<String, ZenBpmBpmnModel> bpmnFiles() {
+        return Collections.unmodifiableMap(bpmnFiles);
+    }
+
+    /**
+     * Adds identifiers the files of the workflow module declare, see
+     * {@link #declaredIdentifiers()}.
+     *
+     * @param identifiers The identifiers, plain
+     */
+    public void addDeclaredIdentifiers(final Collection<ModelIdentifier> identifiers) {
+        declaredIdentifiers.addAll(identifiers);
+    }
+
+    /**
+     * The identifiers the BPMN and DMN files of the workflow module declare, in their plain form:
+     * message names, error and escalation codes, task definitions with their process, and decision
+     * ids. The platform warns where two workflow modules end up under one scoped form.
+     *
+     * @return The identifiers, each once, in the order they were read
+     */
+    public Set<ModelIdentifier> declaredIdentifiers() {
+        return Collections.unmodifiableSet(declaredIdentifiers);
     }
 
     /**

@@ -28,6 +28,17 @@ keys per version (decision 14: one search per process). Registered in `wireBpmn`
 (`registerProcessVersions`) and warmed by the core's `resolveProcessVersions`. `versionTag` is read
 from `zenbpm:versionTag` for the version this boot deployed without a request.
 
+*Note from S4.3.2, 2026-10-17.* `deployResources` calls `registerDeployedVersion` for every
+deployed process, unchanged ones included, and keeps what the engine ended up with in
+`ZenBpmClientFactory#deployedProcesses()` (`ZenBpmDeployedProcesses`: key, version, version tag and
+the BPMN as the engine holds it), so the version this boot deployed needs no request here. The test
+S4.3.2 planned as `ZenBpmDeploymentIT#aDeployedVersionWithoutAMethodEndsTheStart` (a task whose only
+method serves `version = ">1"` in a model the engine keeps as version 1 ends the start, platform
+decision 126) belongs to this story: the platform runs that check only for a process with a
+registered catalog (`DeployedProcessVersionsCheck#check` walks `registeredCatalogs`), so it cannot
+fail before this catalog exists. Assert the core's message by the phrases
+`DeployedProcessVersionsCheck.A_VERSION_OF_A_PROCESS` and `ELEMENTS_SERVED_BY_NO_METHOD_IN_THIS_VERSION`.
+
 **Tests**: `ZenBpmProcessVersionsTest` (fake server), Spring `ZenBpmProcessVersionIT#theVersionDecidesWhichMethodRuns`
 (two methods, `version = "1"` and `version = ">1"`, two deployments), `#aTagResolves`.
 

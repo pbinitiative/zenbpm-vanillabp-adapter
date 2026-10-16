@@ -15,6 +15,7 @@ import java.io.InputStream;
 import java.io.StringWriter;
 import java.io.UncheckedIOException;
 import java.nio.charset.StandardCharsets;
+import java.util.List;
 import java.util.Map;
 
 import javax.xml.transform.TransformerException;
@@ -32,6 +33,8 @@ import org.w3c.dom.Document;
 import org.w3c.dom.Element;
 
 import io.vanillabp.integration.adapter.spi.NameClashAvoidance;
+import io.vanillabp.integration.adapter.spi.NameClashAvoidanceSupport.ModelIdentifier;
+import io.vanillabp.integration.adapter.spi.NameClashAvoidanceSupport.ScopedIdentifierKind;
 import io.vanillabp.integration.test.utils.SuppressOutputExtension;
 
 /**
@@ -80,6 +83,23 @@ class ZenBpmScopingTest {
         ZenBpmScoping.apply(document, "shop", "Orders", TestScoping.of(mode), "orders");
 
         assertTrue(read(text()).isEqualNode(document), () -> serialized(document));
+    }
+
+    @ParameterizedTest
+    @EnumSource(value = NameClashAvoidance.class, names = {
+            "USE_PREFIX", "NONE"
+    })
+    @DisplayName("The identifiers the file declares are handed back plain in every mode: message names, error and escalation codes and the task definitions with their process, each once and without the empty ones")
+    void theDeclaredIdentifiersAreHandedBackPlain(final NameClashAvoidance mode) {
+        final var declared = ZenBpmScoping.apply(read(text()), "shop", "Orders", TestScoping.of(mode), "orders");
+
+        assertEquals(List.of(
+                new ModelIdentifier(ScopedIdentifierKind.MESSAGE_NAME, "paid", null),
+                new ModelIdentifier(ScopedIdentifierKind.ERROR_CODE, "declined", null),
+                new ModelIdentifier(ScopedIdentifierKind.ESCALATION_CODE, "late", null),
+                new ModelIdentifier(ScopedIdentifierKind.TASK_DEFINITION, "charge", "Orders"),
+                new ModelIdentifier(ScopedIdentifierKind.TASK_DEFINITION, "approve", "Orders")),
+                declared);
     }
 
     @Test

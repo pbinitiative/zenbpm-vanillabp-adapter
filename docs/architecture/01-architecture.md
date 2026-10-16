@@ -174,14 +174,17 @@ expression reading an attribute the aggregate does not share fails at runtime as
 (deviation 14). The process version catalog (`registerProcessVersions`) comes with E10; until then
 nothing is registered, which the core reads as "not asked yet".
 
-`deployResources`: `ZenBpmEngineWait`, then `validateNoCollidingProcessIds` (before anything is
-sent), then one `POST /v1/process-definitions` per file and one `POST /v1/dmn-resource-definitions`
-per DMN, then `GET /v1/process-definitions/{key}` per process to learn the version,
-`registerDeployedVersion` (the core ends the start where the deployed version has a task without a
-method, platform decision 126), the identifier reports `reportIdentifiersTheBpmsAlreadyHolds` and
-`reportIdentifiersTheModelsDeclare` (a failed lookup never fails the deployment and is logged at
-debug), and the `ZenBpmDeployedProcesses` record (scoped id, key, version, model as deployed) which
-serves the viewer and the ownership checks.
+`deployResources`: `validateNoCollidingProcessIds` (before anything is sent), then `ZenBpmEngineWait`
+and `ZenBpmEnvironmentInfo`, then one `POST /v1/process-definitions` per file (the bytes as read where
+the pipeline changed nothing, the document written out otherwise) and one
+`POST /v1/dmn-resource-definitions` per DMN, then `GET /v1/process-definitions/{key}` per process to
+learn the version, `registerDeployedVersion` (unchanged files included), the `ZenBpmDeployedProcesses`
+record (scoped id, key, version, version tag, model as the engine holds it) in the client factory,
+which serves the viewer and the ownership checks, and `reportIdentifiersTheModelsDeclare`. The
+identifiers the engine held before are not reported: every REST deployment is recorded under the
+resource name `process.bpmn` and a definition carries no owner, so nothing tells this application's
+earlier deployments from another's (GAPS 24). A file the engine refuses ends the deployment with the
+engine's reason.
 
 Name-clash mode (decision 24): ZenBPM has no tenant, so `by-adapter` cannot be served. It stays the
 default, as the platform's contract asks of a BPMS without isolation of its own, and is refused
