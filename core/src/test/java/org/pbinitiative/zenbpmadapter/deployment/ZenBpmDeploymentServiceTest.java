@@ -453,14 +453,39 @@ class ZenBpmDeploymentServiceTest {
     }
 
     @Test
+    @DisplayName("Two files of one workflow module declaring the same process id end the preparation of the second, naming both files, before it is rewritten; the same file prepared again is no second declaration")
+    void twoFilesDeclaringOneProcessAreRefused() {
+        final var deploymentService = new ZenBpmDeploymentService("orders", withoutClients("orders"), TestCollaborators
+                .of("orders", TestScoping.of(NameClashAvoidance.USE_PREFIX), TestWiring
+                        .claiming("Order")
+                        .wiring()));
+        final var first = read(deploymentService, "order.bpmn", WAITING_FOR_PAYMENT);
+        final var second = read(deploymentService, "order-copy.bpmn", WAITING_FOR_PAYMENT);
+        final var context = deploymentService.prepareBpmn("shop", null, "order.bpmn", "Order", first);
+        deploymentService.prepareBpmn("shop", context, "order.bpmn", "Order", first);
+
+        final var failure = assertThrows(IllegalStateException.class, () -> deploymentService.prepareBpmn("shop",
+                context, "order-copy.bpmn", "Order", second));
+
+        assertAll(
+                () -> assertEquals("""
+                        Workflow module 'shop' declares BPMN process 'Order' in two files, 'order.bpmn' and \
+                        'order-copy.bpmn'. ZenBPM keeps one definition per process id, so the later file would \
+                        replace the earlier one as a new version of it. Keep the process in one file, or give one \
+                        of the two processes another id.""", failure.getMessage()),
+                () -> assertEquals("Order", processIdOf(second)),
+                () -> assertEquals(List.of("Order"), context.processes()));
+    }
+
+    @Test
     @DisplayName("Deploying first hands the module's processes to the platform's check for colliding process ids, before anything else")
     void deployingChecksForCollidingProcessIdsFirst() {
         final var scoping = TestScoping.of(NameClashAvoidance.USE_PREFIX);
         final var deploymentService = new ZenBpmDeploymentService("orders", withoutClients("orders"), TestCollaborators
                 .of("orders", scoping));
         final var context = new ZenBpmProcessingContext("shop");
-        context.recordProcess("Order");
-        context.recordProcess("Invoice");
+        context.recordProcess("Order", "order.bpmn");
+        context.recordProcess("Invoice", "invoice.bpmn");
 
         final var failure = assertThrows(IllegalStateException.class, () -> deploymentService.deployResources("shop",
                 context));

@@ -916,6 +916,23 @@ smoke test 29, Quarkus runtime 9, Quarkus deployment 39, coverage gate 35). The 
 of 15,059 instructions for Spring Boot and 100 % of 14,933 for Quarkus, and
 `bin/check-deploy-safety.sh` passes both runs.
 
+**Answer to CodeRabbit on pull request #32, 2026-10-16** (one finding). Two files of one workflow
+module declaring the same process id reached `deployResources` as one process, because the context
+kept the ids in a set, so the platform's collision check could not see them. Valid, but not by the
+suggested fix: the platform's `validateNoCollidingProcessIds` skips one process of one module handed
+over twice on purpose (one file with several processes, or one module deployed to several
+adapters), and the core keeps only the first file of a process id (`putIfAbsent`) without refusing
+the second. On ZenBPM, which deploys every file on its own, the second file would replace the first
+as a new version of it; Camunda 8 refuses such a deployment. So `ZenBpmProcessingContext.recordProcess`
+now keeps each process id with its file and refuses a second file declaring it, naming both files,
+before that file is rewritten. Test: `ZenBpmDeploymentServiceTest#twoFilesDeclaringOneProcessAreRefused`.
+Seen to fail, each restored afterwards (3 of 3 mutants): the refusal off, the same file prepared
+again refused, the process recorded after the rewrite. `TZ=Etc/UTC mvn clean install` builds green
+with every integration test run and none skipped (core 588 unit and 34 integration tests, Spring
+Boot 9, smoke test 29, Quarkus runtime 9, Quarkus deployment 39, coverage gate 35); the gate
+measures 100 % of 15,094 instructions for Spring Boot and of 14,968 for Quarkus, and
+`bin/check-deploy-safety.sh` passes both runs.
+
 ---
 
 ## F4.3 Wiring and deploying

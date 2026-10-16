@@ -258,8 +258,9 @@ public class ZenBpmDeploymentService implements AdapterDeploymentService<ZenBpmB
      * without clients prepares as well. Once per file, it refuses a file which uses what ZenBPM
      * cannot run, see {@link ZenBpmUnsupportedConstructs}. Then it refuses the name-clash-avoidance
      * mode <code>by-adapter</code>, for the workflow module and for the workflow, because ZenBPM
-     * has no isolation of its own (see decision 24 in the repository's DECISIONS.md). Once per
-     * file again, it refuses a message used both to start a workflow of the module and as one a
+     * has no isolation of its own (see decision 24 in the repository's DECISIONS.md). It refuses a
+     * process id another file of the workflow module declares as well. Once per file again, it
+     * refuses a message used both to start a workflow of the module and as one a
      * claimed workflow waits for, scopes the identifiers of the file, see {@link ZenBpmScoping}, and,
      * in a process a workflow service claims, writes the correlation keys, see
      * {@link ZenBpmCorrelationKeys}, and the input mappings which carry what the methods read into
@@ -273,8 +274,9 @@ public class ZenBpmDeploymentService implements AdapterDeploymentService<ZenBpmB
      * @param model The model of the process's file
      * @return The context of the workflow module, never <code>null</code>
      * @throws IllegalStateException Where the file uses what ZenBPM cannot run, naming every
-     *             element, where <code>by-adapter</code> applies to the module or the workflow, or
-     *             where a message starts a workflow and a workflow waits for it
+     *             element, where <code>by-adapter</code> applies to the module or the workflow,
+     *             where another file declares the same process, or where a message starts a
+     *             workflow and a workflow waits for it
      */
     @Override
     public ZenBpmProcessingContext prepareBpmn(
@@ -298,10 +300,10 @@ public class ZenBpmDeploymentService implements AdapterDeploymentService<ZenBpmB
                 .scoping()
                 .validateNativeIsolationSupported(adapterId, workflowModuleId, ZenBpmAdapter.BPMS_NAME);
         refuseByAdapterForTheWorkflow(workflowModuleId, bpmnProcessId);
+        context.recordProcess(bpmnProcessId, filename);
         if (firstPreparation) {
             rewrite(workflowModuleId, context, bpmnProcessId, model, claimed);
         }
-        context.recordProcess(bpmnProcessId);
         return context;
     }
 
