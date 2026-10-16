@@ -65,7 +65,8 @@ Reference implementations to read before starting: `Camunda8AdapterConfiguration
   Read as the sixteen keys instruction 1 lists: each has a field, an accessor pair and a default
   (`aRestAddressAloneIsComplete` asserts all of them). The table's other keys arrive with the
   stories which give them a meaning: `job-timeout`, `async-task-lock-renewal` and
-  `async-task-max-age-action` with E6, `shared-engine` with S3.3.1,
+  `async-task-max-age-action` with E6, `shared-engine` with S3.3.1 (which dropped it: the mode
+  tells two ids on one engine apart),
   `message-start-lookup-max-instances` with S7.1.2; `type`, `name-clash-avoidance` and
   `deployment-failure` are core keys. `accept-unscoped-identifiers` was named by no story and is
   now instruction 5 of S4.2.1 (and the module level in S3.1.1's overlay).

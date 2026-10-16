@@ -89,6 +89,28 @@ final class SmokeApplication {
     }
 
     /**
+     * A test of the smoke application with two adapter ids on one engine, the new one first, as in
+     * a migration from one name-clash-avoidance mode to another.
+     *
+     * @param newMode The name-clash-avoidance mode of the new adapter id
+     * @param oldMode The name-clash-avoidance mode of the old adapter id
+     * @return The test, to be given what the case checks
+     */
+    static QuarkusExtensionTest oneEngine(
+        final String newMode,
+        final String oldMode
+    ) {
+        return extensionTest()
+                .overrideConfigKey("vanillabp.prioritized-adapters", "zenbpm-new,zenbpm-old")
+                .overrideConfigKey("vanillabp.adapters.zenbpm-new.type", "zenbpm")
+                .overrideConfigKey("vanillabp.adapters.zenbpm-new.rest-address", "http://localhost:8080")
+                .overrideConfigKey("vanillabp.adapters.zenbpm-new.name-clash-avoidance", newMode)
+                .overrideConfigKey("vanillabp.adapters.zenbpm-old.type", "zenbpm")
+                .overrideConfigKey("vanillabp.adapters.zenbpm-old.rest-address", "http://localhost:8080")
+                .overrideConfigKey("vanillabp.adapters.zenbpm-old.name-clash-avoidance", oldMode);
+    }
+
+    /**
      * What the start wrote, as one text.
      *
      * @param records The log records of the start

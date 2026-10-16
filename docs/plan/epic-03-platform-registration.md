@@ -559,6 +559,12 @@ Where the code differs from the instructions:
 
 **Instructions**
 
+*Superseded in part at the fit check, 2026-10-16 (the user's decision):* there is no
+`shared-engine` key and no comparison of the modules an id serves. Two ids are one instance where
+their normalised `rest-address` and their `name-clash-avoidance` at the adapter level are the same,
+as on Camunda 8; see "Where the code differs from the instructions" below. The instructions, the
+tests and the note from S3.2.1 are kept as they were written.
+
 `ZenBpmDeploymentService.validateDistinctAdapterInstances(ids)`: group by
 `configuration.instanceIdentity()`; a group with two ids ends the boot with a message naming both ids,
 the shared address and the key which tells them apart (`vanillabp.adapters.<id>.rest-address`), and
@@ -582,4 +588,114 @@ own, in `quarkus/deployment` next to `ZenBpmTwoAdapterIdsTest`.
 
 **Acceptance criteria**
 
-- [ ] The failure names both ids and the key; the shared-engine setup boots and is the input to S11.3.1.
+- [x] The failure names both ids and the key; the shared-engine setup boots and is the input to S11.3.1.
+  (Revised with the instructions: "the key" are the keys `rest-address` and `name-clash-avoidance`
+  of each id, and the shared-engine setup is one `rest-address` with two modes.)
+  Two ids of type `zenbpm` on one engine with the same mode end the start with one message which
+  names both ids, the engine (`http://localhost:8080/v1`), the mode, and the keys `rest-address` and
+  `name-clash-avoidance` of each id: `ZenBpmInstanceIdentityTest` in core, and the real start on
+  both platforms (`ZenBpmDistinctInstancesBootTest#oneEngineWithOneModeEndsTheStart`,
+  `ZenBpmOneEngineOneModeTest`). The shared-engine setup is one engine with two modes, `use-prefix`
+  for the new id and `none` for the old one. It boots on both platforms with nothing in the
+  `CONFIGURATION` section, and the registry knows that the two ids share the engine
+  (`#oneEngineWithTwoModesBoots`, `ZenBpmOneEngineTwoModesTest`). It is the setup S11.3.1 runs
+  against a real engine.
+
+**Implemented 2026-10-16.** Core: `client.ZenBpmInstanceIdentity` (adapted from Camunda 8's
+`Camunda8InstanceIdentity`, decision 17) groups the given ids by engine, the normalised address of
+`instanceIdentity()`, and by the mode the platform's scoping resolves for the adapter id as a whole
+(`modeFor(null, null, id)`). It names every group of two or more ids in one message, so one restart
+shows them all, and it leaves out an id without a valid `rest-address` (after the reviews; first it
+left out every id without clients). `ZenBpmDeploymentService` overrides
+`validateDistinctAdapterInstances` with that check. To reach the configuration of the other ids,
+it now takes the `ZenBpmClientRegistry` instead of the factory of its own id. Both platforms hand
+it over, and the check that the collaborators belong to the id stays. `getAddressedSystem()` keeps
+its default. Tests: `ZenBpmInstanceIdentityTest` (7), two new cases in
+`ZenBpmDeploymentServiceTest` (now 9), `ZenBpmDistinctInstancesBootTest` (2) in the smoke test, and
+`ZenBpmOneEngineOneModeTest` (1) and `ZenBpmOneEngineTwoModesTest` (1) in `quarkus/deployment`.
+`TZ=Etc/UTC mvn clean install` on OpenJDK 25.0.2 builds green with every integration test run and
+none skipped (core 470 unit and 34 integration tests, Spring Boot 8, smoke test 21, Quarkus runtime
+8, Quarkus deployment 32, coverage gate 33). The gate measures 100 % of 10,310 instructions for
+Spring Boot and 100 % of 10,193 for Quarkus, and `bin/check-deploy-safety.sh` passes both runs (13
+files deployed, nothing after a red gate).
+
+Seen to fail, each restored afterwards (11 of 11 mutants). In the identity, each mutant fails
+`ZenBpmInstanceIdentityTest`, and four of them `ZenBpmDeploymentServiceTest` as well:
+- the mode ignored;
+- the raw address compared instead of the normalised one;
+- an id without clients compared;
+- only the first group named;
+- every id asked for the mode of the first one;
+- the mode asked for a workflow module instead of the adapter id;
+- a group of one id refused.
+
+In the deployment service:
+- the check not asked: fails `ZenBpmDeploymentServiceTest`, `ZenBpmDistinctInstancesBootTest` and
+  `ZenBpmOneEngineOneModeTest`;
+- collaborators of another id accepted.
+
+In the wiring, the service handed a registry with only its own factory:
+- on Spring Boot, `ZenBpmDistinctInstancesBootTest` fails;
+- on Quarkus, both `ZenBpmOneEngine*` tests fail, because the registry has no factory of the other
+  id.
+
+**Answers to two reviews, 2026-10-16** (one by Claude, one by Copilot; both approve). Every
+finding was checked against the code:
+
+- **A degraded id escaped the check** (Claude 1, valid). An inconsistent id which is nowhere first
+  priority and may fail with `warn` boots without clients although its `rest-address` is valid, so
+  it names an engine; the check left it out because it filtered on `isConfigured()`. Reproduced by
+  the new `ZenBpmInstanceIdentityTest#aDegradedAdapterIdIsComparedByItsAddress`, red before the
+  fix. Now the check compares every id whose `rest-address` is valid
+  (`ZenBpmAdapterConfiguration.hasValidRestAddress()`, held by `ZenBpmAdapterConfigurationTest`),
+  and the case "an id without an address" also has a malformed one. Mutants: the old filter on
+  clients, no filter at all, a malformed address taken as valid, a missing address taken as valid;
+  each fails `ZenBpmInstanceIdentityTest`, the third also `ZenBpmAdapterConfigurationTest`.
+- **"One engine" promised more than the check knows** (Claude 2, valid). The README and the E12
+  note now say "one `rest-address`" and "at the adapter level", and the javadoc says that two
+  addresses of one engine are not recognised as one. Not taken: comparing `grpc-address` as a
+  second criterion. The identity is the one the registry's `sharesEngineWith` uses for the election
+  too, and a second criterion would make the two answers disagree; Camunda 8 compares its gRPC
+  address only to tell ids apart, never to join them.
+- **The story still prescribed `shared-engine`** (Claude 3 and Copilot 1, valid). The instructions
+  now open with a notice that names the rule built and points here, the acceptance line says how it
+  is to be read, and roadmap row 15 says "the same address with the same mode".
+- **Two restarts with the default mode** (Claude 4, valid, left to S4.2.1). With no mode set, both
+  ids are `by-adapter`, and the message asks for a mode of its own per id; an operator who sets
+  `use-prefix` on one id only is refused later, when S4.2.1 refuses `by-adapter`. A message which
+  says so now would promise a refusal which does not exist yet, so the note under S4.2.1 makes that
+  story change the message with its refusal.
+- Nits, all taken: `whyTheyAreOneInstance`, `asConfigured` and `messages` for what the names
+  returned and held; "in the order of their priority where all of them are prioritized", because
+  the platform falls back to the order of its services; the deployment service's javadoc sentence
+  in the active voice; the collaborators extracted in the Quarkus producer; the properties of the
+  Spring boot test one per line.
+
+After the fixes, `TZ=Etc/UTC mvn clean install` builds green with every integration test run and
+none skipped (core 471 unit and 34 integration tests, Spring Boot 8, smoke test 21, Quarkus runtime
+8, Quarkus deployment 32, coverage gate 33). The gate measures 100 % of 10,325 instructions for
+Spring Boot and 100 % of 10,210 for Quarkus, and `bin/check-deploy-safety.sh` passes both runs.
+
+Where the code differs from the instructions:
+
+- **No `shared-engine` key** (the user's decision at the fit check). The instructions ask for a new
+  key which lets two ids on one address boot. Camunda 8, the template, has none. Its identity
+  includes the mode, so its migration setup needs no key, and two ids with the same mode are
+  refused. On ZenBPM the mode is the only thing which separates two ids on one engine (there are
+  no tenants and no credentials), and the key as worded would have let two ids with the same mode
+  boot, though they reach the engine with the same identifiers. So the identity is the address and
+  the mode, the key is gone from the architecture table and from S11.3.1, and the note from S3.2.1
+  above about putting it on both overlays no longer applies. The "modules they serve" of the
+  instructions are not compared: the platform asks once per type with the ids only, and Camunda 8
+  does not compare them either.
+- **The mode is read at the adapter level.** A workflow module can set a mode of its own. The check
+  is about the adapter id as a whole, as on Camunda 8, and the platform's scoping resolves a mode
+  without a module for exactly this comparison.
+- **Until S4.2.1 the default mode is `by-adapter` for every id.** So two ids on one address are
+  refused unless one of them sets a mode, and S4.2.1 then refuses `by-adapter` itself.
+- **An id without a valid `rest-address` is not compared.** It names no engine. The validation
+  already reported the key it misses, and it refuses all work. An id which boots degraded because
+  of another key is compared, see the reviews above.
+- **The address is compared as configured.** Two addresses of one engine (an alias, a proxy in
+  front of a node, two nodes of one cluster) are not recognised as one; the javadoc of
+  `ZenBpmInstanceIdentity`, the README and the E12 note say so.

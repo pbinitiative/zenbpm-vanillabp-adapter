@@ -361,9 +361,8 @@ and are re-parked by whichever node receives them next.
 | `user-task-poll-interval` | adapter | `PT5S` | `PT0S` switches user-task notifications off with a WARN |
 | `history-time-to-live` | adapter, module, workflow | none (engine default) | sent with every start |
 | `instance-cache-max-entries` | adapter | `10000` | |
-| `name-clash-avoidance` | adapter, module, workflow | `by-adapter` (the platform's default) | refused while deploying, so every application sets `use-prefix` or `none` (decision 24); `none` warns |
+| `name-clash-avoidance` | adapter, module, workflow | `by-adapter` (the platform's default) | refused while deploying, so every application sets `use-prefix` or `none` (decision 24); `none` warns; two ids on one `rest-address` boot only where their modes at the adapter level differ, the setup of a prefix migration |
 | `accept-unscoped-identifiers` | adapter, module | `false` | silences the `none` warning |
-| `shared-engine` | adapter | `false` | says that this id deliberately shares its engine with another id (a prefix migration); without it two ids on one `rest-address` end the boot |
 | `message-start-lookup` | adapter | `start-row` (S7.1.2) | `scan` adds the bounded client-side lookup of message-started workflows for what the start row cannot cover (GAPS 1); an opt-in until E13.4 lands, then removed |
 | `message-start-lookup-max-instances` | adapter | `1000` | the bound of that scan |
 | `async-task-max-age-action` | adapter | `report` | `incident` fails an overdue asynchronous task's job with `retries: 0`, so the engine raises an incident |

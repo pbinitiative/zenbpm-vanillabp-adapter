@@ -189,6 +189,17 @@ the module level, and once with `false` on the module overriding `true` on the a
 - [ ] `accept-unscoped-identifiers: true` turns the `none` warning into a DEBUG line naming the key;
   the module level wins over the adapter level.
 
+*Note from S3.3.1, 2026-10-16.* `ZenBpmInstanceIdentity` (S3.3.1) refuses two ids on one
+`rest-address` with the same mode before anything is deployed, so before the refusal of
+`by-adapter` this story adds to `prepareBpmn`. Two ids on one address which set no mode both
+resolve to the default `by-adapter`, and its message says "the same name-clash-avoidance
+'by-adapter' ... give each id its own mode". An operator who then sets `use-prefix` on the new id
+only passes that check and is refused here for the old id's `by-adapter`: two restarts. Once this
+story refuses `by-adapter`, the message of a `by-adapter` group says that ZenBPM serves only
+`use-prefix` and `none`, so each of the ids needs one of them (one more case in
+`ZenBpmInstanceIdentityTest`). Not before: until then the message would promise a refusal which
+does not exist.
+
 ### S4.2.2 Correlation keys and the start/catch collision
 
 - [ ] **Depends on:** S4.2.1.

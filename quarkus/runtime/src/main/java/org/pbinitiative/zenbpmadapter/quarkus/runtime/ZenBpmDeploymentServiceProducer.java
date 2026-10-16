@@ -52,7 +52,8 @@ public class ZenBpmDeploymentServiceProducer {
      * Builds one deployment service per configured adapter id of type <code>zenbpm</code>.
      *
      * @param coreProperties The platform's properties, which name the adapter ids
-     * @param registry Where each service gets the factory of its adapter id
+     * @param registry The factories of every adapter id, which each service gets its own from and
+     *            compares when the platform asks for distinct instances
      * @param workflowTaskRegistry The wiring half and the runtime half of the task SPI
      * @param scoping How identifiers are kept apart where two adapter ids share an engine
      * @param workflowAggregateSync Which values of an aggregate reach the engine
@@ -80,10 +81,10 @@ public class ZenBpmDeploymentServiceProducer {
                 .adapterIdsOfType(ZenBpmAdapter.ADAPTER_TYPE)
                 .stream()
                 .<AdapterDeploymentService<Object, Object>>map(adapterId -> {
-                    final var deploymentService = new ZenBpmDeploymentService(adapterId, registry.getFactory(
-                            adapterId), AdapterCollaboratorsSupport.collaborators(adapterId, workflowTaskRegistry,
-                                    workflowTaskRegistry, scoping, workflowAggregateSync, preCommitRegistrar,
-                                    workflowEndedInvoker, bpmsInitiatedStartInvoker));
+                    final var collaborators = AdapterCollaboratorsSupport.collaborators(adapterId,
+                            workflowTaskRegistry, workflowTaskRegistry, scoping, workflowAggregateSync,
+                            preCommitRegistrar, workflowEndedInvoker, bpmsInitiatedStartInvoker);
+                    final var deploymentService = new ZenBpmDeploymentService(adapterId, registry, collaborators);
                     // the block both platform integrations write at the end of a start
                     deploymentService.setStartupReport(startupReport);
                     return asListElement(deploymentService);

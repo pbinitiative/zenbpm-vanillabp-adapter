@@ -66,7 +66,7 @@ where the dependency is not simply the previous one.
 | 12 | S2.4.2 Executor and execution model | E2 | unit tests for slots, virtual mode, timing threads |
 | 13 | S3.1.1 Spring Boot registration and smoke tests | E3 | discovery, two ids, three validation outcomes, health boot |
 | 14 | S3.2.1 Quarkus extension and extension tests | E3 | discovery, overlay typo fails, validation outcomes |
-| 15 | S3.3.1 Distinct instances | E3 | same address twice ends the boot, both platforms |
+| 15 | S3.3.1 Distinct instances | E3 | same address with the same mode ends the boot, two modes boot, both platforms |
 | 16 | S4.1.1 Model reader | E4 | unit tests per element kind on fixture models |
 | 17 | S4.1.2 Unsupported constructs refused | E4 | one refusal per construct with element ids |
 | 18 | S4.2.1 Scoping and name-clash modes | E4 | rewritten XML deploys under prefixes; `by-adapter` refused |

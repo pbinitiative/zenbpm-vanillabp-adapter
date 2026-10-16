@@ -11,6 +11,8 @@ import java.util.Map;
 import org.pbinitiative.zenbpmadapter.ZenBpmAdapter;
 import org.pbinitiative.zenbpmadapter.ZenBpmProcessingContext;
 import org.pbinitiative.zenbpmadapter.client.ZenBpmClientFactory;
+import org.pbinitiative.zenbpmadapter.client.ZenBpmClientRegistry;
+import org.pbinitiative.zenbpmadapter.client.ZenBpmInstanceIdentity;
 import org.pbinitiative.zenbpmadapter.health.ZenBpmHealth;
 import org.pbinitiative.zenbpmadapter.model.ZenBpmBpmnModel;
 
@@ -29,7 +31,8 @@ import io.vanillabp.integration.spi.startup.StartupReport;
  * the message of its validation, which names the keys to set; otherwise an
  * {@link UnsupportedOperationException} which says that the step is not built yet. Nothing
  * pretends to have done the work. A workflow module without BPMN files reaches none of the steps,
- * because the platform skips the adapter for it.
+ * because the platform skips the adapter for it. It also answers what the platform asks before the
+ * deployment: whether two adapter ids of this type are one instance.
  * <p>
  * Each field has an accessor of its own and no Lombok getter on the class, see decision 13 in the
  * repository's DECISIONS.md.
@@ -38,6 +41,8 @@ import io.vanillabp.integration.spi.startup.StartupReport;
 public class ZenBpmDeploymentService implements AdapterDeploymentService<ZenBpmBpmnModel, ZenBpmProcessingContext> {
 
     private final String adapterId;
+
+    private final ZenBpmClientRegistry registry;
 
     private final ZenBpmClientFactory factory;
 
@@ -50,25 +55,28 @@ public class ZenBpmDeploymentService implements AdapterDeploymentService<ZenBpmB
      * VanillaBP platform integration on the classpath do not belong together.
      *
      * @param adapterId The adapter id
-     * @param factory The factory of the adapter id, from the registry
+     * @param registry The factories of every adapter id of this type: the one of this id, and the
+     *            others, which the check for distinct instances compares
      * @param collaborators What the platform hands to the adapter id
-     * @throws IllegalStateException Where adapter and platform do not belong together
-     * @throws IllegalArgumentException Where the factory or the collaborators belong to another
-     *             adapter id, a defect of the platform module's wiring
+     * @throws IllegalStateException Where adapter and platform do not belong together, or where the
+     *             registry has no factory of the adapter id
+     * @throws IllegalArgumentException Where the collaborators belong to another adapter id, a
+     *             defect of the platform module's wiring
      */
     public ZenBpmDeploymentService(
         final String adapterId,
-        final ZenBpmClientFactory factory,
+        final ZenBpmClientRegistry registry,
         final AdapterCollaborators collaborators
     ) {
         VanillaBpParts.requireAdapterFitsPlatform(ZenBpmAdapter.ADAPTER_TYPE, ZenBpmDeploymentService.class);
-        if (!adapterId.equals(factory.getAdapterId()) || !adapterId.equals(collaborators.adapterId())) {
+        if (!adapterId.equals(collaborators.adapterId())) {
             throw new IllegalArgumentException(
-                    "The deployment service of ZenBPM adapter id '%s' was given the factory of adapter id '%s' and the collaborators of adapter id '%s'; the platform module wires the three of one id."
-                            .formatted(adapterId, factory.getAdapterId(), collaborators.adapterId()));
+                    "The deployment service of ZenBPM adapter id '%s' was given the collaborators of adapter id '%s'; the platform module wires the collaborators of one id."
+                            .formatted(adapterId, collaborators.adapterId()));
         }
         this.adapterId = adapterId;
-        this.factory = factory;
+        this.registry = registry;
+        this.factory = registry.getFactory(adapterId);
         this.collaborators = collaborators;
     }
 
@@ -100,6 +108,21 @@ public class ZenBpmDeploymentService implements AdapterDeploymentService<ZenBpmB
     @Override
     public AdapterHealth checkHealth() {
         return ZenBpmHealth.check(factory);
+    }
+
+    /**
+     * Ends the start where two adapter ids of this type are one instance: the same
+     * <code>rest-address</code> with the same name-clash-avoidance mode, see
+     * {@link ZenBpmInstanceIdentity}. The platform asks the
+     * first deployment service of the type, before anything is deployed.
+     *
+     * @param adapterIdsOfThisType The adapter ids of type <code>zenbpm</code>, in the order of
+     *            their priority where all of them are prioritized
+     * @throws IllegalStateException Where two of them are one instance
+     */
+    @Override
+    public void validateDistinctAdapterInstances(final List<String> adapterIdsOfThisType) {
+        ZenBpmInstanceIdentity.validateDistinct(adapterIdsOfThisType, registry, collaborators.scoping());
     }
 
     /**

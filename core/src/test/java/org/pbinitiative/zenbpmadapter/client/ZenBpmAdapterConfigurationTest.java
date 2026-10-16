@@ -583,6 +583,7 @@ class ZenBpmAdapterConfigurationTest {
     void theIdentityIsNormalised() {
         final var identity = configured("http://host:8080").instanceIdentity();
 
+        assertTrue(configured("http://host:8080").hasValidRestAddress());
         assertEquals(identity, configured("HTTP://Host:8080/").instanceIdentity());
         assertEquals(identity, configured(" http://HOST:8080/v1 ").instanceIdentity());
         assertEquals(identity, configured("http://host:8080/%76%31").instanceIdentity());
@@ -600,6 +601,7 @@ class ZenBpmAdapterConfigurationTest {
     void nothingIsDerivedFromAnUnusableAddress(final String restAddress) {
         final var configuration = configured(restAddress);
 
+        assertFalse(configuration.hasValidRestAddress());
         assertThrows(IllegalStateException.class, configuration::engineAddress);
         assertThrows(IllegalStateException.class, configuration::restBaseUri);
         assertThrows(IllegalStateException.class, configuration::instanceIdentity);

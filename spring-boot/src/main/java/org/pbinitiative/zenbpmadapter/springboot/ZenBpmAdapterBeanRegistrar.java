@@ -53,8 +53,8 @@ public class ZenBpmAdapterBeanRegistrar implements BeanRegistrar {
 
             registry.registerBean("ZenBpm_DeploymentService_%s".formatted(adapterId), ZenBpmDeploymentService.class,
                     spec -> spec.supplier(supplierContext -> {
-                        final var deploymentService = new ZenBpmDeploymentService(adapterId, factoryOf(
-                                supplierContext, adapterId), AdapterBeanRegistrarSupport.collaborators(
+                        final var deploymentService = new ZenBpmDeploymentService(adapterId, supplierContext
+                                .bean(ZenBpmClientRegistry.class), AdapterBeanRegistrarSupport.collaborators(
                                         supplierContext, adapterId));
                         // the block both platform integrations write at the end of a start
                         deploymentService.setStartupReport(supplierContext

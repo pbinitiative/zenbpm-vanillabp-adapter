@@ -248,6 +248,10 @@ adapters recognises them (`request-timeout`, `startup-wait`, `worker-threads`, `
 **2026-10-15:** `max-redeliveries` goes with the E13.3 twin (decision 27), and
 `message-start-lookup-max-instances` with the scan once E13.4 lands.
 
+**2026-10-16:** `shared-engine` is dropped. Two ids on one engine are told apart by their
+`name-clash-avoidance`, as on Camunda 8, whose adapter has no such key either (S3.3.1, the user's
+decision).
+
 ### 15. Two things the core could offer every remote adapter
 
 Not needed for this plan, but seen while mapping: (a) the instance-facts cache with a bounded LRU and
