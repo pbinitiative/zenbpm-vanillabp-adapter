@@ -15,9 +15,12 @@ import org.pbinitiative.zenbpmadapter.client.ZenBpmClientRegistry;
 import org.pbinitiative.zenbpmadapter.client.ZenBpmInstanceIdentity;
 import org.pbinitiative.zenbpmadapter.health.ZenBpmHealth;
 import org.pbinitiative.zenbpmadapter.model.ZenBpmBpmnModel;
+import org.pbinitiative.zenbpmadapter.model.ZenBpmModelReader;
+import org.pbinitiative.zenbpmadapter.model.ZenBpmUnsupportedConstructs;
 
 import io.vanillabp.integration.adapter.spi.AdapterCollaborators;
 import io.vanillabp.integration.adapter.spi.AdapterDeploymentService;
+import io.vanillabp.integration.adapter.spi.BpmnParseException;
 import io.vanillabp.integration.adapter.spi.health.AdapterHealth;
 import io.vanillabp.integration.spi.parts.VanillaBpParts;
 import io.vanillabp.integration.spi.startup.StartupReport;
@@ -26,13 +29,17 @@ import io.vanillabp.integration.spi.startup.StartupReport;
  * The deployment pipeline of one ZenBPM adapter id: one instance per configured adapter id, built
  * by the platform modules.
  * <p>
- * This version of the adapter registers, validates its configuration and reports health, and
- * deploys nothing yet. Every step of the pipeline throws: where the adapter id has no clients,
- * the message of its validation, which names the keys to set; otherwise an
+ * This version of the adapter registers, validates its configuration, reports health, reads BPMN
+ * files and refuses what ZenBPM cannot run, and deploys nothing yet. Reading and preparing need no
+ * engine, so an adapter id without clients reads and prepares its files as well, like the Camunda
+ * 8 adapter, and the checks done meanwhile speak before the configuration does. Every later step
+ * of the pipeline throws: where the adapter id has no clients, the message of its validation,
+ * which names the keys to set, so a workflow module with BPMN files ends the start of an
+ * application which configured no engine for it; otherwise an
  * {@link UnsupportedOperationException} which says that the step is not built yet. Nothing
- * pretends to have done the work. A workflow module without BPMN files reaches none of the steps,
- * because the platform skips the adapter for it. It also answers what the platform asks before the
- * deployment: whether two adapter ids of this type are one instance.
+ * pretends to have done the work. A workflow module without BPMN files reaches none of the
+ * steps, because the platform skips the adapter for it. It also answers what the platform asks
+ * before the deployment: whether two adapter ids of this type are one instance.
  * <p>
  * Each field has an accessor of its own and no Lombok getter on the class, see decision 13 in the
  * repository's DECISIONS.md.
@@ -153,6 +160,18 @@ public class ZenBpmDeploymentService implements AdapterDeploymentService<ZenBpmB
         this.startupReport = startupReport;
     }
 
+    /**
+     * Reads one BPMN file, see {@link ZenBpmModelReader}. It needs no engine, so it reads for an
+     * adapter id without clients as well.
+     *
+     * @param workflowModuleId The workflow module the file belongs to
+     * @param filename The name of the file
+     * @param bpmn The content of the file, which is not closed
+     * @param isVanillaBpBpmn Not read: every file is read alike
+     * @return The executable process of the file under its id, or nothing where it has none
+     * @throws BpmnParseException Where the file cannot be deployed as it is, naming file and
+     *             workflow module
+     */
     @Override
     public List<Map.Entry<String, ZenBpmBpmnModel>> readBpmn(
         final String workflowModuleId,
@@ -160,9 +179,28 @@ public class ZenBpmDeploymentService implements AdapterDeploymentService<ZenBpmB
         final InputStream bpmn,
         final boolean isVanillaBpBpmn
     ) {
-        throw notBuiltYet("reading BPMN file '%s' of workflow module '%s'".formatted(filename, workflowModuleId));
+        return ZenBpmModelReader
+                .read(workflowModuleId, filename, bpmn)
+                .stream()
+                .map(model -> Map.entry(model.bpmnProcessId(), model))
+                .toList();
     }
 
+    /**
+     * Prepares one process for the engine. This version refuses a file which uses what ZenBPM cannot
+     * run, see {@link ZenBpmUnsupportedConstructs}, once per file and before anything is sent to
+     * the engine; it rewrites nothing yet. It needs no engine, so it prepares for an adapter id
+     * without clients as well.
+     *
+     * @param workflowModuleId The workflow module of the process
+     * @param existingContext The context of the module's earlier processes, <code>null</code> for
+     *            its first
+     * @param filename The name of the process's file
+     * @param bpmnProcessId The id of the process
+     * @param model The model of the process's file
+     * @return The context of the workflow module, never <code>null</code>
+     * @throws IllegalStateException Where the file uses what ZenBPM cannot run, naming every element
+     */
     @Override
     public ZenBpmProcessingContext prepareBpmn(
         final String workflowModuleId,
@@ -171,8 +209,14 @@ public class ZenBpmDeploymentService implements AdapterDeploymentService<ZenBpmB
         final String bpmnProcessId,
         final ZenBpmBpmnModel model
     ) {
-        throw notBuiltYet("preparing BPMN process '%s' of workflow module '%s'".formatted(bpmnProcessId,
-                workflowModuleId));
+        final var context = existingContext != null ? existingContext
+                : new ZenBpmProcessingContext(workflowModuleId);
+        if (context.firstPreparationOf(filename)) {
+            ZenBpmUnsupportedConstructs.check(workflowModuleId, model, collaborators
+                    .workflowTaskWiring()
+                    .isClaimedByAWorkflowService(workflowModuleId, bpmnProcessId));
+        }
+        return context;
     }
 
     @Override

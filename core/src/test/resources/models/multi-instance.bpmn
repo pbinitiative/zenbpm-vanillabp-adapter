@@ -1,0 +1,64 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL"
+    xmlns:zeebe="http://camunda.org/schema/zeebe/1.0" id="multiInstance" targetNamespace="http://bpmn.io/schema/bpmn"
+    xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI"
+    xmlns:dc="http://www.omg.org/spec/DD/20100524/DC"
+    xmlns:di="http://www.omg.org/spec/DD/20100524/DI">
+  <bpmn:process id="Orders" isExecutable="true">
+    <bpmn:startEvent id="Start" />
+    <bpmn:subProcess id="EveryParcel">
+      <bpmn:multiInstanceLoopCharacteristics>
+        <bpmn:extensionElements>
+          <zeebe:loopCharacteristics inputCollection="=parcels" inputElement="parcel" />
+        </bpmn:extensionElements>
+      </bpmn:multiInstanceLoopCharacteristics>
+      <bpmn:startEvent id="EveryParcel_Start" />
+      <bpmn:serviceTask id="LabelEveryItem">
+        <bpmn:extensionElements>
+          <zeebe:taskDefinition type="label" />
+        </bpmn:extensionElements>
+        <bpmn:multiInstanceLoopCharacteristics isSequential="true">
+          <bpmn:extensionElements>
+            <zeebe:loopCharacteristics inputCollection="=parcel.items" />
+          </bpmn:extensionElements>
+        </bpmn:multiInstanceLoopCharacteristics>
+      </bpmn:serviceTask>
+      <bpmn:endEvent id="EveryParcel_End" />
+    </bpmn:subProcess>
+    <bpmn:callActivity id="Invoice">
+      <bpmn:extensionElements>
+        <zeebe:calledElement processId="Invoicing" />
+      </bpmn:extensionElements>
+    </bpmn:callActivity>
+    <bpmn:callActivity id="Unnamed" />
+    <bpmn:endEvent id="Done" />
+  </bpmn:process>
+  <bpmndi:BPMNDiagram id="BPMNDiagram_1">
+    <bpmndi:BPMNPlane id="BPMNPlane_1" bpmnElement="Orders">
+      <bpmndi:BPMNShape id="Start_di" bpmnElement="Start">
+        <dc:Bounds x="160" y="132" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="EveryParcel_di" bpmnElement="EveryParcel" isExpanded="true">
+        <dc:Bounds x="256" y="80" width="352" height="140" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="EveryParcel_Start_di" bpmnElement="EveryParcel_Start">
+        <dc:Bounds x="286" y="132" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="LabelEveryItem_di" bpmnElement="LabelEveryItem">
+        <dc:Bounds x="382" y="110" width="100" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="EveryParcel_End_di" bpmnElement="EveryParcel_End">
+        <dc:Bounds x="542" y="132" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Invoice_di" bpmnElement="Invoice">
+        <dc:Bounds x="668" y="110" width="100" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Unnamed_di" bpmnElement="Unnamed">
+        <dc:Bounds x="828" y="110" width="100" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Done_di" bpmnElement="Done">
+        <dc:Bounds x="988" y="132" width="36" height="36" />
+      </bpmndi:BPMNShape>
+    </bpmndi:BPMNPlane>
+  </bpmndi:BPMNDiagram>
+</bpmn:definitions>

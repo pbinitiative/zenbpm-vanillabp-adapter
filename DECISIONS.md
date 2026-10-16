@@ -243,3 +243,19 @@ the edge of a body separates nothing. Spotless applies and checks both on every 
 number of parameters, so it still wraps every list. A `replaceRegex` step of Spotless in the root
 POM then joins a list of one parameter back onto its declaration, even where that line grows longer
 than the 120 columns the formatter aims at.
+
+### 29. A BPMN file carries its diagram
+
+The owners of this repository chose this for every BPMN file in it, test fixtures included. A BPMN
+file is read by people as much as by the engine: a reviewer opens it in a modeler, a fixture shows
+the shape of the case it tests, and a file without diagram interchange opens as an empty canvas. So
+every `.bpmn` file carries a `bpmndi:BPMNDiagram`: a shape with bounds for every flow node, boundary
+event and pool, an edge with at least two waypoints for every sequence flow, and nothing drawn which
+the model does not hold. Save a file from a modeler, or give a file written by hand a generated
+diagram with `bin/add-bpmn-diagram.py`; the engine ignores it either way.
+
+Two things are left out. A file which is no model on purpose, such as one which is not well-formed
+XML because its refusal is what a test checks, is named with its reason in the check. And BPMN
+written inline in a Java test is a fragment of the one construct the test is about, which nobody
+opens in a modeler. `BpmnDiagramTest` of the coverage gate checks every `.bpmn` file of the
+repository on every build.

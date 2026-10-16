@@ -28,7 +28,7 @@ constructs the engine itself rejects.
 
 ### S4.1.1 `ZenBpmModelReader` and `ZenBpmBpmnModel`
 
-- [ ] **Depends on:** E3.
+- [x] **Depends on:** E3.
 
 **Instructions**
 
@@ -95,14 +95,116 @@ key to set. Before `readBpmn` is built, decide whether an unconfigured id skips 
 the warning the startup report already holds, or ends the start naming `rest-address`, and test the
 choice with a workflow module that has BPMN files.
 
+*Fit check, 2026-10-16.* The story was checked against `main` (`e4977c1`), `ADAPTER-AUTHORS.md`,
+Camunda 8's reader and the engine at the pinned `bdd795a3`. The SPI has what instruction 1 names
+(`BpmnTaskSpec(id, type, false, name)`, `BpmnTaskSpec.userTask(id, type, name)`, `ModelExpression`
+and `ExpressionPlace`, `BpmsStartTrigger.Kind`). Four things did not fit, and the maintainer decided
+two of them:
+
+1. **One process per file, not one executable process.** The engine never reads `isExecutable`,
+   and `TRootElementsContainer.Process` is one struct, so Go's `encoding/xml` reads every
+   `bpmn:process` of a file into it. A scratch program against the engine's `bpmn20` package (the
+   model code at `bdd795a3` and at the local `main` is the same) read a file with an executable
+   `executable` and a non-executable `documentation` as ONE definition with the id
+   `documentation` and the start events of both, and `ResolveReferences` accepted it. Decided: a
+   file with an executable process and ANY other `bpmn:process` is refused, naming every process;
+   a file whose processes are all non-executable still yields nothing. GAPS 18 says so now.
+2. **What is an expression.** The engine evaluates FEEL in `evaluateExpression` only, and only
+   where a value starts with `=`; it is called for sequence-flow conditions, the correlation key
+   of a message subscription, the `source` of input and output mappings, `inputCollection`,
+   `outputElement`, the assignee of a user task, the `retries` and `retryBackoff` of a task
+   definition and the `businessKey` of a call activity's `in`. Timers are parsed as ISO 8601 only
+   (`pkg/bpmn/timer.go`), `completionCondition` is parsed and never read, and message names are
+   always taken literally. Decided: the reader reports only what the engine evaluates
+   (`SEQUENCE_FLOW_CONDITION`, `MULTI_INSTANCE_COLLECTION`, `MESSAGE_CORRELATION_KEY` per catch
+   element, `INPUT_OR_OUTPUT_MAPPING`, and `SOMEWHERE_ELSE` for the other five), so `TIMER` and
+   `MULTI_INSTANCE_COMPLETION_CONDITION` never occur, like cardinality; and
+   `startMessagesAreKnown` is false only where a message start event's name cannot be read (no
+   `messageRef`, an unknown message, a message without a name), because `=x` is the literal name
+   `=x`. A timer written as `=...` (fails when the token arrives), the ignored `completionCondition`
+   and the none intermediate throw event (fails at runtime, `pkg/bpmn/events.go`) go to the fit
+   check of S4.1.2 as refusal candidates.
+3. Conditions, timers and completion conditions are element TEXT, not attributes; the reader reads
+   both. Extension elements are matched by local name in ANY namespace, as the engine matches them.
+4. `read` takes the workflow module id as well, `read(workflowModuleId, filename, stream)`: the
+   core does not wrap a `BpmnParseException`, so the message names file and module itself, as
+   Camunda 8's does. A start event of the process itself with a signal or a conditional event
+   definition is reported as `SIGNAL` or `CONDITIONAL` (S4.1.2 refuses both).
+
+**The open question of the S3.1.1 review, decided 2026-10-16: Camunda 8's way.** Reading, preparing
+and wiring need no engine, so an adapter id without clients (no `rest-address`, or degraded since
+S3.3.1) reads its files like a configured one, and the checks of reading speak before the
+configuration does. The first step which needs the engine ends the start with the message of the
+validation, which names `rest-address`; until S4.3.2 that is the first step not built yet. The
+`deployment-failure` policy applies, so an id which is nowhere first and set to `warn` still lets
+the application boot. This is what Camunda 8's `getClient()` does and what
+`ZenBpmClientFactory.rest()` already does. Held by `ZenBpmStartupValidationBootTest`
+(`#anUnconfiguredAdapterIdWithBpmnFilesEndsTheStart`,
+`#aDegradedAdapterIdWithBpmnFilesBootsOnTheFirstAdapter`) on Spring Boot and by
+`ZenBpmUnconfiguredWithBpmnTest` and `ZenBpmDegradedWithBpmnTest` on Quarkus, with a module whose
+BPMN file is the process of the sample workflow service (the degraded case beside the BPMS double,
+which is first).
+
 **Acceptance criteria**
 
-- [ ] Every collection of the record is filled by a fixture and asserted.
-- [ ] Models from the Camunda Modeler (`zeebe:` namespace) read without changes.
+- [x] Every collection of the record is filled by a fixture and asserted.
+  `ZenBpmModelReaderTest` (15 tests, fixtures in `core/src/test/resources/models/`): tasks and
+  user tasks with their task definitions and names, a decision-calling business rule task and a
+  receive task left out, the default `user-task-type` (`job-tasks-zeebe.bpmn`); start and catch
+  messages (`messages.bpmn`) and unknown start messages (`message-start-without-name.bpmn`); the
+  three start events of the process itself without the two of its sub-processes, and its end
+  events only (`start-and-end-events.bpmn`); multi-instance elements with collection, item and
+  enclosing chain, and call activities (`multi-instance.bpmn`); concurrent-token elements beside
+  their sequential and interrupting siblings (`concurrent-tokens.bpmn`); one expression per place
+  and none for literals, timers, completion conditions, names and job types (`expressions.bpmn`).
+  Refused: a second process, executable or not, and a DOCTYPE; a file which is no XML or no BPMN
+  is refused naming file and module; a file without an executable process yields nothing; the
+  stream is read to its end and not closed.
+- [x] Models from the Camunda Modeler (`zeebe:` namespace) read without changes.
+  `#bothExtensionNamespacesReadAlike` reads `job-tasks-zeebe.bpmn` and the same model in the
+  `zenbpm:` namespace (`http://zenbpm.pbinitiative.org/1.0`, the namespace of the engine's own
+  models) to the same tasks, user tasks, messages, start and end events.
+
+**Implemented 2026-10-16.** Core: `model.ZenBpmBpmnModel` is the record of instruction 1, with
+`StartEvent`, `MultiInstanceElement` and `CallActivity` as nested records and every collection
+copied in file order; `model.ZenBpmModelReader.read(workflowModuleId, filename, stream)` reads the
+bytes first (a parser closes what it reads), parses with DOCTYPEs refused, no external access and
+the JDK's `DefaultHandler`, so nothing is written to standard error, and walks the one process
+in document order. `ZenBpmDeploymentService.readBpmn` delegates to it, for an adapter id with or
+without clients; every later step throws as before. Tests: `ZenBpmModelReaderTest` (15) with 13
+fixtures in `core/src/test/resources/models/`, two new cases in `ZenBpmDeploymentServiceTest`
+(now 11), two boots in `ZenBpmStartupValidationBootTest` (now 10; fixture
+`smoke-test/src/test/resources/with-bpmn/`), and `ZenBpmUnconfiguredWithBpmnTest` and
+`ZenBpmDegradedWithBpmnTest` in `quarkus/deployment` (`SmokeApplication.withBpmnFiles()` and
+`withTheBpmsDoubleAndBpmnFiles()`). `TZ=Etc/UTC mvn clean install` on OpenJDK 25.0.2 builds green
+with every integration test run and none skipped (core 488 unit and 34 integration tests, Spring
+Boot 8, smoke test 23, Quarkus runtime 8, Quarkus deployment 34, coverage gate 33). The gate
+measures 100 % of 11,668 instructions for Spring Boot and 100 % of 11,553 for Quarkus, and
+`bin/check-deploy-safety.sh` passes both runs (13 files deployed, nothing after a red gate). The
+first full build measured 99.89 %: the branch of a single quoted process, which cannot be reached,
+and the error handler's methods for non-fatal errors were removed, and the fixtures gained a
+receive task without a message, an `extensionElements` of the process, and a signal and a
+conditional start event.
+
+Seen to fail, each restored afterwards (13 of 13 mutants). Each fails `ZenBpmModelReaderTest`
+unless named otherwise:
+- a second, non-executable process accepted;
+- DOCTYPEs allowed;
+- the stream handed to the parser, which closes it;
+- the root element not checked;
+- a value without `=` reported as an expression;
+- a business rule task which calls a decision counted as a job;
+- a start message without a readable name counted as known;
+- the start events of sub-processes collected;
+- a non-interrupting boundary event not counted as a second token;
+- a gateway with one outgoing flow counted;
+- the enclosing chain of a multi-instance element dropped;
+- the correlation key of a start event reported (also fails the message split);
+- `readBpmn` refusing an adapter id without clients: fails `ZenBpmDeploymentServiceTest`.
 
 ### S4.1.2 Refuse what the engine cannot run
 
-- [ ] **Depends on:** S4.1.1.
+- [x] **Depends on:** S4.1.1.
 
 **Instructions**
 
@@ -127,9 +229,179 @@ application marked.
 unclaimed process with a construct the engine rejects is refused, the same process with an
 instantiating receive task is not.
 
+*Fit check, 2026-10-16.* Every construct was run through the engine's own parser
+(`bpmn20.TDefinitions`, whose `UnmarshalXML` calls `ResolveReferences`) at the model code of
+`bdd795a3`, in a scratch Go program. The engine refuses with a `400`: signal, conditional,
+escalation, compensation and cancel definitions on intermediate catch, throw and boundary events;
+`scriptTask`, `manualTask`, `task` and `complexGateway` with flows; a condition leaving an
+event-based gateway. It ACCEPTS and runs something else: a signal or conditional start event and a
+signal, escalation, compensation or cancel end event (`UnmarshalXML` keeps only message, timer and
+error definitions on a start event and terminate, message and error on an end event, so the event
+runs as a plain one); a condition on a flow leaving anything but an exclusive or inclusive gateway
+(read nowhere else); a standard loop (runs once). It accepts and fails later: a timer written as
+`=...` (`timer.go` reads ISO 8601 only), and an intermediate throw event without a definition
+(`events.go`). A `completionCondition` is parsed and never read. So the story's message ("the
+engine rejects them (`400`) or would run them without an aggregate") missed a third reason. Two
+more things did not fit: `AGENTS.md` lets code cite DECISIONS.md only, so the message cannot name
+GAPS 13/14/19; and no refusal here is about a task which marking it `implemented-externally` would
+change, because the engine refuses or ignores the construct whoever serves it, and an instantiating
+receive task is no job a method serves. GAPS 19 was missing from `GAPS.md`.
+
+Decided by the maintainer:
+- Refused are the story's list, the start and end event definitions the engine drops, and three
+  more: a timer written as an expression, a `completionCondition`, and an intermediate throw event
+  without a definition. All of them in every process of the file, a process nobody claims
+  included, because the adapter deploys the whole file and whoever serves that process would get
+  something other than its model. Only the instantiating receive task (GAPS 19) is refused in a
+  claimed process alone.
+- The message gives each element's reason in its own words, under one of three headings (refused
+  by the engine; deployed but run differently, saying how; would start a workflow without an
+  aggregate), cites no GAPS number, and has no `howToMark` and no `isImplementedExternally`
+  exemption.
+
 **Acceptance criteria**
 
-- [ ] The message names file, process and every element; the boot ends before the engine is asked.
+- [x] The message names file, process and every element; the boot ends before the engine is asked.
+  `ZenBpmUnsupportedConstructsTest` (27 tests): one case per construct (24) asserts the heading of
+  its reason and the line `<process>/<element> (<construct>)`; `three-offences.bpmn` asserts the
+  whole message for one offence of each reason, grouped and in the order of the file; what ZenBPM
+  runs as modelled passes (conditions at exclusive and inclusive gateways, a literal timer, message
+  and link throw events, a waiting receive task, terminate and error end events); a process nobody
+  claims is refused for the constructs the engine cannot run as modelled, but not for an
+  instantiating receive task. The check runs in `prepareBpmn`, before anything reaches the
+  engine, for an adapter id without clients as well, once per file
+  (`ZenBpmDeploymentServiceTest#preparingRefusesWhatZenBpmCannotRunOncePerFile`); the message is an
+  `IllegalStateException`, so the `deployment-failure` policy applies.
+
+**Implemented 2026-10-16.** Core: `model.ZenBpmUnsupportedConstructs.check(workflowModuleId,
+model, claimed)` walks the one process of the file, its sub-processes included, and collects
+every offence by its reason; `ZenBpmDeploymentService.prepareBpmn` calls it once per file, asking
+`isClaimedByAWorkflowService` for the process, and rewrites nothing yet. `ZenBpmProcessingContext`
+is a class now: the workflow module and the files it prepared (`firstPreparationOf`), which the
+rewriting of S4.2.1 needs as well. `wireBpmn` is now the first step not built yet, so the boot
+tests of the S4.1.1 decision end there with the message of the validation. Tests:
+`ZenBpmUnsupportedConstructsTest` (27) with the fixture `three-offences.bpmn`, two new cases in
+`ZenBpmDeploymentServiceTest` (now 13; `TestCollaborators.of(adapterId, workflowTaskWiring)`).
+`TZ=Etc/UTC mvn clean install` on OpenJDK 25.0.2 builds green with every integration test run and
+none skipped (core 517 unit and 34 integration tests, Spring Boot 8, smoke test 23, Quarkus
+runtime 8, Quarkus deployment 34, coverage gate 33). The gate measures 100 % of 12,291
+instructions for Spring Boot and 100 % of 12,176 for Quarkus, and `bin/check-deploy-safety.sh`
+passes both runs. Two earlier full builds were red or short: one on a case added for a condition
+leaving no element, whose source the check looked up in a `Set.of` before testing it for
+`null`; one at 99.85 %, because a search for the process could not fail and a helper was left
+unused. Both were fixed.
+
+Seen to fail, each restored afterwards (11 of 11 mutants), against a green unmutated run (a first
+round ran after the case above was added and before it passed, so it was repeated):
+- the instantiating receive task refused in a process nobody claims, a construct the engine
+  refuses, or one it runs differently, refused only in a claimed process: each fails
+  `#aProcessNobodyClaimsIsRefusedOnlyForWhatTheEngineCannotRun`;
+- a condition at an exclusive or inclusive gateway refused, a literal timer refused, a throw
+  event with any definition refused: each fails `#whatZenBpmRunsPasses`;
+- the sub-processes not walked: fails the cases of an event sub-process start and of an end event
+  inside a sub-process;
+- end events not checked: fails the four end-event cases;
+- only the first offence named: fails `#severalOffencesAreNamedInOneMessage`;
+- `prepareBpmn` checking nothing, or checking a file again for each of its processes: each fails
+  `ZenBpmDeploymentServiceTest#preparingRefusesWhatZenBpmCannotRunOncePerFile`.
+
+**Answers to two reviews of F4.1, 2026-10-16** (one by Claude, 13 findings; one more, 6
+findings). Every claim was checked against the engine at `bdd795a3`, its model code by a scratch Go
+program against `pkg/bpmn/model/bpmn20` (unchanged on the local `main`), the rest in the source.
+
+Valid and fixed:
+
+- **Implicit forks** (Claude 1). `handleDefaultElementTransition` leaves a non-gateway element on
+  all its flows, so every element except an exclusive or event-based gateway with more than one
+  outgoing flow is a concurrent-token element now (fixture element `Split`). Camunda 8 misses it
+  as well.
+- **Boolean attributes** (second review 1). The engine decodes them with Go's
+  `strconv.ParseBool` after trimming: `1`, `t`, `TRUE`, `True` are true. An attribute which is
+  there but empty is false whatever the default (`cancelActivity=""` is non-interrupting), and a
+  blank or unknown spelling makes the engine refuse the file. `instantiate="1"` passed the check,
+  and `cancelActivity="0"`, `triggeredByEvent="1"`, `isSequential="1"` gave wrong concurrency.
+  `model.ZenBpmBooleans` reads them as the engine does; the reader uses it for every flag and
+  `isExecutable` (an unreadable one ends `readBpmn`), the check refuses every flag the engine
+  cannot read.
+- **Whitespace kept** (second review 2). The engine keeps a job type, a user task type and a
+  message name as written; the reader trimmed them. Attributes are read raw now; a blank user task
+  type stays a type, an empty one is the default.
+- **An empty `calledDecision`** (second review 3) makes the business rule task an external job in
+  the engine (`decisionId=" "` makes it a local decision); the reader now leaves a task out only
+  where `decisionId` is not empty.
+- **Expressions where the engine keeps them** (second review 4). A plain, terminate or error end
+  event without definition id keeps no mappings, a start or boundary event only outputs, retries
+  and backoff count for job elements only, the assignee for user tasks, `in businessKey` for call
+  activities and sub-processes. A correlation key counts only where it starts with `=` as written
+  (the engine checks it before trimming), and a condition in CDATA or with a comment is text to the
+  engine (it reads `innerxml`).
+- **Gateway conditions without `=`** (Claude 2) are refused: an exclusive gateway fails on them,
+  an inclusive one never takes the flow; so is a CDATA condition.
+- **Flows without a condition** (Claude 5) of an exclusive or inclusive gateway with more than one
+  flow, other than the default, are refused: the engine never takes them.
+- **Multi-instance** (Claude 4): a collection which is no expression, a missing one included, fails
+  when reached; a `loopCardinality` is never read. Both refused.
+- **What the engine refuses with `400`** (Claude 6): an unknown element with sequence flows (ad-hoc
+  sub-process, transaction, ...), a sub-process with more than one start event, a non-interrupting
+  error start event, an event-based gateway leading to anything but an intermediate catch event.
+  A timer on a throw event, which the engine fails on later, is refused as well. Found while
+  checking: an error end event whose definition has no `id` runs as a plain end event, an
+  instantiating event-based gateway and a receive task inside a sub-process never start a workflow,
+  and a business key which is no expression fails; all four refused under "runs differently".
+- **`=` values ZenBPM takes literally** (Claude 3), decided by the maintainer: a message name, the
+  `processId` of `calledElement`, the `type` of `taskDefinition`, the `decisionId` of
+  `calledDecision` and the `candidateGroups` of `assignmentDefinition` starting with `=` are
+  refused, like the `=` timer. The reader still reports such a name literally.
+- **Boot tests of the refusal** (Claude 7, second review 6). `ZenBpmUnsupportedModelBootTest`
+  (Spring Boot, 2) and `ZenBpmUnsupportedModelTest` / `ZenBpmUnsupportedModelWarnTest` (Quarkus)
+  boot a module whose file has a script task and `instantiate="1"`: the start ends with the whole
+  message, and a server standing in for the engine counted no request (a mutant asking the engine
+  in `prepareBpmn` fails both platforms); with `warn` on an id which is nowhere first the
+  application boots beside the BPMS double and the block holds the refusal.
+- **Event sub-process start** (Claude 8): the message now says the event sub-process never starts;
+  the javadoc no longer says a timer start fails "when a workflow reaches it".
+- **Per-file guard** (Claude 9): the context's javadoc says the guard keeps the SPI's contract and
+  cannot fire while the reader allows one process per file; a note under S4.2.1 says the same.
+- **Camunda Modeler acceptance** (Claude 10): the paired fixtures carry a mapping, a multi-instance
+  element and a call activity, and the test compares every collection; `camunda-modeler.bpmn` is a
+  model in the shape the Modeler 5 exports for Camunda 8 (`modeler:` attributes, `zeebe:userTask`,
+  form, subscription, diagram), written by hand, not exported.
+- **A process without an id** (Claude 11) ends `readBpmn` with a message naming file and module;
+  **the root-element message** (Claude 12) names the namespace found.
+- **Nits** (Claude 13): the record constructor call one argument per line, the long javadoc line
+  rewrapped, the double blank line removed, `String#formatted` instead of `+` in the tests, draft
+  rows 13 and 14 in step with `GAPS.md`, and "as written" says "without the surrounding
+  whitespace". GAPS 14 now names every construct of this list.
+
+Not valid at first, then decided otherwise: **diagram interchange in the fixtures** (second review
+5). The rule that a BPMN fixture carries a `BPMNDiagram` belonged to the engine's Go tests, as
+answered under S2.2.1. On 2026-10-16 the maintainer made it a rule of this repository as well:
+decision 29, held by `BpmnDiagramTest` in the coverage gate. Every `.bpmn` file got a diagram
+generated by `bin/add-bpmn-diagram.py` (the hand-written diagram of `camunda-modeler.bpmn`, which
+drew no element of its sub-process, was replaced); `broken.bpmn` stays without one, because it is
+not well-formed on purpose, and `doctype.bpmn` names its entity in a `documentation` now, because
+XML forbids an external entity in an attribute value, so the file was not well-formed either. BPMN
+written inline in Java tests is exempt.
+
+Evidence: `TZ=Etc/UTC mvn clean install` on OpenJDK 25.0.2 builds green with every integration test
+run and none skipped (core 546 unit and 34 integration tests, Spring Boot 8, smoke test 25, Quarkus
+runtime 8, Quarkus deployment 36, coverage gate 33); the gate measures 100 % of 13,309 instructions
+for Spring Boot and 100 % of 13,194 for Quarkus, and `bin/check-deploy-safety.sh` passes both runs.
+`ZenBpmModelReaderTest` has 20 tests and `ZenBpmUnsupportedConstructsTest` 51 (47 constructs), on
+the 15 fixtures of `core/src/test/resources/models/`. Seen to fail, each restored afterwards, against a green unmutated run: 24 of 24
+mutants in core (`1` not true; an empty flag taking the default; no flag unreadable; implicit forks
+not counted; any `calledDecision` a decision; attributes trimmed; mappings not gated by kind; an
+error end without definition id keeping mappings; a correlation key trimmed; markup in a condition
+ignored; a process without id accepted; a literal gateway condition passing; the default flow
+refused; `=` literals passing; unknown flow nodes passing; two sub-process starts passing; the
+event-based gateway's targets not checked; a nested receive task taken for one of the process; a
+literal collection passing; dropped end event definitions passing; an event sub-process start
+called a plain start; the standard loop passing; sub-processes not walked; unreadable flags
+passing), and `prepareBpmn` asking the engine once before it checks, which fails
+`ZenBpmUnsupportedModelBootTest` (both cases) and `ZenBpmUnsupportedModelTest` with the server
+counting one request. Two full builds before were short: one at 99.98 % (a blank condition and an
+unknown element without flows were never read), and `checkChild` and `checkCondition` were
+rewritten with early returns, because the formatter mangles an `else if` whose condition wraps.
 
 ---
 
@@ -148,6 +420,8 @@ instantiating receive task is not.
    `scopedProcessId`, `calledDecision@decisionId` through `scopedIdentifier`, `userTask`'s
    `taskDefinition@type` as well. In `NONE` and `BY_ADAPTER` untouched. Rewrite once per FILE: the
    context remembers rewritten filenames (`prepareBpmn` is called per process).
+   (*Note from the review of F4.1, 2026-10-16:* the reader allows one process per file, so the
+   guard cannot fire today; it keeps the SPI's contract.)
 2. `ZenBpmDeploymentService.defaultNameClashAvoidance()` keeps the SPI's default `BY_ADAPTER`
    (decision 24): `ADAPTER-AUTHORS.md` section 2.1 tells an adapter whose BPMS has no isolation of
    its own to keep it and refuse it while deploying. In `prepareBpmn` call
@@ -292,7 +566,8 @@ such a task carries the variable.
 3. `reportStartMessages(adapterId, module, process, plainNames)` with the plain names of the message
    start events of the top-level process (event sub-process starts do not start a workflow): an
    empty collection for a process without a message start, and NO call at all where
-   `startMessagesAreKnown` is false (a name is an expression), as `ADAPTER-AUTHORS.md` and Camunda 8
+   `startMessagesAreKnown` is false (a name cannot be read, see the fit check of S4.1.1: ZenBPM takes
+   every message name literally), as `ADAPTER-AUTHORS.md` and Camunda 8
    do. The core then refuses a `startWorkflowByMessage` whose message does not start that process,
    before phase one (platform decision 109).
 4. `validateBpmsInitiatedStarts(module, process, specs)` with one `BpmsInitiatedStartSpec(elementId,
@@ -375,6 +650,12 @@ call-activity injection both ways.
    "process definition key N, version M". (b) warns about the application's own older versions at
    every boot, so (a) is recommended. Either way a failed query never fails the deployment: it is
    logged at DEBUG, as `ADAPTER-AUTHORS.md` asks.
+
+*Note from S4.1.1, 2026-10-16.* An adapter id without clients reaches `deployResources` (it reads,
+prepares and wires like a configured one, see the decision under S4.1.1), and step 1 has to end it
+with the message of its validation: `awaitReady` asks `factory.rest()`, which throws exactly that,
+so nothing has to be added, but nothing may catch it either. `ZenBpmStartupValidationBootTest`,
+`ZenBpmUnconfiguredWithBpmnTest` and `ZenBpmDegradedWithBpmnTest` hold it.
 
 *Note from S2.4.1, 2026-10-15.* Step 1 is `ZenBpmEngineWait.awaitReady(factory)`, followed at once
 by `ZenBpmEnvironmentInfo.logOnce(factory, startupReport)`: no other story calls the second, and

@@ -25,7 +25,7 @@ import jakarta.enterprise.inject.Instance;
  * keeps the platform's JDBC outbox and delivery log on an in-memory database, so the start runs as
  * it runs in production, deployment included. Its workflow module <code>smoke-app</code> has no
  * BPMN file, so the platform deploys nothing to the adapter and calls none of the steps this
- * version of the adapter refuses.
+ * version of the adapter refuses, except in the tests which add one.
  * <p>
  * The platform's BPMS double is a test dependency of this module, for the tests of an application
  * with an adapter id of another type: beside a ZenBPM adapter id, or without one. Every other test
@@ -38,6 +38,21 @@ final class SmokeApplication {
 
     private static final String BPMS_DOUBLE_ARTIFACT_ID = "bpms-double-quarkus";
 
+    /**
+     * Where the BPMN file of {@link #withBpmnFiles()} and {@link #withTheBpmsDoubleAndBpmnFiles()}
+     * is: one process, the one of the sample workflow service. The file is named after the
+     * process, because the BPMS double takes the process id from the file name.
+     */
+    static final String WITH_BPMN = "classpath*:with-bpmn";
+
+    /**
+     * Where the BPMN file of {@link #withBpmnFiles(String)} and
+     * {@link #withTheBpmsDoubleAndBpmnFiles(String)} with this directory is: the process of the
+     * sample workflow service with a script task and an instantiating receive task, which ZenBPM
+     * cannot run.
+     */
+    static final String WITH_REFUSED_BPMN = "classpath*:with-bpmn-refused";
+
     private SmokeApplication() {
     }
 
@@ -48,10 +63,28 @@ final class SmokeApplication {
      * @return The test, to be given the keys of the case
      */
     static QuarkusExtensionTest extensionTest() {
-        return withTheBpmsDouble().setExcludedDependencies(Set.of(ArtifactKey.of(BPMS_DOUBLE_GROUP_ID,
-                BPMS_DOUBLE_ARTIFACT_ID, "", "jar"),
-                ArtifactKey.of(BPMS_DOUBLE_GROUP_ID, BPMS_DOUBLE_ARTIFACT_ID
-                        + "-deployment", "", "jar")));
+        return withoutTheBpmsDouble(withTheBpmsDouble());
+    }
+
+    /**
+     * A test of the smoke application without the BPMS double whose workflow module has one BPMN
+     * file, see {@link #WITH_BPMN}.
+     *
+     * @return The test, to be given the keys of the case
+     */
+    static QuarkusExtensionTest withBpmnFiles() {
+        return withBpmnFiles("with-bpmn");
+    }
+
+    /**
+     * A test of the smoke application without the BPMS double whose workflow module has the BPMN
+     * file of the sample workflow service in the given directory.
+     *
+     * @param directory The directory below the test resources
+     * @return The test, to be given the keys of the case
+     */
+    static QuarkusExtensionTest withBpmnFiles(final String directory) {
+        return withoutTheBpmsDouble(withTheBpmsDoubleAndBpmnFiles(directory));
     }
 
     /**
@@ -62,12 +95,32 @@ final class SmokeApplication {
      */
     static QuarkusExtensionTest withTheBpmsDouble() {
         return new QuarkusExtensionTest()
-                .setArchiveProducer(() -> ShrinkWrap
-                        .create(JavaArchive.class)
-                        .addClasses(Aggregate.class, SampleWorkflowService.class, SmokeApplication.class,
-                                StartupBlock.class, FactoryLog.class)
-                        .addAsResource("application.yaml")
-                        .addAsResource("workflow-module-descriptor/workflow-module", "META-INF/workflow-module"))
+                .setArchiveProducer(() -> archive())
+                .setLogRecordPredicate(record -> true);
+    }
+
+    /**
+     * A test of the smoke application with the platform's BPMS double as a second adapter type
+     * whose workflow module has one BPMN file, see {@link #WITH_BPMN}.
+     *
+     * @return The test, to be given the keys of the case
+     */
+    static QuarkusExtensionTest withTheBpmsDoubleAndBpmnFiles() {
+        return withTheBpmsDoubleAndBpmnFiles("with-bpmn");
+    }
+
+    /**
+     * A test of the smoke application with the platform's BPMS double as a second adapter type
+     * whose workflow module has the BPMN file of the sample workflow service in the given
+     * directory.
+     *
+     * @param directory The directory below the test resources
+     * @return The test, to be given the keys of the case
+     */
+    static QuarkusExtensionTest withTheBpmsDoubleAndBpmnFiles(final String directory) {
+        return new QuarkusExtensionTest()
+                .setArchiveProducer(() -> archive().addAsResource("%s/SampleWorkflowService.bpmn".formatted(
+                        directory)))
                 .setLogRecordPredicate(record -> true);
     }
 
@@ -193,6 +246,22 @@ final class SmokeApplication {
                 .phaseOperations()
                 .get(PhaseOperation.START_WORKFLOW)
                 .phaseOne(null);
+    }
+
+    private static QuarkusExtensionTest withoutTheBpmsDouble(final QuarkusExtensionTest test) {
+        return test.setExcludedDependencies(Set.of(ArtifactKey.of(BPMS_DOUBLE_GROUP_ID,
+                BPMS_DOUBLE_ARTIFACT_ID, "", "jar"),
+                ArtifactKey.of(BPMS_DOUBLE_GROUP_ID, BPMS_DOUBLE_ARTIFACT_ID
+                        + "-deployment", "", "jar")));
+    }
+
+    private static JavaArchive archive() {
+        return ShrinkWrap
+                .create(JavaArchive.class)
+                .addClasses(Aggregate.class, SampleWorkflowService.class, SmokeApplication.class, StartupBlock.class,
+                        FactoryLog.class)
+                .addAsResource("application.yaml")
+                .addAsResource("workflow-module-descriptor/workflow-module", "META-INF/workflow-module");
     }
 
     private static String messageOf(final LogRecord record) {

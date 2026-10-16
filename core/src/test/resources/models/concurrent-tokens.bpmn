@@ -1,0 +1,289 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL"
+    xmlns:zenbpm="http://zenbpm.pbinitiative.org/1.0" id="concurrentTokens" targetNamespace="http://bpmn.io/schema/bpmn"
+    xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI"
+    xmlns:dc="http://www.omg.org/spec/DD/20100524/DC"
+    xmlns:di="http://www.omg.org/spec/DD/20100524/DI">
+  <bpmn:message id="Message_Complaint" name="complaint" />
+  <bpmn:message id="Message_Cancelled" name="cancelled" />
+  <bpmn:process id="Orders" isExecutable="true">
+    <bpmn:startEvent id="Start" />
+    <bpmn:parallelGateway id="Fork" />
+    <bpmn:parallelGateway id="Join" />
+    <bpmn:inclusiveGateway id="Choose" />
+    <bpmn:inclusiveGateway id="OnlyOneWay" />
+    <bpmn:exclusiveGateway id="Either" />
+    <bpmn:serviceTask id="Charge">
+      <bpmn:extensionElements>
+        <zenbpm:taskDefinition type="charge" />
+      </bpmn:extensionElements>
+    </bpmn:serviceTask>
+    <bpmn:serviceTask id="Ship">
+      <bpmn:extensionElements>
+        <zenbpm:taskDefinition type="ship" />
+      </bpmn:extensionElements>
+    </bpmn:serviceTask>
+    <bpmn:boundaryEvent id="Reminder" attachedToRef="Charge" cancelActivity="false">
+      <bpmn:timerEventDefinition id="Reminder_Definition">
+        <bpmn:timeDuration>PT1H</bpmn:timeDuration>
+      </bpmn:timerEventDefinition>
+    </bpmn:boundaryEvent>
+    <bpmn:boundaryEvent id="Cancelled" attachedToRef="Charge">
+      <bpmn:messageEventDefinition id="Cancelled_Definition" messageRef="Message_Cancelled" />
+    </bpmn:boundaryEvent>
+    <bpmn:subProcess id="Complaints" triggeredByEvent="true">
+      <bpmn:startEvent id="Complaint" isInterrupting="false">
+        <bpmn:messageEventDefinition id="Complaint_Definition" messageRef="Message_Complaint" />
+      </bpmn:startEvent>
+      <bpmn:endEvent id="Complaint_End" />
+    </bpmn:subProcess>
+    <bpmn:subProcess id="Escalations" triggeredByEvent="true">
+      <bpmn:startEvent id="Escalation">
+        <bpmn:timerEventDefinition id="Escalation_Definition">
+          <bpmn:timeDuration>P1D</bpmn:timeDuration>
+        </bpmn:timerEventDefinition>
+      </bpmn:startEvent>
+      <bpmn:endEvent id="Escalation_End" />
+    </bpmn:subProcess>
+    <bpmn:serviceTask id="NotifyAll">
+      <bpmn:extensionElements>
+        <zenbpm:taskDefinition type="notify" />
+      </bpmn:extensionElements>
+      <bpmn:multiInstanceLoopCharacteristics>
+        <bpmn:extensionElements>
+          <zenbpm:loopCharacteristics inputCollection="=recipients" inputElement="recipient" />
+        </bpmn:extensionElements>
+      </bpmn:multiInstanceLoopCharacteristics>
+    </bpmn:serviceTask>
+    <bpmn:serviceTask id="NotifyOneByOne">
+      <bpmn:extensionElements>
+        <zenbpm:taskDefinition type="notify" />
+      </bpmn:extensionElements>
+      <bpmn:multiInstanceLoopCharacteristics isSequential="true">
+        <bpmn:extensionElements>
+          <zenbpm:loopCharacteristics inputCollection="=recipients" inputElement="recipient" />
+        </bpmn:extensionElements>
+      </bpmn:multiInstanceLoopCharacteristics>
+    </bpmn:serviceTask>
+    <bpmn:serviceTask id="Split">
+      <bpmn:extensionElements>
+        <zenbpm:taskDefinition type="split" />
+      </bpmn:extensionElements>
+    </bpmn:serviceTask>
+    <bpmn:serviceTask id="Pack">
+      <bpmn:extensionElements>
+        <zenbpm:taskDefinition type="pack" />
+      </bpmn:extensionElements>
+    </bpmn:serviceTask>
+    <bpmn:boundaryEvent id="ReminderSpelledAsZero" attachedToRef="Pack" cancelActivity="0">
+      <bpmn:timerEventDefinition id="ReminderSpelledAsZero_Definition">
+        <bpmn:timeDuration>PT1H</bpmn:timeDuration>
+      </bpmn:timerEventDefinition>
+    </bpmn:boundaryEvent>
+    <bpmn:boundaryEvent id="InterruptingSpelledAsTrue" attachedToRef="Pack" cancelActivity="TRUE">
+      <bpmn:timerEventDefinition id="InterruptingSpelledAsTrue_Definition">
+        <bpmn:timeDuration>PT2H</bpmn:timeDuration>
+      </bpmn:timerEventDefinition>
+    </bpmn:boundaryEvent>
+    <bpmn:boundaryEvent id="ReminderWithEmptyFlag" attachedToRef="Pack" cancelActivity="">
+      <bpmn:timerEventDefinition id="ReminderWithEmptyFlag_Definition">
+        <bpmn:timeDuration>PT3H</bpmn:timeDuration>
+      </bpmn:timerEventDefinition>
+    </bpmn:boundaryEvent>
+    <bpmn:subProcess id="ComplaintsSpelledAsDigits" triggeredByEvent="1">
+      <bpmn:startEvent id="ComplaintSpelledAsDigits" isInterrupting="0">
+        <bpmn:messageEventDefinition id="ComplaintSpelledAsDigits_Definition" messageRef="Message_Complaint" />
+      </bpmn:startEvent>
+    </bpmn:subProcess>
+    <bpmn:serviceTask id="NotifyOneByOneSpelledAsDigit">
+      <bpmn:extensionElements>
+        <zenbpm:taskDefinition type="notify" />
+      </bpmn:extensionElements>
+      <bpmn:multiInstanceLoopCharacteristics isSequential="1">
+        <bpmn:extensionElements>
+          <zenbpm:loopCharacteristics inputCollection="=recipients" inputElement="recipient" />
+        </bpmn:extensionElements>
+      </bpmn:multiInstanceLoopCharacteristics>
+    </bpmn:serviceTask>
+    <bpmn:endEvent id="Done" />
+    <bpmn:sequenceFlow id="Flow_SplitPack" sourceRef="Split" targetRef="Pack" />
+    <bpmn:sequenceFlow id="Flow_SplitDone" sourceRef="Split" targetRef="Done" />
+    <bpmn:sequenceFlow id="Flow_Start" sourceRef="Start" targetRef="Fork" />
+    <bpmn:sequenceFlow id="Flow_ForkCharge" sourceRef="Fork" targetRef="Charge" />
+    <bpmn:sequenceFlow id="Flow_ForkShip" sourceRef="Fork" targetRef="Ship" />
+    <bpmn:sequenceFlow id="Flow_ChargeJoin" sourceRef="Charge" targetRef="Join" />
+    <bpmn:sequenceFlow id="Flow_ShipJoin" sourceRef="Ship" targetRef="Join" />
+    <bpmn:sequenceFlow id="Flow_JoinChoose" sourceRef="Join" targetRef="Choose" />
+    <bpmn:sequenceFlow id="Flow_ChooseNotify" sourceRef="Choose" targetRef="NotifyAll" />
+    <bpmn:sequenceFlow id="Flow_ChooseOneByOne" sourceRef="Choose" targetRef="NotifyOneByOne" />
+    <bpmn:sequenceFlow id="Flow_NotifyOnly" sourceRef="NotifyAll" targetRef="OnlyOneWay" />
+    <bpmn:sequenceFlow id="Flow_OnlyEither" sourceRef="OnlyOneWay" targetRef="Either" />
+    <bpmn:sequenceFlow id="Flow_EitherDone" sourceRef="Either" targetRef="Done" />
+    <bpmn:sequenceFlow id="Flow_EitherOneByOne" sourceRef="Either" targetRef="NotifyOneByOne" />
+  </bpmn:process>
+  <bpmndi:BPMNDiagram id="BPMNDiagram_1">
+    <bpmndi:BPMNPlane id="BPMNPlane_1" bpmnElement="Orders">
+      <bpmndi:BPMNShape id="Start_di" bpmnElement="Start">
+        <dc:Bounds x="192" y="80" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Split_di" bpmnElement="Split">
+        <dc:Bounds x="160" y="166" width="100" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Fork_di" bpmnElement="Fork">
+        <dc:Bounds x="345" y="80" width="50" height="50" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Pack_di" bpmnElement="Pack">
+        <dc:Bounds x="320" y="180" width="100" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Charge_di" bpmnElement="Charge">
+        <dc:Bounds x="480" y="80" width="100" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Ship_di" bpmnElement="Ship">
+        <dc:Bounds x="480" y="210" width="100" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Join_di" bpmnElement="Join">
+        <dc:Bounds x="640" y="80" width="50" height="50" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Choose_di" bpmnElement="Choose">
+        <dc:Bounds x="750" y="80" width="50" height="50" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="NotifyAll_di" bpmnElement="NotifyAll">
+        <dc:Bounds x="860" y="80" width="100" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="OnlyOneWay_di" bpmnElement="OnlyOneWay">
+        <dc:Bounds x="1020" y="80" width="50" height="50" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Either_di" bpmnElement="Either">
+        <dc:Bounds x="1130" y="80" width="50" height="50" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="NotifyOneByOne_di" bpmnElement="NotifyOneByOne">
+        <dc:Bounds x="1240" y="80" width="100" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Done_di" bpmnElement="Done">
+        <dc:Bounds x="1272" y="210" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Complaints_di" bpmnElement="Complaints" isExpanded="true">
+        <dc:Bounds x="160" y="340" width="200" height="120" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Complaint_di" bpmnElement="Complaint">
+        <dc:Bounds x="190" y="370" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Complaint_End_di" bpmnElement="Complaint_End">
+        <dc:Bounds x="286" y="370" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Escalations_di" bpmnElement="Escalations" isExpanded="true">
+        <dc:Bounds x="420" y="340" width="200" height="120" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Escalation_di" bpmnElement="Escalation">
+        <dc:Bounds x="450" y="370" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Escalation_End_di" bpmnElement="Escalation_End">
+        <dc:Bounds x="546" y="370" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="ComplaintsSpelledAsDigits_di" bpmnElement="ComplaintsSpelledAsDigits" isExpanded="true">
+        <dc:Bounds x="680" y="340" width="200" height="120" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="ComplaintSpelledAsDigits_di" bpmnElement="ComplaintSpelledAsDigits">
+        <dc:Bounds x="710" y="370" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="NotifyOneByOneSpelledAsDigit_di" bpmnElement="NotifyOneByOneSpelledAsDigit">
+        <dc:Bounds x="940" y="360" width="100" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Reminder_di" bpmnElement="Reminder">
+        <dc:Bounds x="554" y="142" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Cancelled_di" bpmnElement="Cancelled">
+        <dc:Bounds x="514" y="142" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="ReminderSpelledAsZero_di" bpmnElement="ReminderSpelledAsZero">
+        <dc:Bounds x="394" y="242" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="InterruptingSpelledAsTrue_di" bpmnElement="InterruptingSpelledAsTrue">
+        <dc:Bounds x="354" y="242" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="ReminderWithEmptyFlag_di" bpmnElement="ReminderWithEmptyFlag">
+        <dc:Bounds x="314" y="242" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNEdge id="Flow_SplitPack_di" bpmnElement="Flow_SplitPack">
+        <di:waypoint x="260" y="206" />
+        <di:waypoint x="290" y="206" />
+        <di:waypoint x="290" y="220" />
+        <di:waypoint x="320" y="220" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_SplitDone_di" bpmnElement="Flow_SplitDone">
+        <di:waypoint x="260" y="206" />
+        <di:waypoint x="766" y="206" />
+        <di:waypoint x="766" y="228" />
+        <di:waypoint x="1272" y="228" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_Start_di" bpmnElement="Flow_Start">
+        <di:waypoint x="228" y="98" />
+        <di:waypoint x="286" y="98" />
+        <di:waypoint x="286" y="105" />
+        <di:waypoint x="345" y="105" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_ForkCharge_di" bpmnElement="Flow_ForkCharge">
+        <di:waypoint x="395" y="105" />
+        <di:waypoint x="437" y="105" />
+        <di:waypoint x="437" y="120" />
+        <di:waypoint x="480" y="120" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_ForkShip_di" bpmnElement="Flow_ForkShip">
+        <di:waypoint x="395" y="105" />
+        <di:waypoint x="437" y="105" />
+        <di:waypoint x="437" y="250" />
+        <di:waypoint x="480" y="250" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_ChargeJoin_di" bpmnElement="Flow_ChargeJoin">
+        <di:waypoint x="580" y="120" />
+        <di:waypoint x="610" y="120" />
+        <di:waypoint x="610" y="105" />
+        <di:waypoint x="640" y="105" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_ShipJoin_di" bpmnElement="Flow_ShipJoin">
+        <di:waypoint x="580" y="250" />
+        <di:waypoint x="610" y="250" />
+        <di:waypoint x="610" y="105" />
+        <di:waypoint x="640" y="105" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_JoinChoose_di" bpmnElement="Flow_JoinChoose">
+        <di:waypoint x="690" y="105" />
+        <di:waypoint x="750" y="105" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_ChooseNotify_di" bpmnElement="Flow_ChooseNotify">
+        <di:waypoint x="800" y="105" />
+        <di:waypoint x="830" y="105" />
+        <di:waypoint x="830" y="120" />
+        <di:waypoint x="860" y="120" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_ChooseOneByOne_di" bpmnElement="Flow_ChooseOneByOne">
+        <di:waypoint x="800" y="105" />
+        <di:waypoint x="1020" y="105" />
+        <di:waypoint x="1020" y="120" />
+        <di:waypoint x="1240" y="120" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_NotifyOnly_di" bpmnElement="Flow_NotifyOnly">
+        <di:waypoint x="960" y="120" />
+        <di:waypoint x="990" y="120" />
+        <di:waypoint x="990" y="105" />
+        <di:waypoint x="1020" y="105" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_OnlyEither_di" bpmnElement="Flow_OnlyEither">
+        <di:waypoint x="1070" y="105" />
+        <di:waypoint x="1130" y="105" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_EitherDone_di" bpmnElement="Flow_EitherDone">
+        <di:waypoint x="1180" y="105" />
+        <di:waypoint x="1226" y="105" />
+        <di:waypoint x="1226" y="228" />
+        <di:waypoint x="1272" y="228" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_EitherOneByOne_di" bpmnElement="Flow_EitherOneByOne">
+        <di:waypoint x="1180" y="105" />
+        <di:waypoint x="1210" y="105" />
+        <di:waypoint x="1210" y="120" />
+        <di:waypoint x="1240" y="120" />
+      </bpmndi:BPMNEdge>
+    </bpmndi:BPMNPlane>
+  </bpmndi:BPMNDiagram>
+</bpmn:definitions>

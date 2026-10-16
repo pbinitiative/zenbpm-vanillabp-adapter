@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" id="unnamed"
+    targetNamespace="http://bpmn.io/schema/bpmn"
+    xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI"
+    xmlns:dc="http://www.omg.org/spec/DD/20100524/DC"
+    xmlns:di="http://www.omg.org/spec/DD/20100524/DI">
+  <bpmn:message id="Message_Unnamed" />
+  <bpmn:process id="Orders" isExecutable="true">
+    <bpmn:startEvent id="WithoutReference">
+      <bpmn:messageEventDefinition id="WithoutReference_Definition" />
+    </bpmn:startEvent>
+    <bpmn:startEvent id="WithoutName">
+      <bpmn:messageEventDefinition id="WithoutName_Definition" messageRef="Message_Unnamed" />
+    </bpmn:startEvent>
+    <bpmn:startEvent id="ToNowhere">
+      <bpmn:messageEventDefinition id="ToNowhere_Definition" messageRef="Message_Missing" />
+    </bpmn:startEvent>
+    <bpmn:endEvent id="Done" />
+  </bpmn:process>
+  <bpmndi:BPMNDiagram id="BPMNDiagram_1">
+    <bpmndi:BPMNPlane id="BPMNPlane_1" bpmnElement="Orders">
+      <bpmndi:BPMNShape id="WithoutReference_di" bpmnElement="WithoutReference">
+        <dc:Bounds x="160" y="80" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="WithoutName_di" bpmnElement="WithoutName">
+        <dc:Bounds x="256" y="80" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="ToNowhere_di" bpmnElement="ToNowhere">
+        <dc:Bounds x="352" y="80" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Done_di" bpmnElement="Done">
+        <dc:Bounds x="448" y="80" width="36" height="36" />
+      </bpmndi:BPMNShape>
+    </bpmndi:BPMNPlane>
+  </bpmndi:BPMNDiagram>
+</bpmn:definitions>

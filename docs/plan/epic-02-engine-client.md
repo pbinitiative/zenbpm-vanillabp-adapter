@@ -402,6 +402,8 @@ of an unreadable answer dropped.
   instance at a time.
 - Not changed: the BPMN fixtures carry no `BPMNDiagram`. That rule belongs to the engine's Go
   tests; neither this repository nor the VanillaBP adapters ask it of their test fixtures.
+  (*Note, 2026-10-16:* reversed by the maintainer. Decision 29 asks every BPMN file of this
+  repository for its diagram, and the contract fixtures carry one now.)
 
 **CodeRabbit on the pull request, 2026-10-14.** `history(key, page)` sent a page below 1, which the
 pinned engine answers with 400 (probed); it is refused before sending now, as the filters do.

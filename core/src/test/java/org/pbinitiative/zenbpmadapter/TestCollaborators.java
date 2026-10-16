@@ -46,9 +46,31 @@ public final class TestCollaborators {
         final String adapterId,
         final NameClashAvoidanceSupport scoping
     ) {
+        return of(adapterId, scoping, unused(WorkflowTaskWiring.class));
+    }
+
+    /**
+     * A complete set of collaborators, of which only the wiring may be called.
+     *
+     * @param adapterId The adapter id they are handed to
+     * @param workflowTaskWiring The platform's wiring, as the test wants it to answer
+     * @return The collaborators
+     */
+    public static AdapterCollaborators of(
+        final String adapterId,
+        final WorkflowTaskWiring workflowTaskWiring
+    ) {
+        return of(adapterId, unused(NameClashAvoidanceSupport.class), workflowTaskWiring);
+    }
+
+    private static AdapterCollaborators of(
+        final String adapterId,
+        final NameClashAvoidanceSupport scoping,
+        final WorkflowTaskWiring workflowTaskWiring
+    ) {
         return AdapterCollaborators
                 .forAdapter(adapterId)
-                .workflowTaskWiring(unused(WorkflowTaskWiring.class))
+                .workflowTaskWiring(workflowTaskWiring)
                 .workflowTaskInvoker(unused(WorkflowTaskInvoker.class))
                 .scoping(scoping)
                 .workflowAggregateSync(unused(WorkflowAggregateSync.class))

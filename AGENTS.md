@@ -77,6 +77,15 @@ Constructors stay next to the fields. `MethodOrderTest` in `test-coverage-report
 fails the build on a method out of place and names it. The reason is decision 19 in the
 repository's DECISIONS.md.
 
+## BPMN files carry their diagram
+
+Every `.bpmn` file of the repository, test fixtures included, carries its diagram: a shape for every
+flow node, boundary event and pool, an edge for every sequence flow (decision 29 in the repository's
+DECISIONS.md). Save the file from a modeler, or give a file written by hand a generated diagram with
+`bin/add-bpmn-diagram.py <file>...`. `BpmnDiagramTest` in `test-coverage-report/coverage-gate` fails
+the build on a file without one and names what is missing. BPMN written inline in a Java test is
+exempt, and so is a file which is no model on purpose; the check names such a file with its reason.
+
 ## What belongs in `UPGRADE.md`
 
 [`UPGRADE.md`](./UPGRADE.md) holds what a released version of this adapter asks an upgrading
