@@ -933,6 +933,31 @@ Boot 9, smoke test 29, Quarkus runtime 9, Quarkus deployment 39, coverage gate 3
 measures 100 % of 15,094 instructions for Spring Boot and of 14,968 for Quarkus, and
 `bin/check-deploy-safety.sh` passes both runs.
 
+**F4.2 done 2026-10-16**, merged to `main` as `0fa554c` (pull request #32, after two reviews and
+CodeRabbit's review, whose one comment was answered in the pull request). On that commit (GitHub
+keeps run logs for 90 days, so what they showed is written here as well):
+
+- `Checks`, run
+  [38964208056](https://github.com/pbinitiative/zenbpm-vanillabp-adapter/actions/runs/38964208056):
+  green on both JDKs. `bin/check-engine-copies.sh` reported both copies as the engine's files of
+  `bdd795a3...`. `ZenBpmScopingTest` ran 6 tests, `ZenBpmCorrelationKeysTest` 8,
+  `ZenBpmTaskParametersTest` 5, `ZenBpmUnsupportedConstructsTest` 53, `ZenBpmModelReaderTest` 20,
+  `ZenBpmDeploymentServiceTest` 31, `ZenBpmInstanceIdentityTest` 11,
+  `ZenBpmStartupValidationBootTest` 14, `ZenBpmByAdapterRefusedTest` 1,
+  `ZenBpmWorkflowByAdapterRefusedTest` 1, `ZenBpmOverlayResolutionTest` 5 and `BpmnDiagramTest` 2,
+  none skipped (core: 588 unit tests and 34 integration tests; Spring Boot 9, smoke test 29,
+  Quarkus runtime 9, Quarkus deployment 39, coverage gate 35). The gate measured 100 % on both
+  platforms: of 15,094 instructions for Spring Boot and 14,968 for Quarkus on JDK 25, of 15,086 and
+  14,960 on JDK 21.
+- `Publish snapshots`, run
+  [38964208035](https://github.com/pbinitiative/zenbpm-vanillabp-adapter/actions/runs/38964208035):
+  green. The core snapshot it published to GitHub Packages, `2.0.0-20261016.204258-28`, contains
+  `model/ZenBpmScoping`, `model/ZenBpmCorrelationKeys`, `model/ZenBpmTaskParameters`,
+  `model/ZenBpmInputMappings`, `model/ZenBpmBpmnModel` with its nested `MessageReference`, and
+  `ZenBpmProcessingContext`, and holds no test class, fixture or BPMN file. Both report pages
+  (`spring-boot-report/index.html`, `quarkus-report/index.html`) answer HTTP 200 and show 0 of
+  15,094 (Spring Boot) and 0 of 14,968 (Quarkus) instructions missed.
+
 ---
 
 ## F4.3 Wiring and deploying
