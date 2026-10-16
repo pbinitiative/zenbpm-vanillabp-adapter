@@ -466,6 +466,40 @@ and restored afterwards, unless it is wording only:
   for what it asserts; the processor's sentence about the missing root and the one above are
   rewritten; one javadoc line is wrapped and the root POM's licence comment reflowed.
 
+**Done 2026-10-16**, merged to `main` as `6998046` (pull request #26, after two reviews and
+CodeRabbit's review, whose one finding, two cross-references pointing below instead of above, was
+fixed in `89b2115`). On that commit (GitHub keeps run logs for 90 days, so what they showed is
+written here as well):
+
+- `Checks`, run
+  [38887026946](https://github.com/pbinitiative/zenbpm-vanillabp-adapter/actions/runs/38887026946):
+  green on both JDKs. `bin/check-engine-copies.sh` reported both copies as the engine's files of
+  `bdd795a3...`. `VanillaBpZenBpmPropertiesTest` ran 8 tests; in `quarkus/deployment`,
+  `ZenBpmAdapterDiscoveryTest` 5, `ZenBpmTwoAdapterIdsTest` 2, `ZenBpmStartupValidationTest` 2,
+  `ZenBpmWithoutAdapterIdsTest` 1, `ZenBpmUnknownKeyTest` 1, `ZenBpmInconsistentConfigurationTest`
+  1, `ZenBpmDegradedBootTest` 1, `ZenBpmUnworkableNumberTest` 1, `ZenBpmNegativeScopedValueTest` 1,
+  `ZenBpmNoticeOnceTest` 1, `ZenBpmCompleteAdapterIdTest` 2, `ZenBpmOverlayResolutionTest` 4,
+  `ZenBpmBesideAnotherAdapterTypeTest` 2, `ZenBpmHealthDownTest` 1,
+  `ZenBpmIntegrationProcessorTest` 3 and `ZenBpmNativeImageProcessorTest` 2;
+  `ZenBpmBesideAnotherAdapterTypeBootTest` 1 in the smoke test and `QuarkusOverlayTest` 4 in the
+  gate, none skipped (core: 461 unit tests and 34 integration tests; Spring Boot 8, smoke test 19,
+  Quarkus runtime 8, Quarkus deployment 30, coverage gate 33). The gate measured 100 % on both
+  platforms: of 10,112 instructions for Spring Boot and 9,998 for Quarkus on JDK 25, of 10,108 and
+  9,994 on JDK 21.
+- `Publish snapshots`, run
+  [38887026965](https://github.com/pbinitiative/zenbpm-vanillabp-adapter/actions/runs/38887026965):
+  green, with the same test counts, none skipped. Its snapshots, `2.0.0-20261016.102441-22`, are
+  the first Quarkus jars with the extension in them: the ones before (`2.0.0-20261015.191756-20`
+  of S3.1.1) held the extension's descriptor and no class. The runtime jar
+  `zenbpm-vanillabp-adapter-quarkus` holds the overlay with its six nested types, the three
+  producers and the startup observer, the config root list naming the overlay, and a
+  `quarkus-extension.properties` which provides `io.vanillabp.adapter.zenbpm` and names
+  `zenbpm-vanillabp-adapter-quarkus-deployment` as its deployment artifact. The deployment jar holds
+  the two processors with their accessors and the build-step list naming both. Both carry
+  `LICENSE`, `LICENSE-APACHE-2.0` and `NOTICE`, and no jar of the build holds a test class. Both
+  report pages answer HTTP 200 and show 0 of 10,112 (Spring Boot) and 0 of 9,998 (Quarkus)
+  instructions missed.
+
 Where the code differs from the instructions:
 
 - **No build-time configuration root.** Instruction 2 asks for an empty BUILD_TIME
