@@ -105,7 +105,7 @@ public final class FakeEngine implements AutoCloseable {
      * @param path The path without a query
      * @param handler What to do with the request
      */
-    void answers(
+    public void answers(
         final String method,
         final String path,
         final Handler handler
@@ -152,7 +152,7 @@ public final class FakeEngine implements AutoCloseable {
      * @param body The JSON body, <code>null</code> for none
      * @throws IOException Where the connection broke
      */
-    static void respond(
+    public static void respond(
         final HttpExchange exchange,
         final int status,
         final String body
@@ -201,7 +201,7 @@ public final class FakeEngine implements AutoCloseable {
      * What to do with a request.
      */
     @FunctionalInterface
-    interface Handler {
+    public interface Handler {
 
         void handle(HttpExchange exchange) throws IOException;
 

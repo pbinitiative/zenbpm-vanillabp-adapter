@@ -51,6 +51,28 @@ class ZenBpmDeploymentWiringTest {
 
     private static final String NOT_CONFIGURED = "ZenBPM adapter 'orders' is not configured: set the key";
 
+    // elements which create a job, all of them but Charge naming no task definition
+    private static final String JOBS_OF_NO_TYPE = """
+            <bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL"
+                xmlns:zenbpm="http://zenbpm.pbinitiative.org/1.0" id="order">
+              <bpmn:message id="Message_Shipped" name="shipped" />
+              <bpmn:process id="Order" isExecutable="true">
+                <bpmn:serviceTask id="Ship" />
+                <bpmn:sendTask id="Notify" />
+                <bpmn:businessRuleTask id="Rate" />
+                <bpmn:serviceTask id="Archive" />
+                <bpmn:serviceTask id="Charge">
+                  <bpmn:extensionElements>
+                    <zenbpm:taskDefinition type="charge" />
+                  </bpmn:extensionElements>
+                </bpmn:serviceTask>
+                <bpmn:endEvent id="Shipped">
+                  <bpmn:messageEventDefinition messageRef="Message_Shipped" />
+                </bpmn:endEvent>
+              </bpmn:process>
+            </bpmn:definitions>
+            """;
+
     @Test
     @DisplayName("A claimed process gets every wiring call once, with what the modeller wrote, and the context remembers its scoped id and the job types this application serves")
     void aClaimedProcessGetsEveryWiringCallOnce() {
@@ -241,9 +263,58 @@ class ZenBpmDeploymentWiringTest {
     }
 
     @Test
-    @DisplayName("A task without a task definition is handed to the check of the tasks, gives no job type, and is asked about items by its element id only")
-    void aTaskWithoutATaskDefinitionGivesNoJobType() {
-        final var wiring = TestWiring.claiming("Order");
+    @DisplayName("Every element of a claimed process which creates a job and names no task definition ends wiring, named with the fix, before the check of the tasks")
+    void anElementCreatingAJobOfNoTypeIsRefused() {
+        final var wiring = TestWiring
+                .claiming("Order")
+                .servedElsewhere("Archive");
+        final var deploymentService = deploymentService(TestCollaborators.of(ADAPTER_ID, TestScoping.of(
+                NameClashAvoidance.USE_PREFIX), wiring.wiring(), TestStarts.everyProcessStartingAWorkflow()));
+        final var model = read(deploymentService, "order.bpmn", JOBS_OF_NO_TYPE);
+        final var context = deploymentService.prepareBpmn("shop", null, "order.bpmn", "Order", model);
+
+        final var failure = assertThrows(IllegalStateException.class, () -> deploymentService.wireBpmn("shop",
+                "order.bpmn", "Order", model, context));
+
+        assertAll(
+                () -> assertEquals("""
+                        BPMN file 'order.bpmn' of workflow module 'shop' holds elements of process 'Order' which \
+                        create a job and name no task definition:
+                          - Ship
+                          - Notify
+                          - Rate
+                          - Shipped
+                        ZenBPM gives each of them a job of the type '', which no worker of this application \
+                        subscribes, so a workflow would wait there for good. Give each of them a task definition, \
+                        <zenbpm:taskDefinition type="..." />, and serve that type with a @WorkflowTask method.""",
+                        failure.getMessage()),
+                () -> assertEquals(List.of(), wiring.callsOf("validateTaskWiring")),
+                () -> assertEquals(Map.of(), context.wiredProcesses()));
+    }
+
+    @Test
+    @DisplayName("A process nobody claims may hold elements which create a job and name no task definition: it belongs to somebody else")
+    void aProcessNobodyClaimsMayHoldJobsOfNoType() {
+        final var deploymentService = deploymentService(TestCollaborators.of(ADAPTER_ID, TestScoping.of(
+                NameClashAvoidance.USE_PREFIX),
+                TestWiring
+                        .claiming()
+                        .wiring(),
+                TestStarts.everyProcessStartingAWorkflow()));
+        final var model = read(deploymentService, "order.bpmn", JOBS_OF_NO_TYPE);
+        final var context = deploymentService.prepareBpmn("shop", null, "order.bpmn", "Order", model);
+
+        deploymentService.wireBpmn("shop", "order.bpmn", "Order", model, context);
+
+        assertEquals(Map.of(), context.wiredProcesses());
+    }
+
+    @Test
+    @DisplayName("A task served elsewhere which names no task definition is handed to the check of the tasks, gives no job type, and is asked about items by its element id only")
+    void aTaskServedElsewhereWithoutATaskDefinitionGivesNoJobType() {
+        final var wiring = TestWiring
+                .claiming("Order")
+                .servedElsewhere("Ship");
         final var deploymentService = deploymentService(TestCollaborators.of(ADAPTER_ID, TestScoping.of(
                 NameClashAvoidance.USE_PREFIX), wiring.wiring(), TestStarts.everyProcessStartingAWorkflow()));
 

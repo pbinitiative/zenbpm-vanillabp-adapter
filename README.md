@@ -46,20 +46,24 @@ would start a workflow with a correlation which finds none waiting. A job inside
 body carries only what input mappings give it, so the adapter maps the names the methods serving it
 read (theirs and the extensions'), and the aggregate id, into the body; a job anywhere else gets the
 variables of its scope from the engine. The processes a workflow service claims are wired with
-the platform: a task nothing serves ends the start, the start events, the start messages, the
-expressions the modeller wrote and the elements which give a workflow a second token are reported,
-a method which wants the item of an iteration whose element names none ends the start, and a
-process called on the same aggregate from inside a multi-instance body gets the aggregate id
-carried into that body. Then the files are deployed, one request per file, once the engine answers
-ready; a file the pipeline left as it was written reaches the engine as its bytes, a file the engine
-refuses ends the start with the engine's reason, and the version of every process is reported to the
-platform, also where the engine kept an unchanged file. An adapter id without clients ends the start
-there with the message of its validation, which names the key to set. Starting a workflow module
-subscribes the job types of its claimed processes on the job stream, and stopping it unsubscribes
-them before the clients close; a type two modules share stays subscribed until both stopped. It runs
-no task yet: a job which arrives is logged at WARN and left to its lock, after which the engine hands
-it out again. What is built next, and in which order, is
-the implementation plan in [`docs/`](docs/README.md).
+the platform: a task nothing serves ends the start, and so does an element which creates a job
+and names no task definition, which ZenBPM would give a job of the type `''` that nothing takes,
+unless the application marks the task `implemented-externally`; the start events, the start
+messages, the expressions the modeller wrote and the elements which give a workflow a second token
+are reported, a method which wants the item of an iteration whose element names none ends the
+start, and a process called on the same aggregate from inside a multi-instance body gets the
+aggregate id carried into that body. Then the files are deployed, one request per file and the
+DMN files first, once the engine answers ready; a file the pipeline left as it was written reaches
+the engine as its bytes, and a file the engine refuses ends the start with the engine's reason. The
+files sent before it stay deployed, because ZenBPM takes one file per request, but no version is
+reported then; once the engine took every file, the version of every process is reported to the
+platform, also where the engine kept an unchanged file. An adapter id without clients ends the
+start there with the message of its validation, which names the key to set. Starting a workflow
+module subscribes the job types of its claimed processes on the job stream, and stopping it
+unsubscribes them before the clients close; a type two modules share stays subscribed until both
+stopped. It runs no task yet: a job which arrives is logged at WARN and left to its lock, after
+which the engine hands it out again. What is built next, and in which order, is the implementation
+plan in [`docs/`](docs/README.md).
 
 ## Modules
 

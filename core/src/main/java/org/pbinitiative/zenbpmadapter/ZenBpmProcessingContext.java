@@ -225,7 +225,6 @@ public final class ZenBpmProcessingContext {
         return Collections.unmodifiableMap(awaitedMessages);
     }
 
-
     /**
      * Remembers what wiring found out about a claimed process of the workflow module.
      *

@@ -158,22 +158,28 @@ class ZenBpmWorkflowProcessingTest {
         final var shop = withJobTypes("shop", "charge");
         final var billing = withJobTypes("billing", "charge");
         billing.recordWiring(new WiredProcess("Invoice", "Invoice", Set.of("invoice"), true, false));
+        // a module started after the first stop marks on the stream where that stop's frames end
+        final var audit = withJobTypes("audit", "audit");
 
         deploymentService.startWorkflowProcessing("shop", shop);
         deploymentService.startWorkflowProcessing("billing", billing);
-        final var started = engine
+        engine
                 .call(0)
                 .subscriptions(2);
         deploymentService.stopWorkflowProcessing("shop", shop);
+        deploymentService.startWorkflowProcessing("audit", audit);
         deploymentService.stopWorkflowProcessing("billing", billing);
         final var all = engine
                 .call(0)
-                .subscriptions(4);
+                .subscriptions(5);
 
-        assertAll(
-                () -> assertEquals(List.of("TYPE_SUBSCRIBE charge", "TYPE_SUBSCRIBE invoice"), described(started)),
-                () -> assertEquals(List.of("TYPE_UNSUBSCRIBE charge", "TYPE_UNSUBSCRIBE invoice"), described(all
-                        .subList(2, all.size()))));
+        assertEquals(List.of(
+                "TYPE_SUBSCRIBE charge",
+                "TYPE_SUBSCRIBE invoice",
+                "TYPE_SUBSCRIBE audit",
+                "TYPE_UNSUBSCRIBE charge",
+                "TYPE_UNSUBSCRIBE invoice"),
+                described(all));
     }
 
     @Test

@@ -14,6 +14,7 @@ import java.io.ByteArrayInputStream;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Optional;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -90,7 +91,7 @@ class ZenBpmDeployingTest {
     }
 
     @Test
-    @DisplayName("Every file is deployed after the engine answered ready, the version of each process is registered, and what the engine ended up with is remembered and logged")
+    @DisplayName("Every file is deployed after the engine answered ready, the DMN files before the BPMN files, the version of each process is registered, and what the engine ended up with is remembered and logged")
     void everyFileIsDeployedAndItsVersionRegistered(final CapturedOutput output) {
         engine.answers("POST", "/v1/process-definitions", 201, "{\"processDefinitionKey\":11}");
         engine.answers("GET", "/v1/process-definitions/11", 200, """
@@ -112,9 +113,9 @@ class ZenBpmDeployingTest {
                     () -> assertEquals(List.of(
                             "GET /system/health/ready",
                             "GET /system/status",
+                            "POST /v1/dmn-resource-definitions",
                             "POST /v1/process-definitions",
-                            "GET /v1/process-definitions/11",
-                            "POST /v1/dmn-resource-definitions"),
+                            "GET /v1/process-definitions/11"),
                             engine
                                     .requests()
                                     .stream()
@@ -126,10 +127,12 @@ class ZenBpmDeployingTest {
                     () -> assertEquals(Optional.of(3), deployedProcesses(registry).versionOf("shop", "Order")),
                     () -> assertEquals(Optional.of("<xml/>"), deployedProcesses(registry).xmlOf(11)),
                     () -> assertEquals(List.of("shop__Order"), deployedProcesses(registry).scopedIdsOf("shop")),
-                    () -> assertTrue(log.contains("""
-                            ZenBPM[orders]: workflow module 'shop' is deployed to the engine at %s:
-                              order.bpmn as process 'shop__Order', version 3, definition key 11
-                              rating.dmn as DMN resource definition key 21 (unchanged)""".formatted(engine.address())),
+                    () -> assertTrue(
+                            log.contains("""
+                                    ZenBPM[orders]: workflow module 'shop' is deployed to the engine at %s:
+                                      rating.dmn as DMN resource definition key 21 (unchanged)
+                                      order.bpmn as process 'shop__Order', version 3, definition key 11"""
+                                    .formatted(engine.address())),
                             log),
                     () -> assertEquals(List.of(
                             "reportIdentifiersTheModelsDeclare(orders, shop, [ModelIdentifier[kind=MESSAGE_NAME, plainIdentifier=paid, bpmnProcessId=null], ModelIdentifier[kind=ERROR_CODE, plainIdentifier=declined, bpmnProcessId=null], ModelIdentifier[kind=TASK_DEFINITION, plainIdentifier=charge, bpmnProcessId=Order], ModelIdentifier[kind=DMN_DECISION_ID, plainIdentifier=rating, bpmnProcessId=null]])"),
@@ -178,17 +181,25 @@ class ZenBpmDeployingTest {
     }
 
     @Test
-    @DisplayName("A file the engine refuses ends the deployment naming file, workflow module, process and the engine's reason, before the next file is sent")
+    @DisplayName("A BPMN file the engine refuses ends the deployment naming file, workflow module, process and the engine's reason; no version of the files it took before is registered or remembered")
     void aRejectedModelNamesTheFile() {
-        engine.answers("POST", "/v1/process-definitions", 400,
-                "{\"code\":\"BAD_REQUEST\",\"message\":\"no registered BaseElement with ID [nowhere]\"}");
-        final var wiring = TestWiring.claiming("Order");
+        final var deployments = new AtomicInteger();
+        engine.answers("POST", "/v1/process-definitions", exchange -> {
+            if (deployments.getAndIncrement() == 0) {
+                FakeEngine.respond(exchange, 201, "{\"processDefinitionKey\":11}");
+                return;
+            }
+            FakeEngine.respond(exchange, 400,
+                    "{\"code\":\"BAD_REQUEST\",\"message\":\"no registered BaseElement with ID [nowhere]\"}");
+        });
+        engine.answers("GET", "/v1/process-definitions/11", 200, """
+                {"key":11,"version":1,"bpmnProcessId":"Order","bpmnData":"<xml/>"}""");
+        final var wiring = TestWiring.claiming("Order", "Refund");
 
         try (var registry = registry()) {
             final var deploymentService = deploymentService(registry, TestScoping.of(NameClashAvoidance.NONE), wiring);
             final var context = prepared(deploymentService, ORDER);
-            deploymentService.readDmn("shop", context, "rating.dmn", new ByteArrayInputStream(DMN.getBytes(
-                    StandardCharsets.UTF_8)));
+            prepared(deploymentService, context, "refund.bpmn", ORDER.replace("\"Order\"", "\"Refund\""));
 
             final var failure = assertThrows(IllegalStateException.class, () -> deploymentService.deployResources(
                     "shop", context));
@@ -196,25 +207,20 @@ class ZenBpmDeployingTest {
             assertAll(
                     () -> assertEquals(
                             """
-                                    ZenBPM refuses BPMN file 'order.bpmn' of workflow module 'shop' (process 'Order'): POST \
+                                    ZenBPM refuses BPMN file 'refund.bpmn' of workflow module 'shop' (process 'Refund'): POST \
                                     /v1/process-definitions was answered with status 400, BAD_REQUEST: no registered BaseElement \
                                     with ID [nowhere]. Correct the model where the engine's reason points, or take the file out \
                                     of the workflow module.""",
                             failure.getMessage()),
                     () -> assertInstanceOf(ZenBpmApiException.class, failure.getCause()),
+                    () -> assertEquals(2, deployments.get()),
                     () -> assertEquals(List.of(), wiring.callsOf("registerDeployedVersion")),
-                    () -> assertTrue(engine
-                            .requests()
-                            .stream()
-                            .noneMatch(request -> request
-                                    .path()
-                                    .startsWith("/v1/dmn")),
-                            engine.requests()::toString));
+                    () -> assertEquals(Optional.empty(), deployedProcesses(registry).keyOf("shop", "Order")));
         }
     }
 
     @Test
-    @DisplayName("A DMN file the engine refuses ends the deployment naming file and workflow module")
+    @DisplayName("A DMN file the engine refuses ends the deployment naming file and workflow module, before any process calling its decisions is sent")
     void aRejectedDecisionNamesTheFile() {
         engine.answers("POST", "/v1/process-definitions", 201, "{\"processDefinitionKey\":11}");
         engine.answers("GET", "/v1/process-definitions/11", 200, """
@@ -232,11 +238,19 @@ class ZenBpmDeployingTest {
             final var failure = assertThrows(IllegalStateException.class, () -> deploymentService.deployResources(
                     "shop", context));
 
-            assertTrue(failure
-                    .getMessage()
-                    .startsWith(
-                            "ZenBPM refuses DMN file 'rating.dmn' of workflow module 'shop': POST /v1/dmn-resource-definitions was answered with status 400, BAD_REQUEST: no DMN."),
-                    failure.getMessage());
+            assertAll(
+                    () -> assertTrue(failure
+                            .getMessage()
+                            .startsWith(
+                                    "ZenBPM refuses DMN file 'rating.dmn' of workflow module 'shop': POST /v1/dmn-resource-definitions was answered with status 400, BAD_REQUEST: no DMN."),
+                            failure.getMessage()),
+                    () -> assertTrue(engine
+                            .requests()
+                            .stream()
+                            .noneMatch(request -> request
+                                    .path()
+                                    .startsWith("/v1/process-definitions")),
+                            engine.requests()::toString));
         }
     }
 
@@ -288,12 +302,22 @@ class ZenBpmDeployingTest {
         final ZenBpmDeploymentService deploymentService,
         final String bpmn
     ) {
+        return prepared(deploymentService, null, "order.bpmn", bpmn);
+    }
+
+    private static ZenBpmProcessingContext prepared(
+        final ZenBpmDeploymentService deploymentService,
+        final ZenBpmProcessingContext existingContext,
+        final String filename,
+        final String bpmn
+    ) {
         final var model = deploymentService
-                .readBpmn("shop", "order.bpmn", new ByteArrayInputStream(bpmn.getBytes(StandardCharsets.UTF_8)), true)
+                .readBpmn("shop", filename, new ByteArrayInputStream(bpmn.getBytes(StandardCharsets.UTF_8)), true)
                 .getFirst()
                 .getValue();
-        final var context = deploymentService.prepareBpmn("shop", null, "order.bpmn", model.bpmnProcessId(), model);
-        deploymentService.wireBpmn("shop", "order.bpmn", model.bpmnProcessId(), model, context);
+        final var context = deploymentService.prepareBpmn("shop", existingContext, filename, model.bpmnProcessId(),
+                model);
+        deploymentService.wireBpmn("shop", filename, model.bpmnProcessId(), model, context);
         return context;
     }
 

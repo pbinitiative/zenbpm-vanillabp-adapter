@@ -92,7 +92,10 @@ class ZenBpmDeploymentServiceIT {
     @Test
     @DisplayName("Under use-prefix the rewritten file deploys, and the engine holds it under the prefixed id as it was sent")
     void theFileRewrittenUnderUsePrefixDeploys() {
-        final var wiring = TestWiring.claiming("Orders");
+        // the send task names an empty task definition, so it is served elsewhere or refused
+        final var wiring = TestWiring
+                .claiming("Orders")
+                .servedElsewhere("Notify");
         final var deploymentService = deploymentService(NameClashAvoidance.USE_PREFIX, wiring);
         final var context = prepared(deploymentService, "scoping-it", "scoping.bpmn", "Orders");
         deploymentService.readDmn("scoping-it", context, "rating.dmn", new ByteArrayInputStream("""
@@ -143,6 +146,7 @@ class ZenBpmDeploymentServiceIT {
     void aTaskParameterReachesAJobInsideAMultiInstanceBody() {
         final var wiring = TestWiring
                 .claiming("Orders")
+                .servedElsewhere("Label")
                 .withTaskParameters("ship", "customerName")
                 .withExtensionTaskParameters("Ship", "trackingSystem");
         final var deploymentService = deploymentService(NameClashAvoidance.USE_PREFIX, wiring);
@@ -186,6 +190,30 @@ class ZenBpmDeploymentServiceIT {
                         () -> ship
                                 .inputVariables()
                                 .toString()));
+    }
+
+    @Test
+    @DisplayName("A process called on the same aggregate from inside a multi-instance body gets the aggregate id, which the engine does not hand into the body by itself")
+    void theAggregateIdReachesAProcessCalledFromInsideAMultiInstanceBody() {
+        final var wiring = TestWiring
+                .claiming("Shipping", "Tracking")
+                .sharingTheAggregateWith("Tracking");
+        final var deploymentService = deploymentService(NameClashAvoidance.USE_PREFIX, wiring);
+        final var context = prepared(deploymentService, "carry-it", "call-in-a-body.bpmn", "Shipping");
+        prepared(deploymentService, context, "carry-it", "called-in-a-body.bpmn", "Tracking");
+        deploymentService.deployResources("carry-it", context);
+
+        rest.createInstance(new CreateInstanceRequest("carry-it__Shipping", null, "order-2", Map.of(
+                "orderId", "order-2",
+                "parcels", List.of("p-1")), null));
+        final var track = activeJob("carry-it__Tracking__track");
+
+        assertEquals("order-2", track
+                .inputVariables()
+                .get("orderId"),
+                () -> track
+                        .inputVariables()
+                        .toString());
     }
 
     @Test
@@ -279,11 +307,22 @@ class ZenBpmDeploymentServiceIT {
         final String filename,
         final String bpmnProcessId
     ) {
+        return prepared(deploymentService, null, workflowModuleId, filename, bpmnProcessId);
+    }
+
+    private static ZenBpmProcessingContext prepared(
+        final ZenBpmDeploymentService deploymentService,
+        final ZenBpmProcessingContext existingContext,
+        final String workflowModuleId,
+        final String filename,
+        final String bpmnProcessId
+    ) {
         final var model = deploymentService
                 .readBpmn(workflowModuleId, filename, new ByteArrayInputStream(fixture(filename)), true)
                 .getFirst()
                 .getValue();
-        final var context = deploymentService.prepareBpmn(workflowModuleId, null, filename, bpmnProcessId, model);
+        final var context = deploymentService.prepareBpmn(workflowModuleId, existingContext, filename, bpmnProcessId,
+                model);
         deploymentService.wireBpmn(workflowModuleId, filename, bpmnProcessId, model, context);
         return context;
     }
