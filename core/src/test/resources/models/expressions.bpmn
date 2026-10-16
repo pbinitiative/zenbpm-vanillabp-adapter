@@ -1,0 +1,67 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL"
+    xmlns:zenbpm="http://zenbpm.pbinitiative.org/1.0" id="expressions" targetNamespace="http://bpmn.io/schema/bpmn">
+  <bpmn:message id="Message_Paid" name="paid">
+    <bpmn:extensionElements>
+      <zenbpm:subscription correlationKey="=orderId" />
+    </bpmn:extensionElements>
+  </bpmn:message>
+  <bpmn:message id="Message_Ordered" name="=ordered">
+    <bpmn:extensionElements>
+      <zenbpm:subscription correlationKey="=customerId" />
+    </bpmn:extensionElements>
+  </bpmn:message>
+  <bpmn:process id="Orders" isExecutable="true">
+    <bpmn:startEvent id="Ordered">
+      <bpmn:messageEventDefinition id="Ordered_Definition" messageRef="Message_Ordered" />
+    </bpmn:startEvent>
+    <bpmn:exclusiveGateway id="HowBig" />
+    <bpmn:sequenceFlow id="Flow_Big" sourceRef="HowBig" targetRef="Paid">
+      <bpmn:conditionExpression>= amount &gt; 100</bpmn:conditionExpression>
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="Flow_Literal" sourceRef="HowBig" targetRef="Paid">
+      <bpmn:conditionExpression>true</bpmn:conditionExpression>
+    </bpmn:sequenceFlow>
+    <bpmn:intermediateCatchEvent id="Paid">
+      <bpmn:messageEventDefinition id="Paid_Definition" messageRef="Message_Paid" />
+    </bpmn:intermediateCatchEvent>
+    <bpmn:intermediateCatchEvent id="Wait">
+      <bpmn:timerEventDefinition id="Wait_Definition">
+        <bpmn:timeDuration>=delay</bpmn:timeDuration>
+      </bpmn:timerEventDefinition>
+    </bpmn:intermediateCatchEvent>
+    <bpmn:subProcess id="EveryParcel">
+      <bpmn:multiInstanceLoopCharacteristics>
+        <bpmn:extensionElements>
+          <zenbpm:loopCharacteristics inputCollection="=parcels" inputElement="parcel"
+              outputCollection="weights" outputElement="=parcel.weight" />
+        </bpmn:extensionElements>
+        <bpmn:completionCondition>=done</bpmn:completionCondition>
+      </bpmn:multiInstanceLoopCharacteristics>
+      <bpmn:startEvent id="EveryParcel_Start" />
+      <bpmn:endEvent id="EveryParcel_End" />
+    </bpmn:subProcess>
+    <bpmn:serviceTask id="Charge" name="=label">
+      <bpmn:extensionElements>
+        <zenbpm:taskDefinition type="=dynamicType" retries="=maxAttempts" retryBackoff="=backoff" />
+        <zenbpm:ioMapping>
+          <zenbpm:input source="=customer.name" target="name" />
+          <zenbpm:input source="fixed" target="kind" />
+          <zenbpm:output source="=receipt" target="receipt" />
+        </zenbpm:ioMapping>
+      </bpmn:extensionElements>
+    </bpmn:serviceTask>
+    <bpmn:userTask id="Review">
+      <bpmn:extensionElements>
+        <zenbpm:assignmentDefinition assignee="=reviewer" candidateGroups="=groups" />
+      </bpmn:extensionElements>
+    </bpmn:userTask>
+    <bpmn:callActivity id="Invoice">
+      <bpmn:extensionElements>
+        <zenbpm:calledElement processId="=target" />
+        <zenbpm:in businessKey="=orderId" />
+      </bpmn:extensionElements>
+    </bpmn:callActivity>
+    <bpmn:endEvent id="Done" />
+  </bpmn:process>
+</bpmn:definitions>

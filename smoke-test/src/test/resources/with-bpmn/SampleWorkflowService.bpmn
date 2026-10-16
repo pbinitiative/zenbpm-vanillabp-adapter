@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" id="sample"
+    targetNamespace="http://bpmn.io/schema/bpmn">
+  <bpmn:process id="SampleWorkflowService" isExecutable="true">
+    <bpmn:startEvent id="Start">
+      <bpmn:outgoing>Flow</bpmn:outgoing>
+    </bpmn:startEvent>
+    <bpmn:endEvent id="Done">
+      <bpmn:incoming>Flow</bpmn:incoming>
+    </bpmn:endEvent>
+    <bpmn:sequenceFlow id="Flow" sourceRef="Start" targetRef="Done" />
+  </bpmn:process>
+</bpmn:definitions>

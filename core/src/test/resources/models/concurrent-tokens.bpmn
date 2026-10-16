@@ -1,0 +1,79 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL"
+    xmlns:zenbpm="http://zenbpm.pbinitiative.org/1.0" id="concurrentTokens" targetNamespace="http://bpmn.io/schema/bpmn">
+  <bpmn:message id="Message_Complaint" name="complaint" />
+  <bpmn:message id="Message_Cancelled" name="cancelled" />
+  <bpmn:process id="Orders" isExecutable="true">
+    <bpmn:startEvent id="Start" />
+    <bpmn:parallelGateway id="Fork" />
+    <bpmn:parallelGateway id="Join" />
+    <bpmn:inclusiveGateway id="Choose" />
+    <bpmn:inclusiveGateway id="OnlyOneWay" />
+    <bpmn:exclusiveGateway id="Either" />
+    <bpmn:serviceTask id="Charge">
+      <bpmn:extensionElements>
+        <zenbpm:taskDefinition type="charge" />
+      </bpmn:extensionElements>
+    </bpmn:serviceTask>
+    <bpmn:serviceTask id="Ship">
+      <bpmn:extensionElements>
+        <zenbpm:taskDefinition type="ship" />
+      </bpmn:extensionElements>
+    </bpmn:serviceTask>
+    <bpmn:boundaryEvent id="Reminder" attachedToRef="Charge" cancelActivity="false">
+      <bpmn:timerEventDefinition id="Reminder_Definition">
+        <bpmn:timeDuration>PT1H</bpmn:timeDuration>
+      </bpmn:timerEventDefinition>
+    </bpmn:boundaryEvent>
+    <bpmn:boundaryEvent id="Cancelled" attachedToRef="Charge">
+      <bpmn:messageEventDefinition id="Cancelled_Definition" messageRef="Message_Cancelled" />
+    </bpmn:boundaryEvent>
+    <bpmn:subProcess id="Complaints" triggeredByEvent="true">
+      <bpmn:startEvent id="Complaint" isInterrupting="false">
+        <bpmn:messageEventDefinition id="Complaint_Definition" messageRef="Message_Complaint" />
+      </bpmn:startEvent>
+      <bpmn:endEvent id="Complaint_End" />
+    </bpmn:subProcess>
+    <bpmn:subProcess id="Escalations" triggeredByEvent="true">
+      <bpmn:startEvent id="Escalation">
+        <bpmn:timerEventDefinition id="Escalation_Definition">
+          <bpmn:timeDuration>P1D</bpmn:timeDuration>
+        </bpmn:timerEventDefinition>
+      </bpmn:startEvent>
+      <bpmn:endEvent id="Escalation_End" />
+    </bpmn:subProcess>
+    <bpmn:serviceTask id="NotifyAll">
+      <bpmn:extensionElements>
+        <zenbpm:taskDefinition type="notify" />
+      </bpmn:extensionElements>
+      <bpmn:multiInstanceLoopCharacteristics>
+        <bpmn:extensionElements>
+          <zenbpm:loopCharacteristics inputCollection="=recipients" inputElement="recipient" />
+        </bpmn:extensionElements>
+      </bpmn:multiInstanceLoopCharacteristics>
+    </bpmn:serviceTask>
+    <bpmn:serviceTask id="NotifyOneByOne">
+      <bpmn:extensionElements>
+        <zenbpm:taskDefinition type="notify" />
+      </bpmn:extensionElements>
+      <bpmn:multiInstanceLoopCharacteristics isSequential="true">
+        <bpmn:extensionElements>
+          <zenbpm:loopCharacteristics inputCollection="=recipients" inputElement="recipient" />
+        </bpmn:extensionElements>
+      </bpmn:multiInstanceLoopCharacteristics>
+    </bpmn:serviceTask>
+    <bpmn:endEvent id="Done" />
+    <bpmn:sequenceFlow id="Flow_Start" sourceRef="Start" targetRef="Fork" />
+    <bpmn:sequenceFlow id="Flow_ForkCharge" sourceRef="Fork" targetRef="Charge" />
+    <bpmn:sequenceFlow id="Flow_ForkShip" sourceRef="Fork" targetRef="Ship" />
+    <bpmn:sequenceFlow id="Flow_ChargeJoin" sourceRef="Charge" targetRef="Join" />
+    <bpmn:sequenceFlow id="Flow_ShipJoin" sourceRef="Ship" targetRef="Join" />
+    <bpmn:sequenceFlow id="Flow_JoinChoose" sourceRef="Join" targetRef="Choose" />
+    <bpmn:sequenceFlow id="Flow_ChooseNotify" sourceRef="Choose" targetRef="NotifyAll" />
+    <bpmn:sequenceFlow id="Flow_ChooseOneByOne" sourceRef="Choose" targetRef="NotifyOneByOne" />
+    <bpmn:sequenceFlow id="Flow_NotifyOnly" sourceRef="NotifyAll" targetRef="OnlyOneWay" />
+    <bpmn:sequenceFlow id="Flow_OnlyEither" sourceRef="OnlyOneWay" targetRef="Either" />
+    <bpmn:sequenceFlow id="Flow_EitherDone" sourceRef="Either" targetRef="Done" />
+    <bpmn:sequenceFlow id="Flow_EitherOneByOne" sourceRef="Either" targetRef="NotifyOneByOne" />
+  </bpmn:process>
+</bpmn:definitions>

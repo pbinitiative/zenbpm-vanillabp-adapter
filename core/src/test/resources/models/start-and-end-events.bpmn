@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" id="startAndEnd"
+    targetNamespace="http://bpmn.io/schema/bpmn">
+  <bpmn:message id="Message_Ordered" name="ordered" />
+  <bpmn:message id="Message_Complaint" name="complaint" />
+  <bpmn:process id="Orders" isExecutable="true">
+    <bpmn:startEvent id="Plain" />
+    <bpmn:startEvent id="ByMessage">
+      <bpmn:messageEventDefinition id="ByMessage_Definition" messageRef="Message_Ordered" />
+    </bpmn:startEvent>
+    <bpmn:startEvent id="ByTimer">
+      <bpmn:timerEventDefinition id="ByTimer_Definition">
+        <bpmn:timeCycle>R/PT1H</bpmn:timeCycle>
+      </bpmn:timerEventDefinition>
+    </bpmn:startEvent>
+    <bpmn:startEvent id="BySignal">
+      <bpmn:signalEventDefinition id="BySignal_Definition" />
+    </bpmn:startEvent>
+    <bpmn:startEvent id="ByCondition">
+      <bpmn:conditionalEventDefinition id="ByCondition_Definition" />
+    </bpmn:startEvent>
+    <bpmn:subProcess id="Packing">
+      <bpmn:startEvent id="Packing_Start" />
+      <bpmn:endEvent id="Packing_End" />
+    </bpmn:subProcess>
+    <bpmn:subProcess id="Complaints" triggeredByEvent="true">
+      <bpmn:startEvent id="Complaint">
+        <bpmn:messageEventDefinition id="Complaint_Definition" messageRef="Message_Complaint" />
+      </bpmn:startEvent>
+      <bpmn:endEvent id="Complaint_End" />
+    </bpmn:subProcess>
+    <bpmn:endEvent id="Shipped" />
+    <bpmn:endEvent id="Rejected">
+      <bpmn:terminateEventDefinition id="Rejected_Definition" />
+    </bpmn:endEvent>
+  </bpmn:process>
+</bpmn:definitions>

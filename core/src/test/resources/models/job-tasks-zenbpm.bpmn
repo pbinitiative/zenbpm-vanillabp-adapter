@@ -1,0 +1,61 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL"
+    xmlns:zenbpm="http://zenbpm.pbinitiative.org/1.0" id="jobTasks" targetNamespace="http://bpmn.io/schema/bpmn">
+  <bpmn:message id="Message_Shipped" name="shipped" />
+  <bpmn:process id="Orders" name="Orders" isExecutable="true">
+    <bpmn:extensionElements>
+      <zenbpm:properties />
+    </bpmn:extensionElements>
+    <bpmn:startEvent id="Start" />
+    <bpmn:serviceTask id="Charge" name="Charge the card">
+      <bpmn:extensionElements>
+        <zenbpm:taskDefinition type="charge" />
+      </bpmn:extensionElements>
+    </bpmn:serviceTask>
+    <bpmn:serviceTask id="Unwired" name="Nobody serves me" />
+    <bpmn:sendTask id="Notify">
+      <bpmn:extensionElements>
+        <zenbpm:taskDefinition type="notify" />
+      </bpmn:extensionElements>
+    </bpmn:sendTask>
+    <bpmn:businessRuleTask id="Rate" name="Rate the customer">
+      <bpmn:extensionElements>
+        <zenbpm:taskDefinition type="rate" />
+      </bpmn:extensionElements>
+    </bpmn:businessRuleTask>
+    <bpmn:businessRuleTask id="Decide" name="The engine decides">
+      <bpmn:extensionElements>
+        <zenbpm:calledDecision decisionId="discount" resultVariable="discount" />
+      </bpmn:extensionElements>
+    </bpmn:businessRuleTask>
+    <bpmn:intermediateThrowEvent id="Announce" name="Announce">
+      <bpmn:extensionElements>
+        <zenbpm:taskDefinition type="announce" />
+      </bpmn:extensionElements>
+      <bpmn:messageEventDefinition id="Announce_Definition" messageRef="Message_Shipped" />
+    </bpmn:intermediateThrowEvent>
+    <bpmn:receiveTask id="AwaitShipping" name="Await shipping" messageRef="Message_Shipped" />
+    <bpmn:userTask id="Approve" name="Approve the order">
+      <bpmn:extensionElements>
+        <zenbpm:taskDefinition type="approve" />
+      </bpmn:extensionElements>
+    </bpmn:userTask>
+    <bpmn:userTask id="Review" />
+    <bpmn:subProcess id="Packing">
+      <bpmn:startEvent id="Packing_Start" />
+      <bpmn:serviceTask id="Pack" name="Pack">
+        <bpmn:extensionElements>
+          <zenbpm:taskDefinition type="pack" />
+        </bpmn:extensionElements>
+      </bpmn:serviceTask>
+      <bpmn:endEvent id="Packing_End" />
+    </bpmn:subProcess>
+    <bpmn:endEvent id="Shipped" name="Report the shipping">
+      <bpmn:extensionElements>
+        <zenbpm:taskDefinition type="report-shipping" />
+      </bpmn:extensionElements>
+      <bpmn:messageEventDefinition id="Shipped_Definition" messageRef="Message_Shipped" />
+    </bpmn:endEvent>
+    <bpmn:endEvent id="Done" />
+  </bpmn:process>
+</bpmn:definitions>

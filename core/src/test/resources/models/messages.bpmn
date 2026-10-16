@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL"
+    xmlns:zenbpm="http://zenbpm.pbinitiative.org/1.0" id="messages" targetNamespace="http://bpmn.io/schema/bpmn">
+  <bpmn:message id="Message_Ordered" name="ordered" />
+  <bpmn:message id="Message_Paid" name="paid" />
+  <bpmn:message id="Message_Cancelled" name="cancelled" />
+  <bpmn:message id="Message_Shipped" name="shipped" />
+  <bpmn:message id="Message_Complaint" name="complaint" />
+  <bpmn:message id="Message_Announced" name="announced" />
+  <bpmn:message id="Message_Expression" name="=orderType" />
+  <bpmn:process id="Orders" isExecutable="true">
+    <bpmn:startEvent id="Ordered">
+      <bpmn:messageEventDefinition id="Ordered_Definition" messageRef="Message_Ordered" />
+    </bpmn:startEvent>
+    <bpmn:startEvent id="OrderedByType">
+      <bpmn:messageEventDefinition id="OrderedByType_Definition" messageRef="Message_Expression" />
+    </bpmn:startEvent>
+    <bpmn:intermediateCatchEvent id="Paid">
+      <bpmn:messageEventDefinition id="Paid_Definition" messageRef="Message_Paid" />
+    </bpmn:intermediateCatchEvent>
+    <bpmn:receiveTask id="AwaitShipping" messageRef="Message_Shipped" />
+    <bpmn:receiveTask id="AwaitNothing" />
+    <bpmn:serviceTask id="Charge">
+      <bpmn:extensionElements>
+        <zenbpm:taskDefinition type="charge" />
+      </bpmn:extensionElements>
+    </bpmn:serviceTask>
+    <bpmn:boundaryEvent id="Cancelled" attachedToRef="Charge">
+      <bpmn:messageEventDefinition id="Cancelled_Definition" messageRef="Message_Cancelled" />
+    </bpmn:boundaryEvent>
+    <bpmn:subProcess id="Complaints" triggeredByEvent="true">
+      <bpmn:startEvent id="Complaint" isInterrupting="false">
+        <bpmn:messageEventDefinition id="Complaint_Definition" messageRef="Message_Complaint" />
+      </bpmn:startEvent>
+      <bpmn:endEvent id="Complaint_End" />
+    </bpmn:subProcess>
+    <bpmn:intermediateThrowEvent id="Announce">
+      <bpmn:extensionElements>
+        <zenbpm:taskDefinition type="announce" />
+      </bpmn:extensionElements>
+      <bpmn:messageEventDefinition id="Announce_Definition" messageRef="Message_Announced" />
+    </bpmn:intermediateThrowEvent>
+    <bpmn:endEvent id="Done" />
+  </bpmn:process>
+</bpmn:definitions>

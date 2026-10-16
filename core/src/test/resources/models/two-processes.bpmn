@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" id="twoProcesses"
+    targetNamespace="http://bpmn.io/schema/bpmn">
+  <bpmn:collaboration id="Collaboration">
+    <bpmn:participant id="Shop" processRef="Orders" />
+    <bpmn:participant id="Warehouse" processRef="Warehouse_Documentation" />
+  </bpmn:collaboration>
+  <bpmn:process id="Orders" isExecutable="true">
+    <bpmn:startEvent id="Start" />
+    <bpmn:endEvent id="Done" />
+  </bpmn:process>
+  <bpmn:process id="Warehouse_Documentation" isExecutable="false">
+    <bpmn:startEvent id="Warehouse_Start" />
+    <bpmn:endEvent id="Warehouse_Done" />
+  </bpmn:process>
+</bpmn:definitions>

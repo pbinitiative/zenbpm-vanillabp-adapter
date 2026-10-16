@@ -35,6 +35,10 @@ class ZenBpmStartupValidationBootTest {
 
     private static final String SCOPE = "zenbpm adapter 'zenbpm'";
 
+    // a workflow module with one BPMN file, the process of the sample workflow service. The file is
+    // named after the process, because the BPMS double takes the process id from the file name
+    private static final String WITH_BPMN = "classpath*:with-bpmn";
+
     @Test
     @DisplayName("An adapter id without an address boots with a warning naming the key, and a use of the adapter fails with the same words")
     void anUnconfiguredAdapterIdBootsWithAWarning(final CapturedOutput output) {
@@ -58,6 +62,43 @@ class ZenBpmStartupValidationBootTest {
                             "ZenBPM adapter 'zenbpm' is not configured: 'vanillabp.adapters.zenbpm.rest-address' is missing."),
                             message),
                     () -> assertEquals(message, use.getMessage()));
+        }
+    }
+
+    @Test
+    @DisplayName("An adapter id without an address and a workflow module with BPMN files end the start, naming the key")
+    void anUnconfiguredAdapterIdWithBpmnFilesEndsTheStart() {
+        final var failure = rootOf(assertThrows(Exception.class, () -> run("vanillabp.prioritized-adapters=zenbpm",
+                "vanillabp.adapters.zenbpm.resources-location="
+                        + WITH_BPMN)
+                .close()));
+
+        assertTrue(failure
+                .getMessage()
+                .startsWith(
+                        "ZenBPM adapter 'zenbpm' is not configured: 'vanillabp.adapters.zenbpm.rest-address' is missing."),
+                failure.getMessage());
+    }
+
+    @Test
+    @DisplayName("A degraded adapter id with BPMN files, nowhere first and with policy 'warn', lets the application boot on the adapter which is first")
+    void aDegradedAdapterIdWithBpmnFilesBootsOnTheFirstAdapter(final CapturedOutput output) {
+        try (var context = run("vanillabp.prioritized-adapters=dummy,zenbpm", "vanillabp.adapters.dummy.type=dummy",
+                "vanillabp.adapters.dummy.test=7", "vanillabp.adapters.dummy.resources-location="
+                        + WITH_BPMN,
+                "vanillabp.adapters.zenbpm.type=zenbpm", "vanillabp.adapters.zenbpm.deployment-failure=warn",
+                "vanillabp.adapters.zenbpm.rest-address=ftp://old-engine:8080",
+                "vanillabp.adapters.zenbpm.resources-location="
+                        + WITH_BPMN)) {
+            final var log = output.getAllOfThisTest();
+
+            final var failure = log.indexOf("Deployment of workflow module 'smoke-app' failed for adapter 'zenbpm'!");
+
+            assertAll(
+                    () -> assertTrue(context.isActive()),
+                    () -> assertTrue(failure >= 0, log),
+                    () -> assertTrue(log.indexOf("ZenBPM adapter 'zenbpm' is configured inconsistently:", failure) > 0,
+                            log));
         }
     }
 

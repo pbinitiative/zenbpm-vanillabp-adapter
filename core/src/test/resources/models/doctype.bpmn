@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE definitions [ <!ENTITY secret SYSTEM "file:///etc/passwd"> ]>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" id="doctype"
+    targetNamespace="http://bpmn.io/schema/bpmn">
+  <bpmn:process id="Orders" name="&secret;" isExecutable="true">
+    <bpmn:startEvent id="Start" />
+  </bpmn:process>
+</bpmn:definitions>

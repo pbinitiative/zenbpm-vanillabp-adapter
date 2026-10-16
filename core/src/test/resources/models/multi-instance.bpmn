@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL"
+    xmlns:zeebe="http://camunda.org/schema/zeebe/1.0" id="multiInstance" targetNamespace="http://bpmn.io/schema/bpmn">
+  <bpmn:process id="Orders" isExecutable="true">
+    <bpmn:startEvent id="Start" />
+    <bpmn:subProcess id="EveryParcel">
+      <bpmn:multiInstanceLoopCharacteristics>
+        <bpmn:extensionElements>
+          <zeebe:loopCharacteristics inputCollection="=parcels" inputElement="parcel" />
+        </bpmn:extensionElements>
+      </bpmn:multiInstanceLoopCharacteristics>
+      <bpmn:startEvent id="EveryParcel_Start" />
+      <bpmn:serviceTask id="LabelEveryItem">
+        <bpmn:extensionElements>
+          <zeebe:taskDefinition type="label" />
+        </bpmn:extensionElements>
+        <bpmn:multiInstanceLoopCharacteristics isSequential="true">
+          <bpmn:extensionElements>
+            <zeebe:loopCharacteristics inputCollection="=parcel.items" />
+          </bpmn:extensionElements>
+        </bpmn:multiInstanceLoopCharacteristics>
+      </bpmn:serviceTask>
+      <bpmn:endEvent id="EveryParcel_End" />
+    </bpmn:subProcess>
+    <bpmn:callActivity id="Invoice">
+      <bpmn:extensionElements>
+        <zeebe:calledElement processId="Invoicing" />
+      </bpmn:extensionElements>
+    </bpmn:callActivity>
+    <bpmn:callActivity id="Unnamed" />
+    <bpmn:endEvent id="Done" />
+  </bpmn:process>
+</bpmn:definitions>

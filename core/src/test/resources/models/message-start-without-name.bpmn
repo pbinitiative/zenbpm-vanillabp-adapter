@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" id="unnamed"
+    targetNamespace="http://bpmn.io/schema/bpmn">
+  <bpmn:message id="Message_Unnamed" />
+  <bpmn:process id="Orders" isExecutable="true">
+    <bpmn:startEvent id="WithoutReference">
+      <bpmn:messageEventDefinition id="WithoutReference_Definition" />
+    </bpmn:startEvent>
+    <bpmn:startEvent id="WithoutName">
+      <bpmn:messageEventDefinition id="WithoutName_Definition" messageRef="Message_Unnamed" />
+    </bpmn:startEvent>
+    <bpmn:startEvent id="ToNowhere">
+      <bpmn:messageEventDefinition id="ToNowhere_Definition" messageRef="Message_Missing" />
+    </bpmn:startEvent>
+    <bpmn:endEvent id="Done" />
+  </bpmn:process>
+</bpmn:definitions>
