@@ -10,6 +10,18 @@ later story")` (never a silent stub).
 guiding messages are asserted through `CapturedOutput`, in the block the platform's `StartupReport`
 writes at the end of the start.
 
+**E3 done 2026-10-16**, with S3.3.1 merged to `main` as `071b174` (pull request #28), the last of
+its stories. The criterion holds on Spring Boot as written: the smoke tests boot with zero, one and
+two adapter ids, and read the guiding messages through `CapturedOutput` in the block at the end of
+the start. On Quarkus it holds with two qualifications, both recorded under S3.2.1:
+- The extension tests boot with one and two ids, and with nothing configured at all, where the
+  platform derives the id `zenbpm`. An application which configures ids of another type only is
+  refused by the platform, and `ZenBpmWithoutAdapterIdsTest` asserts that refusal.
+- The tests read the same block from the log records `QuarkusExtensionTest` keeps, not through
+  `CapturedOutput`.
+
+See S3.1.1, S3.2.1 and S3.3.1 below for the runs on GitHub.
+
 Templates: `camunda8-adapter/spring-boot` (announcement, `BeanRegistrar`, overlay) and
 `camunda7-adapter/spring-boot` (`applicationBean` helper); `camunda8-adapter/quarkus` and
 `camunda7-adapter/quarkus` (`StartupObserver` for eager validation); the platform's dummy adapters.
@@ -675,6 +687,28 @@ After the fixes, `TZ=Etc/UTC mvn clean install` builds green with every integrat
 none skipped (core 471 unit and 34 integration tests, Spring Boot 8, smoke test 21, Quarkus runtime
 8, Quarkus deployment 32, coverage gate 33). The gate measures 100 % of 10,325 instructions for
 Spring Boot and 100 % of 10,210 for Quarkus, and `bin/check-deploy-safety.sh` passes both runs.
+
+**Done 2026-10-16**, merged to `main` as `071b174` (pull request #28, after two reviews and
+CodeRabbit's review, which had no comment). On that commit (GitHub keeps run logs for 90 days, so
+what they showed is written here as well):
+
+- `Checks`, run
+  [38901863842](https://github.com/pbinitiative/zenbpm-vanillabp-adapter/actions/runs/38901863842):
+  green on both JDKs. `bin/check-engine-copies.sh` reported both copies as the engine's files of
+  `bdd795a3...`. `ZenBpmInstanceIdentityTest` ran 8 tests, `ZenBpmDeploymentServiceTest` 9,
+  `ZenBpmAdapterConfigurationTest` 99, `ZenBpmDistinctInstancesBootTest` 2,
+  `ZenBpmOneEngineOneModeTest` 1 and `ZenBpmOneEngineTwoModesTest` 1, none skipped (core: 471 unit
+  tests and 34 integration tests; Spring Boot 8, smoke test 21, Quarkus runtime 8, Quarkus
+  deployment 32, coverage gate 33). The gate measured 100 % on both platforms: of 10,325
+  instructions for Spring Boot and 10,210 for Quarkus on JDK 25, of 10,319 and 10,204 on JDK 21.
+- `Publish snapshots`, run
+  [38901863970](https://github.com/pbinitiative/zenbpm-vanillabp-adapter/actions/runs/38901863970):
+  green, with the same test counts, none skipped. The core snapshot it published,
+  `2.0.0-20261016.123758-24`, contains `client/ZenBpmInstanceIdentity` (with `Instance`), the
+  deployment service with the constructor which takes the registry and with
+  `validateDistinctAdapterInstances`, and `hasValidRestAddress` on the configuration. No jar of
+  the build holds a test class. Both report pages answer HTTP 200 and show 0 of 10,325 (Spring
+  Boot) and 0 of 10,210 (Quarkus) instructions missed.
 
 Where the code differs from the instructions:
 
