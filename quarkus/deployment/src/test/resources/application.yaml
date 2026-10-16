@@ -1,0 +1,11 @@
+quarkus:
+  application:
+    name: quarkus-smoke-test
+  datasource:
+    db-kind: h2
+    jdbc:
+      url: jdbc:h2:mem:smoke;DB_CLOSE_DELAY=-1
+vanillabp:
+  outbox:
+    housekeeping:
+      zone: UTC

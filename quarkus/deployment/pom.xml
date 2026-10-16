@@ -26,10 +26,72 @@
       <artifactId>zenbpm-vanillabp-adapter-quarkus</artifactId>
       <version>${project.version}</version>
     </dependency>
+    <dependency>
+      <groupId>io.quarkus</groupId>
+      <artifactId>quarkus-junit-internal</artifactId>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
+      <groupId>io.quarkus</groupId>
+      <artifactId>quarkus-config-yaml</artifactId>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
+      <groupId>io.vanillabp</groupId>
+      <artifactId>test-utils</artifactId>
+      <scope>test</scope>
+    </dependency>
+    <!-- the platform's JDBC outbox and delivery log on an in-memory database, so the smoke
+         application starts as it starts in production -->
+    <dependency>
+      <groupId>io.quarkus</groupId>
+      <artifactId>quarkus-agroal</artifactId>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
+      <groupId>io.quarkus</groupId>
+      <artifactId>quarkus-jdbc-h2</artifactId>
+      <scope>test</scope>
+    </dependency>
+    <!-- a second adapter type, so an application can boot without any ZenBPM adapter id -->
+    <dependency>
+      <groupId>io.vanillabp</groupId>
+      <artifactId>bpms-double-quarkus</artifactId>
+      <version>${adapter-platform.version}</version>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
+      <groupId>io.vanillabp</groupId>
+      <artifactId>bpms-double-quarkus-deployment</artifactId>
+      <version>${adapter-platform.version}</version>
+      <scope>test</scope>
+    </dependency>
   </dependencies>
 
   <build>
     <plugins>
+      <plugin>
+        <artifactId>maven-surefire-plugin</artifactId>
+        <configuration>
+          <!-- the log manager Quarkus logs through, so a test reads the records of a boot -->
+          <systemPropertyVariables>
+            <java.util.logging.manager>org.jboss.logmanager.LogManager</java.util.logging.manager>
+          </systemPropertyVariables>
+        </configuration>
+      </plugin>
+      <plugin>
+        <artifactId>maven-javadoc-plugin</artifactId>
+        <configuration>
+          <!-- only what is written here: the Quarkus extension processor writes an accessor
+               class per build-step class into target/generated-sources, and nobody can put a
+               comment on a file the build creates -->
+          <sourcepath>${project.basedir}/src/main/java</sourcepath>
+          <!-- the build steps are package-private, because only Quarkus calls them, and the
+               module has no public class; javadoc refuses a module with nothing to show, so
+               it shows and checks the package-private classes -->
+          <show>package</show>
+        </configuration>
+      </plugin>
       <plugin>
         <artifactId>maven-compiler-plugin</artifactId>
         <executions>

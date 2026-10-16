@@ -693,8 +693,8 @@ public class ZenBpmAdapterConfiguration {
     }
 
     /**
-     * Checks every key of this adapter instance. Called once per adapter id at startup (Spring
-     * Boot) or build time (Quarkus), before anything contacts the engine.
+     * Checks every key of this adapter instance. Called once per adapter id while the application
+     * starts, on both platforms, before anything contacts the engine.
      * <p>
      * Only a defect in how the engine is reached (<code>rest-address</code>,
      * <code>grpc-address</code>, <code>client-id</code>) may let the application boot degraded,

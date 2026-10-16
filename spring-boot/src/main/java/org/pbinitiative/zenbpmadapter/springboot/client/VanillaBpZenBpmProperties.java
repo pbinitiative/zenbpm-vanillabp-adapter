@@ -35,7 +35,9 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
  * <code>vanillabp.adapters.&lt;id&gt;.</code> changes nothing and fails nothing: a misspelt
  * <code>rest-adress</code> leaves the adapter id unconfigured, and the start warns about the
  * missing <code>rest-address</code>. That is the difference to Quarkus, where every key under
- * <code>vanillabp.</code> is modelled and an unknown one fails the start.
+ * <code>vanillabp.</code> is modelled and an unknown one fails the start, as long as no extension
+ * of the application declares a build-time configuration root under <code>vanillabp</code>; the
+ * Camunda 8 adapter declares one.
  * <p>
  * The adapter ids are NEVER taken from this overlay's maps. They come from the platform's core
  * properties, and the overlay is only asked about an id the core knows: an environment variable can

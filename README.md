@@ -18,12 +18,16 @@ documented in the [VanillaBP wiki](https://github.com/vanillabp/adapter-platform
 
 ## Status
 
-**Under construction.** On Spring Boot the adapter registers one process service and one deployment
-service per adapter id of type `zenbpm`, validates the configuration of each id while the
-application starts and answers the platform's health check; the smoke tests in `smoke-test` boot it
-with no, one and two adapter ids. It deploys nothing and runs no task yet: every step which needs
-the engine throws an exception which says that it is not built yet. Quarkus has nothing yet. What is
-built next, and in which order, is the implementation plan in [`docs/`](docs/README.md).
+**Under construction.** On Spring Boot and on Quarkus the adapter registers one process service and
+one deployment service per adapter id of type `zenbpm`, validates the configuration of each id
+while the application starts and answers the platform's health check. The smoke tests in
+`smoke-test` boot it on Spring Boot with no, one and two adapter ids, the extension tests in
+`quarkus/deployment` on Quarkus with one and two, and with none configured at all, where the
+platform derives the id `zenbpm`. An application on Quarkus which configures adapter ids of another
+type only is refused by the platform, which asks for an id of every adapter type on the classpath.
+The adapter deploys nothing and runs no task yet: every step which needs the engine throws an
+exception which says that it is not built yet. What is built next, and in which order, is the
+implementation plan in [`docs/`](docs/README.md).
 
 ## Modules
 

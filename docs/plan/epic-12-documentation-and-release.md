@@ -39,8 +39,20 @@ testing), the decision log pointer, known deviations with the `GAPS.md` numbers 
 for a misspelt key under `vanillabp.adapters.<id>.`: Spring Boot ignores it, so the adapter id
 stays unconfigured and the start warns about the key it misses
 (`ZenBpmStartupValidationBootTest#aMisspeltKeyIsIgnored`); Quarkus fails the start naming it
-(S3.2.1's `ZenBpmUnknownKeyTest`). Until the page exists, the javadoc of
-`VanillaBpZenBpmProperties` says it.
+(S3.2.1's `ZenBpmUnknownKeyTest`), unless another extension of the application declares a
+build-time configuration root under `vanillabp`, as the Camunda 8 adapter does: then Quarkus too
+ignores the key, warning only that it does, and the start warns about the key the adapter misses
+(found in the reviews of S3.2.1 with a scratch boot beside Camunda 8's extension). The page says
+so, because an application moved from Camunda 8 to ZenBPM has both extensions while it migrates.
+Until the page exists, the javadoc of `VanillaBpZenBpmProperties` says it.
+
+*Note from S3.2.1, 2026-10-16.* Two more differences of the platform belong on the same page. On
+Quarkus an application whose classpath holds the adapter but which configures adapter ids of
+another type only does not start: the platform wants an id of every adapter extension on the
+classpath and names `vanillabp.adapters.*.type=zenbpm` (`ZenBpmWithoutAdapterIdsTest`); Spring Boot
+starts it, and the adapter has nothing. And on Quarkus every configured id has to be listed in
+`vanillabp.prioritized-adapters`. An application which configures nothing starts on both platforms
+with the derived id `zenbpm`.
 
 **Acceptance criteria**: every claim names its test; a reviewer following the wiki alone boots an
 application against a fresh engine container.

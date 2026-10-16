@@ -188,6 +188,7 @@ class ZenBpmStartupValidationBootTest {
                     () -> assertTrue(factory
                             .clientId()
                             .startsWith("smoke-test-zenbpm-"), factory.clientId()),
+                    () -> assertTrue(StartupBlock.isWritten(log), log),
                     () -> assertEquals("", StartupBlock.configuration(log), log),
                     () -> assertFalse(log.contains(SCOPE), log),
                     () -> assertEquals(

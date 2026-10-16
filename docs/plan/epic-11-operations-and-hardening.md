@@ -85,6 +85,16 @@ native-image resource. `ZenBpmNativeImageIT` runs deploy,
 start, task, message against the container from the native executable. Runs in CI on a schedule
 (nightly) like Camunda 8's line matrix, not per pull request.
 
+*Note from S3.2.1, 2026-10-16.* `ZenBpmNativeImageProcessor` exists: it indexes the core
+(`IndexDependencyBuildItem`) and opens every class of the generated package
+`org.pbinitiative.zenbpmadapter.client.grpc` to reflection with constructors, methods and fields
+(`ZenBpmNativeImageProcessorTest`, against an index of the core, no native build). Nothing else is
+registered yet: the gRPC providers the channel looks up through the `ServiceLoader`, the run-time
+initialization Netty and protobuf need (Camunda 8's `Camunda8NativeImageProcessor` lists both), and
+the Jackson records. `ProtobufRuntimeCheck` reads `META-INF/vanillabp/adapter-zenbpm.properties` with
+`ResourceBundle.getBundle`, which a native image may want registered as a bundle and not only as a
+resource; the job stream runs the check when it is built, so the native flow shows it.
+
 **Acceptance criteria**: the native build succeeds and the flow runs; the wiki page "Native images"
 says what is needed.
 
