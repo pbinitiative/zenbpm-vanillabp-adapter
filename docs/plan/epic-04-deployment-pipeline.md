@@ -432,7 +432,7 @@ keeps run logs for 90 days, so what they showed is written here as well):
 
 ### S4.2.1 Scoping and the name-clash modes
 
-- [ ] **Depends on:** S4.1.1.
+- [x] **Depends on:** S4.1.1.
 
 **Instructions**
 
@@ -481,10 +481,68 @@ the module level, and once with `false` on the module overriding `true` on the a
 **Acceptance criteria**
 
 - [ ] The rewritten XML deploys to the container (asserted in S4.3.2's IT under `use-prefix`).
-- [ ] Nothing configured -> the boot ends with the core's message naming `use-prefix`, `none` and
+  Open until batch 3: nothing is deployed before S4.3.2. What holds today is the rewrite itself,
+  `ZenBpmScopingTest#usePrefixScopesWhatTheEngineResolvesAcrossFiles`, which compares the whole
+  rewritten `models/scoping.bpmn` with the file prefixed by hand.
+- [x] Nothing configured -> the boot ends with the core's message naming `use-prefix`, `none` and
   the key, because `by-adapter` is the default and ZenBPM cannot serve it.
-- [ ] `accept-unscoped-identifiers: true` turns the `none` warning into a DEBUG line naming the key;
+  `ZenBpmStartupValidationBootTest#nothingConfiguredEndsTheStartNamingBothWaysOut` (Spring Boot)
+  and `ZenBpmByAdapterRefusedTest` (Quarkus) boot a module with a BPMN file and compare the whole
+  message of the platform, "(nothing is configured, so the default applies)" included;
+  `#byAdapterConfiguredEndsTheStartNamingBothWaysOut` does the same with `by-adapter` written.
+  `ZenBpmDeploymentServiceTest#byAdapterIsRefused` holds the order (constructs first, then the
+  mode, the file not rewritten), `#byAdapterOfAWorkflowIsRefused` the workflow's key.
+- [x] `accept-unscoped-identifiers: true` turns the `none` warning into a DEBUG line naming the key;
   the module level wins over the adapter level.
+  `ZenBpmDeploymentServiceTest#acceptedUnscopedIdentifiersAreNotWarnedAbout`: the adapter's key,
+  the module's key, `false` on the module over `true` on the adapter (a WARN) and nothing set (a
+  WARN); `#noneWarnsNamingTheAlternatives` holds the WARN, and
+  `ZenBpmStartupValidationBootTest#noneIsWarnedAboutWhileTheModuleIsPrepared` shows the platform
+  calling it while a module is prepared. Both platforms bind the key at both levels
+  (`VanillaBpZenBpmPropertiesTest#acceptUnscopedIdentifiersOfAWorkflowModuleWins` in `spring-boot`
+  and `quarkus/runtime`), and a booted Quarkus application accepts and resolves it
+  (`ZenBpmOverlayResolutionTest#acceptUnscopedIdentifiersThroughItsTwoLevels`).
+
+**Implemented 2026-10-16.** Core: `model.ZenBpmScoping.apply(document, module, process, scoping,
+adapterId)` rewrites the identifiers listed in the fit check through the platform's scoping, the
+pool and the diagram pointing at the process included; `ZenBpmDeploymentService.prepareBpmn`
+refuses constructs (once per file), then `by-adapter` for the module and for the workflow, then
+scopes the file (once per file) and records the process; `readDmn` keeps each DMN file in the
+context, its decision ids scoped under `use-prefix` (a file which is no DMN then ends the start
+naming file and module); `deployResources` hands the module's processes to
+`validateNoCollidingProcessIds` and throws as before; `defaultNameClashAvoidance` answers
+`by-adapter` (decision 24); `warnAboutUnscopedIdentifiers` names ZenBPM's alternatives or writes the
+DEBUG line. `ZenBpmAdapterConfiguration` has `accept-unscoped-identifiers` at the adapter and the
+module level, and both platform overlays bind them. `ZenBpmInstanceIdentity` names the modes ZenBPM
+serves for a group which shares `by-adapter` (the note of S3.3.1;
+`ZenBpmInstanceIdentityTest#oneEngineWithTheDefaultModeNamesTheModesZenBpmServes`). Decision 24 is in
+`DECISIONS.md`, GAPS 11 is no longer *planned*, and the README says what is built. Tests:
+`ZenBpmScopingTest` (5) with the fixture `models/scoping.bpmn`, 12 new cases in
+`ZenBpmDeploymentServiceTest` (now 25; `TestScoping` is the platform's scoping for tests), 3 new
+boot tests in `ZenBpmStartupValidationBootTest` (now 13) and `ZenBpmByAdapterRefusedTest` on
+Quarkus; the boot tests of the S4.1.1 decision set `use-prefix` now. `TZ=Etc/UTC mvn clean install`
+on OpenJDK 25.0.2 builds green with every integration test run and none skipped (core 564 unit and
+34 integration tests, Spring Boot 9, smoke test 28, Quarkus runtime 9, Quarkus deployment 38,
+coverage gate 35). The gate measures 100 % of 13,945 instructions for Spring Boot and 100 % of
+13,819 for Quarkus, and `bin/check-deploy-safety.sh` passes both runs. The first full build
+measured 99.99 %: a pool of another process was never read; `ZenBpmScopingTest` has one now.
+
+Seen to fail, each restored afterwards (17 of 17 mutants), against a green unmutated run. Each
+fails `ZenBpmDeploymentServiceTest` unless named otherwise:
+- a file scoped for each of its processes (`#preparingScopesAFileOnce`);
+- `by-adapter` of the module not refused, or refused before the constructs (`#byAdapterIsRefused`);
+- `by-adapter` of a workflow not refused (`#byAdapterOfAWorkflowIsRefused`);
+- an empty value scoped, the references to the process not followed, extensions searched outside
+  `extensionElements`, a `zeebe:` task definition not scoped: each fails `ZenBpmScopingTest`;
+- the adapter's `accept-unscoped-identifiers` winning over the module's, and an accepted `none`
+  warned about (`#acceptedUnscopedIdentifiersAreNotWarnedAbout`);
+- a DMN file rewritten under every mode, and a file which is no DMN not named;
+- the module's processes not handed to the collision check;
+- a group sharing `by-adapter` told to give each id its own mode: fails `ZenBpmInstanceIdentityTest`;
+- the module's `accept-unscoped-identifiers` not handed on: fails `VanillaBpZenBpmPropertiesTest` on
+  Spring Boot, and on Quarkus;
+- `prepareBpmn` without the platform's check, installed and booted: fails both cases of
+  `ZenBpmStartupValidationBootTest` and `ZenBpmByAdapterRefusedTest`.
 
 *Note from S3.3.1, 2026-10-16.* `ZenBpmInstanceIdentity` (S3.3.1) refuses two ids on one
 `rest-address` with the same mode before anything is deployed, so before the refusal of
@@ -496,6 +554,51 @@ story refuses `by-adapter`, the message of a `by-adapter` group says that ZenBPM
 `use-prefix` and `none`, so each of the ids needs one of them (one more case in
 `ZenBpmInstanceIdentityTest`). Not before: until then the message would promise a refusal which
 does not exist.
+
+*Fit check, 2026-10-16, decided by the Implementor.* The story was checked against `main`
+(`4d18277`), `ADAPTER-AUTHORS.md` sections 2.1 and 3.2, the platform's `NameClashAvoidanceService`
+(the source of the snapshot `2.0.0-20261015.045823-21` the build resolves), Camunda 8's
+`Camunda8Scoping` and `readDmn`, PEA's `PeaScoping` and the engine at `bdd795a3`. The SPI has
+every call instruction 1 to 5 names, and `validateNativeIsolationSupported` ends the start with a
+message naming `use-prefix`, `none`, `vanillabp.adapters.<id>.name-clash-avoidance` and the
+module's key. The engine reads `taskDefinition`, `calledElement`, `calledDecision` and
+`subscription` as children of `extensionElements` in any namespace and takes an empty attribute
+as none, so the scoping does the same: it rewrites only a value which is there, and a user task
+without a task definition keeps the engine's default `user-task-type` unscoped (decision 12 lists
+user tasks by process, not by type). Signals are refused by S4.1.2 and not rewritten. Five things
+did not fit or were left open:
+
+1. **A mode per workflow.** The core resolves `validateNativeIsolationSupported` for the MODULE,
+   while `scopedProcessId` and `scopedTaskDefinition` resolve the mode per workflow
+   (`vanillabp.workflow-modules.<module>.workflows.<process>.adapters.<id>.name-clash-avoidance`).
+   A workflow set to `by-adapter` in a module of `use-prefix` passes the core's check and would be
+   deployed with plain identifiers, isolated by nothing. Options: accept it, or refuse it in
+   `prepareBpmn`. Decided: refused, with a message naming that key and the two ways out, because
+   the mode promises an isolation ZenBPM does not have.
+2. **Which message comes first.** `prepareBpmn` refuses constructs (S4.1.2) and now the mode. The
+   decision of S4.1.1 is that the checks of reading speak before the configuration, so the
+   constructs are refused first, then the mode, then the file is rewritten. The boot tests of that
+   decision (an unconfigured and a degraded adapter id with BPMN files, both platforms) set
+   `name-clash-avoidance: use-prefix` now, so they still end at the first step which needs the
+   engine; a new boot test per platform holds criterion 2 with nothing configured.
+3. **Instruction 4 lands before `deployResources` does.** The collision check needs no engine, so
+   `deployResources` makes it now, with the plain process ids the context remembered, and then
+   throws as before (for an adapter id without clients, the message of its validation). S4.3.2 keeps
+   it as its step 2.
+4. **`accept-unscoped-identifiers` below the adapter level.** The overlay of E3 knows no
+   module-level key of its own: `retry-backoff`, `max-redeliveries` and `history-time-to-live` are
+   shared by module and workflow. The key is added at the adapter level and at the module level
+   only, on both platforms; a workflow level would mean nothing, because the core reports `none`
+   once per module. `ZenBpmAdapterConfiguration` resolves it (the module wins), and the DEBUG line
+   names the key which decided.
+5. **`fromDefault` of `warnAboutUnscopedIdentifiers`** is never true here: the default is
+   `by-adapter`, which is refused before the core could report `none` as a default. The message
+   does not use it.
+
+Decision 24 says "supersedes decision 2", but decision 2 is a draft which never entered
+`DECISIONS.md`; the entry says that in its own words. It also promises a sentence on the first page
+of the wiki, which holds a placeholder only, so the entry says the user documentation will carry it
+once it is written. `GAPS.md` row 11 loses its *planned*.
 
 ### S4.2.2 Correlation keys and the start/catch collision
 

@@ -31,7 +31,9 @@ import io.vanillabp.integration.adapter.spi.NameClashAvoidanceSupport;
  * </ul>
  * Two ids with the same engine and the same mode reach it with the same identifiers. They would
  * deploy the same processes and work the same jobs, so configuring them as two adapters is an
- * error.
+ * error. Where they share <code>by-adapter</code>, the default where no mode is configured, the
+ * message says that ZenBPM serves only <code>use-prefix</code> and <code>none</code>, because the
+ * deployment refuses <code>by-adapter</code> (see decision 24 in the repository's DECISIONS.md).
  * <p>
  * An adapter id without a valid <code>rest-address</code> names no engine. It is not compared: its
  * start already reported the key it misses, and it refuses all work until the key is set. An id
@@ -92,6 +94,20 @@ public final class ZenBpmInstanceIdentity {
         final List<String> adapterIds
     ) {
         final var mode = asConfigured(instance.mode());
+        if (instance.mode() == NameClashAvoidance.BY_ADAPTER) {
+            // ZenBPM refuses this mode while deploying, so giving each id "its own mode" would
+            // lead an operator into that refusal for the id left on the default
+            return """
+                    ZenBPM adapter ids %s address the same engine, '%s', with the same name-clash-avoidance \
+                    '%s', the default where none is configured. ZenBPM has no isolation of its own and serves \
+                    only 'use-prefix' and 'none', so each of these ids needs one of them, and two ids on one \
+                    engine need different ones. Tell them apart:
+                      - for two engines, give each id its own address: %s;
+                      - for one engine on purpose, as in a migration from 'none' to 'use-prefix', set \
+                    'use-prefix' on one id and 'none' on the other: %s;
+                      - or remove all but one of these adapter ids.""".formatted(listed(adapterIds), instance
+                    .engine(), mode, keys(adapterIds, "rest-address"), keys(adapterIds, "name-clash-avoidance"));
+        }
         return """
                 ZenBPM adapter ids %s address the same engine, '%s', with the same name-clash-avoidance \
                 '%s', so they reach it with the same identifiers: they would deploy the same processes and \

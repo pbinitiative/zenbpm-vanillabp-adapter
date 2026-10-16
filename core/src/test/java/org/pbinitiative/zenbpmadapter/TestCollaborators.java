@@ -63,7 +63,15 @@ public final class TestCollaborators {
         return of(adapterId, unused(NameClashAvoidanceSupport.class), workflowTaskWiring);
     }
 
-    private static AdapterCollaborators of(
+    /**
+     * A complete set of collaborators, of which only the scoping and the wiring may be called.
+     *
+     * @param adapterId The adapter id they are handed to
+     * @param scoping The platform's name-clash scoping, as the test wants it to answer
+     * @param workflowTaskWiring The platform's wiring, as the test wants it to answer
+     * @return The collaborators
+     */
+    public static AdapterCollaborators of(
         final String adapterId,
         final NameClashAvoidanceSupport scoping,
         final WorkflowTaskWiring workflowTaskWiring

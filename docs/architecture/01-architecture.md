@@ -110,9 +110,13 @@ declared on the root once.
 `prepareBpmn` rewrites the document ONCE per file (the context remembers the filename) and every
 rewrite is idempotent and never overwrites what the modeller wrote (draft decision 4):
 
-1. **Scoping** (`ZenBpmScoping`, from `PeaScoping`): under `use-prefix` rewrite `process@id`,
-   `message@name`, `error@errorCode`, `escalation@escalationCode`, `taskDefinition@type` (scoped per
-   process by default), `calledElement@processId`, `calledDecision@decisionId`; unchanged in `none`.
+1. **Scoping** (`ZenBpmScoping`, from `PeaScoping`): under `use-prefix` rewrite `process@id` (and
+   the `participant@processRef` and `BPMNPlane@bpmnElement` pointing at it), `message@name`,
+   `error@errorCode`, `escalation@escalationCode`, `taskDefinition@type` (scoped per process by
+   default), `calledElement@processId`, `calledDecision@decisionId`; unchanged in `none`. Before it,
+   `by-adapter` is refused for the module (the platform's `validateNativeIsolationSupported`) and for
+   a workflow which sets it (decision 24); `readDmn` scopes the decision ids of a DMN file the same
+   way.
 2. **Correlation keys**: every `bpmn:message` used by a catch element, boundary event or receive
    task without `zenbpm:subscription` gets `correlationKey="=<aggregate-id variable>"`. A message
    used ONLY by a start event gets none. A message a start event AND a catch element share is

@@ -59,6 +59,29 @@ class ZenBpmInstanceIdentityTest {
     }
 
     @Test
+    @DisplayName("Two adapter ids on one engine without a mode share the default 'by-adapter', and the message says that ZenBPM serves only 'use-prefix' and 'none', so each id needs one of them")
+    void oneEngineWithTheDefaultModeNamesTheModesZenBpmServes() {
+        try (var registry = registryOf(configured("new", "http://zenbpm:8080"), configured("old",
+                "http://zenbpm:8080"))) {
+            final var failure = assertThrows(IllegalStateException.class, () -> ZenBpmInstanceIdentity
+                    .validateDistinct(List.of("new", "old"), registry, modes(Map.of("new",
+                            NameClashAvoidance.BY_ADAPTER, "old", NameClashAvoidance.BY_ADAPTER))));
+
+            assertEquals("""
+                    ZenBPM adapter ids 'new' and 'old' address the same engine, 'http://zenbpm:8080/v1', with the \
+                    same name-clash-avoidance 'by-adapter', the default where none is configured. ZenBPM has no \
+                    isolation of its own and serves only 'use-prefix' and 'none', so each of these ids needs one of \
+                    them, and two ids on one engine need different ones. Tell them apart:
+                      - for two engines, give each id its own address: 'vanillabp.adapters.new.rest-address', \
+                    'vanillabp.adapters.old.rest-address';
+                      - for one engine on purpose, as in a migration from 'none' to 'use-prefix', set 'use-prefix' \
+                    on one id and 'none' on the other: 'vanillabp.adapters.new.name-clash-avoidance', \
+                    'vanillabp.adapters.old.name-clash-avoidance';
+                      - or remove all but one of these adapter ids.""", failure.getMessage());
+        }
+    }
+
+    @Test
     @DisplayName("One engine is one engine however its address is spelled")
     void theAddressIsComparedNormalised() {
         try (var registry = registryOf(configured("new", "http://ZenBPM:8080/"), configured("old",

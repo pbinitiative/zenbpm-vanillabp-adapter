@@ -4,7 +4,12 @@
  */
 package org.pbinitiative.zenbpmadapter;
 
+import java.util.Collections;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
+import java.util.List;
+import java.util.Map;
 import java.util.Set;
 
 /**
@@ -12,8 +17,9 @@ import java.util.Set;
  * BPMN file to the start of its workflow processing. It names the type the platform and the
  * extensions match the pipeline by.
  * <p>
- * The adapter SPI prepares every process of a file, and all processes of a file share one model,
- * so what is done to a file is done once: the context remembers the files it prepared. This
+ * It holds the files it prepared, the processes of the workflow module and its DMN files as they
+ * are deployed. The adapter SPI prepares every process of a file, and all processes of a file share
+ * one model, so what is done to a file is done once: the context remembers the files it prepared. This
  * adapter reads one process per file, because the engine deploys no more, so today every file is
  * prepared once anyway; the guard keeps the SPI's contract should that ever change.
  * <p>
@@ -26,6 +32,10 @@ public final class ZenBpmProcessingContext {
     private final String workflowModuleId;
 
     private final Set<String> preparedFiles = new HashSet<>();
+
+    private final Set<String> processes = new LinkedHashSet<>();
+
+    private final Map<String, byte[]> decisions = new LinkedHashMap<>();
 
     /**
      * The context of one workflow module, built for its first BPMN process.
@@ -53,6 +63,46 @@ public final class ZenBpmProcessingContext {
      */
     public boolean firstPreparationOf(final String filename) {
         return preparedFiles.add(filename);
+    }
+
+    /**
+     * Remembers a process of the workflow module, by its plain id.
+     *
+     * @param bpmnProcessId The id of the process as the modeller wrote it
+     */
+    public void recordProcess(final String bpmnProcessId) {
+        processes.add(bpmnProcessId);
+    }
+
+    /**
+     * The processes of the workflow module, by their plain ids, in the order they were prepared.
+     *
+     * @return The ids, each once
+     */
+    public List<String> processes() {
+        return List.copyOf(processes);
+    }
+
+    /**
+     * Keeps a DMN file of the workflow module as it is deployed.
+     *
+     * @param filename The name of the file
+     * @param dmn The content of the file, with its decision ids scoped where the mode asks for it
+     */
+    public void addDecisions(
+        final String filename,
+        final byte[] dmn
+    ) {
+        decisions.put(filename, dmn);
+    }
+
+    /**
+     * The DMN files of the workflow module as they are deployed, in the order they were read.
+     *
+     * @return The content of each file, by its name
+     */
+    public Map<String, byte[]> decisions() {
+        return Collections.unmodifiableMap(decisions);
     }
 
 }

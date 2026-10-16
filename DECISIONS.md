@@ -244,6 +244,26 @@ number of parameters, so it still wraps every list. A `replaceRegex` step of Spo
 POM then joins a list of one parameter back onto its declaration, even where that line grows longer
 than the 120 columns the formatter aims at.
 
+### 24. `by-adapter` stays the default and is refused while deploying
+
+VanillaBP's contract for adapters says what a BPMS without an isolation of its own does about the
+default mode of name-clash avoidance: it keeps `by-adapter` and refuses it while deploying, with
+`scoping.validateNativeIsolationSupported(...)`, whose message names `use-prefix` and `none` as the
+two ways out. ZenBPM has no tenant and no namespace, so that is its case, and the
+Process-Engine-API adapter does the same. Making `use-prefix` the default instead would let an
+application which moves to ZenBPM from another adapter end up with prefixed identifiers without
+anybody choosing them. The price is one line per adapter id, for example
+`vanillabp.adapters.zenbpm.name-clash-avoidance: use-prefix`, which may also be set per workflow
+module or workflow. The message which ends the start names that line, and the user documentation
+says so on the first page an application reads, once it is written.
+
+A mode set for one workflow is refused as well where it is `by-adapter`, because the platform's
+check reads the mode of the workflow module, and the workflow would otherwise be deployed with
+plain identifiers which nothing isolates.
+
+The plan drafted this decision the other way round, as decision 2 with `use-prefix` as the default.
+That draft was superseded by this entry before any code relied on it, so it never entered this log.
+
 ### 29. A BPMN file carries its diagram
 
 The owners of this repository chose this for every BPMN file in it, test fixtures included. A BPMN

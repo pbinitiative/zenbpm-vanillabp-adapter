@@ -13,6 +13,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Optional;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.function.Supplier;
 import java.util.stream.Collectors;
@@ -62,9 +63,14 @@ import java.util.stream.Collectors;
  * facts</li>
  * <li><code>message-start-lookup</code> (default <code>refuse</code>) - <code>scan</code>
  * allows the bounded lookup of workflows a message started</li>
+ * <li><code>accept-unscoped-identifiers</code> (default <code>false</code>) - <code>true</code>
+ * says that the identifiers of the workflow modules are unique, so the warning about
+ * <code>name-clash-avoidance: none</code> becomes a DEBUG line</li>
  * </ul>
  * <code>retry-backoff</code> and <code>max-redeliveries</code> may also be set per workflow
- * module, workflow or task, <code>history-time-to-live</code> per workflow module or workflow.
+ * module, workflow or task, <code>history-time-to-live</code> per workflow module or workflow, and
+ * <code>accept-unscoped-identifiers</code> per workflow module, which
+ * {@link #setAcceptUnscopedIdentifiers(String, Boolean)} hands in.
  * This class holds their values at the adapter level. A value set at a lower level is handed in
  * through {@link #addScopedValue(String, Duration)} or {@link #addScopedValue(String, Integer)},
  * so the validation checks it at startup like the adapter's own; which level wins for a task is
@@ -300,6 +306,14 @@ public class ZenBpmAdapterConfiguration {
     private int instanceCacheMaxEntries = DEFAULT_INSTANCE_CACHE_MAX_ENTRIES;
 
     private MessageStartLookup messageStartLookup = MessageStartLookup.REFUSE;
+
+    private boolean acceptUnscopedIdentifiers;
+
+    /**
+     * <code>accept-unscoped-identifiers</code> of the workflow modules which set it, by workflow
+     * module id.
+     */
+    private final Map<String, Boolean> acceptUnscopedIdentifiersOfModules = new LinkedHashMap<>();
 
     /**
      * The durations set below the adapter level, keyed by their full property key, in the order
@@ -651,6 +665,66 @@ public class ZenBpmAdapterConfiguration {
      */
     public void setMessageStartLookup(final MessageStartLookup messageStartLookup) {
         this.messageStartLookup = messageStartLookup == null ? MessageStartLookup.REFUSE : messageStartLookup;
+    }
+
+    /**
+     * Whether the application says that the identifiers of its workflow modules are unique, at the
+     * adapter level.
+     *
+     * @return The value of the adapter level, <code>false</code> where it is not set
+     */
+    public boolean isAcceptUnscopedIdentifiers() {
+        return acceptUnscopedIdentifiers;
+    }
+
+    /**
+     * Whether the application says that the identifiers of its workflow modules are unique, at the
+     * adapter level.
+     *
+     * @param acceptUnscopedIdentifiers The value, or <code>null</code> for the default
+     */
+    public void setAcceptUnscopedIdentifiers(final Boolean acceptUnscopedIdentifiers) {
+        this.acceptUnscopedIdentifiers = Boolean.TRUE.equals(acceptUnscopedIdentifiers);
+    }
+
+    /**
+     * Whether the application says that the identifiers of one workflow module are unique:
+     * <code>accept-unscoped-identifiers</code> set for the workflow module, which wins over the
+     * adapter level.
+     *
+     * @param workflowModuleId The workflow module
+     * @param accepted The value; <code>null</code>, where the workflow module does not set the
+     *            key, is ignored
+     */
+    public void setAcceptUnscopedIdentifiers(
+        final String workflowModuleId,
+        final Boolean accepted
+    ) {
+        if (accepted != null) {
+            acceptUnscopedIdentifiersOfModules.put(workflowModuleId, accepted);
+        }
+    }
+
+    /**
+     * The key which says that a workflow module's identifiers are unique, so that
+     * <code>name-clash-avoidance: none</code> is no reason to warn: the module's
+     * <code>accept-unscoped-identifiers</code> where it sets the key, otherwise the adapter's.
+     *
+     * @param adapterId The adapter id
+     * @param workflowModuleId The workflow module
+     * @return The full key, empty where the level which decides does not accept them
+     */
+    public Optional<String> keyAcceptingUnscopedIdentifiers(
+        final String adapterId,
+        final String workflowModuleId
+    ) {
+        final var ofTheModule = acceptUnscopedIdentifiersOfModules.get(workflowModuleId);
+        if (ofTheModule != null) {
+            return ofTheModule ? Optional.of("vanillabp.workflow-modules.%s.adapters.%s.accept-unscoped-identifiers"
+                    .formatted(workflowModuleId, adapterId)) : Optional.empty();
+        }
+        return acceptUnscopedIdentifiers ? Optional.of(propertyKey(adapterId, "accept-unscoped-identifiers"))
+                : Optional.empty();
     }
 
     /**

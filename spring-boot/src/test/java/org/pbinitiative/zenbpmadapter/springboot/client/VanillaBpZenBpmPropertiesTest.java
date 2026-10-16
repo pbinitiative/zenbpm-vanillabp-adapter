@@ -16,6 +16,7 @@ import java.lang.reflect.Modifier;
 import java.time.Duration;
 import java.util.Arrays;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import java.util.stream.Collectors;
 
@@ -84,7 +85,9 @@ class VanillaBpZenBpmPropertiesTest {
             Map.entry(ADAPTER
                     + "instance-cache-max-entries", "99"),
             Map.entry(ADAPTER
-                    + "message-start-lookup", "scan"));
+                    + "message-start-lookup", "scan"),
+            Map.entry(ADAPTER
+                    + "accept-unscoped-identifiers", "true"));
 
     @Test
     @DisplayName("The overlay binds every key the core configuration has, and nothing else")
@@ -115,6 +118,7 @@ class VanillaBpZenBpmPropertiesTest {
                 () -> assertEquals(Duration.ofDays(30), configuration.getHistoryTimeToLive()),
                 () -> assertEquals(99, configuration.getInstanceCacheMaxEntries()),
                 () -> assertEquals(MessageStartLookup.SCAN, configuration.getMessageStartLookup()),
+                () -> assertTrue(configuration.isAcceptUnscopedIdentifiers()),
                 () -> assertEquals(Kind.COMPLETE, configuration
                         .validate("orders", false, false)
                         .kind()));
@@ -239,6 +243,32 @@ class VanillaBpZenBpmPropertiesTest {
                 () -> assertEquals(Duration.ofDays(2), overlay.historyTimeToLiveFor("shop", "Invoice", "orders")),
                 () -> assertEquals(Duration.ofDays(1), overlay.historyTimeToLiveFor("crm", "Order", "orders")),
                 () -> assertNull(overlay.historyTimeToLiveFor("shop", "Order", "billing")));
+    }
+
+    @Test
+    @DisplayName("accept-unscoped-identifiers of a workflow module wins over the adapter's, and a module which does not set it leaves it to the adapter")
+    void acceptUnscopedIdentifiersOfAWorkflowModuleWins() {
+        final var configuration = bind(Map.of(
+                ADAPTER
+                        + "accept-unscoped-identifiers",
+                "true",
+                MODULE
+                        + "adapters.orders.accept-unscoped-identifiers",
+                "false",
+                "vanillabp.workflow-modules.crm.adapters.orders.accept-unscoped-identifiers",
+                "true",
+                "vanillabp.workflow-modules.billing.adapters.orders.retry-backoff",
+                "PT1S"))
+                .configurationOf("orders");
+
+        assertAll(
+                () -> assertEquals(Optional.empty(), configuration.keyAcceptingUnscopedIdentifiers("orders", "shop")),
+                () -> assertEquals(Optional.of(
+                        "vanillabp.workflow-modules.crm.adapters.orders.accept-unscoped-identifiers"),
+                        configuration
+                                .keyAcceptingUnscopedIdentifiers("orders", "crm")),
+                () -> assertEquals(Optional.of("vanillabp.adapters.orders.accept-unscoped-identifiers"),
+                        configuration.keyAcceptingUnscopedIdentifiers("orders", "billing")));
     }
 
     @Test

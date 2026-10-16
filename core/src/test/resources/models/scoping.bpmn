@@ -1,0 +1,159 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL"
+    xmlns:zenbpm="http://zenbpm.pbinitiative.org/1.0" xmlns:zeebe="http://camunda.org/schema/zeebe/1.0"
+    id="scoping" targetNamespace="http://bpmn.io/schema/bpmn"
+    xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI"
+    xmlns:dc="http://www.omg.org/spec/DD/20100524/DC"
+    xmlns:di="http://www.omg.org/spec/DD/20100524/DI">
+  <bpmn:message id="Message_Paid" name="paid" />
+  <bpmn:message id="Message_Unnamed" />
+  <bpmn:error id="Error_Declined" name="Declined" errorCode="declined" />
+  <bpmn:error id="Error_WithoutCode" name="No code" />
+  <bpmn:escalation id="Escalation_Late" name="Late" escalationCode="late" />
+  <bpmn:process id="Orders" name="Orders" isExecutable="true">
+    <bpmn:startEvent id="Start">
+      <bpmn:outgoing>Flow_1</bpmn:outgoing>
+    </bpmn:startEvent>
+    <bpmn:serviceTask id="Charge" name="Charge the card">
+      <bpmn:incoming>Flow_1</bpmn:incoming>
+      <bpmn:outgoing>Flow_2</bpmn:outgoing>
+      <bpmn:extensionElements>
+        <zenbpm:taskDefinition type="charge" />
+      </bpmn:extensionElements>
+    </bpmn:serviceTask>
+    <bpmn:boundaryEvent id="ChargeDeclined" attachedToRef="Charge">
+      <bpmn:outgoing>Flow_5</bpmn:outgoing>
+      <bpmn:errorEventDefinition id="ErrorDefinition_Declined" errorRef="Error_Declined" />
+    </bpmn:boundaryEvent>
+    <bpmn:userTask id="Approve" name="Approve the order">
+      <bpmn:incoming>Flow_2</bpmn:incoming>
+      <bpmn:outgoing>Flow_3</bpmn:outgoing>
+      <bpmn:extensionElements>
+        <zeebe:taskDefinition type="approve" />
+      </bpmn:extensionElements>
+    </bpmn:userTask>
+    <bpmn:userTask id="Check" name="Check the order">
+      <bpmn:incoming>Flow_3</bpmn:incoming>
+      <bpmn:outgoing>Flow_4</bpmn:outgoing>
+    </bpmn:userTask>
+    <bpmn:businessRuleTask id="Rate" name="Rate the customer">
+      <bpmn:incoming>Flow_4</bpmn:incoming>
+      <bpmn:outgoing>Flow_6</bpmn:outgoing>
+      <bpmn:extensionElements>
+        <zenbpm:calledDecision decisionId="rating" resultVariable="rating" />
+      </bpmn:extensionElements>
+    </bpmn:businessRuleTask>
+    <bpmn:callActivity id="Invoice" name="Invoice the order">
+      <bpmn:incoming>Flow_6</bpmn:incoming>
+      <bpmn:outgoing>Flow_7</bpmn:outgoing>
+      <bpmn:extensionElements>
+        <zeebe:calledElement processId="Invoicing" />
+      </bpmn:extensionElements>
+    </bpmn:callActivity>
+    <bpmn:receiveTask id="WaitForPayment" name="Wait for the payment" messageRef="Message_Paid">
+      <bpmn:incoming>Flow_7</bpmn:incoming>
+      <bpmn:outgoing>Flow_8</bpmn:outgoing>
+    </bpmn:receiveTask>
+    <bpmn:sendTask id="Notify" name="Notify the customer">
+      <bpmn:incoming>Flow_8</bpmn:incoming>
+      <bpmn:outgoing>Flow_9</bpmn:outgoing>
+      <bpmn:extensionElements>
+        <zenbpm:taskDefinition type="" />
+      </bpmn:extensionElements>
+    </bpmn:sendTask>
+    <bpmn:endEvent id="Done">
+      <bpmn:incoming>Flow_9</bpmn:incoming>
+    </bpmn:endEvent>
+    <bpmn:endEvent id="Declined">
+      <bpmn:incoming>Flow_5</bpmn:incoming>
+    </bpmn:endEvent>
+    <bpmn:sequenceFlow id="Flow_1" sourceRef="Start" targetRef="Charge" />
+    <bpmn:sequenceFlow id="Flow_2" sourceRef="Charge" targetRef="Approve" />
+    <bpmn:sequenceFlow id="Flow_3" sourceRef="Approve" targetRef="Check" />
+    <bpmn:sequenceFlow id="Flow_4" sourceRef="Check" targetRef="Rate" />
+    <bpmn:sequenceFlow id="Flow_5" sourceRef="ChargeDeclined" targetRef="Declined" />
+    <bpmn:sequenceFlow id="Flow_6" sourceRef="Rate" targetRef="Invoice" />
+    <bpmn:sequenceFlow id="Flow_7" sourceRef="Invoice" targetRef="WaitForPayment" />
+    <bpmn:sequenceFlow id="Flow_8" sourceRef="WaitForPayment" targetRef="Notify" />
+    <bpmn:sequenceFlow id="Flow_9" sourceRef="Notify" targetRef="Done" />
+  </bpmn:process>
+  <bpmndi:BPMNDiagram id="BPMNDiagram_1">
+    <bpmndi:BPMNPlane id="BPMNPlane_1" bpmnElement="Orders">
+      <bpmndi:BPMNShape id="Start_di" bpmnElement="Start">
+        <dc:Bounds x="160" y="80" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Charge_di" bpmnElement="Charge">
+        <dc:Bounds x="256" y="80" width="100" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Approve_di" bpmnElement="Approve">
+        <dc:Bounds x="416" y="80" width="100" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Check_di" bpmnElement="Check">
+        <dc:Bounds x="576" y="80" width="100" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Rate_di" bpmnElement="Rate">
+        <dc:Bounds x="736" y="80" width="100" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Invoice_di" bpmnElement="Invoice">
+        <dc:Bounds x="896" y="80" width="100" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="WaitForPayment_di" bpmnElement="WaitForPayment">
+        <dc:Bounds x="1056" y="80" width="100" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Notify_di" bpmnElement="Notify">
+        <dc:Bounds x="1216" y="80" width="100" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Done_di" bpmnElement="Done">
+        <dc:Bounds x="1376" y="80" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Declined_di" bpmnElement="Declined">
+        <dc:Bounds x="160" y="210" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="ChargeDeclined_di" bpmnElement="ChargeDeclined">
+        <dc:Bounds x="330" y="142" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNEdge id="Flow_1_di" bpmnElement="Flow_1">
+        <di:waypoint x="196" y="98" />
+        <di:waypoint x="226" y="98" />
+        <di:waypoint x="226" y="120" />
+        <di:waypoint x="256" y="120" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_2_di" bpmnElement="Flow_2">
+        <di:waypoint x="356" y="120" />
+        <di:waypoint x="416" y="120" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_3_di" bpmnElement="Flow_3">
+        <di:waypoint x="516" y="120" />
+        <di:waypoint x="576" y="120" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_4_di" bpmnElement="Flow_4">
+        <di:waypoint x="676" y="120" />
+        <di:waypoint x="736" y="120" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_5_di" bpmnElement="Flow_5">
+        <di:waypoint x="348" y="178" />
+        <di:waypoint x="348" y="266" />
+        <di:waypoint x="178" y="266" />
+        <di:waypoint x="178" y="246" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_6_di" bpmnElement="Flow_6">
+        <di:waypoint x="836" y="120" />
+        <di:waypoint x="896" y="120" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_7_di" bpmnElement="Flow_7">
+        <di:waypoint x="996" y="120" />
+        <di:waypoint x="1056" y="120" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_8_di" bpmnElement="Flow_8">
+        <di:waypoint x="1156" y="120" />
+        <di:waypoint x="1216" y="120" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_9_di" bpmnElement="Flow_9">
+        <di:waypoint x="1316" y="120" />
+        <di:waypoint x="1346" y="120" />
+        <di:waypoint x="1346" y="98" />
+        <di:waypoint x="1376" y="98" />
+      </bpmndi:BPMNEdge>
+    </bpmndi:BPMNPlane>
+  </bpmndi:BPMNDiagram>
+</bpmn:definitions>

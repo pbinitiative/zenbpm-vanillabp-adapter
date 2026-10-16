@@ -17,8 +17,9 @@ import io.vanillabp.integration.test.utils.SuppressOutputExtension;
 /**
  * An adapter id without an address boots on Quarkus as long as its workflow module has no BPMN
  * file. Once the module has one, the start ends with the message of the validation, which names the
- * key to set: the adapter reads the file, which needs no engine, and the first step which needs one
- * refuses.
+ * key to set: the adapter reads and prepares the file, which needs no engine, and the first step
+ * which needs one refuses. The module has a name-clash-avoidance mode ZenBPM serves, so preparing
+ * passes.
  */
 @ExtendWith(SuppressOutputExtension.class)
 class ZenBpmUnconfiguredWithBpmnTest {
@@ -27,6 +28,7 @@ class ZenBpmUnconfiguredWithBpmnTest {
     static final QuarkusExtensionTest extensionTest = SmokeApplication
             .withBpmnFiles()
             .overrideConfigKey("vanillabp.prioritized-adapters", "zenbpm")
+            .overrideConfigKey("vanillabp.adapters.zenbpm.name-clash-avoidance", "use-prefix")
             .overrideConfigKey("vanillabp.adapters.zenbpm.resources-location", SmokeApplication.WITH_BPMN)
             .assertException(failure -> {
                 final var message = SmokeApplication.rootMessageOf(failure);

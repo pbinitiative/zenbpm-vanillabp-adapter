@@ -22,7 +22,8 @@ import jakarta.inject.Inject;
  * A degraded adapter id whose workflow module has a BPMN file lets the application boot on Quarkus
  * where it is nowhere first and its <code>deployment-failure</code> policy is <code>warn</code>: the
  * deployment fails with the message of the validation, and the platform reports it as a warning.
- * The platform's BPMS double is the first adapter, as the other BPMS of a migration.
+ * The platform's BPMS double is the first adapter, as the other BPMS of a migration. The adapter id
+ * has a name-clash-avoidance mode ZenBPM serves, so preparing passes.
  */
 @ExtendWith(SuppressOutputExtension.class)
 class ZenBpmDegradedWithBpmnTest {
@@ -37,6 +38,7 @@ class ZenBpmDegradedWithBpmnTest {
             .overrideConfigKey("vanillabp.adapters.zenbpm.type", "zenbpm")
             .overrideConfigKey("vanillabp.adapters.zenbpm.deployment-failure", "warn")
             .overrideConfigKey("vanillabp.adapters.zenbpm.rest-address", "ftp://old-engine:8080")
+            .overrideConfigKey("vanillabp.adapters.zenbpm.name-clash-avoidance", "use-prefix")
             .overrideConfigKey("vanillabp.adapters.zenbpm.resources-location", SmokeApplication.WITH_BPMN)
             .assertLogRecords(records -> {
                 final var log = SmokeApplication.logOf(records);

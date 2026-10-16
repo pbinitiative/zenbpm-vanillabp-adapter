@@ -32,9 +32,14 @@ addresses of one engine (an alias, a proxy, two nodes of one cluster) are not re
 The adapter reads the BPMN files of a workflow module, also for an adapter id without an engine, and
 refuses a file holding an executable process and any other process, because the engine would read
 them as one, and a file which uses what ZenBPM cannot run or would run differently from the model,
-as [`GAPS.md`](./GAPS.md) lists. It deploys nothing and runs no task yet: every later step throws an
-exception which says that it is not built yet, or, for an adapter id without clients, the message of
-its validation, which names the key to set. What is built next, and in which order, is the
+as [`GAPS.md`](./GAPS.md) lists. ZenBPM has no isolation of its own, so the name-clash-avoidance
+mode `by-adapter`, the default where nothing is configured, ends the start of a workflow module with
+BPMN files, naming `use-prefix` and `none` (decision 24 in [`DECISIONS.md`](./DECISIONS.md)); under
+`use-prefix` the identifiers of the BPMN and DMN files are prefixed with the workflow module id, and
+`none` warns unless `accept-unscoped-identifiers` says that the identifiers are unique. Two
+processes which would reach the engine under one id end the start. It deploys nothing and runs no
+task yet: every later step throws an exception which says that it is not built yet, or, for an
+adapter id without clients, the message of its validation, which names the key to set. What is built next, and in which order, is the
 implementation plan in [`docs/`](docs/README.md).
 
 ## Modules
