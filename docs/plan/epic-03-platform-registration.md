@@ -474,7 +474,7 @@ Where the code differs from the instructions:
   key under `vanillabp.`. Without it, the start fails with `SRCFG00050` naming the key
   (`ZenBpmUnknownKeyTest`; adding the empty root back is one of the mutants above). The root of
   another extension does the same: beside Camunda 8's adapter, Quarkus ignores the key (see the
-  reviews below). The deployment module has no public class then, so
+  reviews above). The deployment module has no public class then, so
   its javadoc check documents the package-private build steps (`<show>package</show>`).
 - **No adapter id of type `zenbpm` cannot boot on Quarkus.** The platform refuses an application
   whose adapter extension on the classpath has no configured id ("VanillaBP Quarkus adapter
@@ -492,9 +492,10 @@ Where the code differs from the instructions:
   `RuntimeVersion`.
 - **The tests mirror every case of the Spring smoke tests**, one boot each (the user's decision),
   beyond the six the instructions name. The first commit left out two (an address nothing listens
-  on is DOWN, and the smoke application persists nothing); both came with the reviews below. The block at the end of the start is read from the log
-  records the extension test keeps, which end where the application begins to stop, so what the
-  factory says while it closes is heard on its own logger. The platform's phase-two outbox needs a
+  on is DOWN, and the smoke application persists nothing); both came with the reviews above. The
+  block at the end of the start is read from the log records the extension test keeps, which end
+  where the application begins to stop, so what the factory says while it closes is heard on its
+  own logger. The platform's phase-two outbox needs a
   datasource, so the tests run the JDBC outbox on H2, as the Spring smoke application does.
 - **Health** is the produced deployment service's `checkHealth()` (UNKNOWN with the missing key in
   `ZenBpmStartupValidationTest`, DOWN naming the address, the request timeout and the job stream in
