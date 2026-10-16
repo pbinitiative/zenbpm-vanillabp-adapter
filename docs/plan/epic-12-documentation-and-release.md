@@ -54,6 +54,15 @@ starts it, and the adapter has nothing. And on Quarkus every configured id has t
 `vanillabp.prioritized-adapters`. An application which configures nothing starts on both platforms
 with the derived id `zenbpm`.
 
+*Note from S3.3.1, 2026-10-16.* The `Configuration` page says when two adapter ids of type
+`zenbpm` may address one engine: only where their `name-clash-avoidance` at the adapter level
+differs, which is the setup of a migration from one mode to the other (new id first in
+`prioritized-adapters`). With the same mode they reach the engine with the same identifiers, and
+the start ends naming both ids, the engine and the keys `rest-address` and `name-clash-avoidance`
+of each (`ZenBpmInstanceIdentityTest`, `ZenBpmDistinctInstancesBootTest`,
+`ZenBpmOneEngineOneModeTest`). There is no `shared-engine` key; Camunda 8 compares the same way.
+An id without an address is not compared.
+
 **Acceptance criteria**: every claim names its test; a reviewer following the wiki alone boots an
 application against a fresh engine container.
 

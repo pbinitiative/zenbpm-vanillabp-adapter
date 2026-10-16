@@ -11,7 +11,7 @@ ZenBPM offers for it, the verdict and the design the adapter takes. The verdicts
 | Requirement | ZenBPM | Verdict | Design |
 |---|---|---|---|
 | One `MigratableProcessService` and one `AdapterDeploymentService` per configured adapter id | a plain REST + gRPC address per engine | SUPPORTED | one `ZenBpmClient` (REST + one job stream) per adapter id, built eagerly at startup |
-| `validateDistinctAdapterInstances` | no cluster identity in the API; `/system/status` reports node ids | SUPPORTED | identity = normalised `rest-address`; two ids with the same address end the boot naming the key |
+| `validateDistinctAdapterInstances` | no cluster identity in the API; `/system/status` reports node ids | SUPPORTED | identity = normalised `rest-address` and the `name-clash-avoidance` of the adapter id, as on Camunda 8; two ids with the same of both end the boot naming the keys |
 | Configuration under `vanillabp.adapters.<id>.*`, validated at startup, unconfigured still boots | - | SUPPORTED | overlay classes on both platforms; `rest-address` required, `grpc-address` derived from it by default |
 | Version guard descriptor | - | SUPPORTED | `META-INF/vanillabp/adapter-zenbpm.properties` with `part.version`, `part.artifact` and `platform.version`, which the platform's `VanillaBpParts` reads, plus the engine commit the tests ran against |
 | `checkHealth()` | `GET /system/health/ready` | SUPPORTED | READY -> UP, 503 -> DOWN with reasons, unconfigured -> UNKNOWN |

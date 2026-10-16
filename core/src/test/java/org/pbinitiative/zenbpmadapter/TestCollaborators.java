@@ -32,11 +32,25 @@ public final class TestCollaborators {
      * @return The collaborators
      */
     public static AdapterCollaborators of(final String adapterId) {
+        return of(adapterId, unused(NameClashAvoidanceSupport.class));
+    }
+
+    /**
+     * A complete set of collaborators, of which only the scoping may be called.
+     *
+     * @param adapterId The adapter id they are handed to
+     * @param scoping The platform's name-clash scoping, as the test wants it to answer
+     * @return The collaborators
+     */
+    public static AdapterCollaborators of(
+        final String adapterId,
+        final NameClashAvoidanceSupport scoping
+    ) {
         return AdapterCollaborators
                 .forAdapter(adapterId)
                 .workflowTaskWiring(unused(WorkflowTaskWiring.class))
                 .workflowTaskInvoker(unused(WorkflowTaskInvoker.class))
-                .scoping(unused(NameClashAvoidanceSupport.class))
+                .scoping(scoping)
                 .workflowAggregateSync(unused(WorkflowAggregateSync.class))
                 .preCommitRegistrar(unused(PreCommitRegistrar.class))
                 .workflowEndedInvoker(unused(WorkflowEndedInvoker.class))

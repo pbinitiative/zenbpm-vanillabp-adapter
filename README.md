@@ -25,6 +25,9 @@ while the application starts and answers the platform's health check. The smoke 
 `quarkus/deployment` on Quarkus with one and two, and with none configured at all, where the
 platform derives the id `zenbpm`. An application on Quarkus which configures adapter ids of another
 type only is refused by the platform, which asks for an id of every adapter type on the classpath.
+Two adapter ids on one engine boot only where their `name-clash-avoidance` differs, the setup of a
+migration from one mode to the other; with the same mode they end the start, naming the keys which
+tell them apart.
 The adapter deploys nothing and runs no task yet: every step which needs the engine throws an
 exception which says that it is not built yet. What is built next, and in which order, is the
 implementation plan in [`docs/`](docs/README.md).

@@ -62,7 +62,7 @@ of the adapter bypasses the `StartupReport`.
 - [ ] **Depends on:** S3.3.1, E7.
 
 New module `election-integration-test` (Spring, Docker): `ZenBpmSharedEngineElectionIT` - two ids of
-type `zenbpm` on ONE engine (`shared-engine: true`), differing in `name-clash-avoidance` (`use-prefix`
+type `zenbpm` on ONE engine, differing in `name-clash-avoidance` (`use-prefix`
 first, `none` second); a workflow started under the old id is found and completed by the old id, a
 new one starts under the new id, a task probe of the wrong id answers UNKNOWN. `ZenBpmNextToTheDoubleIT`
 - `zenbpm` first, the platform's BPMS double second (`bpms-double-spring-boot`): a workflow the double
