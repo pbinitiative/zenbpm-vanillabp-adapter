@@ -5,6 +5,7 @@
 package org.pbinitiative.zenbpmadapter.deployment;
 
 import java.io.InputStream;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -17,7 +18,9 @@ import java.util.stream.Stream;
 import org.pbinitiative.zenbpmadapter.ZenBpmAdapter;
 import org.pbinitiative.zenbpmadapter.ZenBpmDeployedProcesses;
 import org.pbinitiative.zenbpmadapter.ZenBpmProcessingContext;
+import org.pbinitiative.zenbpmadapter.ZenBpmProcessingContext.StartedProcessing;
 import org.pbinitiative.zenbpmadapter.ZenBpmProcessingContext.WiredProcess;
+import org.pbinitiative.zenbpmadapter.client.ReceivedJob;
 import org.pbinitiative.zenbpmadapter.client.ZenBpmClientFactory;
 import org.pbinitiative.zenbpmadapter.client.ZenBpmClientRegistry;
 import org.pbinitiative.zenbpmadapter.client.ZenBpmEngineWait;
@@ -59,15 +62,15 @@ import lombok.extern.slf4j.Slf4j;
  * files, refuses what ZenBPM cannot run and the name-clash-avoidance mode <code>by-adapter</code>,
  * scopes the identifiers of the files and of the DMN files under <code>use-prefix</code>, wires the
  * processes with the platform, deploys the files once the engine is ready and reports the version
- * of each process, and starts no workflow processing yet. Reading, preparing and wiring need no
- * engine, so an adapter id without clients does them as well, like the Camunda 8 adapter, and the
- * checks done meanwhile speak before the configuration does; its deployment then ends with the
- * message of its validation, which names the keys to set, so a workflow module with BPMN files ends
- * the start of an application which configured no engine for it. Starting the workflow processing
- * throws an {@link UnsupportedOperationException} which says that the step is not built yet.
- * Nothing pretends to have done the work. A workflow module without BPMN files reaches none of the
- * steps, because the platform skips the adapter for it. It also answers what the platform asks
- * before the deployment: whether two adapter ids of this type are one instance.
+ * of each process, and starts and stops the workflow processing of a module by subscribing and
+ * unsubscribing the job types of its claimed processes. It handles no job yet: a job which arrives
+ * is logged and left to its lock. Reading, preparing and wiring need no engine, so an adapter id
+ * without clients does them as well, like the Camunda 8 adapter, and the checks done meanwhile speak
+ * before the configuration does; its deployment then ends with the message of its validation, which
+ * names the keys to set, so a workflow module with BPMN files ends the start of an application which
+ * configured no engine for it. A workflow module without BPMN files reaches none of the steps,
+ * because the platform skips the adapter for it. It also answers what the platform asks before the
+ * deployment: whether two adapter ids of this type are one instance.
  * <p>
  * Each field has an accessor of its own and no Lombok getter on the class, see decision 13 in the
  * repository's DECISIONS.md.
@@ -529,12 +532,78 @@ public class ZenBpmDeploymentService implements AdapterDeploymentService<ZenBpmB
                         .declaredIdentifiers()));
     }
 
+    /**
+     * Starts the workflow processing of a workflow module: subscribes every job type of its claimed
+     * processes on the job stream of this adapter id, a process nobody claims left to whoever serves
+     * it. The hook which stops the module where the client factory closes first is registered
+     * before the first subscription, so a factory which closes already refuses the module before
+     * anything is subscribed. A job type two workflow modules share stays subscribed until both
+     * stopped. A module without a job type subscribes nothing and asks the engine nothing.
+     * <p>
+     * No job is handled yet: a job which arrives is logged at WARN and left to its lock, after which
+     * the engine hands it out again. Every type is subscribed with the engine's default lock and
+     * cap of active jobs.
+     *
+     * @param workflowModuleId The workflow module
+     * @param context What its deployment collected
+     * @throws IllegalStateException Where the client factory is closing, or a job type cannot be
+     *             subscribed; then nothing of the module stays subscribed
+     */
     @Override
     public void startWorkflowProcessing(
         final String workflowModuleId,
         final ZenBpmProcessingContext context
     ) {
-        throw notBuiltYet("starting the workflow processing of workflow module '%s'".formatted(workflowModuleId));
+        final var jobTypes = context.jobTypes();
+        if (jobTypes.isEmpty()) {
+            log.info("ZenBPM[{}]: workflow module '{}' has no job type to subscribe", adapterId, workflowModuleId);
+            return;
+        }
+        final var stream = factory.stream();
+        stream.onJob(this::leaveAJobNothingHandles);
+        context.processingStarted(new StartedProcessing(jobTypes, factory.workflowModuleStarted(workflowModuleId,
+                () -> stopWorkflowProcessing(workflowModuleId, context))));
+        try {
+            jobTypes.forEach(jobType -> stream.subscribe(workflowModuleId, jobType, Duration.ZERO, 0));
+        } catch (final RuntimeException e) {
+            stopWorkflowProcessing(workflowModuleId, context);
+            throw e;
+        }
+        log.info("ZenBPM[{}]: workflow module '{}' subscribed the job type(s) {}", adapterId, workflowModuleId,
+                String.join(", ", jobTypes));
+    }
+
+    /**
+     * Stops the workflow processing of a workflow module: unsubscribes its job types, where no other
+     * module of this adapter id subscribes them, and removes the hook of the client factory after
+     * the last of them. It is idempotent, because the platform and the closing client factory may
+     * both stop a module. Jobs delivered before keep their locks.
+     *
+     * @param workflowModuleId The workflow module
+     * @param context What its deployment collected
+     */
+    @Override
+    public void stopWorkflowProcessing(
+        final String workflowModuleId,
+        final ZenBpmProcessingContext context
+    ) {
+        final var started = context.processingStopped();
+        if (started.isEmpty()) {
+            return;
+        }
+        final var stream = factory.stream();
+        started
+                .get()
+                .jobTypes()
+                .forEach(jobType -> stream.unsubscribe(workflowModuleId, jobType));
+        started
+                .get()
+                .registration()
+                .close();
+        log.info("ZenBPM[{}]: workflow module '{}' unsubscribed the job type(s) {}", adapterId, workflowModuleId,
+                String.join(", ", started
+                        .get()
+                        .jobTypes()));
     }
 
     // what is done to a file once, the refusals before anything is written: a process nobody
@@ -627,15 +696,12 @@ public class ZenBpmDeploymentService implements AdapterDeploymentService<ZenBpmB
                 bpmnProcessId, workflowModuleId, key, key));
     }
 
-    // an adapter id without clients answers with the message of its validation, which names the
-    // keys to set, before it says what this version cannot do
-    private RuntimeException notBuiltYet(final String what) {
-        final var unconfigured = factory.unconfiguredMessage();
-        if (unconfigured.isPresent()) {
-            return new IllegalStateException(unconfigured.get());
-        }
-        return new UnsupportedOperationException(
-                "ZenBPM adapter '%s': %s is implemented in a later story".formatted(adapterId, what));
+    // no task is handled yet: a job is left to its lock, after which the engine hands it out again,
+    // because closing the stream would hand it to another client at once
+    private void leaveAJobNothingHandles(final ReceivedJob received) {
+        final var job = received.job();
+        log.warn("ZenBPM[{}]: a job of type '{}' (key {}) arrived, which nothing handles yet; it is left to its lock",
+                adapterId, job.getType(), job.getKey());
     }
 
 }

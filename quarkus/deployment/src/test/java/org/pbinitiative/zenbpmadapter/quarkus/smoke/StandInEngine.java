@@ -24,6 +24,8 @@ final class StandInEngine implements AutoCloseable {
 
     private static final String TESTED_COMMIT = "bdd795a399b6";
 
+    private static final String SHARED_ADDRESS = "zenbpm.stand-in-engine.address";
+
     private final HttpServer server;
 
     private final List<String> requests = new CopyOnWriteArrayList<>();
@@ -39,6 +41,24 @@ final class StandInEngine implements AutoCloseable {
      */
     static StandInEngine takingEveryFile() {
         return start(201, "{\"processDefinitionKey\":7}");
+    }
+
+    /**
+     * Where an engine which takes every file answers, started once per JVM. A Quarkus test which
+     * boots runs its class a second time, in the application's own class loader, and that second
+     * run finds the engine the first one started through a system property, instead of starting an
+     * engine nobody configured. The engine runs until the JVM ends.
+     *
+     * @return The value of <code>rest-address</code>
+     */
+    static synchronized String addressOfOneTakingEveryFile() {
+        final var running = System.getProperty(SHARED_ADDRESS);
+        if (running != null) {
+            return running;
+        }
+        final var address = takingEveryFile().address();
+        System.setProperty(SHARED_ADDRESS, address);
+        return address;
     }
 
     /**

@@ -1383,7 +1383,7 @@ out fails `ZenBpmDeploymentServiceIT#aVersion1ModelDeploysByteForByte`.
 
 ### S4.3.3 Start and stop processing (skeleton)
 
-- [ ] **Depends on:** S4.3.2, S2.3.1.
+- [x] **Depends on:** S4.3.2, S2.3.1.
 
 **Instructions**
 
@@ -1408,11 +1408,105 @@ so it may wait for the module's own stop. The factory's WARN about a module it h
 "on both platforms the lifecycle stops the modules first": that sentence is a promise about this
 story's wiring, so the criterion below proves it.
 
+*Fit check, 2026-10-17, decided by the Implementor.* Checked against `main` with S4.3.1 and S4.3.2,
+`ADAPTER-AUTHORS.md` (sections 2.1 and 5 on the shutdown), the platform's `DeploymentService`
+(`startWorkflowProcessing` once per module after every adapter deployed, `stopWorkflowProcessing`
+extensions first and adapters last, and never a call with a `null` context), `ZenBpmJobStream` and
+`ZenBpmClientFactory` of E2. The stream already keeps a type subscribed until the last subscriber of
+it unsubscribes, and the factory's hook does what the note of the review of S2.4.1 asks. Four
+things did not fit or were left open:
+
+1. **No `JobDispatcher` class yet.** E6 builds it per adapter id (S6.1.1). Until then the stream's
+   consumer is a private method of the deployment service which logs a job at WARN, naming type and
+   key, and leaves it to its lock; a note under S6.1.1 says what it replaces.
+2. **"A module which deployed nothing"** never reaches the adapter: the platform skips an adapter for
+   a module without an executable process, and never calls it with a `null` context. What can reach
+   it is a module whose claimed processes give no job type (a model of start and end events, or tasks
+   all served elsewhere). Decided: such a module registers no hook and subscribes nothing, and asks
+   neither the stream nor the factory for anything, so an adapter id without clients starts it as
+   well; criterion 2 is held for that case.
+3. **Which types are subscribed** follows the decision of S4.3.1: the scoped job types of the tasks
+   of claimed processes, without the tasks served elsewhere and without user tasks (E8 polls them).
+4. **A subscription which fails.** The stream refuses a type another subscriber of the adapter id
+   holds with other settings (an extension later). Decided: the module is stopped again (what it
+   subscribed so far is unsubscribed, the hook removed) and the failure ends the start, which the
+   platform does not soften by `deployment-failure`.
+
+The stop is idempotent, because the platform and a closing factory may both stop a module: the
+context hands out what started once (`ZenBpmProcessingContext#processingStopped`). The boot test of
+criterion 1 runs on Spring Boot against the pinned engine (`ZenBpmDeploymentIT`, which boots now that
+the processing starts) and on Quarkus against a server standing in for the engine
+(`ZenBpmStopOrderTest`, with a workflow service of its own whose task gives the module a job type,
+and the factory heard on its own logger while the application stops, as `ZenBpmCompleteAdapterIdTest`
+does).
+
 **Acceptance criteria**
 
-- [ ] Stopping the application stops every started module before its factory closes: a boot test
+- [x] Stopping the application stops every started module before its factory closes: a boot test
   per platform (Spring Boot and Quarkus) stops a context with a started module and finds no WARN of
   the factory about a module it had to stop.
-- [ ] A module which deployed nothing subscribes nothing and starts without touching the engine.
-- [ ] No job type of a process nobody claims is subscribed.
-- [ ] Types shared by two modules under `none` stay subscribed until the second module stops.
+  `ZenBpmDeploymentIT#aStartedModuleSubscribesItsJobTypeAndStopsFirst` boots Spring Boot against the
+  pinned engine: the module subscribes `deploy-it__DeployIt__ship`, the job of an instance started
+  over REST arrives and is logged at WARN as nothing handles it yet (so the subscription reached the
+  engine), and closing the context unsubscribes the type and closes the REST client without the
+  factory's WARN. `ZenBpmStopOrderTest` boots Quarkus with a module which subscribes
+  `smoke-app__Shipping__ship` (the module is open at the factory while it runs) and hears the factory
+  close without that WARN. A hook left in place when the module stops fails both.
+  `ZenBpmWorkflowProcessingTest#theClosingFactoryStopsAModuleThePlatformDidNotStop` shows the other
+  side: a module nobody stopped is stopped by the closing factory, which says so.
+- [x] A module which deployed nothing subscribes nothing and starts without touching the engine.
+  Fit-check item 2: `ZenBpmWorkflowProcessingTest#aModuleWithoutAJobTypeSubscribesNothing` starts and
+  stops a module without a job type on an adapter id without clients, and the stream of the engine
+  sees no call.
+- [x] No job type of a process nobody claims is subscribed.
+  `ZenBpmWorkflowProcessingTest#aModuleSubscribesTheJobTypesOfItsClaimedProcesses` prepares and wires
+  `models/wiring.bpmn` (claimed, one task served elsewhere) and a file of a process nobody claims in
+  one module: the three types of the claimed tasks are subscribed with the engine's default lock and
+  cap, the hook registered, and the stop unsubscribes them and removes the hook, once.
+- [x] Types shared by two modules under `none` stay subscribed until the second module stops.
+  `ZenBpmWorkflowProcessingTest#aSharedJobTypeStaysSubscribedUntilBothStopped`: two modules share
+  `charge`; it is unsubscribed only when the second stops, with the type of its second process.
+  `#aModuleCannotStartOnAClosedFactory`, `#aSubscriptionWhichFailsStopsTheModule` and
+  `#aJobNothingHandlesIsLeftToItsLock` hold fit-check item 4 and the WARN.
+
+**Implemented 2026-10-17.** Core: `ZenBpmDeploymentService.startWorkflowProcessing` registers the
+factory's hook and subscribes the module's job types (`ZenBpmProcessingContext#jobTypes`), with the
+engine's default lock and cap, and hands every job to a WARN which leaves it to its lock;
+`stopWorkflowProcessing` unsubscribes them and removes the hook, once
+(`ZenBpmProcessingContext#processingStarted` and `#processingStopped`); the last step which said "not
+built yet" is gone. `FakeJobStreamEngine` of the client tests is public for the tests of the
+deployment package. The README says what is built, S6.1.1 has a note. Tests:
+`ZenBpmWorkflowProcessingTest` (7, against `FakeJobStreamEngine` over TCP); `ZenBpmDeploymentIT` boots
+now and has the second case (now 2); `ZenBpmStopOrderTest` on Quarkus with
+`SmokeApplication#withAModuleWhichSubscribes`, `ShippingWorkflowService`, the fixture
+`with-shipping/Shipping.bpmn` and `StandInEngine#addressOfOneTakingEveryFile`;
+`ZenBpmDeploymentServiceTest` lost the case of the step not built yet (now 30). `TZ=Etc/UTC mvn
+clean install` on OpenJDK 25.0.2 builds green with every integration test run and none skipped (core
+618 unit and 39 integration tests, Spring Boot 9 and 2 integration tests, smoke test 32, Quarkus
+runtime 9, Quarkus deployment 44, coverage gate 35). The gate measures 100 % of 16,397 instructions
+for Spring Boot and 100 % of 16,271 for Quarkus on the first full build, and
+`bin/check-deploy-safety.sh` passes both runs (13 files deployed, nothing after a red gate).
+
+Seen to fail, each restored afterwards (12 of 12 mutants in core, against a green unmutated run).
+Each fails `ZenBpmWorkflowProcessingTest`, the second-last also `ZenBpmDeploymentServiceTest`:
+- a module without a job type asking the stream; the hook registered after the subscriptions, or not
+  at all; a failed subscription leaving the module started; another lock or another cap than the
+  engine's default; the jobs not taken from the stream;
+- a stopped module stopped again; the job types not unsubscribed; the hook not removed; the start not
+  forgotten when it stops; the job types of the first process only.
+Installed and booted: the hook not removed when the module stops fails
+`ZenBpmDeploymentIT#aStartedModuleSubscribesItsJobTypeAndStopsFirst` on Spring Boot (the factory's
+WARN about `deploy-it` appears) and `ZenBpmStopOrderTest` on Quarkus.
+
+**E4 "Done when" is met, 2026-10-17.** A workflow module with BPMN and DMN deploys to the container
+from a booted Spring application: `ZenBpmDeploymentIT` (module `deploy-it`, one BPMN and one DMN file,
+the engine holding both under their prefixed ids, versions 1, 1 and 2). The Quarkus pipeline test
+proves the pipeline runs on Quarkus: `ZenBpmDeploymentPipelineTest` reads, prepares and wires a file
+and ends in the engine wait naming the address, `ZenBpmRefusedFileTest` deploys to a server standing
+in for the engine and ends with its refusal, and `ZenBpmStopOrderTest` deploys, starts and stops a
+module. Every unsupported construct is refused with a message naming file, process and element:
+`ZenBpmUnsupportedConstructsTest` (S4.1.2 and the answers to its reviews), booted by
+`ZenBpmUnsupportedModelBootTest` and `ZenBpmUnsupportedModelTest`. Left for later epics, each with a
+note at its story: the version catalog and the check of the deployed version (S10.1.1), task
+delivery (E6), user tasks (E8), the start and end markers and a called process on its own aggregate
+(S9.1.1).

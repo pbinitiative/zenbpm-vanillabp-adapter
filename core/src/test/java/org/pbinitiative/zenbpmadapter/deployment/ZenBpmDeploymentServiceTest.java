@@ -637,7 +637,7 @@ class ZenBpmDeploymentServiceTest {
     }
 
     @Test
-    @DisplayName("Every step after wiring refuses with the message of the validation where the adapter id has no clients")
+    @DisplayName("Deploying, and starting a module which subscribes a job type, refuse with the message of the validation where the adapter id has no clients")
     void anAdapterIdWithoutClientsRefusesWithItsValidationMessage() {
         final var deploymentService = new ZenBpmDeploymentService("orders", withoutClients("orders"), TestCollaborators
                 .of("orders", TestScoping.of(NameClashAvoidance.USE_PREFIX)));
@@ -646,22 +646,6 @@ class ZenBpmDeploymentServiceTest {
                 .stream()
                 .map(step -> () -> assertEquals(NOT_CONFIGURED, assertThrows(IllegalStateException.class,
                         () -> step.accept(deploymentService)).getMessage())));
-    }
-
-    @Test
-    @DisplayName("Starting the workflow processing of a configured adapter id says that it is not built yet, and what it was asked to do")
-    void aConfiguredAdapterIdSaysThatTheStepIsNotBuiltYet() {
-        try (var registry = new ZenBpmClientRegistry(List.of(configured("orders", "http://localhost:8080")))) {
-            final var deploymentService = new ZenBpmDeploymentService("orders", registry, TestCollaborators.of(
-                    "orders", TestScoping.of(NameClashAvoidance.USE_PREFIX)));
-
-            final var failure = assertThrows(UnsupportedOperationException.class, () -> deploymentService
-                    .startWorkflowProcessing("shop", null));
-
-            assertEquals(
-                    "ZenBPM adapter 'orders': starting the workflow processing of workflow module 'shop' is implemented in a later story",
-                    failure.getMessage());
-        }
     }
 
     @Test
@@ -745,7 +729,14 @@ class ZenBpmDeploymentServiceTest {
     private static List<Consumer<ZenBpmDeploymentService>> steps() {
         return List.of(
                 deploymentService -> deploymentService.deployResources("shop", new ZenBpmProcessingContext("shop")),
-                deploymentService -> deploymentService.startWorkflowProcessing("shop", null));
+                deploymentService -> deploymentService.startWorkflowProcessing("shop", withAJobType()));
+    }
+
+    private static ZenBpmProcessingContext withAJobType() {
+        final var context = new ZenBpmProcessingContext("shop");
+        context.recordWiring(
+                new ZenBpmProcessingContext.WiredProcess("Order", "Order", java.util.Set.of("charge"), true, false));
+        return context;
     }
 
     private static ByteArrayInputStream bpmn() {

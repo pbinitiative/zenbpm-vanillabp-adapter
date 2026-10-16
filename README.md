@@ -54,8 +54,11 @@ carried into that body. Then the files are deployed, one request per file, once 
 ready; a file the pipeline left as it was written reaches the engine as its bytes, a file the engine
 refuses ends the start with the engine's reason, and the version of every process is reported to the
 platform, also where the engine kept an unchanged file. An adapter id without clients ends the start
-there with the message of its validation, which names the key to set. It runs no task yet: starting
-the workflow processing throws an exception which says that it is not built yet. What is built next, and in which order, is
+there with the message of its validation, which names the key to set. Starting a workflow module
+subscribes the job types of its claimed processes on the job stream, and stopping it unsubscribes
+them before the clients close; a type two modules share stays subscribed until both stopped. It runs
+no task yet: a job which arrives is logged at WARN and left to its lock, after which the engine hands
+it out again. What is built next, and in which order, is
 the implementation plan in [`docs/`](docs/README.md).
 
 ## Modules

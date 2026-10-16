@@ -11,8 +11,10 @@ import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 
+import org.pbinitiative.zenbpmadapter.client.ZenBpmClientFactory.WorkflowModuleShutdownRegistration;
 import org.pbinitiative.zenbpmadapter.model.ZenBpmBpmnModel;
 import org.pbinitiative.zenbpmadapter.model.ZenBpmCorrelationKeys;
 
@@ -54,6 +56,10 @@ public final class ZenBpmProcessingContext {
     private final Map<String, ZenBpmBpmnModel> bpmnFiles = new LinkedHashMap<>();
 
     private final Set<ModelIdentifier> declaredIdentifiers = new LinkedHashSet<>();
+
+    // guarded by this: the platform stops a module on the thread which stops the application, and
+    // the client factory on the thread which closes it
+    private StartedProcessing startedProcessing;
 
     /**
      * The context of one workflow module, built for its first BPMN process.
@@ -237,6 +243,63 @@ public final class ZenBpmProcessingContext {
      */
     public Map<String, WiredProcess> wiredProcesses() {
         return Collections.unmodifiableMap(wiredProcesses);
+    }
+
+    /**
+     * The job types of the workflow module's claimed processes, each once, in the order the
+     * processes were wired.
+     *
+     * @return The job types as the engine knows them
+     */
+    public Set<String> jobTypes() {
+        final var jobTypes = new LinkedHashSet<String>();
+        wiredProcesses
+                .values()
+                .forEach(wiredProcess -> jobTypes.addAll(wiredProcess.jobTypes()));
+        return Collections.unmodifiableSet(jobTypes);
+    }
+
+    /**
+     * Remembers that the workflow processing of the module started: the job types it subscribes
+     * and the registration of the hook which stops it where the client factory closes first.
+     *
+     * @param started What started
+     */
+    public synchronized void processingStarted(final StartedProcessing started) {
+        startedProcessing = started;
+    }
+
+    /**
+     * Forgets that the workflow processing of the module started, and says what has to be stopped.
+     * Only the first call after a start answers, so a module is stopped once, whoever stops it.
+     *
+     * @return What started, empty where nothing started or it was stopped already
+     */
+    public synchronized Optional<StartedProcessing> processingStopped() {
+        final var started = Optional.ofNullable(startedProcessing);
+        startedProcessing = null;
+        return started;
+    }
+
+    /**
+     * What the start of the workflow processing of a module opened.
+     *
+     * @param jobTypes The job types the module subscribes, as the engine knows them
+     * @param registration What removes the hook which stops the module where the client factory
+     *            closes before the module stopped
+     */
+    public record StartedProcessing(
+        Set<String> jobTypes,
+        WorkflowModuleShutdownRegistration registration
+    ) {
+
+        /**
+         * Copies the job types, so what started stays what it was.
+         */
+        public StartedProcessing {
+            jobTypes = Collections.unmodifiableSet(new LinkedHashSet<>(jobTypes));
+        }
+
     }
 
     /**
