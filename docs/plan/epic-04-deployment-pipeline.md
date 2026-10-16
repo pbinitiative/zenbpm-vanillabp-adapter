@@ -403,6 +403,29 @@ counting one request. Two full builds before were short: one at 99.98 % (a blank
 unknown element without flows were never read), and `checkChild` and `checkCondition` were
 rewritten with early returns, because the formatter mangles an `else if` whose condition wraps.
 
+**F4.1 done 2026-10-16**, merged to `main` as `091e9f6` (pull request #30, after two reviews and
+CodeRabbit's review, whose three comments were fixed in the pull request). On that commit (GitHub
+keeps run logs for 90 days, so what they showed is written here as well):
+
+- `Checks`, run
+  [38937712209](https://github.com/pbinitiative/zenbpm-vanillabp-adapter/actions/runs/38937712209):
+  green on both JDKs. `bin/check-engine-copies.sh` reported both copies as the engine's files of
+  `bdd795a3...`. `ZenBpmModelReaderTest` ran 20 tests, `ZenBpmUnsupportedConstructsTest` 51,
+  `ZenBpmDeploymentServiceTest` 13, `ZenBpmStartupValidationBootTest` 10,
+  `ZenBpmUnsupportedModelBootTest` 2, `ZenBpmUnsupportedModelTest` 1,
+  `ZenBpmUnsupportedModelWarnTest` 1 and `BpmnDiagramTest` 2, none skipped (core: 546 unit tests
+  and 34 integration tests; Spring Boot 8, smoke test 25, Quarkus runtime 8, Quarkus deployment 36,
+  coverage gate 35). The gate measured 100 % on both platforms: of 13,332 instructions for Spring
+  Boot and 13,217 for Quarkus on JDK 25, of 13,324 and 13,209 on JDK 21.
+- `Publish snapshots`, run
+  [38937712124](https://github.com/pbinitiative/zenbpm-vanillabp-adapter/actions/runs/38937712124):
+  green. The core snapshot it published to GitHub Packages, `2.0.0-20261016.171113-26`, contains
+  `model/ZenBpmModelReader`, `model/ZenBpmBpmnModel` with its nested `StartEvent`,
+  `MultiInstanceElement` and `CallActivity`, `model/ZenBpmUnsupportedConstructs` and
+  `model/ZenBpmBooleans`, and holds no test class, fixture or BPMN file. Both report pages
+  (`spring-boot-report/index.html`, `quarkus-report/index.html`) answer HTTP 200 and show 0 of
+  13,332 (Spring Boot) and 0 of 13,217 (Quarkus) instructions missed.
+
 ---
 
 ## F4.2 Rewriting
