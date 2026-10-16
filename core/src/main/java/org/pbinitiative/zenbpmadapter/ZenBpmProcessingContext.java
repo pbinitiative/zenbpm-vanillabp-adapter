@@ -12,8 +12,10 @@ import java.util.Set;
  * BPMN file to the start of its workflow processing. It names the type the platform and the
  * extensions match the pipeline by.
  * <p>
- * The core prepares every process of a file, and all processes of a file share one model, so what
- * is done to a file is done once: the context remembers the files it prepared.
+ * The adapter SPI prepares every process of a file, and all processes of a file share one model,
+ * so what is done to a file is done once: the context remembers the files it prepared. This
+ * adapter reads one process per file, because the engine deploys no more, so today every file is
+ * prepared once anyway; the guard keeps the SPI's contract should that ever change.
  * <p>
  * Each field has an accessor of its own and no Lombok getter on the class, see decision 13 in the
  * repository's DECISIONS.md.

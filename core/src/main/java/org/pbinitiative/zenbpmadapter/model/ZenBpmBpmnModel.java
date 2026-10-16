@@ -28,11 +28,13 @@ import io.vanillabp.spi.service.BpmsStartTrigger;
  * @param bpmnProcessId The id of the process as the modeller wrote it
  * @param tasks The elements which make the engine create a job a worker serves, user tasks
  *            excepted: service, send and business rule tasks and the intermediate throw and end
- *            events which send a message. A business rule task which calls a decision is left
- *            out, because the engine evaluates the decision itself. An element without a task
- *            definition has none in its spec, so the wiring check names it.
+ *            events which send a message. A business rule task which names a decision
+ *            (<code>calledDecision</code> with a <code>decisionId</code>) is left out, because the
+ *            engine evaluates the decision itself. An element without a task definition has none
+ *            in its spec, so the wiring check names it. Job types are kept as written, whitespace
+ *            included, as the engine keeps them.
  * @param userTasks The user tasks, each with its task definition, or the engine's default
- *            <code>user-task-type</code> where it names none
+ *            <code>user-task-type</code> where it names none or an empty one
  * @param catchMessages The names of the messages the process waits for: in intermediate catch
  *            events, boundary events, receive tasks and the start events of event sub-processes
  * @param startMessages The names of the messages which start the process: in the message start
@@ -48,11 +50,14 @@ import io.vanillabp.spi.service.BpmsStartTrigger;
  * @param multiInstanceElements The multi-instance elements, wherever they are in the process
  * @param callActivities The call activities, wherever they are in the process
  * @param concurrentTokenElements The ids of the elements which give the workflow more than one
- *            token: parallel and inclusive gateways with more than one outgoing flow, parallel
- *            multi-instance activities, non-interrupting boundary events and non-interrupting event
- *            sub-processes
+ *            token: every element with more than one outgoing flow except an exclusive and an
+ *            event-based gateway (the engine leaves an activity or event on all of its flows),
+ *            parallel multi-instance activities, non-interrupting boundary events and
+ *            non-interrupting event sub-processes; boolean attributes read as the engine reads
+ *            them, so <code>cancelActivity="0"</code> is non-interrupting
  * @param expressions The values the engine evaluates as FEEL and which read the data of the
- *            workflow, as the modeller wrote them
+ *            workflow, where the engine keeps them for the element's kind, as the modeller wrote
+ *            them without the surrounding whitespace
  */
 public record ZenBpmBpmnModel(
     String filename,

@@ -10,6 +10,9 @@
     <bpmn:serviceTask id="Charge" name="Charge the card">
       <bpmn:extensionElements>
         <zenbpm:taskDefinition type="charge" />
+        <zenbpm:ioMapping>
+          <zenbpm:input source="=order.total" target="amount" />
+        </zenbpm:ioMapping>
       </bpmn:extensionElements>
     </bpmn:serviceTask>
     <bpmn:serviceTask id="Unwired" name="Nobody serves me" />
@@ -28,6 +31,32 @@
         <zenbpm:calledDecision decisionId="discount" resultVariable="discount" />
       </bpmn:extensionElements>
     </bpmn:businessRuleTask>
+    <bpmn:businessRuleTask id="RateWithoutDecision" name="No decision named">
+      <bpmn:extensionElements>
+        <zenbpm:calledDecision />
+        <zenbpm:taskDefinition type="rate-again" />
+      </bpmn:extensionElements>
+    </bpmn:businessRuleTask>
+    <bpmn:businessRuleTask id="DecideBlank" name="A blank decision id is a decision">
+      <bpmn:extensionElements>
+        <zenbpm:calledDecision decisionId=" " />
+        <zenbpm:taskDefinition type="never-a-job" />
+      </bpmn:extensionElements>
+    </bpmn:businessRuleTask>
+    <bpmn:callActivity id="Invoice">
+      <bpmn:extensionElements>
+        <zenbpm:calledElement processId="Invoicing" />
+        <zenbpm:in businessKey="=orderId" />
+      </bpmn:extensionElements>
+    </bpmn:callActivity>
+    <bpmn:subProcess id="EveryParcel">
+      <bpmn:multiInstanceLoopCharacteristics>
+        <bpmn:extensionElements>
+          <zenbpm:loopCharacteristics inputCollection="=parcels" inputElement="parcel" />
+        </bpmn:extensionElements>
+      </bpmn:multiInstanceLoopCharacteristics>
+      <bpmn:startEvent id="EveryParcel_Start" />
+    </bpmn:subProcess>
     <bpmn:intermediateThrowEvent id="Announce" name="Announce">
       <bpmn:extensionElements>
         <zenbpm:taskDefinition type="announce" />

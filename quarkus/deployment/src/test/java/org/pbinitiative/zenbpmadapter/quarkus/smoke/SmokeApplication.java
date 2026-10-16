@@ -45,6 +45,14 @@ final class SmokeApplication {
      */
     static final String WITH_BPMN = "classpath*:with-bpmn";
 
+    /**
+     * Where the BPMN file of {@link #withBpmnFiles(String)} and
+     * {@link #withTheBpmsDoubleAndBpmnFiles(String)} with this directory is: the process of the
+     * sample workflow service with a script task and an instantiating receive task, which ZenBPM
+     * cannot run.
+     */
+    static final String WITH_REFUSED_BPMN = "classpath*:with-bpmn-refused";
+
     private SmokeApplication() {
     }
 
@@ -65,7 +73,18 @@ final class SmokeApplication {
      * @return The test, to be given the keys of the case
      */
     static QuarkusExtensionTest withBpmnFiles() {
-        return withoutTheBpmsDouble(withTheBpmsDoubleAndBpmnFiles());
+        return withBpmnFiles("with-bpmn");
+    }
+
+    /**
+     * A test of the smoke application without the BPMS double whose workflow module has the BPMN
+     * file of the sample workflow service in the given directory.
+     *
+     * @param directory The directory below the test resources
+     * @return The test, to be given the keys of the case
+     */
+    static QuarkusExtensionTest withBpmnFiles(final String directory) {
+        return withoutTheBpmsDouble(withTheBpmsDoubleAndBpmnFiles(directory));
     }
 
     /**
@@ -87,11 +106,23 @@ final class SmokeApplication {
      * @return The test, to be given the keys of the case
      */
     static QuarkusExtensionTest withTheBpmsDoubleAndBpmnFiles() {
-        return new QuarkusExtensionTest()
-                .setArchiveProducer(() -> archive().addAsResource("with-bpmn/SampleWorkflowService.bpmn"))
-                .setLogRecordPredicate(record -> true);
+        return withTheBpmsDoubleAndBpmnFiles("with-bpmn");
     }
 
+    /**
+     * A test of the smoke application with the platform's BPMS double as a second adapter type
+     * whose workflow module has the BPMN file of the sample workflow service in the given
+     * directory.
+     *
+     * @param directory The directory below the test resources
+     * @return The test, to be given the keys of the case
+     */
+    static QuarkusExtensionTest withTheBpmsDoubleAndBpmnFiles(final String directory) {
+        return new QuarkusExtensionTest()
+                .setArchiveProducer(() -> archive().addAsResource("%s/SampleWorkflowService.bpmn".formatted(
+                        directory)))
+                .setLogRecordPredicate(record -> true);
+    }
 
     /**
      * A test of the smoke application with the setup of a migration: the new engine is first

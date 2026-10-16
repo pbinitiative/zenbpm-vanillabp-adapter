@@ -90,10 +90,20 @@ public final class ZenBpmModelReader {
         final var definitions = document.getDocumentElement();
         if (!isBpmn(definitions, "definitions")) {
             throw new BpmnParseException(
-                    "%s cannot be read: its root element is '%s', not 'definitions' of the namespace %s."
-                            .formatted(file, definitions.getLocalName(), BPMN));
+                    "%s cannot be read: its root element is '%s' of %s, not 'definitions' of the namespace %s."
+                            .formatted(file, definitions.getLocalName(), definitions.getNamespaceURI() == null
+                                    ? "no namespace"
+                                    : "the namespace %s".formatted(definitions.getNamespaceURI()), BPMN));
         }
         final var processes = bpmnChildren(definitions, "process");
+        for (final var process : processes) {
+            if (ZenBpmBooleans.isUnreadable(process, "isExecutable")) {
+                throw new BpmnParseException("""
+                        %s cannot be deployed: process '%s' has isExecutable="%s", which is no \
+                        boolean, and ZenBPM refuses the file over it. Write true or false."""
+                        .formatted(file, process.getAttribute("id"), process.getAttribute("isExecutable")));
+            }
+        }
         final var executable = processes
                 .stream()
                 .filter(ZenBpmModelReader::isExecutable)
@@ -112,7 +122,68 @@ public final class ZenBpmModelReader {
                             .map(process -> process.getAttribute("id"))
                             .toList())));
         }
-        return List.of(new ProcessReading(filename, document, definitions, executable.getFirst()).model());
+        final var process = executable.getFirst();
+        if (attribute(process, "id") == null) {
+            throw new BpmnParseException("%s cannot be deployed: its executable process has no id."
+                    .formatted(file));
+        }
+        return List.of(new ProcessReading(filename, document, definitions, process).model());
+    }
+
+    /**
+     * The extension elements of the given local name, in any namespace, below the element's own
+     * <code>extensionElements</code> and not below those of its children.
+     *
+     * @param element The BPMN element
+     * @param localName The local name of the extension elements
+     * @return The extension elements, in the order of the file
+     */
+    static List<Element> extensions(
+        final Element element,
+        final String localName
+    ) {
+        final var found = new ArrayList<Element>();
+        for (final var extensionElements : bpmnChildren(element, EXTENSION_ELEMENTS)) {
+            for (var child = extensionElements.getFirstChild(); child != null; child = child.getNextSibling()) {
+                if (child instanceof Element extension && localName.equals(extension.getLocalName())) {
+                    found.add(extension);
+                }
+            }
+        }
+        return found;
+    }
+
+    /**
+     * The first extension element of the given local name, see {@link #extensions}.
+     *
+     * @param element The BPMN element
+     * @param localName The local name of the extension element
+     * @return The extension element, empty where the element has none
+     */
+    static Optional<Element> extension(
+        final Element element,
+        final String localName
+    ) {
+        return extensions(element, localName)
+                .stream()
+                .findFirst();
+    }
+
+    /**
+     * The text of a condition as the engine reads it: the element's content with its markup, so a
+     * CDATA section or a comment stays part of the text and no condition starts with <code>=</code>
+     * then. The reader gives the text only where the content is plain text.
+     *
+     * @param condition The <code>conditionExpression</code> element
+     * @return The text, empty where the content holds markup
+     */
+    static Optional<String> plainTextOf(final Element condition) {
+        for (var child = condition.getFirstChild(); child != null; child = child.getNextSibling()) {
+            if (child.getNodeType() != Node.TEXT_NODE) {
+                return Optional.empty();
+            }
+        }
+        return Optional.of(condition.getTextContent());
     }
 
     // a hardened parser: no DOCTYPE at all, so no entity can be declared, and nothing external
@@ -141,10 +212,7 @@ public final class ZenBpmModelReader {
     }
 
     private static boolean isExecutable(final Element process) {
-        final var executable = process
-                .getAttribute("isExecutable")
-                .trim();
-        return "true".equals(executable) || "1".equals(executable);
+        return ZenBpmBooleans.valueOf(process, "isExecutable", false);
     }
 
     private static boolean isBpmn(
@@ -177,32 +245,6 @@ public final class ZenBpmModelReader {
                 .findFirst();
     }
 
-    // the extension elements of the given local name, in any namespace, below the element's own
-    // 'extensionElements' and not below those of its children
-    private static List<Element> extensions(
-        final Element element,
-        final String localName
-    ) {
-        final var found = new ArrayList<Element>();
-        for (final var extensionElements : bpmnChildren(element, EXTENSION_ELEMENTS)) {
-            for (var child = extensionElements.getFirstChild(); child != null; child = child.getNextSibling()) {
-                if (child instanceof Element extension && localName.equals(extension.getLocalName())) {
-                    found.add(extension);
-                }
-            }
-        }
-        return found;
-    }
-
-    private static Optional<Element> extension(
-        final Element element,
-        final String localName
-    ) {
-        return extensions(element, localName)
-                .stream()
-                .findFirst();
-    }
-
     private static List<Element> children(final Element parent) {
         final var children = new ArrayList<Element>();
         for (var child = parent.getFirstChild(); child != null; child = child.getNextSibling()) {
@@ -213,14 +255,13 @@ public final class ZenBpmModelReader {
         return children;
     }
 
-    // an attribute's value, or null where the element has none or an empty one
+    // an attribute's value as written, whitespace included, because the engine keeps it: a job
+    // type ' charge ' is not 'charge'. Null where the element has none or an empty one
     private static String attribute(
         final Element element,
         final String name
     ) {
-        final var value = element
-                .getAttribute(name)
-                .trim();
+        final var value = element.getAttribute(name);
         return value.isEmpty() ? null : value;
     }
 
@@ -301,8 +342,9 @@ public final class ZenBpmModelReader {
                 readTopLevel(element);
             }
             walk(process, List.of());
-            return new ZenBpmBpmnModel(filename, document, attribute(process,
-                    "id"), tasks, userTasks, catchMessages, startMessages, startMessagesAreKnown, startEvents, endEventIds, multiInstanceElements, callActivities, concurrentTokenElements, expressions);
+            return new ZenBpmBpmnModel(
+                    filename, document, attribute(process,
+                            "id"), tasks, userTasks, catchMessages, startMessages, startMessagesAreKnown, startEvents, endEventIds, multiInstanceElements, callActivities, concurrentTokenElements, expressions);
         }
 
         private void countOutgoingFlows(final Element container) {
@@ -363,18 +405,15 @@ public final class ZenBpmModelReader {
             final boolean ofTheProcessItself
         ) {
             final var id = attribute(element, "id");
-            switch (element.getLocalName()) {
-                case "serviceTask", "sendTask" -> tasks.add(taskOf(element));
-                case "businessRuleTask" -> {
-                    if (extension(element, "calledDecision").isEmpty()) {
-                        tasks.add(taskOf(element));
-                    }
-                }
-                case "intermediateThrowEvent", "endEvent" -> {
-                    if (bpmnChild(element, MESSAGE_DEFINITION).isPresent()) {
-                        tasks.add(taskOf(element));
-                    }
-                }
+            final var kind = element.getLocalName();
+            var job = false;
+            switch (kind) {
+                case "serviceTask", "sendTask" -> job = true;
+                // the engine evaluates the decision itself only where the task names one
+                case "businessRuleTask" -> job = extension(element, "calledDecision")
+                        .map(calledDecision -> attribute(calledDecision, "decisionId"))
+                        .isEmpty();
+                case "intermediateThrowEvent", "endEvent" -> job = bpmnChild(element, MESSAGE_DEFINITION).isPresent();
                 case "userTask" -> userTasks.add(BpmnTaskSpec.userTask(id, Optional
                         .ofNullable(taskDefinitionOf(element))
                         .orElse(DEFAULT_USER_TASK_TYPE), attribute(element, "name")));
@@ -391,14 +430,18 @@ public final class ZenBpmModelReader {
                         .map(calledElement -> attribute(calledElement, "processId"))
                         .orElse(null)));
                 case "sequenceFlow" -> bpmnChild(element, "conditionExpression")
-                        .ifPresent(condition -> addExpression(id, ExpressionPlace.SEQUENCE_FLOW_CONDITION, condition
-                                .getTextContent()));
+                        .flatMap(ZenBpmModelReader::plainTextOf)
+                        .ifPresent(condition -> addExpression(id, ExpressionPlace.SEQUENCE_FLOW_CONDITION,
+                                condition));
                 default -> {
                     // nothing to read from it beyond what every element is asked below
                 }
             }
+            if (job) {
+                tasks.add(taskOf(element));
+            }
             readConcurrency(element);
-            readExtensionExpressions(id, element);
+            readExtensionExpressions(id, element, job || "userTask".equals(kind));
         }
 
         private BpmnTaskSpec taskOf(final Element element) {
@@ -425,8 +468,10 @@ public final class ZenBpmModelReader {
             if (name != null) {
                 catchMessages.add(name);
             }
+            // the engine evaluates a correlation key only where it starts with '=' as written,
+            // before it trims anything
             final var correlationKey = correlationKeys.get(messageRef);
-            if (correlationKey != null) {
+            if (correlationKey != null && correlationKey.startsWith("=")) {
                 addExpression(elementId, ExpressionPlace.MESSAGE_CORRELATION_KEY, correlationKey);
             }
         }
@@ -450,51 +495,82 @@ public final class ZenBpmModelReader {
                     .ifPresent(outputElement -> addExpression(id, ExpressionPlace.SOMEWHERE_ELSE, outputElement));
         }
 
+        // a token per outgoing flow wherever the engine forks: at a parallel or inclusive gateway,
+        // and at every other element with more than one outgoing flow, which it leaves on all of
+        // them; an exclusive and an event-based gateway choose one
         private void readConcurrency(final Element element) {
             final var id = attribute(element, "id");
+            final var forks = outgoingFlows.getOrDefault(id, 0) > 1;
             final var concurrent = switch (element.getLocalName()) {
-                case "parallelGateway", "inclusiveGateway" -> outgoingFlows.getOrDefault(id, 0) > 1;
-                case "boundaryEvent" -> "false".equals(attribute(element, "cancelActivity"));
-                case "subProcess" -> "true".equals(attribute(element, "triggeredByEvent")) && bpmnChildren(element,
-                        "startEvent")
-                        .stream()
-                        .anyMatch(start -> "false".equals(attribute(start, "isInterrupting")));
-                default -> false;
+                case "exclusiveGateway", "eventBasedGateway", "sequenceFlow" -> false;
+                case "boundaryEvent" -> forks || !ZenBpmBooleans.valueOf(element, "cancelActivity", true);
+                case "subProcess" -> forks || ZenBpmBooleans.valueOf(element, "triggeredByEvent",
+                        false) && bpmnChildren(element, "startEvent")
+                                .stream()
+                                .anyMatch(start -> !ZenBpmBooleans.valueOf(start, "isInterrupting", true));
+                default -> forks;
             };
             final var parallelMultiInstance = bpmnChild(element, MULTI_INSTANCE)
-                    .filter(multiInstance -> !"true".equals(attribute(multiInstance, "isSequential")))
+                    .filter(multiInstance -> !ZenBpmBooleans.valueOf(multiInstance, "isSequential", false))
                     .isPresent();
             if (concurrent || parallelMultiInstance) {
                 concurrentTokenElements.add(id);
             }
         }
 
-        // the values of the element's extensions which the engine evaluates as FEEL: the retries
-        // and the backoff of a task definition, the sources of the mappings, the assignee of a
-        // user task and the business key a call activity hands down
+        // the values of the element's extensions which the engine evaluates as FEEL, where the
+        // engine keeps them for the element's kind: the retries and the backoff of a task which
+        // creates a job, the sources of the mappings, the assignee of a user task and the business
+        // key a call activity or a sub-process hands down
         private void readExtensionExpressions(
             final String elementId,
-            final Element element
+            final Element element,
+            final boolean createsAJob
         ) {
-            for (final var taskDefinition : extensions(element, "taskDefinition")) {
-                addExpression(elementId, ExpressionPlace.SOMEWHERE_ELSE, attribute(taskDefinition, "retries"));
-                addExpression(elementId, ExpressionPlace.SOMEWHERE_ELSE, attribute(taskDefinition,
-                        "retryBackoff"));
+            final var kind = element.getLocalName();
+            if (createsAJob) {
+                for (final var taskDefinition : extensions(element, "taskDefinition")) {
+                    addExpression(elementId, ExpressionPlace.SOMEWHERE_ELSE, attribute(taskDefinition, "retries"));
+                    addExpression(elementId, ExpressionPlace.SOMEWHERE_ELSE, attribute(taskDefinition,
+                            "retryBackoff"));
+                }
             }
+            final var inputs = keepsInputMappings(element);
+            final var outputs = inputs || "startEvent".equals(kind) || "boundaryEvent".equals(kind);
             for (final var ioMapping : extensions(element, "ioMapping")) {
                 for (final var mapping : children(ioMapping)) {
-                    if ("input".equals(mapping.getLocalName()) || "output".equals(mapping.getLocalName())) {
+                    final var direction = mapping.getLocalName();
+                    if (("input".equals(direction) && inputs) || ("output".equals(direction) && outputs)) {
                         addExpression(elementId, ExpressionPlace.INPUT_OR_OUTPUT_MAPPING, attribute(mapping,
                                 "source"));
                     }
                 }
             }
-            for (final var assignment : extensions(element, "assignmentDefinition")) {
-                addExpression(elementId, ExpressionPlace.SOMEWHERE_ELSE, attribute(assignment, "assignee"));
+            if ("userTask".equals(kind)) {
+                for (final var assignment : extensions(element, "assignmentDefinition")) {
+                    addExpression(elementId, ExpressionPlace.SOMEWHERE_ELSE, attribute(assignment, "assignee"));
+                }
             }
-            for (final var in : extensions(element, "in")) {
-                addExpression(elementId, ExpressionPlace.SOMEWHERE_ELSE, attribute(in, "businessKey"));
+            if ("callActivity".equals(kind) || "subProcess".equals(kind)) {
+                for (final var in : extensions(element, "in")) {
+                    addExpression(elementId, ExpressionPlace.SOMEWHERE_ELSE, attribute(in, "businessKey"));
+                }
             }
+        }
+
+        // the activities, the intermediate events, and an end event which sends a message or
+        // throws an error; the engine drops the mappings of every other end event
+        private static boolean keepsInputMappings(final Element element) {
+            return switch (element.getLocalName()) {
+                case "serviceTask", "userTask", "businessRuleTask", "sendTask", "receiveTask", "callActivity",
+                        "subProcess", "intermediateCatchEvent", "intermediateThrowEvent" ->
+                    true;
+                case "endEvent" -> bpmnChild(element, MESSAGE_DEFINITION).isPresent() || bpmnChild(element,
+                        "errorEventDefinition")
+                        .filter(definition -> definition.hasAttribute("id"))
+                        .isPresent();
+                default -> false;
+            };
         }
 
         // the engine evaluates a value only where it starts with '='; anything else it takes

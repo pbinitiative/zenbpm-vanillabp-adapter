@@ -32,13 +32,14 @@ import io.vanillabp.integration.spi.startup.StartupReport;
  * This version of the adapter registers, validates its configuration, reports health, reads BPMN
  * files and refuses what ZenBPM cannot run, and deploys nothing yet. Reading and preparing need no
  * engine, so an adapter id without clients reads and prepares its files as well, like the Camunda
- * 8 adapter, and the checks done meanwhile speak before the configuration does. Every later step of the pipeline throws: where the adapter id has
- * no clients, the message of its validation, which names the keys to set, so a workflow module
- * with BPMN files ends the start of an application which configured no engine for it; otherwise
- * an {@link UnsupportedOperationException} which says that the step is not built yet. Nothing
- * pretends to have done the work. A workflow module without BPMN files reaches none of the steps,
- * because the platform skips the adapter for it. It also answers what the platform asks before the
- * deployment: whether two adapter ids of this type are one instance.
+ * 8 adapter, and the checks done meanwhile speak before the configuration does. Every later step
+ * of the pipeline throws: where the adapter id has no clients, the message of its validation,
+ * which names the keys to set, so a workflow module with BPMN files ends the start of an
+ * application which configured no engine for it; otherwise an
+ * {@link UnsupportedOperationException} which says that the step is not built yet. Nothing
+ * pretends to have done the work. A workflow module without BPMN files reaches none of the
+ * steps, because the platform skips the adapter for it. It also answers what the platform asks
+ * before the deployment: whether two adapter ids of this type are one instance.
  * <p>
  * Each field has an accessor of its own and no Lombok getter on the class, see decision 13 in the
  * repository's DECISIONS.md.

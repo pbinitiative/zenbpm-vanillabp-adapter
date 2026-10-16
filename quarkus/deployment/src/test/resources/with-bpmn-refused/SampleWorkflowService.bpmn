@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" id="refused"
+    targetNamespace="http://bpmn.io/schema/bpmn">
+  <bpmn:message id="Message_Order" name="order" />
+  <bpmn:process id="SampleWorkflowService" isExecutable="true">
+    <bpmn:receiveTask id="OrderReceived" instantiate="1" messageRef="Message_Order">
+      <bpmn:outgoing>Flow_1</bpmn:outgoing>
+    </bpmn:receiveTask>
+    <bpmn:scriptTask id="Calculate" scriptFormat="feel">
+      <bpmn:incoming>Flow_1</bpmn:incoming>
+      <bpmn:outgoing>Flow_2</bpmn:outgoing>
+      <bpmn:script>=amount * 2</bpmn:script>
+    </bpmn:scriptTask>
+    <bpmn:endEvent id="Done">
+      <bpmn:incoming>Flow_2</bpmn:incoming>
+    </bpmn:endEvent>
+    <bpmn:sequenceFlow id="Flow_1" sourceRef="OrderReceived" targetRef="Calculate" />
+    <bpmn:sequenceFlow id="Flow_2" sourceRef="Calculate" targetRef="Done" />
+  </bpmn:process>
+</bpmn:definitions>

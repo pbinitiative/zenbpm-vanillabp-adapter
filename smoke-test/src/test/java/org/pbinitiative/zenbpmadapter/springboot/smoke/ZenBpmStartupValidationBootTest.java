@@ -69,8 +69,7 @@ class ZenBpmStartupValidationBootTest {
     @DisplayName("An adapter id without an address and a workflow module with BPMN files end the start, naming the key")
     void anUnconfiguredAdapterIdWithBpmnFilesEndsTheStart() {
         final var failure = rootOf(assertThrows(Exception.class, () -> run("vanillabp.prioritized-adapters=zenbpm",
-                "vanillabp.adapters.zenbpm.resources-location="
-                        + WITH_BPMN)
+                "vanillabp.adapters.zenbpm.resources-location=%s".formatted(WITH_BPMN))
                 .close()));
 
         assertTrue(failure
@@ -84,12 +83,11 @@ class ZenBpmStartupValidationBootTest {
     @DisplayName("A degraded adapter id with BPMN files, nowhere first and with policy 'warn', lets the application boot on the adapter which is first")
     void aDegradedAdapterIdWithBpmnFilesBootsOnTheFirstAdapter(final CapturedOutput output) {
         try (var context = run("vanillabp.prioritized-adapters=dummy,zenbpm", "vanillabp.adapters.dummy.type=dummy",
-                "vanillabp.adapters.dummy.test=7", "vanillabp.adapters.dummy.resources-location="
-                        + WITH_BPMN,
+                "vanillabp.adapters.dummy.test=7",
+                "vanillabp.adapters.dummy.resources-location=%s".formatted(WITH_BPMN),
                 "vanillabp.adapters.zenbpm.type=zenbpm", "vanillabp.adapters.zenbpm.deployment-failure=warn",
                 "vanillabp.adapters.zenbpm.rest-address=ftp://old-engine:8080",
-                "vanillabp.adapters.zenbpm.resources-location="
-                        + WITH_BPMN)) {
+                "vanillabp.adapters.zenbpm.resources-location=%s".formatted(WITH_BPMN))) {
             final var log = output.getAllOfThisTest();
 
             final var failure = log.indexOf("Deployment of workflow module 'smoke-app' failed for adapter 'zenbpm'!");

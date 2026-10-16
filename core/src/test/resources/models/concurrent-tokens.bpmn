@@ -62,7 +62,49 @@
         </bpmn:extensionElements>
       </bpmn:multiInstanceLoopCharacteristics>
     </bpmn:serviceTask>
+    <bpmn:serviceTask id="Split">
+      <bpmn:extensionElements>
+        <zenbpm:taskDefinition type="split" />
+      </bpmn:extensionElements>
+    </bpmn:serviceTask>
+    <bpmn:serviceTask id="Pack">
+      <bpmn:extensionElements>
+        <zenbpm:taskDefinition type="pack" />
+      </bpmn:extensionElements>
+    </bpmn:serviceTask>
+    <bpmn:boundaryEvent id="ReminderSpelledAsZero" attachedToRef="Pack" cancelActivity="0">
+      <bpmn:timerEventDefinition id="ReminderSpelledAsZero_Definition">
+        <bpmn:timeDuration>PT1H</bpmn:timeDuration>
+      </bpmn:timerEventDefinition>
+    </bpmn:boundaryEvent>
+    <bpmn:boundaryEvent id="InterruptingSpelledAsTrue" attachedToRef="Pack" cancelActivity="TRUE">
+      <bpmn:timerEventDefinition id="InterruptingSpelledAsTrue_Definition">
+        <bpmn:timeDuration>PT2H</bpmn:timeDuration>
+      </bpmn:timerEventDefinition>
+    </bpmn:boundaryEvent>
+    <bpmn:boundaryEvent id="ReminderWithEmptyFlag" attachedToRef="Pack" cancelActivity="">
+      <bpmn:timerEventDefinition id="ReminderWithEmptyFlag_Definition">
+        <bpmn:timeDuration>PT3H</bpmn:timeDuration>
+      </bpmn:timerEventDefinition>
+    </bpmn:boundaryEvent>
+    <bpmn:subProcess id="ComplaintsSpelledAsDigits" triggeredByEvent="1">
+      <bpmn:startEvent id="ComplaintSpelledAsDigits" isInterrupting="0">
+        <bpmn:messageEventDefinition id="ComplaintSpelledAsDigits_Definition" messageRef="Message_Complaint" />
+      </bpmn:startEvent>
+    </bpmn:subProcess>
+    <bpmn:serviceTask id="NotifyOneByOneSpelledAsDigit">
+      <bpmn:extensionElements>
+        <zenbpm:taskDefinition type="notify" />
+      </bpmn:extensionElements>
+      <bpmn:multiInstanceLoopCharacteristics isSequential="1">
+        <bpmn:extensionElements>
+          <zenbpm:loopCharacteristics inputCollection="=recipients" inputElement="recipient" />
+        </bpmn:extensionElements>
+      </bpmn:multiInstanceLoopCharacteristics>
+    </bpmn:serviceTask>
     <bpmn:endEvent id="Done" />
+    <bpmn:sequenceFlow id="Flow_SplitPack" sourceRef="Split" targetRef="Pack" />
+    <bpmn:sequenceFlow id="Flow_SplitDone" sourceRef="Split" targetRef="Done" />
     <bpmn:sequenceFlow id="Flow_Start" sourceRef="Start" targetRef="Fork" />
     <bpmn:sequenceFlow id="Flow_ForkCharge" sourceRef="Fork" targetRef="Charge" />
     <bpmn:sequenceFlow id="Flow_ForkShip" sourceRef="Fork" targetRef="Ship" />

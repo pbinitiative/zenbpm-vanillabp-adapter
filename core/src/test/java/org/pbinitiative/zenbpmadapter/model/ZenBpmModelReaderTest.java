@@ -16,6 +16,7 @@ import java.io.FilterInputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.UncheckedIOException;
+import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Set;
 
@@ -41,8 +42,17 @@ import io.vanillabp.spi.service.BpmsStartTrigger;
 @ExtendWith(SuppressOutputExtension.class)
 class ZenBpmModelReaderTest {
 
+    // an input and an output mapping, each with an expression, for the elements which may carry them
+    private static final String MAPPINGS = """
+            <bpmn:extensionElements>
+              <zenbpm:ioMapping>
+                <zenbpm:input source="=in" target="a" />
+                <zenbpm:output source="=out" target="b" />
+              </zenbpm:ioMapping>
+            </bpmn:extensionElements>""";
+
     @Test
-    @DisplayName("The elements which create jobs are the tasks, each with its task definition and its name; user tasks are listed apart")
+    @DisplayName("The elements which create jobs are the tasks, each with its task definition and its name; a business rule task naming a decision is none, an empty calledDecision names none; user tasks are listed apart")
     void theElementsWhichCreateJobsAreTheTasks() {
         final var model = readOne("job-tasks-zeebe.bpmn");
 
@@ -54,6 +64,7 @@ class ZenBpmModelReaderTest {
                         new BpmnTaskSpec("Unwired", null, false, "Nobody serves me"),
                         new BpmnTaskSpec("Notify", "notify", false, null),
                         new BpmnTaskSpec("Rate", "rate", false, "Rate the customer"),
+                        new BpmnTaskSpec("RateWithoutDecision", "rate-again", false, "No decision named"),
                         new BpmnTaskSpec("Announce", "announce", false, "Announce"),
                         new BpmnTaskSpec("Pack", "pack", false, "Pack"),
                         new BpmnTaskSpec("Shipped", "report-shipping", false, "Report the shipping")),
@@ -65,17 +76,141 @@ class ZenBpmModelReaderTest {
     }
 
     @Test
-    @DisplayName("A model of the Camunda Modeler (zeebe namespace) reads like the same model in the zenbpm namespace")
+    @DisplayName("A model in the zeebe namespace reads like the same model in the zenbpm namespace, every collection of it")
     void bothExtensionNamespacesReadAlike() {
         final var zeebe = readOne("job-tasks-zeebe.bpmn");
         final var zenbpm = readOne("job-tasks-zenbpm.bpmn");
 
         assertAll(
+                () -> assertEquals(zeebe.bpmnProcessId(), zenbpm.bpmnProcessId()),
                 () -> assertEquals(zeebe.tasks(), zenbpm.tasks()),
                 () -> assertEquals(zeebe.userTasks(), zenbpm.userTasks()),
                 () -> assertEquals(zeebe.catchMessages(), zenbpm.catchMessages()),
+                () -> assertEquals(zeebe.startMessages(), zenbpm.startMessages()),
+                () -> assertEquals(zeebe.startMessagesAreKnown(), zenbpm.startMessagesAreKnown()),
                 () -> assertEquals(zeebe.startEvents(), zenbpm.startEvents()),
-                () -> assertEquals(zeebe.endEventIds(), zenbpm.endEventIds()));
+                () -> assertEquals(zeebe.endEventIds(), zenbpm.endEventIds()),
+                () -> assertEquals(zeebe.multiInstanceElements(), zenbpm.multiInstanceElements()),
+                () -> assertEquals(zeebe.callActivities(), zenbpm.callActivities()),
+                () -> assertEquals(zeebe.concurrentTokenElements(), zenbpm.concurrentTokenElements()),
+                () -> assertEquals(zeebe.expressions(), zenbpm.expressions()),
+                () -> assertEquals(List.of("Charge", "Invoice", "EveryParcel"), zeebe
+                        .expressions()
+                        .stream()
+                        .map(ModelExpression::elementId)
+                        .toList()));
+    }
+
+    @Test
+    @DisplayName("A model in the shape the Camunda Modeler exports for Camunda 8 reads without changes")
+    void aModelOfTheCamundaModelerReadsWithoutChanges() {
+        final var model = readOne("camunda-modeler.bpmn");
+
+        assertAll(
+                () -> assertEquals(List.of(new BpmnTaskSpec("Activity_Charge", "charge", false, "Charge")), model
+                        .tasks()),
+                () -> assertEquals(List.of(BpmnTaskSpec.userTask("Activity_Approve", "user-task-type", "Approve")),
+                        model.userTasks()),
+                () -> assertEquals(Set.of("paid"), model.catchMessages()),
+                () -> assertEquals(List.of(new StartEvent("StartEvent_1", BpmsStartTrigger.Kind.NONE)), model
+                        .startEvents()),
+                () -> assertEquals(List.of("Event_Done"), model.endEventIds()),
+                () -> assertEquals(
+                        List.of(new MultiInstanceElement("Activity_EveryParcel", "=parcels", "parcel", List.of())),
+                        model.multiInstanceElements()),
+                () -> assertEquals(List.of(new CallActivity("Activity_Invoice", "Invoicing")), model.callActivities()),
+                () -> assertEquals(List.of("Activity_EveryParcel"), List.copyOf(model.concurrentTokenElements())),
+                () -> assertEquals(List.of(
+                        new ModelExpression("Activity_Charge", ExpressionPlace.INPUT_OR_OUTPUT_MAPPING, "=order.total", "order.total"),
+                        new ModelExpression("Activity_Approve", ExpressionPlace.SOMEWHERE_ELSE, "=reviewer", "reviewer"),
+                        new ModelExpression("Event_Paid", ExpressionPlace.MESSAGE_CORRELATION_KEY, "=orderId", "orderId"),
+                        new ModelExpression("Activity_EveryParcel", ExpressionPlace.MULTI_INSTANCE_COLLECTION, "=parcels", "parcels")),
+                        model.expressions()));
+    }
+
+    @Test
+    @DisplayName("Job types, user task types and message names are kept as written, whitespace included, as the engine keeps them")
+    void namesAreKeptAsWritten() {
+        final var model = readInline("""
+                <bpmn:message id="Message_Ordered" name=" ordered " />
+                <bpmn:process id="Orders" isExecutable="true">
+                  <bpmn:startEvent id="Ordered">
+                    <bpmn:messageEventDefinition messageRef="Message_Ordered" />
+                  </bpmn:startEvent>
+                  <bpmn:serviceTask id="Charge">
+                    <bpmn:extensionElements><zenbpm:taskDefinition type=" charge " /></bpmn:extensionElements>
+                  </bpmn:serviceTask>
+                  <bpmn:userTask id="Approve">
+                    <bpmn:extensionElements><zenbpm:taskDefinition type=" " /></bpmn:extensionElements>
+                  </bpmn:userTask>
+                  <bpmn:userTask id="Review">
+                    <bpmn:extensionElements><zenbpm:taskDefinition type="" /></bpmn:extensionElements>
+                  </bpmn:userTask>
+                </bpmn:process>
+                """);
+
+        assertAll(
+                () -> assertEquals(Set.of(" ordered "), model.startMessages()),
+                () -> assertEquals(" charge ", model
+                        .tasks()
+                        .getFirst()
+                        .taskDefinition()),
+                () -> assertEquals(List.of(" ", "user-task-type"), model
+                        .userTasks()
+                        .stream()
+                        .map(BpmnTaskSpec::taskDefinition)
+                        .toList()));
+    }
+
+    @Test
+    @DisplayName("Mappings are expressions only where the engine keeps them for the kind of element; a plain end event keeps none, a start or boundary event only outputs")
+    void mappingsCountWhereTheEngineKeepsThem() {
+        final var model = readInline(
+                """
+                        <bpmn:message id="Message_Shipped" name="shipped" />
+                        <bpmn:process id="Orders" isExecutable="true">
+                          <bpmn:startEvent id="Start">%s</bpmn:startEvent>
+                          <bpmn:serviceTask id="Charge" />
+                          <bpmn:boundaryEvent id="Late" attachedToRef="Charge">%s
+                            <bpmn:timerEventDefinition><bpmn:timeDuration>PT1H</bpmn:timeDuration></bpmn:timerEventDefinition>
+                          </bpmn:boundaryEvent>
+                          <bpmn:exclusiveGateway id="Which">%s</bpmn:exclusiveGateway>
+                          <bpmn:endEvent id="Plain">%s</bpmn:endEvent>
+                          <bpmn:endEvent id="Terminate">%s<bpmn:terminateEventDefinition /></bpmn:endEvent>
+                          <bpmn:endEvent id="Failed">%s<bpmn:errorEventDefinition id="Failed_Definition" /></bpmn:endEvent>
+                          <bpmn:endEvent id="FailedWithoutId">%s<bpmn:errorEventDefinition /></bpmn:endEvent>
+                          <bpmn:endEvent id="Shipped">%s<bpmn:messageEventDefinition messageRef="Message_Shipped" /></bpmn:endEvent>
+                        </bpmn:process>
+                        """
+                        .formatted(MAPPINGS, MAPPINGS, MAPPINGS, MAPPINGS, MAPPINGS, MAPPINGS, MAPPINGS, MAPPINGS));
+
+        assertEquals(List.of("Start:=out", "Late:=out", "Failed:=in", "Failed:=out", "Shipped:=in", "Shipped:=out"),
+                model
+                        .expressions()
+                        .stream()
+                        .map(expression -> "%s:%s".formatted(expression.elementId(), expression.expression()))
+                        .toList());
+    }
+
+    @Test
+    @DisplayName("A correlation key or a condition the engine takes as text is no expression: a key starting with a blank, a condition in CDATA")
+    void whatTheEngineTakesAsTextIsNoExpression() {
+        final var model = readInline("""
+                <bpmn:message id="Message_Paid" name="paid">
+                  <bpmn:extensionElements><zenbpm:subscription correlationKey=" =orderId" /></bpmn:extensionElements>
+                </bpmn:message>
+                <bpmn:process id="Orders" isExecutable="true">
+                  <bpmn:intermediateCatchEvent id="Paid">
+                    <bpmn:messageEventDefinition messageRef="Message_Paid" />
+                  </bpmn:intermediateCatchEvent>
+                  <bpmn:exclusiveGateway id="Which" />
+                  <bpmn:sequenceFlow id="Big" sourceRef="Which" targetRef="Paid">
+                    <bpmn:conditionExpression><![CDATA[=amount > 100]]></bpmn:conditionExpression>
+                  </bpmn:sequenceFlow>
+                </bpmn:process>
+                """);
+
+        assertEquals(List.of(), model.expressions());
     }
 
     @Test
@@ -133,12 +268,12 @@ class ZenBpmModelReaderTest {
     }
 
     @Test
-    @DisplayName("The elements which give a workflow a second token are collected, and their sequential or interrupting siblings are not")
+    @DisplayName("The elements which give a workflow a second token are collected, an activity leaving on two flows and flags spelt as Go reads them included (an empty one is false); their sequential or interrupting siblings are not")
     void theElementsWhichGiveASecondToken() {
         final var model = readOne("concurrent-tokens.bpmn");
 
-        assertEquals(List.of("Fork", "Choose", "Reminder", "Complaints", "NotifyAll"), List.copyOf(model
-                .concurrentTokenElements()));
+        assertEquals(List.of("Fork", "Choose", "Reminder", "Complaints", "NotifyAll", "Split", "ReminderSpelledAsZero",
+                "ReminderWithEmptyFlag", "ComplaintsSpelledAsDigits"), List.copyOf(model.concurrentTokenElements()));
     }
 
     @Test
@@ -187,6 +322,29 @@ class ZenBpmModelReaderTest {
     }
 
     @Test
+    @DisplayName("An executable process without an id, or an isExecutable which is no boolean, is refused naming the file; 1 is executable")
+    void aProcessTheEngineCannotTakeIsRefused() {
+        final var withoutId = assertThrows(BpmnParseException.class, () -> readInline("""
+                <bpmn:process isExecutable="true" />
+                """));
+        final var noBoolean = assertThrows(BpmnParseException.class, () -> readInline("""
+                <bpmn:process id="Orders" isExecutable="yes" />
+                """));
+
+        assertAll(
+                () -> assertEquals(
+                        "BPMN file 'order.bpmn' of workflow module 'shop' cannot be deployed: its executable process has no id.",
+                        withoutId.getMessage()),
+                () -> assertEquals("""
+                        BPMN file 'order.bpmn' of workflow module 'shop' cannot be deployed: process 'Orders' has \
+                        isExecutable="yes", which is no boolean, and ZenBPM refuses the file over it. Write true or \
+                        false.""", noBoolean.getMessage()),
+                () -> assertEquals("Orders", readInline("""
+                        <bpmn:process id="Orders" isExecutable="1" />
+                        """).bpmnProcessId()));
+    }
+
+    @Test
     @DisplayName("A file without an executable process yields no model")
     void aFileWithoutAnExecutableProcessYieldsNothing() {
         assertEquals(List.of(), read("not-executable.bpmn"));
@@ -215,7 +373,11 @@ class ZenBpmModelReaderTest {
     void aFileWhichIsNoBpmnIsRefused() {
         final var broken = assertThrows(BpmnParseException.class, () -> read("broken.bpmn"));
         final var noBpmn = assertThrows(BpmnParseException.class, () -> ZenBpmModelReader.read("shop", "order.bpmn",
-                new ByteArrayInputStream("<definitions/>".getBytes())));
+                new ByteArrayInputStream("<definitions/>".getBytes(StandardCharsets.UTF_8))));
+        final var otherNamespace = assertThrows(BpmnParseException.class, () -> ZenBpmModelReader.read("shop",
+                "order.bpmn", new ByteArrayInputStream("""
+                        <definitions xmlns="http://www.omg.org/spec/BPMN/20100524/MODEL/" />
+                        """.getBytes(StandardCharsets.UTF_8))));
 
         assertAll(
                 () -> assertTrue(broken
@@ -223,8 +385,11 @@ class ZenBpmModelReaderTest {
                         .startsWith("BPMN file 'broken.bpmn' of workflow module 'shop' cannot be read: "),
                         broken.getMessage()),
                 () -> assertEquals(
-                        "BPMN file 'order.bpmn' of workflow module 'shop' cannot be read: its root element is 'definitions', not 'definitions' of the namespace http://www.omg.org/spec/BPMN/20100524/MODEL.",
-                        noBpmn.getMessage()));
+                        "BPMN file 'order.bpmn' of workflow module 'shop' cannot be read: its root element is 'definitions' of no namespace, not 'definitions' of the namespace http://www.omg.org/spec/BPMN/20100524/MODEL.",
+                        noBpmn.getMessage()),
+                () -> assertEquals(
+                        "BPMN file 'order.bpmn' of workflow module 'shop' cannot be read: its root element is 'definitions' of the namespace http://www.omg.org/spec/BPMN/20100524/MODEL/, not 'definitions' of the namespace http://www.omg.org/spec/BPMN/20100524/MODEL.",
+                        otherNamespace.getMessage()));
     }
 
     @Test
@@ -276,9 +441,19 @@ class ZenBpmModelReaderTest {
         }
     }
 
+    // the process and messages given, in a file 'order.bpmn' of workflow module 'shop'
+    private static ZenBpmBpmnModel readInline(final String rootElements) {
+        final var models = ZenBpmModelReader.read("shop", "order.bpmn", new ByteArrayInputStream("""
+                <bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL"
+                    xmlns:zenbpm="http://zenbpm.pbinitiative.org/1.0" id="order">
+                %s</bpmn:definitions>
+                """.formatted(rootElements).getBytes(StandardCharsets.UTF_8)));
+        assertEquals(1, models.size());
+        return models.getFirst();
+    }
+
     private static InputStream fixture(final String fixture) {
-        final var stream = ZenBpmModelReaderTest.class.getResourceAsStream("/models/"
-                + fixture);
+        final var stream = ZenBpmModelReaderTest.class.getResourceAsStream("/models/%s".formatted(fixture));
         if (stream == null) {
             throw new IllegalStateException("No fixture '%s' in src/test/resources/models".formatted(fixture));
         }
