@@ -5,8 +5,10 @@
 package org.pbinitiative.zenbpmadapter.model;
 
 import java.util.Collections;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 
 import org.w3c.dom.Document;
@@ -58,6 +60,12 @@ import io.vanillabp.spi.service.BpmsStartTrigger;
  * @param expressions The values the engine evaluates as FEEL and which read the data of the
  *            workflow, where the engine keeps them for the element's kind, as the modeller wrote
  *            them without the surrounding whitespace
+ * @param messageStarts The message start events of the process itself, each with its message
+ * @param messageCatches The elements which wait for a message, as in <code>catchMessages</code>,
+ *            each with its message
+ * @param enclosingMultiInstances For every element inside a multi-instance sub-process, the ids of
+ *            the multi-instance sub-processes around it, the outermost first; an element inside
+ *            none is not in the map
  */
 public record ZenBpmBpmnModel(
     String filename,
@@ -73,7 +81,10 @@ public record ZenBpmBpmnModel(
     List<MultiInstanceElement> multiInstanceElements,
     List<CallActivity> callActivities,
     Set<String> concurrentTokenElements,
-    List<ModelExpression> expressions
+    List<ModelExpression> expressions,
+    List<MessageReference> messageStarts,
+    List<MessageReference> messageCatches,
+    Map<String, List<String>> enclosingMultiInstances
 ) {
 
     /**
@@ -90,6 +101,9 @@ public record ZenBpmBpmnModel(
         callActivities = List.copyOf(callActivities);
         concurrentTokenElements = inOrder(concurrentTokenElements);
         expressions = List.copyOf(expressions);
+        messageStarts = List.copyOf(messageStarts);
+        messageCatches = List.copyOf(messageCatches);
+        enclosingMultiInstances = Collections.unmodifiableMap(new LinkedHashMap<>(enclosingMultiInstances));
     }
 
     private static Set<String> inOrder(final Set<String> values) {
@@ -134,6 +148,21 @@ public record ZenBpmBpmnModel(
             enclosingChain = List.copyOf(enclosingChain);
         }
 
+    }
+
+    /**
+     * An element which starts a workflow by a message or waits for one, and the message.
+     *
+     * @param elementId The id of the start event or of the element which waits
+     * @param messageId The id of the message the element names in <code>messageRef</code>
+     * @param messageName The name of the message, <code>null</code> where the file holds no such
+     *            message or it has no name
+     */
+    public record MessageReference(
+        String elementId,
+        String messageId,
+        String messageName
+    ) {
     }
 
     /**

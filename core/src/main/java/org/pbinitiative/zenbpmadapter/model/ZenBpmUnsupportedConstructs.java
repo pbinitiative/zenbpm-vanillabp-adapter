@@ -36,7 +36,10 @@ import org.w3c.dom.Node;
  * never starts a workflow from an event-based gateway, nor from a receive task inside a
  * sub-process. And it fails on a timer written as an expression (it reads ISO 8601 only), on a
  * multi-instance element whose collection is not an expression, on a business key not written as
- * one, and on an intermediate throw event without a definition or with a timer.</li>
+ * one, on an intermediate throw event without a definition or with a timer, on a called decision
+ * bound otherwise than by <code>latest</code> or <code>versionTag</code>, and on a decision id with
+ * more than one <code>.</code> where it reads one as <code>&lt;DMN definitions id&gt;.&lt;decision
+ * id&gt;</code>.</li>
  * <li>what would start a workflow nobody built a workflow aggregate for: a receive task of the
  * process itself with <code>instantiate="true"</code>.</li>
  * </ul>
@@ -76,6 +79,12 @@ public final class ZenBpmUnsupportedConstructs {
     // ZenBPM takes literally, by the extension element holding them
     private static final Map<String, String> TAKEN_LITERALLY = Map.of("calledElement", "processId",
             "taskDefinition", "type", "calledDecision", "decisionId", "assignmentDefinition", "candidateGroups");
+
+    // the bindings of a called decision the engine resolves, and those of them under which it reads
+    // a decision id as '<id of the DMN definitions>.<id of the decision>'
+    private static final Set<String> DECISION_BINDINGS = Set.of("", "latest", "versionTag");
+
+    private static final Set<String> DECISION_BINDINGS_SPLITTING_THE_ID = Set.of("", "latest");
 
     private ZenBpmUnsupportedConstructs() {
     }
@@ -402,6 +411,9 @@ public final class ZenBpmUnsupportedConstructs {
                     }
                 }
             }
+            for (final var calledDecision : ZenBpmModelReader.extensions(element, "calledDecision")) {
+                checkCalledDecision(element, calledDecision);
+            }
             if ("callActivity".equals(kind) || "subProcess".equals(kind)) {
                 for (final var in : ZenBpmModelReader.extensions(element, "in")) {
                     final var businessKey = in
@@ -412,6 +424,27 @@ public final class ZenBpmUnsupportedConstructs {
                                 "businessKey not written as an expression, which the engine fails on when a workflow reaches it"));
                     }
                 }
+            }
+        }
+
+        // a binding the engine does not resolve, and a decision id it cannot split into the id of
+        // the DMN definitions and the id of the decision
+        private void checkCalledDecision(
+            final Element element,
+            final Element calledDecision
+        ) {
+            final var bindingType = calledDecision.getAttribute("bindingType");
+            if (!DECISION_BINDINGS.contains(bindingType)) {
+                runDifferently.add(line(element,
+                        "bindingType=\"%s\" of calledDecision, which the engine fails on when a workflow reaches it"
+                                .formatted(bindingType)));
+                return;
+            }
+            final var decisionId = calledDecision.getAttribute("decisionId");
+            if (DECISION_BINDINGS_SPLITTING_THE_ID.contains(bindingType) && decisionId.indexOf('.') != decisionId
+                    .lastIndexOf('.')) {
+                runDifferently.add(line(element,
+                        "decisionId of calledDecision with more than one '.', which the engine fails on when a workflow reaches it: it reads '<decision id>' or '<DMN definitions id>.<decision id>'"));
             }
         }
 

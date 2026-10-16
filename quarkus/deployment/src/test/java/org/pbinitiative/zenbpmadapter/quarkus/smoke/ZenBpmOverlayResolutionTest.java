@@ -9,6 +9,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
 
 import java.time.Duration;
+import java.util.Optional;
 
 import org.eclipse.microprofile.config.ConfigProvider;
 import org.junit.jupiter.api.DisplayName;
@@ -27,6 +28,7 @@ import io.vanillabp.integration.test.utils.SuppressOutputExtension;
  * and the most specific level which sets a key wins: task &gt; workflow &gt; workflow module &gt;
  * adapter, and the default where no level sets it. The application sets each key at every level it
  * has, and each case asks for a place where a different level is the most specific one.
+ * <code>accept-unscoped-identifiers</code> has two levels, the workflow module and the adapter.
  */
 @ExtendWith(SuppressOutputExtension.class)
 class ZenBpmOverlayResolutionTest {
@@ -44,6 +46,9 @@ class ZenBpmOverlayResolutionTest {
             .overrideConfigKey("vanillabp.adapters.zenbpm.retry-backoff", "PT4S")
             .overrideConfigKey("vanillabp.adapters.zenbpm.max-redeliveries", "4")
             .overrideConfigKey("vanillabp.adapters.zenbpm.history-time-to-live", "PT4H")
+            .overrideConfigKey("vanillabp.adapters.zenbpm.accept-unscoped-identifiers", "true")
+            .overrideConfigKey(MODULE
+                    + ".adapters.zenbpm.accept-unscoped-identifiers", "false")
             .overrideConfigKey(MODULE
                     + ".adapters.zenbpm.retry-backoff", "PT3S")
             .overrideConfigKey(MODULE
@@ -109,6 +114,18 @@ class ZenBpmOverlayResolutionTest {
                 () -> assertEquals(Duration.ofHours(4), overlay.historyTimeToLiveFor("other-module",
                         "SampleWorkflowService", "zenbpm")),
                 () -> assertNull(overlay.historyTimeToLiveFor("smoke-app", "SampleWorkflowService", "other")));
+    }
+
+    @Test
+    @DisplayName("accept-unscoped-identifiers is read from the workflow module where it sets the key, else from the adapter")
+    void acceptUnscopedIdentifiersThroughItsTwoLevels() {
+        final var configuration = overlay().configurationOf("zenbpm");
+
+        assertAll(
+                () -> assertEquals(Optional.empty(), configuration.keyAcceptingUnscopedIdentifiers("zenbpm",
+                        "smoke-app")),
+                () -> assertEquals(Optional.of("vanillabp.adapters.zenbpm.accept-unscoped-identifiers"), configuration
+                        .keyAcceptingUnscopedIdentifiers("zenbpm", "other-module")));
     }
 
     @Test

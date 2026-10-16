@@ -19,6 +19,8 @@ import java.util.Map;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.EnumSource;
 
 import io.vanillabp.integration.adapter.spi.NameClashAvoidance;
 import io.vanillabp.integration.adapter.spi.NameClashAvoidanceSupport;
@@ -55,6 +57,50 @@ class ZenBpmInstanceIdentityTest {
                             NameClashAvoidance.USE_PREFIX, "old", NameClashAvoidance.USE_PREFIX))));
 
             assertEquals(SAME_ENGINE, failure.getMessage());
+        }
+    }
+
+    @Test
+    @DisplayName("Two adapter ids on one engine without a mode share the default 'by-adapter', and the message says that ZenBPM serves only 'use-prefix' and 'none', so each id needs one of them")
+    void oneEngineWithTheDefaultModeNamesTheModesZenBpmServes() {
+        try (var registry = registryOf(configured("new", "http://zenbpm:8080"), configured("old",
+                "http://zenbpm:8080"))) {
+            final var failure = assertThrows(IllegalStateException.class, () -> ZenBpmInstanceIdentity
+                    .validateDistinct(List.of("new", "old"), registry, modes(Map.of("new",
+                            NameClashAvoidance.BY_ADAPTER, "old", NameClashAvoidance.BY_ADAPTER))));
+
+            assertEquals("""
+                    ZenBPM adapter ids 'new' and 'old' address the same engine, 'http://zenbpm:8080/v1', with the \
+                    same name-clash-avoidance 'by-adapter', the default where none is configured. ZenBPM has no \
+                    isolation of its own and serves only 'use-prefix' and 'none', so each of these ids needs one of \
+                    them, and two ids on one engine need different ones. Tell them apart:
+                      - for two engines, give each id its own address: 'vanillabp.adapters.new.rest-address', \
+                    'vanillabp.adapters.old.rest-address';
+                      - for one engine on purpose, as in a migration from 'none' to 'use-prefix', set 'use-prefix' \
+                    on one id and 'none' on the other: 'vanillabp.adapters.new.name-clash-avoidance', \
+                    'vanillabp.adapters.old.name-clash-avoidance';
+                      - or remove all but one of these adapter ids.""", failure.getMessage());
+        }
+    }
+
+    @ParameterizedTest
+    @EnumSource(value = NameClashAvoidance.class, names = {
+            "BY_ADAPTER", "NONE"
+    })
+    @DisplayName("Three adapter ids on one engine cannot each get a mode of their own, as ZenBPM serves two, so the message gives every further id an engine of its own")
+    void threeIdsOnOneEngineAreToldAboutTheTwoModes(final NameClashAvoidance mode) {
+        try (var registry = registryOf(configured("a", "http://zenbpm:8080"), configured("b", "http://zenbpm:8080"),
+                configured("c", "http://zenbpm:8080"))) {
+            final var failure = assertThrows(IllegalStateException.class, () -> ZenBpmInstanceIdentity
+                    .validateDistinct(List.of("a", "b", "c"), registry, modes(Map.of("a", mode, "b", mode, "c",
+                            mode))));
+
+            assertTrue(failure
+                    .getMessage()
+                    .contains("""
+                              - for one engine on purpose, as in a migration from 'none' to 'use-prefix', set \
+                            'use-prefix' on one id and 'none' on another, and give every further id an engine of its \
+                            own: 'vanillabp.adapters.a.name-clash-avoidance',"""), failure::getMessage);
         }
     }
 

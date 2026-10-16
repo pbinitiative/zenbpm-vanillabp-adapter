@@ -18,6 +18,11 @@ public final class ZenBpmAdapter {
      */
     public static final String ADAPTER_TYPE = "zenbpm";
 
+    /**
+     * How messages name the BPMS this adapter talks to.
+     */
+    public static final String BPMS_NAME = "ZenBPM";
+
     private ZenBpmAdapter() {
         // constants holder
     }

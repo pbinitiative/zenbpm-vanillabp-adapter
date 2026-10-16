@@ -97,6 +97,7 @@ class ZenBpmAdapterConfigurationTest {
         assertNull(configuration.getHistoryTimeToLive());
         assertEquals(10_000, configuration.getInstanceCacheMaxEntries());
         assertEquals(MessageStartLookup.REFUSE, configuration.getMessageStartLookup());
+        assertFalse(configuration.isAcceptUnscopedIdentifiers());
     }
 
     @Test
@@ -118,6 +119,7 @@ class ZenBpmAdapterConfigurationTest {
         configuration.setHistoryTimeToLive(Duration.ofDays(30));
         configuration.setInstanceCacheMaxEntries(0);
         configuration.setMessageStartLookup(MessageStartLookup.SCAN);
+        configuration.setAcceptUnscopedIdentifiers(true);
 
         assertEquals(Kind.COMPLETE, configuration
                 .validate(ADAPTER_ID, false, false)
@@ -139,6 +141,7 @@ class ZenBpmAdapterConfigurationTest {
         assertEquals(Duration.ofDays(30), configuration.getHistoryTimeToLive());
         assertEquals(0, configuration.getInstanceCacheMaxEntries());
         assertEquals(MessageStartLookup.SCAN, configuration.getMessageStartLookup());
+        assertTrue(configuration.isAcceptUnscopedIdentifiers());
 
         configuration.setGrpcPlaintext(null);
         configuration.setRequestTimeout(null);
@@ -152,6 +155,7 @@ class ZenBpmAdapterConfigurationTest {
         configuration.setUserTaskPollInterval(null);
         configuration.setInstanceCacheMaxEntries(null);
         configuration.setMessageStartLookup(null);
+        configuration.setAcceptUnscopedIdentifiers(null);
 
         final var defaults = configured("https://zenbpm");
         assertEquals(defaults.isGrpcPlaintext(), configuration.isGrpcPlaintext());
@@ -166,6 +170,7 @@ class ZenBpmAdapterConfigurationTest {
         assertEquals(defaults.getUserTaskPollInterval(), configuration.getUserTaskPollInterval());
         assertEquals(defaults.getInstanceCacheMaxEntries(), configuration.getInstanceCacheMaxEntries());
         assertEquals(defaults.getMessageStartLookup(), configuration.getMessageStartLookup());
+        assertEquals(defaults.isAcceptUnscopedIdentifiers(), configuration.isAcceptUnscopedIdentifiers());
     }
 
     @ParameterizedTest(name = "{0} with {1}")

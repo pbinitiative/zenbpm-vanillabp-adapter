@@ -35,6 +35,9 @@ import io.smallrye.config.ConfigMapping;
  * <li><code>history-time-to-live</code> at the workflow module and the workflow, because it is sent
  * with the start of a workflow and no task has one of its own.</li>
  * </ul>
+ * <code>accept-unscoped-identifiers</code> may also be set at the workflow module, which wins over
+ * the adapter level: the platform reports <code>name-clash-avoidance: none</code> once per workflow
+ * module, so no level below it would mean anything.
  * SmallRye Config refuses a key under <code>vanillabp.</code> which no mapping knows, so a typo
  * under <code>vanillabp.adapters.&lt;id&gt;.</code> fails the start and names the key. That is
  * the difference to Spring Boot, which ignores such a key; this mapping is what makes the keys of
@@ -90,9 +93,15 @@ public interface VanillaBpZenBpmProperties {
             moduleId,
             module) -> {
             final var modulePrefix = "vanillabp.workflow-modules.%s".formatted(moduleId);
-            addScopedValues(configuration, "%s.adapters.%s".formatted(modulePrefix, adapterId), module
+            final var moduleKeys = module
                     .adapters()
-                    .get(adapterId));
+                    .get(adapterId);
+            addScopedValues(configuration, "%s.adapters.%s".formatted(modulePrefix, adapterId), moduleKeys);
+            if (moduleKeys != null) {
+                configuration.setAcceptUnscopedIdentifiers(moduleId, moduleKeys
+                        .acceptUnscopedIdentifiers()
+                        .orElse(null));
+            }
             module
                     .workflows()
                     .forEach((
@@ -401,6 +410,14 @@ public interface VanillaBpZenBpmProperties {
         Optional<MessageStartLookup> messageStartLookup();
 
         /**
+         * <code>accept-unscoped-identifiers</code>: whether the identifiers of the workflow modules
+         * are unique, so <code>name-clash-avoidance: none</code> is no reason to warn.
+         *
+         * @return The value, empty where the application did not set the key
+         */
+        Optional<Boolean> acceptUnscopedIdentifiers();
+
+        /**
          * Copies every key into the core configuration of the adapter id. A key the application did
          * not write is handed on as <code>null</code>, which restores the core's default.
          *
@@ -423,6 +440,7 @@ public interface VanillaBpZenBpmProperties {
             configuration.setHistoryTimeToLive(historyTimeToLive().orElse(null));
             configuration.setInstanceCacheMaxEntries(instanceCacheMaxEntries().orElse(null));
             configuration.setMessageStartLookup(messageStartLookup().orElse(null));
+            configuration.setAcceptUnscopedIdentifiers(acceptUnscopedIdentifiers().orElse(null));
         }
 
     }
@@ -464,6 +482,21 @@ public interface VanillaBpZenBpmProperties {
     }
 
     /**
+     * The keys of an adapter id which a workflow module may set for itself: those of a workflow, and
+     * <code>accept-unscoped-identifiers</code>.
+     */
+    interface ZenBpmModuleScopedKeys extends ZenBpmWorkflowScopedKeys {
+
+        /**
+         * <code>accept-unscoped-identifiers</code> at this level.
+         *
+         * @return The value, empty where this level does not set it
+         */
+        Optional<Boolean> acceptUnscopedIdentifiers();
+
+    }
+
+    /**
      * One section <code>vanillabp.workflow-modules.&lt;module&gt;</code>.
      */
     interface ModuleOverlay {
@@ -473,7 +506,7 @@ public interface VanillaBpZenBpmProperties {
          *
          * @return The keys, keyed by adapter id
          */
-        Map<String, ZenBpmWorkflowScopedKeys> adapters();
+        Map<String, ZenBpmModuleScopedKeys> adapters();
 
         /**
          * The workflows of the workflow module.

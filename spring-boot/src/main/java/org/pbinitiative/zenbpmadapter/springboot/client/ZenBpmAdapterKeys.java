@@ -53,6 +53,8 @@ public class ZenBpmAdapterKeys {
 
     private MessageStartLookup messageStartLookup;
 
+    private Boolean acceptUnscopedIdentifiers;
+
     /**
      * Bound by Spring Boot, which builds the section with this constructor and then calls the
      * setters.
@@ -349,6 +351,26 @@ public class ZenBpmAdapterKeys {
     }
 
     /**
+     * <code>accept-unscoped-identifiers</code>: whether the identifiers of the workflow modules are
+     * unique, so <code>name-clash-avoidance: none</code> is no reason to warn.
+     *
+     * @return The value, or <code>null</code> where the application did not set the key
+     */
+    public Boolean getAcceptUnscopedIdentifiers() {
+        return acceptUnscopedIdentifiers;
+    }
+
+    /**
+     * <code>accept-unscoped-identifiers</code>: whether the identifiers of the workflow modules are
+     * unique, so <code>name-clash-avoidance: none</code> is no reason to warn.
+     *
+     * @param acceptUnscopedIdentifiers The value as bound
+     */
+    public void setAcceptUnscopedIdentifiers(final Boolean acceptUnscopedIdentifiers) {
+        this.acceptUnscopedIdentifiers = acceptUnscopedIdentifiers;
+    }
+
+    /**
      * Copies every key into the core configuration of the adapter id. A key the application did not
      * write is handed on as <code>null</code>, which restores the core's default.
      *
@@ -371,6 +393,7 @@ public class ZenBpmAdapterKeys {
         configuration.setHistoryTimeToLive(historyTimeToLive);
         configuration.setInstanceCacheMaxEntries(instanceCacheMaxEntries);
         configuration.setMessageStartLookup(messageStartLookup);
+        configuration.setAcceptUnscopedIdentifiers(acceptUnscopedIdentifiers);
     }
 
 }

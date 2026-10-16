@@ -1,0 +1,297 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL"
+    xmlns:zeebe="http://camunda.org/schema/zeebe/1.0" id="correlationKeys" targetNamespace="http://bpmn.io/schema/bpmn"
+    xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI"
+    xmlns:dc="http://www.omg.org/spec/DD/20100524/DC"
+    xmlns:di="http://www.omg.org/spec/DD/20100524/DI">
+  <bpmn:message id="Message_Ordered" name="ordered" />
+  <bpmn:message id="Message_Paid" name="paid" />
+  <bpmn:message id="Message_Shipped" name="shipped">
+    <bpmn:extensionElements>
+      <zeebe:subscription correlationKey="=shipmentId" />
+    </bpmn:extensionElements>
+  </bpmn:message>
+  <bpmn:message id="Message_Complaint" name="complaint">
+    <bpmn:extensionElements>
+      <zeebe:properties />
+    </bpmn:extensionElements>
+  </bpmn:message>
+  <bpmn:message id="Message_Cancelled" name="cancelled" />
+  <bpmn:message id="Message_Recalled" name="recalled" />
+  <bpmn:process id="Orders" isExecutable="true">
+    <bpmn:startEvent id="Ordered">
+      <bpmn:outgoing>Flow_1</bpmn:outgoing>
+      <bpmn:messageEventDefinition id="Ordered_Definition" messageRef="Message_Ordered" />
+    </bpmn:startEvent>
+    <bpmn:intermediateCatchEvent id="Paid">
+      <bpmn:incoming>Flow_1</bpmn:incoming>
+      <bpmn:outgoing>Flow_2</bpmn:outgoing>
+      <bpmn:messageEventDefinition id="Paid_Definition" messageRef="Message_Paid" />
+    </bpmn:intermediateCatchEvent>
+    <bpmn:receiveTask id="PaidAgain" messageRef="Message_Paid">
+      <bpmn:incoming>Flow_2</bpmn:incoming>
+      <bpmn:outgoing>Flow_3</bpmn:outgoing>
+    </bpmn:receiveTask>
+    <bpmn:receiveTask id="AwaitShipping" messageRef="Message_Shipped">
+      <bpmn:incoming>Flow_3</bpmn:incoming>
+      <bpmn:outgoing>Flow_4</bpmn:outgoing>
+    </bpmn:receiveTask>
+    <bpmn:subProcess id="EveryParcel">
+      <bpmn:documentation>Ships every parcel of the order</bpmn:documentation>
+      <bpmn:incoming>Flow_4</bpmn:incoming>
+      <bpmn:outgoing>Flow_5</bpmn:outgoing>
+      <bpmn:multiInstanceLoopCharacteristics>
+        <bpmn:extensionElements>
+          <zeebe:loopCharacteristics inputCollection="=parcels" inputElement="parcel" />
+        </bpmn:extensionElements>
+      </bpmn:multiInstanceLoopCharacteristics>
+      <bpmn:startEvent id="EveryParcel_Start">
+        <bpmn:outgoing>Flow_P1</bpmn:outgoing>
+      </bpmn:startEvent>
+      <bpmn:serviceTask id="Ship">
+        <bpmn:incoming>Flow_P1</bpmn:incoming>
+        <bpmn:outgoing>Flow_P2</bpmn:outgoing>
+        <bpmn:extensionElements>
+          <zeebe:taskDefinition type="ship" />
+        </bpmn:extensionElements>
+      </bpmn:serviceTask>
+      <bpmn:boundaryEvent id="ParcelCancelled" attachedToRef="Ship">
+        <bpmn:outgoing>Flow_P4</bpmn:outgoing>
+        <bpmn:messageEventDefinition id="ParcelCancelled_Definition" messageRef="Message_Cancelled" />
+      </bpmn:boundaryEvent>
+      <bpmn:subProcess id="EveryItem">
+        <bpmn:incoming>Flow_P2</bpmn:incoming>
+        <bpmn:outgoing>Flow_P3</bpmn:outgoing>
+        <bpmn:extensionElements>
+          <zeebe:ioMapping>
+            <zeebe:input source="=parcel.items" target="items" />
+            <zeebe:output source="=items" target="shippedItems" />
+          </zeebe:ioMapping>
+        </bpmn:extensionElements>
+        <bpmn:multiInstanceLoopCharacteristics isSequential="true">
+          <bpmn:extensionElements>
+            <zeebe:loopCharacteristics inputCollection="=items" inputElement="item" />
+          </bpmn:extensionElements>
+        </bpmn:multiInstanceLoopCharacteristics>
+        <bpmn:startEvent id="EveryItem_Start">
+          <bpmn:outgoing>Flow_I1</bpmn:outgoing>
+        </bpmn:startEvent>
+        <bpmn:intermediateCatchEvent id="ItemCancelled">
+          <bpmn:incoming>Flow_I1</bpmn:incoming>
+          <bpmn:outgoing>Flow_I2</bpmn:outgoing>
+          <bpmn:messageEventDefinition id="ItemCancelled_Definition" messageRef="Message_Cancelled" />
+        </bpmn:intermediateCatchEvent>
+        <bpmn:endEvent id="EveryItem_End">
+          <bpmn:incoming>Flow_I2</bpmn:incoming>
+        </bpmn:endEvent>
+        <bpmn:sequenceFlow id="Flow_I1" sourceRef="EveryItem_Start" targetRef="ItemCancelled" />
+        <bpmn:sequenceFlow id="Flow_I2" sourceRef="ItemCancelled" targetRef="EveryItem_End" />
+      </bpmn:subProcess>
+      <bpmn:endEvent id="EveryParcel_End">
+        <bpmn:incoming>Flow_P3</bpmn:incoming>
+      </bpmn:endEvent>
+      <bpmn:endEvent id="EveryParcel_Cancelled">
+        <bpmn:incoming>Flow_P4</bpmn:incoming>
+      </bpmn:endEvent>
+      <bpmn:sequenceFlow id="Flow_P1" sourceRef="EveryParcel_Start" targetRef="Ship" />
+      <bpmn:sequenceFlow id="Flow_P2" sourceRef="Ship" targetRef="EveryItem" />
+      <bpmn:sequenceFlow id="Flow_P3" sourceRef="EveryItem" targetRef="EveryParcel_End" />
+      <bpmn:sequenceFlow id="Flow_P4" sourceRef="ParcelCancelled" targetRef="EveryParcel_Cancelled" />
+    </bpmn:subProcess>
+    <bpmn:subProcess id="EveryReturn">
+      <bpmn:incoming>Flow_5</bpmn:incoming>
+      <bpmn:outgoing>Flow_6</bpmn:outgoing>
+      <bpmn:extensionElements>
+        <zeebe:ioMapping>
+          <zeebe:input source="=order.id" target="orderId" />
+        </zeebe:ioMapping>
+      </bpmn:extensionElements>
+      <bpmn:multiInstanceLoopCharacteristics>
+        <bpmn:extensionElements>
+          <zeebe:loopCharacteristics inputCollection="=returns" inputElement="return" />
+        </bpmn:extensionElements>
+      </bpmn:multiInstanceLoopCharacteristics>
+      <bpmn:startEvent id="EveryReturn_Start">
+        <bpmn:outgoing>Flow_R1</bpmn:outgoing>
+      </bpmn:startEvent>
+      <bpmn:receiveTask id="AwaitRecall" messageRef="Message_Recalled">
+        <bpmn:incoming>Flow_R1</bpmn:incoming>
+        <bpmn:outgoing>Flow_R2</bpmn:outgoing>
+      </bpmn:receiveTask>
+      <bpmn:endEvent id="EveryReturn_End">
+        <bpmn:incoming>Flow_R2</bpmn:incoming>
+      </bpmn:endEvent>
+      <bpmn:sequenceFlow id="Flow_R1" sourceRef="EveryReturn_Start" targetRef="AwaitRecall" />
+      <bpmn:sequenceFlow id="Flow_R2" sourceRef="AwaitRecall" targetRef="EveryReturn_End" />
+    </bpmn:subProcess>
+    <bpmn:endEvent id="Done">
+      <bpmn:incoming>Flow_6</bpmn:incoming>
+    </bpmn:endEvent>
+    <bpmn:subProcess id="Complaints" triggeredByEvent="true">
+      <bpmn:startEvent id="Complaint" isInterrupting="false">
+        <bpmn:outgoing>Flow_C1</bpmn:outgoing>
+        <bpmn:messageEventDefinition id="Complaint_Definition" messageRef="Message_Complaint" />
+      </bpmn:startEvent>
+      <bpmn:endEvent id="Complaint_End">
+        <bpmn:incoming>Flow_C1</bpmn:incoming>
+      </bpmn:endEvent>
+      <bpmn:sequenceFlow id="Flow_C1" sourceRef="Complaint" targetRef="Complaint_End" />
+    </bpmn:subProcess>
+    <bpmn:sequenceFlow id="Flow_1" sourceRef="Ordered" targetRef="Paid" />
+    <bpmn:sequenceFlow id="Flow_2" sourceRef="Paid" targetRef="PaidAgain" />
+    <bpmn:sequenceFlow id="Flow_3" sourceRef="PaidAgain" targetRef="AwaitShipping" />
+    <bpmn:sequenceFlow id="Flow_4" sourceRef="AwaitShipping" targetRef="EveryParcel" />
+    <bpmn:sequenceFlow id="Flow_5" sourceRef="EveryParcel" targetRef="EveryReturn" />
+    <bpmn:sequenceFlow id="Flow_6" sourceRef="EveryReturn" targetRef="Done" />
+  </bpmn:process>
+  <bpmndi:BPMNDiagram id="BPMNDiagram_1">
+    <bpmndi:BPMNPlane id="BPMNPlane_1" bpmnElement="Orders">
+      <bpmndi:BPMNShape id="Ordered_di" bpmnElement="Ordered">
+        <dc:Bounds x="160" y="80" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Paid_di" bpmnElement="Paid">
+        <dc:Bounds x="256" y="80" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="PaidAgain_di" bpmnElement="PaidAgain">
+        <dc:Bounds x="352" y="80" width="100" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="AwaitShipping_di" bpmnElement="AwaitShipping">
+        <dc:Bounds x="512" y="80" width="100" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="EveryParcel_di" bpmnElement="EveryParcel" isExpanded="true">
+        <dc:Bounds x="672" y="80" width="700" height="266" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="EveryParcel_Start_di" bpmnElement="EveryParcel_Start">
+        <dc:Bounds x="702" y="110" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Ship_di" bpmnElement="Ship">
+        <dc:Bounds x="798" y="110" width="100" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="EveryItem_di" bpmnElement="EveryItem" isExpanded="true">
+        <dc:Bounds x="958" y="110" width="288" height="120" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="EveryItem_Start_di" bpmnElement="EveryItem_Start">
+        <dc:Bounds x="988" y="140" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="ItemCancelled_di" bpmnElement="ItemCancelled">
+        <dc:Bounds x="1084" y="140" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="EveryItem_End_di" bpmnElement="EveryItem_End">
+        <dc:Bounds x="1180" y="140" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="EveryParcel_End_di" bpmnElement="EveryParcel_End">
+        <dc:Bounds x="1306" y="110" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="EveryParcel_Cancelled_di" bpmnElement="EveryParcel_Cancelled">
+        <dc:Bounds x="702" y="280" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="ParcelCancelled_di" bpmnElement="ParcelCancelled">
+        <dc:Bounds x="872" y="172" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="EveryReturn_di" bpmnElement="EveryReturn" isExpanded="true">
+        <dc:Bounds x="1432" y="80" width="352" height="140" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="EveryReturn_Start_di" bpmnElement="EveryReturn_Start">
+        <dc:Bounds x="1462" y="110" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="AwaitRecall_di" bpmnElement="AwaitRecall">
+        <dc:Bounds x="1558" y="110" width="100" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="EveryReturn_End_di" bpmnElement="EveryReturn_End">
+        <dc:Bounds x="1718" y="110" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Done_di" bpmnElement="Done">
+        <dc:Bounds x="1844" y="80" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Complaints_di" bpmnElement="Complaints" isExpanded="true">
+        <dc:Bounds x="160" y="396" width="200" height="120" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Complaint_di" bpmnElement="Complaint">
+        <dc:Bounds x="190" y="426" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Complaint_End_di" bpmnElement="Complaint_End">
+        <dc:Bounds x="286" y="426" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNEdge id="Flow_I1_di" bpmnElement="Flow_I1">
+        <di:waypoint x="1024" y="158" />
+        <di:waypoint x="1084" y="158" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_I2_di" bpmnElement="Flow_I2">
+        <di:waypoint x="1120" y="158" />
+        <di:waypoint x="1180" y="158" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_P1_di" bpmnElement="Flow_P1">
+        <di:waypoint x="738" y="128" />
+        <di:waypoint x="768" y="128" />
+        <di:waypoint x="768" y="150" />
+        <di:waypoint x="798" y="150" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_P2_di" bpmnElement="Flow_P2">
+        <di:waypoint x="898" y="150" />
+        <di:waypoint x="928" y="150" />
+        <di:waypoint x="928" y="170" />
+        <di:waypoint x="958" y="170" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_P3_di" bpmnElement="Flow_P3">
+        <di:waypoint x="1246" y="170" />
+        <di:waypoint x="1276" y="170" />
+        <di:waypoint x="1276" y="128" />
+        <di:waypoint x="1306" y="128" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_P4_di" bpmnElement="Flow_P4">
+        <di:waypoint x="890" y="208" />
+        <di:waypoint x="890" y="336" />
+        <di:waypoint x="720" y="336" />
+        <di:waypoint x="720" y="316" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_R1_di" bpmnElement="Flow_R1">
+        <di:waypoint x="1498" y="128" />
+        <di:waypoint x="1528" y="128" />
+        <di:waypoint x="1528" y="150" />
+        <di:waypoint x="1558" y="150" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_R2_di" bpmnElement="Flow_R2">
+        <di:waypoint x="1658" y="150" />
+        <di:waypoint x="1688" y="150" />
+        <di:waypoint x="1688" y="128" />
+        <di:waypoint x="1718" y="128" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_C1_di" bpmnElement="Flow_C1">
+        <di:waypoint x="226" y="444" />
+        <di:waypoint x="286" y="444" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_1_di" bpmnElement="Flow_1">
+        <di:waypoint x="196" y="98" />
+        <di:waypoint x="256" y="98" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_2_di" bpmnElement="Flow_2">
+        <di:waypoint x="292" y="98" />
+        <di:waypoint x="322" y="98" />
+        <di:waypoint x="322" y="120" />
+        <di:waypoint x="352" y="120" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_3_di" bpmnElement="Flow_3">
+        <di:waypoint x="452" y="120" />
+        <di:waypoint x="512" y="120" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_4_di" bpmnElement="Flow_4">
+        <di:waypoint x="612" y="120" />
+        <di:waypoint x="642" y="120" />
+        <di:waypoint x="642" y="213" />
+        <di:waypoint x="672" y="213" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_5_di" bpmnElement="Flow_5">
+        <di:waypoint x="1372" y="213" />
+        <di:waypoint x="1402" y="213" />
+        <di:waypoint x="1402" y="150" />
+        <di:waypoint x="1432" y="150" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_6_di" bpmnElement="Flow_6">
+        <di:waypoint x="1784" y="150" />
+        <di:waypoint x="1814" y="150" />
+        <di:waypoint x="1814" y="98" />
+        <di:waypoint x="1844" y="98" />
+      </bpmndi:BPMNEdge>
+    </bpmndi:BPMNPlane>
+  </bpmndi:BPMNDiagram>
+</bpmn:definitions>

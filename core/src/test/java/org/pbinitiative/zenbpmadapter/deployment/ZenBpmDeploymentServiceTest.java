@@ -7,6 +7,7 @@ package org.pbinitiative.zenbpmadapter.deployment;
 import static org.junit.jupiter.api.Assertions.assertAll;
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
@@ -22,22 +23,34 @@ import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Consumer;
+import java.util.stream.Stream;
 
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.junit.jupiter.api.io.TempDir;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.Arguments;
+import org.junit.jupiter.params.provider.MethodSource;
 import org.pbinitiative.zenbpmadapter.TestCollaborators;
+import org.pbinitiative.zenbpmadapter.TestScoping;
+import org.pbinitiative.zenbpmadapter.TestWiring;
 import org.pbinitiative.zenbpmadapter.ZenBpmProcessingContext;
 import org.pbinitiative.zenbpmadapter.client.ZenBpmAdapterConfiguration;
 import org.pbinitiative.zenbpmadapter.client.ZenBpmClientFactory;
 import org.pbinitiative.zenbpmadapter.client.ZenBpmClientRegistry;
 import org.pbinitiative.zenbpmadapter.model.ZenBpmBpmnModel;
+import org.pbinitiative.zenbpmadapter.model.ZenBpmModelReader;
+import org.slf4j.LoggerFactory;
+import org.w3c.dom.Element;
 
+import ch.qos.logback.classic.Level;
+import ch.qos.logback.classic.Logger;
 import io.vanillabp.integration.adapter.spi.AdapterCollaborators;
 import io.vanillabp.integration.adapter.spi.BpmnParseException;
 import io.vanillabp.integration.adapter.spi.NameClashAvoidance;
@@ -46,6 +59,7 @@ import io.vanillabp.integration.adapter.spi.health.AdapterHealth;
 import io.vanillabp.integration.adapter.spi.workflowtask.WorkflowTaskWiring;
 import io.vanillabp.integration.spi.startup.StartupReport;
 import io.vanillabp.integration.spi.startup.StartupTopic;
+import io.vanillabp.integration.test.utils.CapturedOutput;
 import io.vanillabp.integration.test.utils.SuppressOutputExtension;
 
 /**
@@ -196,18 +210,19 @@ class ZenBpmDeploymentServiceTest {
     @DisplayName("Preparing needs no engine: the first process of a module gets a new context, a later one the context it was given")
     void preparingKeepsOneContextPerModule() {
         final var deploymentService = new ZenBpmDeploymentService("orders", withoutClients("orders"), TestCollaborators
-                .of("orders", claiming(new AtomicInteger())));
+                .of("orders", TestScoping.of(NameClashAvoidance.NONE), claiming(new AtomicInteger())));
         final var model = deploymentService
                 .readBpmn("shop", "order.bpmn", bpmn(), true)
                 .getFirst()
                 .getValue();
 
         final var first = deploymentService.prepareBpmn("shop", null, "order.bpmn", "Order", model);
-        final var later = deploymentService.prepareBpmn("shop", first, "invoice.bpmn", "Order", model);
+        final var later = deploymentService.prepareBpmn("shop", first, "invoice.bpmn", "Invoice", model);
 
         assertAll(
                 () -> assertEquals("shop", first.workflowModuleId()),
-                () -> assertSame(first, later));
+                () -> assertSame(first, later),
+                () -> assertEquals(List.of("Order", "Invoice"), first.processes()));
     }
 
     @Test
@@ -215,7 +230,7 @@ class ZenBpmDeploymentServiceTest {
     void preparingRefusesWhatZenBpmCannotRunOncePerFile() {
         final var claimsAsked = new AtomicInteger();
         final var deploymentService = new ZenBpmDeploymentService("orders", withoutClients("orders"), TestCollaborators
-                .of("orders", claiming(claimsAsked)));
+                .of("orders", TestScoping.of(NameClashAvoidance.USE_PREFIX), claiming(claimsAsked)));
         final var model = deploymentService
                 .readBpmn("shop", "order.bpmn", new ByteArrayInputStream("""
                         <bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" id="order">
@@ -246,10 +261,374 @@ class ZenBpmDeploymentServiceTest {
     }
 
     @Test
+    @DisplayName("Under use-prefix a file is scoped once, however many of its processes are prepared")
+    void preparingScopesAFileOnce() {
+        final var deploymentService = new ZenBpmDeploymentService("orders", withoutClients("orders"), TestCollaborators
+                .of("orders", TestScoping.of(NameClashAvoidance.USE_PREFIX), claiming(new AtomicInteger())));
+        final var model = deploymentService
+                .readBpmn("shop", "order.bpmn", bpmn(), true)
+                .getFirst()
+                .getValue();
+
+        final var context = deploymentService.prepareBpmn("shop", null, "order.bpmn", "Order", model);
+        deploymentService.prepareBpmn("shop", context, "order.bpmn", "Order", model);
+
+        assertEquals("shop__Order", processIdOf(model));
+    }
+
+    @Test
+    @DisplayName("ZenBPM keeps the adapter SPI's default 'by-adapter', which the deployment refuses")
+    void theDefaultModeIsByAdapter() {
+        final var deploymentService = new ZenBpmDeploymentService("orders", withoutClients("orders"), TestCollaborators
+                .of("orders"));
+
+        assertEquals(NameClashAvoidance.BY_ADAPTER, deploymentService.defaultNameClashAvoidance());
+    }
+
+    @Test
+    @DisplayName("'by-adapter' for the workflow module ends preparing with the platform's message naming both ways out, before the file is rewritten, and after the constructs ZenBPM cannot run")
+    void byAdapterIsRefused() {
+        final var scoping = TestScoping.of(NameClashAvoidance.BY_ADAPTER);
+        final var deploymentService = new ZenBpmDeploymentService("orders", withoutClients("orders"), TestCollaborators
+                .of("orders", scoping, claiming(new AtomicInteger())));
+        final var model = deploymentService
+                .readBpmn("shop", "order.bpmn", bpmn(), true)
+                .getFirst()
+                .getValue();
+        final var withAScriptTask = deploymentService
+                .readBpmn("shop", "script.bpmn", new ByteArrayInputStream("""
+                        <bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" id="script">
+                          <bpmn:process id="Script" isExecutable="true">
+                            <bpmn:scriptTask id="Calculate" />
+                          </bpmn:process>
+                        </bpmn:definitions>
+                        """.getBytes(StandardCharsets.UTF_8)), true)
+                .getFirst()
+                .getValue();
+
+        final var failure = assertThrows(IllegalStateException.class, () -> deploymentService.prepareBpmn("shop",
+                null, "order.bpmn", "Order", model));
+        final var constructsFirst = assertThrows(IllegalStateException.class, () -> deploymentService.prepareBpmn(
+                "shop", null, "script.bpmn", "Script", withAScriptTask));
+
+        assertAll(
+                () -> assertEquals(
+                        """
+                                ZenBPM has no isolation mechanism of its own, so the name-clash-avoidance mode 'by-adapter' \
+                                cannot be served by adapter 'orders' - but it applies to workflow module 'shop'. Choose explicitly:
+                                  vanillabp.adapters.orders.name-clash-avoidance: use-prefix
+                                  vanillabp.adapters.orders.name-clash-avoidance: none""",
+                        failure.getMessage()),
+                () -> assertEquals(List.of("validateNativeIsolationSupported(orders, shop, ZenBPM)"), scoping.calls()),
+                () -> assertEquals("Order", processIdOf(model)),
+                () -> assertTrue(constructsFirst
+                        .getMessage()
+                        .startsWith("BPMN file 'script.bpmn' of workflow module 'shop' uses what ZenBPM cannot run:"),
+                        constructsFirst.getMessage()));
+    }
+
+    @Test
+    @DisplayName("'by-adapter' set for one workflow ends preparing, naming the workflow's key and both ways out")
+    void byAdapterOfAWorkflowIsRefused() {
+        final var deploymentService = new ZenBpmDeploymentService("orders", withoutClients("orders"), TestCollaborators
+                .of("orders", TestScoping
+                        .of(NameClashAvoidance.USE_PREFIX)
+                        .withWorkflow("shop", "Order", NameClashAvoidance.BY_ADAPTER), claiming(new AtomicInteger())));
+        final var model = deploymentService
+                .readBpmn("shop", "order.bpmn", bpmn(), true)
+                .getFirst()
+                .getValue();
+
+        final var failure = assertThrows(IllegalStateException.class, () -> deploymentService.prepareBpmn("shop",
+                null, "order.bpmn", "Order", model));
+
+        assertAll(
+                () -> assertEquals(
+                        """
+                                ZenBPM has no isolation mechanism of its own, so the name-clash-avoidance mode 'by-adapter' \
+                                cannot be served by adapter 'orders' - but it is configured for workflow 'Order' of workflow \
+                                module 'shop'. Choose explicitly:
+                                  vanillabp.workflow-modules.shop.workflows.Order.adapters.orders.name-clash-avoidance: use-prefix   # VanillaBP prefixes the identifiers
+                                  vanillabp.workflow-modules.shop.workflows.Order.adapters.orders.name-clash-avoidance: none         # your identifiers are unique already
+                                or remove the key, so the mode of the workflow module applies.""",
+                        failure.getMessage()),
+                () -> assertEquals("Order", processIdOf(model)));
+    }
+
+    @Test
+    @DisplayName("'none' warns, naming what ZenBPM offers instead - use-prefix or an engine per workflow module - and the key which accepts unscoped identifiers")
+    void noneWarnsNamingTheAlternatives(final CapturedOutput output) {
+        final var deploymentService = new ZenBpmDeploymentService("orders", withoutClients("orders"), TestCollaborators
+                .of("orders"));
+
+        deploymentService.warnAboutUnscopedIdentifiers("shop", false);
+
+        final var log = output.getAllOfThisTest();
+        assertAll(
+                () -> assertTrue(log.contains(
+                        "WARN  o.p.z.d.ZenBpmDeploymentService - Workflow module 'shop' is deployed to ZenBPM (adapter 'orders') with name-clash-avoidance 'none'."),
+                        log),
+                () -> assertTrue(log.contains("ZenBPM has no tenants, so 'by-adapter' is no choice; choose instead:\n"
+                        + "  vanillabp.adapters.orders.name-clash-avoidance: use-prefix"), log),
+                () -> assertTrue(log.contains(
+                        "an adapter id of its own with its own vanillabp.adapters.<id>.rest-address"), log),
+                () -> assertTrue(log.contains("(vanillabp.workflow-modules.shop.adapters.orders.name-clash-avoidance)"),
+                        log),
+                () -> assertTrue(log.contains("  vanillabp.adapters.orders.accept-unscoped-identifiers: true\n"), log),
+                () -> assertTrue(log.contains(
+                        "  vanillabp.workflow-modules.shop.adapters.orders.accept-unscoped-identifiers: true"), log));
+    }
+
+    @ParameterizedTest
+    @MethodSource("acceptingConfigurations")
+    @DisplayName("accept-unscoped-identifiers turns the warning into a DEBUG line naming the key which accepted 'none'; the workflow module's key wins over the adapter's")
+    void acceptedUnscopedIdentifiersAreNotWarnedAbout(
+        final Boolean ofTheAdapter,
+        final Boolean ofTheModule,
+        final String acceptedBy,
+        final CapturedOutput output
+    ) {
+        final var configuration = new ZenBpmAdapterConfiguration();
+        configuration.setAcceptUnscopedIdentifiers(ofTheAdapter);
+        configuration.setAcceptUnscopedIdentifiers("shop", ofTheModule);
+        final var deploymentService = new ZenBpmDeploymentService("orders", new ZenBpmClientRegistry(List.of(
+                ZenBpmClientFactory.unconfigured("orders", configuration, NOT_CONFIGURED))), TestCollaborators.of(
+                        "orders"));
+
+        atDebug(() -> deploymentService.warnAboutUnscopedIdentifiers("shop", false));
+
+        final var log = output.getAllOfThisTest();
+        if (acceptedBy == null) {
+            assertTrue(log.contains("WARN  o.p.z.d.ZenBpmDeploymentService - Workflow module 'shop'"), log);
+            return;
+        }
+        assertAll(
+                () -> assertTrue(log.contains(
+                        "DEBUG o.p.z.d.ZenBpmDeploymentService - ZenBPM[orders]: workflow module 'shop' is deployed with name-clash-avoidance 'none', accepted by '%s'"
+                                .formatted(acceptedBy)),
+                        log),
+                () -> assertFalse(log.contains("WARN"), log));
+    }
+
+    @Test
+    @DisplayName("A DMN file is kept for the deployment: under use-prefix with the ids of its decisions and the references to them scoped by the workflow module, otherwise as it was read")
+    void aDmnFileIsKeptWithItsDecisionIdsScoped() {
+        final var prefixing = new ZenBpmDeploymentService("orders", withoutClients("orders"), TestCollaborators.of(
+                "orders", TestScoping.of(NameClashAvoidance.USE_PREFIX)));
+        final var plain = new ZenBpmDeploymentService("orders", withoutClients("orders"), TestCollaborators.of(
+                "orders", TestScoping.of(NameClashAvoidance.NONE)));
+        final var context = new ZenBpmProcessingContext("shop");
+
+        assertSame(context, prefixing.readDmn("shop", context, "rating.dmn", dmn()));
+        plain.readDmn("shop", context, "rating-as-read.dmn", dmn());
+
+        final var scoped = new String(context
+                .decisions()
+                .get("rating.dmn"), StandardCharsets.UTF_8);
+        assertAll(
+                () -> assertTrue(scoped.contains("<decision id=\"shop__rating\""), scoped),
+                () -> assertTrue(scoped.contains("<requiredDecision href=\"#shop__risk\""), scoped),
+                () -> assertTrue(scoped.contains("<decision id=\"shop__risk\""), scoped),
+                () -> assertEquals(DMN, new String(context
+                        .decisions()
+                        .get("rating-as-read.dmn"), StandardCharsets.UTF_8)),
+                () -> assertEquals(List.of("rating.dmn", "rating-as-read.dmn"), List.copyOf(context
+                        .decisions()
+                        .keySet())));
+    }
+
+    @Test
+    @DisplayName("A DMN file which is no XML ends reading it under use-prefix, naming file and workflow module")
+    void aDmnFileWhichIsNoXmlIsRefusedWhereItsIdsAreScoped() {
+        final var deploymentService = new ZenBpmDeploymentService("orders", withoutClients("orders"), TestCollaborators
+                .of("orders", TestScoping.of(NameClashAvoidance.USE_PREFIX)));
+
+        final var failure = assertThrows(IllegalStateException.class, () -> deploymentService.readDmn("shop",
+                new ZenBpmProcessingContext("shop"), "rating.dmn", new ByteArrayInputStream("no xml"
+                        .getBytes(StandardCharsets.UTF_8))));
+
+        assertTrue(failure
+                .getMessage()
+                .startsWith("DMN file 'rating.dmn' of workflow module 'shop' cannot be read: "), failure.getMessage());
+    }
+
+    @Test
+    @DisplayName("Two files of one workflow module declaring the same process id end the preparation of the second, naming both files, before it is rewritten; the same file prepared again is no second declaration")
+    void twoFilesDeclaringOneProcessAreRefused() {
+        final var deploymentService = new ZenBpmDeploymentService("orders", withoutClients("orders"), TestCollaborators
+                .of("orders", TestScoping.of(NameClashAvoidance.USE_PREFIX), TestWiring
+                        .claiming("Order")
+                        .wiring()));
+        final var first = read(deploymentService, "order.bpmn", WAITING_FOR_PAYMENT);
+        final var second = read(deploymentService, "order-copy.bpmn", WAITING_FOR_PAYMENT);
+        final var context = deploymentService.prepareBpmn("shop", null, "order.bpmn", "Order", first);
+        deploymentService.prepareBpmn("shop", context, "order.bpmn", "Order", first);
+
+        final var failure = assertThrows(IllegalStateException.class, () -> deploymentService.prepareBpmn("shop",
+                context, "order-copy.bpmn", "Order", second));
+
+        assertAll(
+                () -> assertEquals("""
+                        Workflow module 'shop' declares BPMN process 'Order' in two files, 'order.bpmn' and \
+                        'order-copy.bpmn'. ZenBPM keeps one definition per process id, so the later file would \
+                        replace the earlier one as a new version of it. Keep the process in one file, or give one \
+                        of the two processes another id.""", failure.getMessage()),
+                () -> assertEquals("Order", processIdOf(second)),
+                () -> assertEquals(List.of("Order"), context.processes()));
+    }
+
+    @Test
+    @DisplayName("Deploying first hands the module's processes to the platform's check for colliding process ids, before anything else")
+    void deployingChecksForCollidingProcessIdsFirst() {
+        final var scoping = TestScoping.of(NameClashAvoidance.USE_PREFIX);
+        final var deploymentService = new ZenBpmDeploymentService("orders", withoutClients("orders"), TestCollaborators
+                .of("orders", scoping));
+        final var context = new ZenBpmProcessingContext("shop");
+        context.recordProcess("Order", "order.bpmn");
+        context.recordProcess("Invoice", "invoice.bpmn");
+
+        final var failure = assertThrows(IllegalStateException.class, () -> deploymentService.deployResources("shop",
+                context));
+
+        assertAll(
+                () -> assertEquals(List.of(
+                        "validateNoCollidingProcessIds(orders, [DeployedProcess[workflowModuleId=shop, bpmnProcessId=Order], DeployedProcess[workflowModuleId=shop, bpmnProcessId=Invoice]])"),
+                        scoping.calls()),
+                () -> assertEquals(NOT_CONFIGURED, failure.getMessage()));
+    }
+
+    @Test
+    @DisplayName("A claimed process gets the aggregate id as the key of every message it waits for, once per file, asking the platform for the name once")
+    void aClaimedProcessGetsItsCorrelationKeysOnce() {
+        final var wiring = TestWiring.claiming("Order");
+        final var deploymentService = new ZenBpmDeploymentService("orders", withoutClients("orders"), TestCollaborators
+                .of("orders", TestScoping.of(NameClashAvoidance.USE_PREFIX), wiring.wiring()));
+        final var model = read(deploymentService, "order.bpmn", WAITING_FOR_PAYMENT);
+
+        final var context = deploymentService.prepareBpmn("shop", null, "order.bpmn", "Order", model);
+        deploymentService.prepareBpmn("shop", context, "order.bpmn", "Order", model);
+
+        assertAll(
+                () -> assertEquals(List.of("=orderId"), correlationKeysOf(model)),
+                () -> assertEquals(List.of("isClaimedByAWorkflowService[shop, Order]",
+                        "resolveWorkflowAggregateIdName[shop, Order]"), wiring.calls()),
+                () -> assertEquals("shop__paid", messageNameOf(model)),
+                () -> assertEquals(Map.of("paid", "Order/AwaitPayment"), context.awaitedMessages()),
+                () -> assertEquals(Map.of(), context.startingMessages()),
+                () -> assertThrows(UnsupportedOperationException.class, () -> context
+                        .awaitedMessages()
+                        .clear()));
+    }
+
+    @Test
+    @DisplayName("A process nobody claims is scoped with its file, and gets no key: somebody else correlates its messages")
+    void aProcessNobodyClaimsGetsNoKey() {
+        final var wiring = TestWiring.claiming();
+        final var deploymentService = new ZenBpmDeploymentService("orders", withoutClients("orders"), TestCollaborators
+                .of("orders", TestScoping.of(NameClashAvoidance.USE_PREFIX), wiring.wiring()));
+        final var model = read(deploymentService, "order.bpmn", WAITING_FOR_PAYMENT);
+
+        final var context = deploymentService.prepareBpmn("shop", null, "order.bpmn", "Order", model);
+
+        assertAll(
+                () -> assertEquals(List.of(), correlationKeysOf(model)),
+                () -> assertEquals("shop__Order", processIdOf(model)),
+                () -> assertEquals(List.of("isClaimedByAWorkflowService[shop, Order]"), wiring.calls()),
+                () -> assertEquals(Map.of(), context.awaitedMessages()));
+    }
+
+    @Test
+    @DisplayName("A message one file of the module starts a workflow with, and which a claimed workflow of another file waits for, ends preparing that file before it is rewritten")
+    void aMessageWhichStartsAndIsAwaitedEndsPreparing() {
+        final var deploymentService = new ZenBpmDeploymentService("orders", withoutClients("orders"), TestCollaborators
+                .of("orders", TestScoping.of(NameClashAvoidance.USE_PREFIX), TestWiring
+                        .claiming("Order")
+                        .wiring()));
+        final var waiting = read(deploymentService, "order.bpmn", WAITING_FOR_PAYMENT);
+        final var starting = read(deploymentService, "payment.bpmn", """
+                <bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" id="payment">
+                  <bpmn:message id="Message_Paid" name="paid" />
+                  <bpmn:process id="Payment" isExecutable="true">
+                    <bpmn:startEvent id="PaymentReceived">
+                      <bpmn:messageEventDefinition messageRef="Message_Paid" />
+                    </bpmn:startEvent>
+                  </bpmn:process>
+                </bpmn:definitions>
+                """);
+        final var context = deploymentService.prepareBpmn("shop", null, "order.bpmn", "Order", waiting);
+
+        final var failure = assertThrows(IllegalStateException.class, () -> deploymentService.prepareBpmn("shop",
+                context, "payment.bpmn", "Payment", starting));
+
+        assertAll(
+                () -> assertTrue(failure
+                        .getMessage()
+                        .startsWith(
+                                """
+                                        Workflow module 'shop' uses a message both to start a workflow and as a message a workflow waits for:
+                                          - 'paid': starts Payment/PaymentReceived, awaited by Order/AwaitPayment
+                                        """),
+                        failure.getMessage()),
+                () -> assertEquals("Payment", processIdOf(starting)));
+    }
+
+    @Test
+    @DisplayName("A version-1 model whose messages all carry a key stays as it was written under 'none', and nothing is asked about its aggregate")
+    void aVersion1ModelWithItsKeysStaysAsItWasWritten() throws IOException {
+        final var wiring = TestWiring.claiming("Version1");
+        final var deploymentService = new ZenBpmDeploymentService("orders", withoutClients("orders"), TestCollaborators
+                .of("orders", TestScoping.of(NameClashAvoidance.NONE), wiring.wiring()));
+        final String text;
+        try (var file = getClass().getResourceAsStream("/models/version-1.bpmn")) {
+            text = new String(file.readAllBytes(), StandardCharsets.UTF_8);
+        }
+        final var model = read(deploymentService, "version-1.bpmn", text);
+
+        deploymentService.prepareBpmn("shop", null, "version-1.bpmn", "Version1", model);
+
+        assertAll(
+                () -> assertTrue(read(deploymentService, "version-1.bpmn", text)
+                        .document()
+                        .isEqualNode(model.document())),
+                () -> assertEquals(List.of("isClaimedByAWorkflowService[shop, Version1]"), wiring.calls()));
+    }
+
+    @Test
+    @DisplayName("A claimed process gets the input mappings of its jobs inside multi-instance bodies once, however often its file is prepared; a process nobody claims gets none")
+    void aClaimedProcessGetsItsTaskParameterMappingsOnce() throws IOException {
+        final String text;
+        try (var file = getClass().getResourceAsStream("/models/task-parameters.bpmn")) {
+            text = new String(file.readAllBytes(), StandardCharsets.UTF_8);
+        }
+        final var claimed = new ZenBpmDeploymentService("orders", withoutClients("orders"), TestCollaborators.of(
+                "orders", TestScoping.of(NameClashAvoidance.NONE), TestWiring
+                        .claiming("Orders")
+                        .withTaskParameters("ship", "weight")
+                        .wiring()));
+        final var unclaimed = new ZenBpmDeploymentService("orders", withoutClients("orders"), TestCollaborators.of(
+                "orders", TestScoping.of(NameClashAvoidance.NONE), TestWiring
+                        .claiming()
+                        .wiring()));
+        final var model = read(claimed, "task-parameters.bpmn", text);
+        final var modelNobodyClaims = read(unclaimed, "task-parameters.bpmn", text);
+
+        final var context = claimed.prepareBpmn("shop", null, "task-parameters.bpmn", "Orders", model);
+        claimed.prepareBpmn("shop", context, "task-parameters.bpmn", "Orders", model);
+        unclaimed.prepareBpmn("shop", null, "task-parameters.bpmn", "Orders", modelNobodyClaims);
+
+        assertAll(
+                () -> assertEquals(List.of("weight", "orderId"), inputTargetsOf(model, "EveryParcel")),
+                () -> assertEquals(List.of("orderId"), inputTargetsOf(model, "NotifyEveryCustomer")),
+                () -> assertTrue(read(unclaimed, "task-parameters.bpmn", text)
+                        .document()
+                        .isEqualNode(modelNobodyClaims.document())));
+    }
+
+    @Test
     @DisplayName("Every step after preparing refuses with the message of the validation where the adapter id has no clients")
     void anAdapterIdWithoutClientsRefusesWithItsValidationMessage() {
         final var deploymentService = new ZenBpmDeploymentService("orders", withoutClients("orders"), TestCollaborators
-                .of("orders"));
+                .of("orders", TestScoping.of(NameClashAvoidance.USE_PREFIX)));
 
         assertAll(steps()
                 .stream()
@@ -262,7 +641,7 @@ class ZenBpmDeploymentServiceTest {
     void aConfiguredAdapterIdSaysThatTheStepIsNotBuiltYet() {
         try (var registry = new ZenBpmClientRegistry(List.of(configured("orders", "http://localhost:8080")))) {
             final var deploymentService = new ZenBpmDeploymentService("orders", registry, TestCollaborators.of(
-                    "orders"));
+                    "orders", TestScoping.of(NameClashAvoidance.USE_PREFIX)));
 
             final var messages = steps()
                     .stream()
@@ -348,10 +727,18 @@ class ZenBpmDeploymentServiceTest {
         }
     }
 
+    private static Stream<Arguments> acceptingConfigurations() {
+        return Stream.of(
+                Arguments.of(true, null, "vanillabp.adapters.orders.accept-unscoped-identifiers"),
+                Arguments.of(null, true, "vanillabp.workflow-modules.shop.adapters.orders.accept-unscoped-identifiers"),
+                Arguments.of(true, false, null),
+                Arguments.of(false, null, null));
+    }
+
     private static List<Consumer<ZenBpmDeploymentService>> steps() {
         return List.of(
                 deploymentService -> deploymentService.wireBpmn("shop", "order.bpmn", "Order", null, null),
-                deploymentService -> deploymentService.deployResources("shop", null),
+                deploymentService -> deploymentService.deployResources("shop", new ZenBpmProcessingContext("shop")),
                 deploymentService -> deploymentService.startWorkflowProcessing("shop", null));
     }
 
@@ -363,6 +750,99 @@ class ZenBpmDeploymentServiceTest {
                   </bpmn:process>
                 </bpmn:definitions>
                 """.getBytes(StandardCharsets.UTF_8));
+    }
+
+    private static final String DMN = """
+            <definitions xmlns="https://www.omg.org/spec/DMN/20191111/MODEL/" id="definitions" name="Rating">
+              <decision id="rating" name="Rating">
+                <informationRequirement id="requirement">
+                  <requiredDecision href="#risk" />
+                </informationRequirement>
+              </decision>
+              <decision id="risk" name="Risk" />
+            </definitions>
+            """;
+
+    private static final String WAITING_FOR_PAYMENT = """
+            <bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" id="order">
+              <bpmn:message id="Message_Paid" name="paid" />
+              <bpmn:process id="Order" isExecutable="true">
+                <bpmn:receiveTask id="AwaitPayment" messageRef="Message_Paid" />
+              </bpmn:process>
+            </bpmn:definitions>
+            """;
+
+    private static ZenBpmBpmnModel read(
+        final ZenBpmDeploymentService deploymentService,
+        final String filename,
+        final String bpmn
+    ) {
+        return deploymentService
+                .readBpmn("shop", filename, new ByteArrayInputStream(bpmn.getBytes(StandardCharsets.UTF_8)), true)
+                .getFirst()
+                .getValue();
+    }
+
+    private static List<String> correlationKeysOf(final ZenBpmBpmnModel model) {
+        final var subscriptions = model
+                .document()
+                .getElementsByTagNameNS("*", "subscription");
+        final var keys = new ArrayList<String>();
+        for (var index = 0; index < subscriptions.getLength(); ++index) {
+            keys.add(((Element) subscriptions.item(index)).getAttribute("correlationKey"));
+        }
+        return keys;
+    }
+
+    private static List<String> inputTargetsOf(
+        final ZenBpmBpmnModel model,
+        final String elementId
+    ) {
+        final var targets = new ArrayList<String>();
+        final var inputs = model
+                .document()
+                .getElementsByTagNameNS("*", "input");
+        for (var index = 0; index < inputs.getLength(); ++index) {
+            final var input = (Element) inputs.item(index);
+            final var element = (Element) input
+                    .getParentNode()
+                    .getParentNode()
+                    .getParentNode();
+            if (elementId.equals(element.getAttribute("id"))) {
+                targets.add(input.getAttribute("target"));
+            }
+        }
+        return targets;
+    }
+
+    private static String messageNameOf(final ZenBpmBpmnModel model) {
+        return ((Element) model
+                .document()
+                .getElementsByTagNameNS(ZenBpmModelReader.BPMN, "message")
+                .item(0)).getAttribute("name");
+    }
+
+    private static ByteArrayInputStream dmn() {
+        return new ByteArrayInputStream(DMN.getBytes(StandardCharsets.UTF_8));
+    }
+
+    private static String processIdOf(final ZenBpmBpmnModel model) {
+        return ((Element) model
+                .document()
+                .getElementsByTagNameNS(ZenBpmModelReader.BPMN, "process")
+                .item(0)).getAttribute("id");
+    }
+
+    // the logger of the deployment service at DEBUG while the work runs
+    private static void atDebug(final Runnable work) {
+        final var logger = (Logger) LoggerFactory.getLogger(ZenBpmDeploymentService.class);
+        final var level = logger.getLevel();
+        logger.setLevel(Level.DEBUG);
+        try {
+            work.run();
+        } finally {
+            logger.setLevel(level);
+        }
     }
 
     // the platform's wiring, as far as preparing asks it: every process is claimed, and the

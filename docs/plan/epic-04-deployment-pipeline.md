@@ -432,7 +432,7 @@ keeps run logs for 90 days, so what they showed is written here as well):
 
 ### S4.2.1 Scoping and the name-clash modes
 
-- [ ] **Depends on:** S4.1.1.
+- [x] **Depends on:** S4.1.1.
 
 **Instructions**
 
@@ -481,10 +481,68 @@ the module level, and once with `false` on the module overriding `true` on the a
 **Acceptance criteria**
 
 - [ ] The rewritten XML deploys to the container (asserted in S4.3.2's IT under `use-prefix`).
-- [ ] Nothing configured -> the boot ends with the core's message naming `use-prefix`, `none` and
+  Open until batch 3: nothing is deployed before S4.3.2. What holds today is the rewrite itself,
+  `ZenBpmScopingTest#usePrefixScopesWhatTheEngineResolvesAcrossFiles`, which compares the whole
+  rewritten `models/scoping.bpmn` with the file prefixed by hand.
+- [x] Nothing configured -> the boot ends with the core's message naming `use-prefix`, `none` and
   the key, because `by-adapter` is the default and ZenBPM cannot serve it.
-- [ ] `accept-unscoped-identifiers: true` turns the `none` warning into a DEBUG line naming the key;
+  `ZenBpmStartupValidationBootTest#nothingConfiguredEndsTheStartNamingBothWaysOut` (Spring Boot)
+  and `ZenBpmByAdapterRefusedTest` (Quarkus) boot a module with a BPMN file and compare the whole
+  message of the platform, "(nothing is configured, so the default applies)" included;
+  `#byAdapterConfiguredEndsTheStartNamingBothWaysOut` does the same with `by-adapter` written.
+  `ZenBpmDeploymentServiceTest#byAdapterIsRefused` holds the order (constructs first, then the
+  mode, the file not rewritten), `#byAdapterOfAWorkflowIsRefused` the workflow's key.
+- [x] `accept-unscoped-identifiers: true` turns the `none` warning into a DEBUG line naming the key;
   the module level wins over the adapter level.
+  `ZenBpmDeploymentServiceTest#acceptedUnscopedIdentifiersAreNotWarnedAbout`: the adapter's key,
+  the module's key, `false` on the module over `true` on the adapter (a WARN) and nothing set (a
+  WARN); `#noneWarnsNamingTheAlternatives` holds the WARN, and
+  `ZenBpmStartupValidationBootTest#noneIsWarnedAboutWhileTheModuleIsPrepared` shows the platform
+  calling it while a module is prepared. Both platforms bind the key at both levels
+  (`VanillaBpZenBpmPropertiesTest#acceptUnscopedIdentifiersOfAWorkflowModuleWins` in `spring-boot`
+  and `quarkus/runtime`), and a booted Quarkus application accepts and resolves it
+  (`ZenBpmOverlayResolutionTest#acceptUnscopedIdentifiersThroughItsTwoLevels`).
+
+**Implemented 2026-10-16.** Core: `model.ZenBpmScoping.apply(document, module, process, scoping,
+adapterId)` rewrites the identifiers listed in the fit check through the platform's scoping, the
+pool and the diagram pointing at the process included; `ZenBpmDeploymentService.prepareBpmn`
+refuses constructs (once per file), then `by-adapter` for the module and for the workflow, then
+scopes the file (once per file) and records the process; `readDmn` keeps each DMN file in the
+context, its decision ids scoped under `use-prefix` (a file which is no XML then ends the start
+naming file and module); `deployResources` hands the module's processes to
+`validateNoCollidingProcessIds` and throws as before; `defaultNameClashAvoidance` answers
+`by-adapter` (decision 24); `warnAboutUnscopedIdentifiers` names ZenBPM's alternatives or writes the
+DEBUG line. `ZenBpmAdapterConfiguration` has `accept-unscoped-identifiers` at the adapter and the
+module level, and both platform overlays bind them. `ZenBpmInstanceIdentity` names the modes ZenBPM
+serves for a group which shares `by-adapter` (the note of S3.3.1;
+`ZenBpmInstanceIdentityTest#oneEngineWithTheDefaultModeNamesTheModesZenBpmServes`). Decision 24 is in
+`DECISIONS.md`, GAPS 11 is no longer *planned*, and the README says what is built. Tests:
+`ZenBpmScopingTest` (5) with the fixture `models/scoping.bpmn`, 12 new cases in
+`ZenBpmDeploymentServiceTest` (now 25; `TestScoping` is the platform's scoping for tests), 3 new
+boot tests in `ZenBpmStartupValidationBootTest` (now 13) and `ZenBpmByAdapterRefusedTest` on
+Quarkus; the boot tests of the S4.1.1 decision set `use-prefix` now. `TZ=Etc/UTC mvn clean install`
+on OpenJDK 25.0.2 builds green with every integration test run and none skipped (core 564 unit and
+34 integration tests, Spring Boot 9, smoke test 28, Quarkus runtime 9, Quarkus deployment 38,
+coverage gate 35). The gate measures 100 % of 13,945 instructions for Spring Boot and 100 % of
+13,819 for Quarkus, and `bin/check-deploy-safety.sh` passes both runs. The first full build
+measured 99.99 %: a pool of another process was never read; `ZenBpmScopingTest` has one now.
+
+Seen to fail, each restored afterwards (17 of 17 mutants), against a green unmutated run. Each
+fails `ZenBpmDeploymentServiceTest` unless named otherwise:
+- a file scoped for each of its processes (`#preparingScopesAFileOnce`);
+- `by-adapter` of the module not refused, or refused before the constructs (`#byAdapterIsRefused`);
+- `by-adapter` of a workflow not refused (`#byAdapterOfAWorkflowIsRefused`);
+- an empty value scoped, the references to the process not followed, extensions searched outside
+  `extensionElements`, a `zeebe:` task definition not scoped: each fails `ZenBpmScopingTest`;
+- the adapter's `accept-unscoped-identifiers` winning over the module's, and an accepted `none`
+  warned about (`#acceptedUnscopedIdentifiersAreNotWarnedAbout`);
+- a DMN file rewritten under every mode, and a file which is no XML not named;
+- the module's processes not handed to the collision check;
+- a group sharing `by-adapter` told to give each id its own mode: fails `ZenBpmInstanceIdentityTest`;
+- the module's `accept-unscoped-identifiers` not handed on: fails `VanillaBpZenBpmPropertiesTest` on
+  Spring Boot, and on Quarkus;
+- `prepareBpmn` without the platform's check, installed and booted: fails both cases of
+  `ZenBpmStartupValidationBootTest` and `ZenBpmByAdapterRefusedTest`.
 
 *Note from S3.3.1, 2026-10-16.* `ZenBpmInstanceIdentity` (S3.3.1) refuses two ids on one
 `rest-address` with the same mode before anything is deployed, so before the refusal of
@@ -497,9 +555,54 @@ story refuses `by-adapter`, the message of a `by-adapter` group says that ZenBPM
 `ZenBpmInstanceIdentityTest`). Not before: until then the message would promise a refusal which
 does not exist.
 
+*Fit check, 2026-10-16, decided by the Implementor.* The story was checked against `main`
+(`4d18277`), `ADAPTER-AUTHORS.md` sections 2.1 and 3.2, the platform's `NameClashAvoidanceService`
+(the source of the snapshot `2.0.0-20261015.045823-21` the build resolves), Camunda 8's
+`Camunda8Scoping` and `readDmn`, PEA's `PeaScoping` and the engine at `bdd795a3`. The SPI has
+every call instruction 1 to 5 names, and `validateNativeIsolationSupported` ends the start with a
+message naming `use-prefix`, `none`, `vanillabp.adapters.<id>.name-clash-avoidance` and the
+module's key. The engine reads `taskDefinition`, `calledElement`, `calledDecision` and
+`subscription` as children of `extensionElements` in any namespace and takes an empty attribute
+as none, so the scoping does the same: it rewrites only a value which is there, and a user task
+without a task definition keeps the engine's default `user-task-type` unscoped (decision 12 lists
+user tasks by process, not by type). Signals are refused by S4.1.2 and not rewritten. Five things
+did not fit or were left open:
+
+1. **A mode per workflow.** The core resolves `validateNativeIsolationSupported` for the MODULE,
+   while `scopedProcessId` and `scopedTaskDefinition` resolve the mode per workflow
+   (`vanillabp.workflow-modules.<module>.workflows.<process>.adapters.<id>.name-clash-avoidance`).
+   A workflow set to `by-adapter` in a module of `use-prefix` passes the core's check and would be
+   deployed with plain identifiers, isolated by nothing. Options: accept it, or refuse it in
+   `prepareBpmn`. Decided: refused, with a message naming that key and the two ways out, because
+   the mode promises an isolation ZenBPM does not have.
+2. **Which message comes first.** `prepareBpmn` refuses constructs (S4.1.2) and now the mode. The
+   decision of S4.1.1 is that the checks of reading speak before the configuration, so the
+   constructs are refused first, then the mode, then the file is rewritten. The boot tests of that
+   decision (an unconfigured and a degraded adapter id with BPMN files, both platforms) set
+   `name-clash-avoidance: use-prefix` now, so they still end at the first step which needs the
+   engine; a new boot test per platform holds criterion 2 with nothing configured.
+3. **Instruction 4 lands before `deployResources` does.** The collision check needs no engine, so
+   `deployResources` makes it now, with the plain process ids the context remembered, and then
+   throws as before (for an adapter id without clients, the message of its validation). S4.3.2 keeps
+   it as its step 2.
+4. **`accept-unscoped-identifiers` below the adapter level.** The overlay of E3 knows no
+   module-level key of its own: `retry-backoff`, `max-redeliveries` and `history-time-to-live` are
+   shared by module and workflow. The key is added at the adapter level and at the module level
+   only, on both platforms; a workflow level would mean nothing, because the core reports `none`
+   once per module. `ZenBpmAdapterConfiguration` resolves it (the module wins), and the DEBUG line
+   names the key which decided.
+5. **`fromDefault` of `warnAboutUnscopedIdentifiers`** is never true here: the default is
+   `by-adapter`, which is refused before the core could report `none` as a default. The message
+   does not use it.
+
+Decision 24 says "supersedes decision 2", but decision 2 is a draft which never entered
+`DECISIONS.md`; the entry says that in its own words. It also promises a sentence on the first page
+of the wiki, which holds a placeholder only, so the entry says the user documentation will carry it
+once it is written. `GAPS.md` row 11 loses its *planned*.
+
 ### S4.2.2 Correlation keys and the start/catch collision
 
-- [ ] **Depends on:** S4.2.1.
+- [x] **Depends on:** S4.2.1.
 
 **Instructions**
 
@@ -519,14 +622,114 @@ claimed one.
 **Tests**: injected where missing, untouched where present, none on a start message, collision
 refused, nothing written into an unclaimed process.
 
+*Fit check, 2026-10-16, decided by the Implementor.* Checked against `main` with S4.2.1, Camunda
+8's `wireMessageSubscriptions`, and the engine at `bdd795a3`: its source, and a scratch Go program
+running the engine's in-memory `bpmn.Engine` at that commit. GAPS 4 holds:
+`publishCorrelatedMessageByName` in `internal/cluster/node.go` falls back from a correlation key no
+subscription matches to the definition-level subscription of a start event of the same name, with
+a warning. GAPS 4 was missing from `GAPS.md` and is added. The engine reads the key from
+`TMessage.Extension`, `xml:"extensionElements>subscription"`, and evaluates it only where it starts
+with `=` (`evaluateMessageCorrelationKey` in `pkg/bpmn/events.go`); a start event's subscription is
+definition-level and ignores it. Five things did not fit:
+
+1. **Where the subscription goes.** The story writes `<zenbpm:extensionElements>`; the BPMN element
+   is `bpmn:extensionElements`, which the engine matches by local name either way. Built as a
+   `zenbpm:subscription` inside the message's `bpmn:extensionElements`, reused where the message has
+   one, with the `zenbpm` namespace declared on the root where the file does not declare it.
+2. **A catch element inside a multi-instance body sees only the item.** The engine runs a
+   multi-instance body in a child scope whose local variables are the item alone
+   (`pkg/bpmn/multi_instance.go`), and a scope copies the local variables of its parent only
+   (`runtime.NewVariableHolder`). The scratch program showed it: an intermediate catch event, a
+   receive task, a boundary event and the start of an event sub-process inside a multi-instance
+   sub-process fail with "result of correlation key evaluation is not a string: got <nil>" when the
+   key is `=orderId`, and subscribe with `o-1` once the multi-instance sub-process carries the input
+   mapping `=orderId -> orderId`; inside two nested multi-instance sub-processes both need it, either
+   alone fails. A multi-instance receive task subscribes without it. Options: inject keys and let
+   such workflows fail, refuse the shape, or carry the id into the body. Decided: wherever the
+   adapter injects a key, every multi-instance sub-process around a catch element of that message
+   gets the input mapping of the aggregate id, unless the modeller mapped that target there. A key
+   the modeller wrote stays the modeller's: what it reads inside a body is theirs to map.
+3. **The collision is a matter of the workflow module, not of one process.** Under one prefix, a
+   message which starts process B and which process A waits for collides as much as one which
+   starts and is caught by A itself. Decided: the context collects, per workflow module, the start
+   messages of every process and the caught messages of the claimed ones, and the file which
+   completes a pair is refused, naming the message and both elements with their processes. The
+   catch of a process nobody claims does not count, because the application does not correlate it.
+   Across workflow modules the names differ under `use-prefix`; under `none` the warning of S4.2.1
+   covers every identifier two modules share. The message explains in words and cites no GAPS
+   number, because code cites `DECISIONS.md` only.
+4. **The reader gives names, not elements.** The model gains the message start events and the
+   message catch elements with their message (`messageStarts`, `messageCatches`) and, for every
+   element inside a multi-instance sub-process, the ids of the sub-processes around it
+   (`enclosingMultiInstances`), which S4.2.3 needs as well.
+5. **A key has to be a string.** The engine refuses a key whose expression gives anything else.
+   E5 instruction 1 already writes the aggregate id as a String; the marker job of decision 25
+   (E9) has to write `result.variables()` the same way where it holds the id.
+
+Found while checking, not refused: the engine stores at most one active subscription per message
+name and correlation key, engine-wide (the unique index `unique_name_correlation_key_waiting` on
+`message_subscription_pointer(name, correlation_key) WHERE state = 1` in
+`internal/sql/migrations/0001_schema.up.sql`, kept by `0005`; the in-memory storage refuses the
+same). So two waits of one workflow for the same message at the same time, in parallel branches or
+in the iterations of a parallel multi-instance body, cannot both subscribe under the aggregate id:
+the scratch program saw the second iteration fail to store its subscription. The shapes in which
+two waits overlap cannot all be told from a model, so this is GAPS 23, new, and nothing is refused
+for it.
+
+The acceptance criterion holds where the adapter writes nothing: a version-1 model whose caught
+messages all carry a modelled key and which has no multi-instance body around them gets no key and
+no mapping, and under `none` (the only mode which leaves process ids as version 1 deployed them)
+its document stays equal to the file. Whether the serialised bytes are identical is S4.3.2's
+question, which serialises.
+
 **Acceptance criteria**
 
-- [ ] `Camunda8`-style version-1 models with modelled keys deploy byte-identically apart from namespace
-  declarations.
+- [x] `Camunda8`-style version-1 models with modelled keys deploy byte-identically apart from namespace
+  declarations. `ZenBpmDeploymentServiceTest#aVersion1ModelWithItsKeysStaysAsItWasWritten` prepares
+  `models/version-1.bpmn` (the shape the Camunda Modeler exports for Camunda 8, a key on each of
+  its two messages) for a claimed process under `none`: the document stays equal to the file, and
+  the platform is asked nothing but whether the process is claimed.
+  `ZenBpmCorrelationKeysTest#aFileWithEveryKeyModelledIsLeftAsItIs` holds the same for the rewrite
+  alone. That the serialised bytes are the same is open until S4.3.2 serialises and deploys (batch
+  3).
+
+**Implemented 2026-10-16.** Core: the reader gives `messageStarts`, `messageCatches` and
+`enclosingMultiInstances`; `model.ZenBpmCorrelationKeys.apply(model, aggregateIdName)` writes the
+keys and carries the aggregate id into the multi-instance bodies through the new
+`model.ZenBpmInputMappings`, which adds an extension element in the `zenbpm` namespace (declared on
+the root, with a free prefix where the file uses `zenbpm` otherwise) and input mappings in front of
+the outputs, never twice for one target;
+`ZenBpmCorrelationKeys.refuseMessagesWhichStartAndAreAwaited` refuses the collision over the
+messages the context collects for the module. `prepareBpmn` makes, once per file: the collision
+check, the scoping, and in a claimed process the keys, asking the platform for the aggregate id's
+name only where a key is written. `GAPS.md` has GAPS 4 and the new GAPS 23; the README says what
+is built. Tests: `ZenBpmCorrelationKeysTest` (7) with the fixture `models/correlation-keys.bpmn`, two
+more cases in `ZenBpmModelReaderTest` (still 20), 4 new cases in `ZenBpmDeploymentServiceTest` (now
+29, `TestWiring` is the platform's wiring for tests) with the fixture `models/version-1.bpmn`.
+`TZ=Etc/UTC mvn clean install` on OpenJDK 25.0.2 builds green with every integration test run and
+none skipped (core 575 unit and 34 integration tests, Spring Boot 9, smoke test 28, Quarkus runtime
+9, Quarkus deployment 38, coverage gate 35). The gate measures 100 % of 14,682 instructions for
+Spring Boot and 100 % of 14,556 for Quarkus, and `bin/check-deploy-safety.sh` passes both runs. The
+first full build measured 99.99 %: an element without a namespace prefix was never extended;
+`#additionsToAFileInTheDefaultNamespaceHaveNoPrefix` covers it.
+
+Seen to fail, each restored afterwards (15 of 15 mutants), against a green unmutated run. Each
+fails `ZenBpmCorrelationKeysTest` unless named otherwise:
+- a modelled key overwritten (also fails `ZenBpmDeploymentServiceTest`);
+- a start message given a key; the aggregate id not carried into multi-instance bodies;
+- the aggregate id asked where no key is written (also fails `ZenBpmDeploymentServiceTest`);
+- a target the modeller maps mapped again; an input added after the outputs; `extensionElements`
+  put in front of the documentation; the prefix `zenbpm` taken although the file binds it
+  elsewhere;
+- the catch elements of a process nobody claims counted; only the first collision named;
+- `prepareBpmn` without the collision check, with it after the scoping, or writing keys into a
+  process nobody claims: each fails `ZenBpmDeploymentServiceTest`;
+- the reader without the multi-instance sub-processes around an element, or without the message
+  start elements: each fails `ZenBpmModelReaderTest`.
 
 ### S4.2.3 Task-parameter input mappings
 
-- [ ] **Depends on:** S4.2.1.
+- [x] **Depends on:** S4.2.1.
 
 **Instructions**
 
@@ -559,10 +762,176 @@ parameter calls is needed there whatever the decision for plain elements is.
 document (the context guard), and `ZenBpmRestClientContractIT`-style check in S4.3.2 that a job of
 such a task carries the variable.
 
+*Fit check, 2026-10-16, decided by the Implementor.* Checked against `main` with S4.2.1 and S4.2.2,
+the SPI (`taskParameterNames`, `extensionTaskParameterNames`: "pass the element id first, then the
+task definition, and fetch the union"), Camunda 8's `fetchVariablesOf`, which asks
+`taskParameterNames` with the element id AND the task definition and adds the aggregate id, and
+the engine at `bdd795a3`, its source and a scratch Go program running its in-memory engine. Open
+question 2 was left to this fit check; four things did not fit:
+
+1. **Open question 2: where mappings matter.** The scratch program read the variables of the jobs
+   the engine created for an instance started with `orderId` and `items`. A plain service task, and
+   one inside a plain sub-process, got every variable of the scope without any mapping. A parallel
+   and a sequential multi-instance service task got `{item}` alone, and `orderId` only with an input
+   mapping on the task. A task inside a multi-instance sub-process got `orderId: null` from an input
+   mapping on the task, because the engine evaluates it in the body's scope, which holds the item
+   only; it got `o-1` from the same mapping on the sub-process. Options: map every job element (the
+   story as written), map nothing and drop the promise, or map where the engine needs it. Decided:
+   only a job element inside a multi-instance body gets mappings, and they go where the engine
+   evaluates them: on the element itself where it is a multi-instance element, and on every
+   multi-instance sub-process around it (S4.2.2 proved that two nested ones both need it). A plain
+   element gets nothing, so a model without a multi-instance body stays as it was written, and the
+   criterion holds for both: outside a body the engine's copy carries a name, inside one the
+   mappings do. The rationale of the story ("input variables are EMPTY without input mappings")
+   holds inside a body only.
+2. **The aggregate id travels with the names.** Inside a body a job carries no variable it is not
+   given, and a workflow the engine started (decision 25) can be named by its aggregate id variable
+   only, so the id is part of the names, as Camunda 8 fetches it with every job.
+3. **An item is mapped only into the elements inside the one which declares it.** *Corrected
+   after the reviews of F4.2: this item first said that no item is mapped, because "a mapping of it
+   would read the scope around the element, where it is not", which holds for the declaring element
+   only.* The engine sets an element's own item inside its body, and the items of the elements
+   inside it do not exist yet where its mappings are evaluated, so neither is mapped on it. The item
+   of an outer element is a variable of the scope around every element inside it, so where a method
+   reads it as a `@TaskParam` it is mapped into each of them: a scratch program at `bdd795a3` gave a
+   job of an inner multi-instance task the item `order` of the sequential multi-instance
+   sub-process around it, mapped on the inner task only. How an iteration reaches a method through
+   `@MultiInstanceElement` stays E9's.
+4. **How a name is written.** The scratch program evaluated `=order-id`, `=order id` and `=if` as
+   the variables of those names, and failed on a name in backticks; a source without `=` is taken
+   literally. So every mapping is `source="=<name>" target="<name>"`, whatever the name.
+
+The `ZenBpmRestClientContractIT`-style check that a job of such a task carries the variable belongs
+to S4.3.2, which deploys; until then the criterion is held by the model and by the scratch program
+above.
+
 **Acceptance criteria**
 
 - [ ] A `@TaskParam` name reaches the job, inside a multi-instance body as well; so does a name only
-  an extension's method reads.
+  an extension's method reads. Open until batch 3, where S4.3.2 deploys and a job is read from the
+  engine. What holds today: the model carries the mappings the engine needs
+  (`ZenBpmTaskParametersTest`: the names of the methods, by element id and by task definition, and
+  of the extensions, with the aggregate id, into a multi-instance task and into every
+  multi-instance sub-process around a job; nothing for a job outside a body, whose names the
+  engine copies from its scope), and the scratch program of the fit check showed the engine hand a
+  job exactly these names: everything of the scope outside a body, the item and the mapped names
+  inside one.
+
+**Implemented 2026-10-16.** Core: `model.ZenBpmTaskParameters.apply(model, module, wiring)`, called
+by `prepareBpmn` once per file for a claimed process, after the correlation keys; it uses
+`ZenBpmInputMappings` of S4.2.2, so a target the modeller maps is left and the inputs stand in
+front of the outputs. The README and the architecture say what is built, and S9.4.1 has a note on
+the items of outer iterations. Tests: `ZenBpmTaskParametersTest` (5) with the fixture
+`models/task-parameters.bpmn`, and `ZenBpmDeploymentServiceTest#aClaimedProcessGetsItsTaskParameterMappingsOnce`
+(now 30 cases): a second preparation of the same file adds nothing, a process nobody claims stays as
+it was written. `TZ=Etc/UTC mvn clean install` on OpenJDK 25.0.2 builds green with every
+integration test run and none skipped (core 581 unit and 34 integration tests, Spring Boot 9, smoke
+test 28, Quarkus runtime 9, Quarkus deployment 38, coverage gate 35). The gate measures 100 % of
+14,840 instructions for Spring Boot and 100 % of 14,714 for Quarkus on the first full build, and
+`bin/check-deploy-safety.sh` passes both runs.
+
+Seen to fail, each restored afterwards (11 of 11 mutants), against a green unmutated run. Each
+fails `ZenBpmTaskParametersTest` unless named otherwise:
+- a job outside every body mapped; a multi-instance task not mapping into itself; only the
+  innermost body around a job mapped;
+- the names not asked by the task definition, by the element id, or of the extensions; the
+  aggregate id not mapped; the items mapped; the aggregate id's name asked for every job;
+- `prepareBpmn` without the task parameters, or writing them into a process nobody claims: each
+  fails `ZenBpmDeploymentServiceTest`.
+
+**F4.2 built 2026-10-16** on the branch `feature/f4.2-rewriting`, one commit per story, not pushed.
+
+**Answers to two reviews of F4.2, 2026-10-16** (one by Claude, 9 findings; one by Copilot, 1
+finding, the same as Claude 5). Every claim about the engine was checked in its source at
+`bdd795a3`, the one about nested items again with a scratch program against its in-memory runtime.
+
+Valid and fixed:
+
+- **A decision id the engine splits** (Claude 1, Major). For the bindings `latest` and none,
+  `FindAndEvaluateDRD` in `pkg/dmn/dmn_engine.go` reads a decision id holding one `.` as
+  `<DMN definitions id>.<decision id>` and fails on more than one; the binding `deployment` and any
+  unknown one always fail; `versionTag` looks the whole id up. Under `use-prefix` the scoping
+  prefixes the ids of the decisions, not those of the DMN definitions, so `pricing.rating` became
+  `shop__pricing.rating`, which names DMN definitions that do not exist. The review did not see the
+  second way into the same failure: the platform forbids only `__` in a workflow module id, so in a
+  module `com.shop` even `rating` became `com.shop__rating`, which the engine splits. Decided by
+  recommendation, because scoping the id of the DMN definitions as well would mean rewriting what
+  the platform's `DmnDecisionIds` does not touch, for a form which is only useful for two decisions
+  of one id in one workflow module: `ZenBpmScoping` refuses, before it rewrites anything, every
+  called decision whose id holds a `.` once it is scoped, unless it is bound by `versionTag`,
+  naming each task, what the id becomes and the three ways out. `ZenBpmUnsupportedConstructs`
+  refuses, in every mode and every process, a binding other than `latest`, `versionTag` or none,
+  and a decision id with more than one `.` under `latest` or none, as GAPS 14 now lists. Tests:
+  `ZenBpmScopingTest#aDecisionIdTheEngineWouldSplitIsRefusedUnderUsePrefix`, two more cases of
+  `ZenBpmUnsupportedConstructsTest#everyConstructIsRefused` and two more elements in
+  `#whatZenBpmRunsPasses`.
+- **The items of outer multi-instance elements** (Claude 2). The engine evaluates the input
+  mappings of an element in the scope around it, and the multi-instance instance of an inner
+  element copies the variables of the outer iteration, the outer item included. The scratch
+  program gave the job of an inner multi-instance task `order`, the item of the sub-process around
+  it, mapped on the inner task only. So an element now maps in the items of the elements around it
+  and leaves out only its own and those of the elements inside it. Fit-check item 3 of S4.2.3, the
+  S9.4.1 note, the javadoc and the architecture say so; `ZenBpmTaskParametersTest` maps `parcel`
+  into `EveryItem` and not into `EveryParcel`.
+- **A modelled key inside a body** (Claude 3). The guard leaving a body without the aggregate id
+  where the message it waits for carries the modeller's key had no test; now
+  `ZenBpmCorrelationKeysTest#aBodyAroundAModelledKeyGetsNoMapping` holds it.
+- **`by-adapter` set for one workflow** (Claude 4). `ZenBpmWorkflowByAdapterRefusedTest` boots
+  Quarkus and `ZenBpmStartupValidationBootTest#byAdapterOfOneWorkflowEndsTheStartNamingItsKey`
+  Spring Boot with `use-prefix` on the adapter id and `by-adapter` on the workflow; both end the
+  start with the message naming the workflow's key. That Quarkus accepts the key is proven by it.
+- **"Every rewrite is idempotent"** (Claude 5, Copilot 1). The architecture now says that the file
+  is rewritten once because the scoping is not idempotent, and that every boot rewrites the file
+  as read, so the same file gives the same deployment. Draft decision 4 is left as it is: its
+  "idempotently" is that same-file-same-deployment promise, which holds, and a decision is not
+  edited.
+- **Lines the formatter did not rewrap** (Claude 6). The javadoc of `ZenBpmProcessingContext` and
+  the README paragraph are rewrapped. The formatter never wraps the arguments of a constructor call
+  (`alignment_for_arguments_in_allocation_expression` is 0) and joins them, so the call building
+  `ZenBpmBpmnModel` is kept one argument per line between `@formatter:off` and `@formatter:on`.
+- **Three ids on one engine** (Claude 7). Both messages of `ZenBpmInstanceIdentity` tell more than
+  two ids to set `use-prefix` on one, `none` on another, and give every further id an engine of its
+  own; `ZenBpmInstanceIdentityTest#threeIdsOnOneEngineAreToldAboutTheTwoModes` for `by-adapter`
+  and `none`.
+- **"No DMN"** (Claude 8). `DmnDecisionIds` refuses what is no XML only; the javadoc, the test and
+  this plan say "no XML" now.
+- **The context's maps** (Claude 9). `ZenBpmProcessingContext` keeps its message maps and hands out
+  read-only views; `addMessagesOf(model, claimed)` adds a file's messages and refuses a collision.
+
+Claude's notes for later stories are no findings: that a call activity in a body needs the
+aggregate id carried as well is now a note under instruction 9 of S4.3.1; that an unconfigured
+application meets two refusals one start after the other is what fit-check item 2 of S4.2.1
+decided.
+
+Seen to fail, each restored afterwards (10 of 10 mutants), against a green unmutated run: the
+binding check off, the two-dot check off, the two-dot check applied under `versionTag` (each fails
+`ZenBpmUnsupportedConstructsTest`); the scoping's refusal off, a `versionTag` binding refused, an
+unscoped id refused, the refusal after the rewrite (each fails `ZenBpmScopingTest`); the items of
+outer elements left out, an element's own item mapped (`ZenBpmTaskParametersTest`); the guard of a
+modelled key off (`ZenBpmCorrelationKeysTest`); three ids treated as two
+(`ZenBpmInstanceIdentityTest`); the context's map handed out for writing
+(`ZenBpmDeploymentServiceTest`). `TZ=Etc/UTC mvn clean install` on OpenJDK 25.0.2 builds green with
+every integration test run and none skipped (core 587 unit and 34 integration tests, Spring Boot 9,
+smoke test 29, Quarkus runtime 9, Quarkus deployment 39, coverage gate 35). The gate measures 100 %
+of 15,059 instructions for Spring Boot and 100 % of 14,933 for Quarkus, and
+`bin/check-deploy-safety.sh` passes both runs.
+
+**Answer to CodeRabbit on pull request #32, 2026-10-16** (one finding). Two files of one workflow
+module declaring the same process id reached `deployResources` as one process, because the context
+kept the ids in a set, so the platform's collision check could not see them. Valid, but not by the
+suggested fix: the platform's `validateNoCollidingProcessIds` skips one process of one module handed
+over twice on purpose (one file with several processes, or one module deployed to several
+adapters), and the core keeps only the first file of a process id (`putIfAbsent`) without refusing
+the second. On ZenBPM, which deploys every file on its own, the second file would replace the first
+as a new version of it; Camunda 8 refuses such a deployment. So `ZenBpmProcessingContext.recordProcess`
+now keeps each process id with its file and refuses a second file declaring it, naming both files,
+before that file is rewritten. Test: `ZenBpmDeploymentServiceTest#twoFilesDeclaringOneProcessAreRefused`.
+Seen to fail, each restored afterwards (3 of 3 mutants): the refusal off, the same file prepared
+again refused, the process recorded after the rewrite. `TZ=Etc/UTC mvn clean install` builds green
+with every integration test run and none skipped (core 588 unit and 34 integration tests, Spring
+Boot 9, smoke test 29, Quarkus runtime 9, Quarkus deployment 39, coverage gate 35); the gate
+measures 100 % of 15,094 instructions for Spring Boot and of 14,968 for Quarkus, and
+`bin/check-deploy-safety.sh` passes both runs.
 
 ---
 
@@ -613,7 +982,10 @@ such a task carries the variable.
    inject `<zenbpm:in businessKey="=<aggregateIdName>"/>` on the call activity and an input mapping of
    the id variable into the called instance: a task of a called process is bound by its own process
    and loads the caller's aggregate (platform decision 123), so the child needs the caller's name;
-   if false, nothing.
+   if false, nothing. *Note from the reviews of F4.2:* a call activity inside a multi-instance body
+   sees only the body's variables, as a job does, so the aggregate id it hands on must also be
+   carried into every multi-instance element around it, with `ZenBpmInputMappings.carry` as S4.2.2
+   does for correlation keys.
 10. No `unsharedWorkflowAggregatePaths` and no `declaredTypesOfWorkflowAggregatePaths` (deviation
     14).
 11. `registerProcessVersions(adapterId, module, process, catalog)` waits for the catalog of E10.

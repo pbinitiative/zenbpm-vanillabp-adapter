@@ -32,10 +32,23 @@ addresses of one engine (an alias, a proxy, two nodes of one cluster) are not re
 The adapter reads the BPMN files of a workflow module, also for an adapter id without an engine, and
 refuses a file holding an executable process and any other process, because the engine would read
 them as one, and a file which uses what ZenBPM cannot run or would run differently from the model,
-as [`GAPS.md`](./GAPS.md) lists. It deploys nothing and runs no task yet: every later step throws an
-exception which says that it is not built yet, or, for an adapter id without clients, the message of
-its validation, which names the key to set. What is built next, and in which order, is the
-implementation plan in [`docs/`](docs/README.md).
+as [`GAPS.md`](./GAPS.md) lists. ZenBPM has no isolation of its own, so the name-clash-avoidance
+mode `by-adapter`, the default where nothing is configured, ends the start of a workflow module with
+BPMN files, naming `use-prefix` and `none` (decision 24 in [`DECISIONS.md`](./DECISIONS.md)); under
+`use-prefix` the identifiers of the BPMN and DMN files are prefixed with the workflow module id, and
+a business rule task whose decision ZenBPM would then not find ends the start, and `none` warns
+unless `accept-unscoped-identifiers` says that the identifiers are unique. Two
+processes which would reach the engine under one id end the start. Every message a claimed workflow
+waits for and which carries no correlation key of the modeller's gets the aggregate id as its key,
+carried into the multi-instance bodies around the elements which wait for it, and a message which
+both starts a workflow of the module and is awaited by a claimed one ends the start, because ZenBPM
+would start a workflow with a correlation which finds none waiting. A job inside a multi-instance
+body carries only what input mappings give it, so the adapter maps the names the methods serving it
+read (theirs and the extensions'), and the aggregate id, into the body; a job anywhere else gets the
+variables of its scope from the engine. It deploys nothing and runs no task yet: every later step
+throws an exception which says that it is not built yet, or, for an adapter id without clients, the
+message of its validation, which names the key to set. What is built next, and in which order, is
+the implementation plan in [`docs/`](docs/README.md).
 
 ## Modules
 

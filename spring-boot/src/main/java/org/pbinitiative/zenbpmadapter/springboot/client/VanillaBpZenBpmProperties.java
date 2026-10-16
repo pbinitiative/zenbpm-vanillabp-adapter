@@ -31,6 +31,9 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
  * <li><code>history-time-to-live</code> at the workflow module and the workflow, because it is sent
  * with the start of a workflow and no task has one of its own.</li>
  * </ul>
+ * <code>accept-unscoped-identifiers</code> may also be set at the workflow module, which wins over
+ * the adapter level: the platform reports <code>name-clash-avoidance: none</code> once per workflow
+ * module, so no level below it would mean anything.
  * Spring Boot ignores a key neither view knows, so a typo under
  * <code>vanillabp.adapters.&lt;id&gt;.</code> changes nothing and fails nothing: a misspelt
  * <code>rest-adress</code> leaves the adapter id unconfigured, and the start warns about the
@@ -110,9 +113,13 @@ public class VanillaBpZenBpmProperties {
             moduleId,
             module) -> {
             final var modulePrefix = "vanillabp.workflow-modules.%s".formatted(moduleId);
-            addScopedValues(configuration, "%s.adapters.%s".formatted(modulePrefix, adapterId), module
+            final var moduleKeys = module
                     .getAdapters()
-                    .get(adapterId));
+                    .get(adapterId);
+            addScopedValues(configuration, "%s.adapters.%s".formatted(modulePrefix, adapterId), moduleKeys);
+            if (moduleKeys != null) {
+                configuration.setAcceptUnscopedIdentifiers(moduleId, moduleKeys.getAcceptUnscopedIdentifiers());
+            }
             module
                     .getWorkflows()
                     .forEach((
@@ -372,11 +379,45 @@ public class VanillaBpZenBpmProperties {
     }
 
     /**
+     * The keys of an adapter id which a workflow module may set for itself: those of a workflow, and
+     * <code>accept-unscoped-identifiers</code>.
+     */
+    public static class ZenBpmModuleScopedKeys extends ZenBpmWorkflowScopedKeys {
+
+        private Boolean acceptUnscopedIdentifiers;
+
+        /**
+         * Bound by Spring Boot.
+         */
+        public ZenBpmModuleScopedKeys() {
+        }
+
+        /**
+         * <code>accept-unscoped-identifiers</code> at this level.
+         *
+         * @return The value, or <code>null</code> where this level does not set it
+         */
+        public Boolean getAcceptUnscopedIdentifiers() {
+            return acceptUnscopedIdentifiers;
+        }
+
+        /**
+         * <code>accept-unscoped-identifiers</code> at this level.
+         *
+         * @param acceptUnscopedIdentifiers The value as bound
+         */
+        public void setAcceptUnscopedIdentifiers(final Boolean acceptUnscopedIdentifiers) {
+            this.acceptUnscopedIdentifiers = acceptUnscopedIdentifiers;
+        }
+
+    }
+
+    /**
      * One section <code>vanillabp.workflow-modules.&lt;module&gt;</code>.
      */
     public static class ModuleOverlay {
 
-        private Map<String, ZenBpmWorkflowScopedKeys> adapters = Map.of();
+        private Map<String, ZenBpmModuleScopedKeys> adapters = Map.of();
 
         private Map<String, WorkflowOverlay> workflows = Map.of();
 
@@ -391,7 +432,7 @@ public class VanillaBpZenBpmProperties {
          *
          * @return The keys, keyed by adapter id, never <code>null</code>
          */
-        public Map<String, ZenBpmWorkflowScopedKeys> getAdapters() {
+        public Map<String, ZenBpmModuleScopedKeys> getAdapters() {
             return adapters;
         }
 
@@ -400,7 +441,7 @@ public class VanillaBpZenBpmProperties {
          *
          * @param adapters The keys, keyed by adapter id
          */
-        public void setAdapters(final Map<String, ZenBpmWorkflowScopedKeys> adapters) {
+        public void setAdapters(final Map<String, ZenBpmModuleScopedKeys> adapters) {
             this.adapters = adapters;
         }
 

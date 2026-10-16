@@ -31,7 +31,9 @@ import io.vanillabp.integration.adapter.spi.NameClashAvoidanceSupport;
  * </ul>
  * Two ids with the same engine and the same mode reach it with the same identifiers. They would
  * deploy the same processes and work the same jobs, so configuring them as two adapters is an
- * error.
+ * error. Where they share <code>by-adapter</code>, the default where no mode is configured, the
+ * message says that ZenBPM serves only <code>use-prefix</code> and <code>none</code>, because the
+ * deployment refuses <code>by-adapter</code> (see decision 24 in the repository's DECISIONS.md).
  * <p>
  * An adapter id without a valid <code>rest-address</code> names no engine. It is not compared: its
  * start already reported the key it misses, and it refuses all work until the key is set. An id
@@ -39,6 +41,11 @@ import io.vanillabp.integration.adapter.spi.NameClashAvoidanceSupport;
  * engine, so it is compared: once the other key is fixed, the two ids would be one instance.
  */
 public final class ZenBpmInstanceIdentity {
+
+    // what an operator does where more than two ids share an engine and a mode
+    private static final String THE_TWO_MODES_AND_MORE_ENGINES = """
+            set 'use-prefix' on one id and 'none' on another, and give every further id an engine of its \
+            own""";
 
     private ZenBpmInstanceIdentity() {
     }
@@ -92,15 +99,44 @@ public final class ZenBpmInstanceIdentity {
         final List<String> adapterIds
     ) {
         final var mode = asConfigured(instance.mode());
+        final var byAdapter = instance.mode() == NameClashAvoidance.BY_ADAPTER;
+        final var oneEngineOnPurpose = oneEngineOnPurpose(adapterIds, byAdapter);
+        if (byAdapter) {
+            // ZenBPM refuses this mode while deploying, so giving each id "its own mode" would
+            // lead an operator into that refusal for the id left on the default
+            return """
+                    ZenBPM adapter ids %s address the same engine, '%s', with the same name-clash-avoidance \
+                    '%s', the default where none is configured. ZenBPM has no isolation of its own and serves \
+                    only 'use-prefix' and 'none', so each of these ids needs one of them, and two ids on one \
+                    engine need different ones. Tell them apart:
+                      - for two engines, give each id its own address: %s;
+                      - for one engine on purpose, as in a migration from 'none' to 'use-prefix', %s: %s;
+                      - or remove all but one of these adapter ids.""".formatted(listed(adapterIds), instance
+                    .engine(), mode, keys(adapterIds, "rest-address"), oneEngineOnPurpose,
+                    keys(adapterIds,
+                            "name-clash-avoidance"));
+        }
         return """
                 ZenBPM adapter ids %s address the same engine, '%s', with the same name-clash-avoidance \
                 '%s', so they reach it with the same identifiers: they would deploy the same processes and \
                 work the same jobs, and the BPMS election would ask one engine twice. Tell them apart:
                   - for two engines, give each id its own address: %s;
-                  - for one engine on purpose, as in a migration from 'none' to 'use-prefix', give each id \
-                its own mode: %s;
+                  - for one engine on purpose, as in a migration from 'none' to 'use-prefix', %s: %s;
                   - or remove all but one of these adapter ids.""".formatted(listed(adapterIds), instance
-                .engine(), mode, keys(adapterIds, "rest-address"), keys(adapterIds, "name-clash-avoidance"));
+                .engine(), mode, keys(adapterIds, "rest-address"), oneEngineOnPurpose,
+                keys(adapterIds,
+                        "name-clash-avoidance"));
+    }
+
+    // ZenBPM serves two modes, so one engine serves two adapter ids at most
+    private static String oneEngineOnPurpose(
+        final List<String> adapterIds,
+        final boolean byAdapter
+    ) {
+        if (adapterIds.size() > 2) {
+            return THE_TWO_MODES_AND_MORE_ENGINES;
+        }
+        return byAdapter ? "set 'use-prefix' on one id and 'none' on the other" : "give each id its own mode";
     }
 
     // 'a', 'b' and 'c'
