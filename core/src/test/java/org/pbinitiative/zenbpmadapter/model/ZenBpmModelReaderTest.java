@@ -18,12 +18,14 @@ import java.io.InputStream;
 import java.io.UncheckedIOException;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.pbinitiative.zenbpmadapter.model.ZenBpmBpmnModel.CallActivity;
+import org.pbinitiative.zenbpmadapter.model.ZenBpmBpmnModel.MessageReference;
 import org.pbinitiative.zenbpmadapter.model.ZenBpmBpmnModel.MultiInstanceElement;
 import org.pbinitiative.zenbpmadapter.model.ZenBpmBpmnModel.StartEvent;
 
@@ -94,6 +96,9 @@ class ZenBpmModelReaderTest {
                 () -> assertEquals(zeebe.callActivities(), zenbpm.callActivities()),
                 () -> assertEquals(zeebe.concurrentTokenElements(), zenbpm.concurrentTokenElements()),
                 () -> assertEquals(zeebe.expressions(), zenbpm.expressions()),
+                () -> assertEquals(zeebe.messageStarts(), zenbpm.messageStarts()),
+                () -> assertEquals(zeebe.messageCatches(), zenbpm.messageCatches()),
+                () -> assertEquals(zeebe.enclosingMultiInstances(), zenbpm.enclosingMultiInstances()),
                 () -> assertEquals(List.of("Charge", "Invoice", "EveryParcel"), zeebe
                         .expressions()
                         .stream()
@@ -222,7 +227,17 @@ class ZenBpmModelReaderTest {
                 () -> assertEquals(List.of("ordered", "=orderType"), List.copyOf(model.startMessages())),
                 () -> assertTrue(model.startMessagesAreKnown()),
                 () -> assertEquals(List.of("paid", "shipped", "cancelled", "complaint"), List.copyOf(model
-                        .catchMessages())));
+                        .catchMessages())),
+                () -> assertEquals(List.of(
+                        new MessageReference("Ordered", "Message_Ordered", "ordered"),
+                        new MessageReference("OrderedByType", "Message_Expression", "=orderType")),
+                        model.messageStarts()),
+                () -> assertEquals(List.of(
+                        new MessageReference("Paid", "Message_Paid", "paid"),
+                        new MessageReference("AwaitShipping", "Message_Shipped", "shipped"),
+                        new MessageReference("Cancelled", "Message_Cancelled", "cancelled"),
+                        new MessageReference("Complaint", "Message_Complaint", "complaint")),
+                        model.messageCatches()));
     }
 
     @Test
@@ -232,7 +247,11 @@ class ZenBpmModelReaderTest {
 
         assertAll(
                 () -> assertFalse(model.startMessagesAreKnown()),
-                () -> assertEquals(Set.of(), model.startMessages()));
+                () -> assertEquals(Set.of(), model.startMessages()),
+                () -> assertEquals(List.of(
+                        new MessageReference("WithoutName", "Message_Unnamed", null),
+                        new MessageReference("ToNowhere", "Message_Missing", null)),
+                        model.messageStarts()));
     }
 
     @Test
@@ -264,7 +283,12 @@ class ZenBpmModelReaderTest {
                 () -> assertEquals(List.of(
                         new CallActivity("Invoice", "Invoicing"),
                         new CallActivity("Unnamed", null)),
-                        model.callActivities()));
+                        model.callActivities()),
+                () -> assertEquals(Map.of(
+                        "EveryParcel_Start", List.of("EveryParcel"),
+                        "LabelEveryItem", List.of("EveryParcel"),
+                        "EveryParcel_End", List.of("EveryParcel")),
+                        model.enclosingMultiInstances()));
     }
 
     @Test
@@ -424,6 +448,9 @@ class ZenBpmModelReaderTest {
                         .clear()),
                 () -> assertThrows(UnsupportedOperationException.class, () -> model
                         .catchMessages()
+                        .clear()),
+                () -> assertThrows(UnsupportedOperationException.class, () -> model
+                        .enclosingMultiInstances()
                         .clear()));
     }
 

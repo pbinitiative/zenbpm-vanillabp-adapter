@@ -15,6 +15,7 @@ import org.pbinitiative.zenbpmadapter.client.ZenBpmClientRegistry;
 import org.pbinitiative.zenbpmadapter.client.ZenBpmInstanceIdentity;
 import org.pbinitiative.zenbpmadapter.health.ZenBpmHealth;
 import org.pbinitiative.zenbpmadapter.model.ZenBpmBpmnModel;
+import org.pbinitiative.zenbpmadapter.model.ZenBpmCorrelationKeys;
 import org.pbinitiative.zenbpmadapter.model.ZenBpmModelReader;
 import org.pbinitiative.zenbpmadapter.model.ZenBpmScoping;
 import org.pbinitiative.zenbpmadapter.model.ZenBpmUnsupportedConstructs;
@@ -257,7 +258,10 @@ public class ZenBpmDeploymentService implements AdapterDeploymentService<ZenBpmB
      * cannot run, see {@link ZenBpmUnsupportedConstructs}. Then it refuses the name-clash-avoidance
      * mode <code>by-adapter</code>, for the workflow module and for the workflow, because ZenBPM
      * has no isolation of its own (see decision 24 in the repository's DECISIONS.md). Once per
-     * file again, it scopes the identifiers of the file, see {@link ZenBpmScoping}.
+     * file again, it refuses a message used both to start a workflow of the module and as one a
+     * claimed workflow waits for, scopes the identifiers of the file, see {@link ZenBpmScoping}, and,
+     * in a process a workflow service claims, writes the correlation keys, see
+     * {@link ZenBpmCorrelationKeys}.
      *
      * @param workflowModuleId The workflow module of the process
      * @param existingContext The context of the module's earlier processes, <code>null</code> for
@@ -267,7 +271,8 @@ public class ZenBpmDeploymentService implements AdapterDeploymentService<ZenBpmB
      * @param model The model of the process's file
      * @return The context of the workflow module, never <code>null</code>
      * @throws IllegalStateException Where the file uses what ZenBPM cannot run, naming every
-     *             element, or where <code>by-adapter</code> applies to the module or the workflow
+     *             element, where <code>by-adapter</code> applies to the module or the workflow, or
+     *             where a message starts a workflow and a workflow waits for it
      */
     @Override
     public ZenBpmProcessingContext prepareBpmn(
@@ -280,16 +285,19 @@ public class ZenBpmDeploymentService implements AdapterDeploymentService<ZenBpmB
         final var context = existingContext != null ? existingContext
                 : new ZenBpmProcessingContext(workflowModuleId);
         final var firstPreparation = context.firstPreparationOf(filename);
+        // asked once per file, because only the first preparation of a file reads it
+        final var claimed = firstPreparation && collaborators
+                .workflowTaskWiring()
+                .isClaimedByAWorkflowService(workflowModuleId, bpmnProcessId);
         if (firstPreparation) {
-            ZenBpmUnsupportedConstructs.check(workflowModuleId, model, collaborators
-                    .workflowTaskWiring()
-                    .isClaimedByAWorkflowService(workflowModuleId, bpmnProcessId));
+            ZenBpmUnsupportedConstructs.check(workflowModuleId, model, claimed);
         }
-        final var scoping = collaborators.scoping();
-        scoping.validateNativeIsolationSupported(adapterId, workflowModuleId, ZenBpmAdapter.BPMS_NAME);
+        collaborators
+                .scoping()
+                .validateNativeIsolationSupported(adapterId, workflowModuleId, ZenBpmAdapter.BPMS_NAME);
         refuseByAdapterForTheWorkflow(workflowModuleId, bpmnProcessId);
         if (firstPreparation) {
-            ZenBpmScoping.apply(model.document(), workflowModuleId, bpmnProcessId, scoping, adapterId);
+            rewrite(workflowModuleId, context, bpmnProcessId, model, claimed);
         }
         context.recordProcess(bpmnProcessId);
         return context;
@@ -372,6 +380,26 @@ public class ZenBpmDeploymentService implements AdapterDeploymentService<ZenBpmB
         final ZenBpmProcessingContext context
     ) {
         throw notBuiltYet("starting the workflow processing of workflow module '%s'".formatted(workflowModuleId));
+    }
+
+    // what is done to a file once, the refusals before anything is written: a process nobody
+    // claims belongs to somebody else and gets nothing but the scoping of the whole file
+    private void rewrite(
+        final String workflowModuleId,
+        final ZenBpmProcessingContext context,
+        final String bpmnProcessId,
+        final ZenBpmBpmnModel model,
+        final boolean claimed
+    ) {
+        ZenBpmCorrelationKeys.refuseMessagesWhichStartAndAreAwaited(workflowModuleId, context.startingMessages(),
+                context.awaitedMessages(), model, claimed);
+        ZenBpmScoping.apply(model.document(), workflowModuleId, bpmnProcessId, collaborators.scoping(), adapterId);
+        if (!claimed) {
+            return;
+        }
+        final var wiring = collaborators.workflowTaskWiring();
+        ZenBpmCorrelationKeys.apply(model, () -> wiring.resolveWorkflowAggregateIdName(workflowModuleId,
+                bpmnProcessId));
     }
 
     // the platform checks the mode of the workflow module, but a workflow may set a mode of its

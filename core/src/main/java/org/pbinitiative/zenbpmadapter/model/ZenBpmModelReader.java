@@ -9,6 +9,7 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
@@ -20,6 +21,7 @@ import javax.xml.parsers.DocumentBuilderFactory;
 import javax.xml.parsers.ParserConfigurationException;
 
 import org.pbinitiative.zenbpmadapter.model.ZenBpmBpmnModel.CallActivity;
+import org.pbinitiative.zenbpmadapter.model.ZenBpmBpmnModel.MessageReference;
 import org.pbinitiative.zenbpmadapter.model.ZenBpmBpmnModel.MultiInstanceElement;
 import org.pbinitiative.zenbpmadapter.model.ZenBpmBpmnModel.StartEvent;
 import org.w3c.dom.Document;
@@ -318,6 +320,12 @@ public final class ZenBpmModelReader {
 
         private final List<ModelExpression> expressions = new ArrayList<>();
 
+        private final List<MessageReference> messageStarts = new ArrayList<>();
+
+        private final List<MessageReference> messageCatches = new ArrayList<>();
+
+        private final Map<String, List<String>> enclosingMultiInstances = new LinkedHashMap<>();
+
         private ProcessReading(
             final String filename,
             final Document document,
@@ -344,7 +352,7 @@ public final class ZenBpmModelReader {
             walk(process, List.of());
             return new ZenBpmBpmnModel(
                     filename, document, attribute(process,
-                            "id"), tasks, userTasks, catchMessages, startMessages, startMessagesAreKnown, startEvents, endEventIds, multiInstanceElements, callActivities, concurrentTokenElements, expressions);
+                            "id"), tasks, userTasks, catchMessages, startMessages, startMessagesAreKnown, startEvents, endEventIds, multiInstanceElements, callActivities, concurrentTokenElements, expressions, messageStarts, messageCatches, enclosingMultiInstances);
         }
 
         private void countOutgoingFlows(final Element container) {
@@ -360,21 +368,29 @@ public final class ZenBpmModelReader {
         // what only the elements of the process itself count for: its start and end events
         private void readTopLevel(final Element element) {
             if (isBpmn(element, "startEvent")) {
-                startEvents.add(new StartEvent(attribute(element, "id"), triggerOf(element)));
-                bpmnChild(element, MESSAGE_DEFINITION).ifPresent(this::readStartMessage);
+                final var id = attribute(element, "id");
+                startEvents.add(new StartEvent(id, triggerOf(element)));
+                bpmnChild(element, MESSAGE_DEFINITION).ifPresent(definition -> readStartMessage(id, definition));
             } else if (isBpmn(element, "endEvent")) {
                 endEventIds.add(attribute(element, "id"));
             }
         }
 
-        private void readStartMessage(final Element definition) {
+        private void readStartMessage(
+            final String elementId,
+            final Element definition
+        ) {
+            final var messageRef = attribute(definition, "messageRef");
             final var name = Optional
-                    .ofNullable(attribute(definition, "messageRef"))
+                    .ofNullable(messageRef)
                     .map(messageNames::get);
             if (name.isPresent()) {
                 startMessages.add(name.get());
             } else {
                 startMessagesAreKnown = false;
+            }
+            if (messageRef != null) {
+                messageStarts.add(new MessageReference(elementId, messageRef, name.orElse(null)));
             }
         }
 
@@ -389,6 +405,10 @@ public final class ZenBpmModelReader {
                     continue;
                 }
                 read(element, container == process);
+                // the loop characteristics of a sub-process are a child of it as well, and have no id
+                if (!chain.isEmpty() && element.hasAttribute("id")) {
+                    enclosingMultiInstances.put(attribute(element, "id"), chain);
+                }
                 final var multiInstance = bpmnChild(element, MULTI_INSTANCE);
                 if (multiInstance.isPresent()) {
                     readMultiInstance(element, multiInstance.get(), chain);
@@ -468,6 +488,7 @@ public final class ZenBpmModelReader {
             if (name != null) {
                 catchMessages.add(name);
             }
+            messageCatches.add(new MessageReference(elementId, messageRef, name));
             // the engine evaluates a correlation key only where it starts with '=' as written,
             // before it trims anything
             final var correlationKey = correlationKeys.get(messageRef);

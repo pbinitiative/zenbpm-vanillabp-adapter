@@ -602,7 +602,7 @@ once it is written. `GAPS.md` row 11 loses its *planned*.
 
 ### S4.2.2 Correlation keys and the start/catch collision
 
-- [ ] **Depends on:** S4.2.1.
+- [x] **Depends on:** S4.2.1.
 
 **Instructions**
 
@@ -622,10 +622,110 @@ claimed one.
 **Tests**: injected where missing, untouched where present, none on a start message, collision
 refused, nothing written into an unclaimed process.
 
+*Fit check, 2026-10-16, decided by the Implementor.* Checked against `main` with S4.2.1, Camunda
+8's `wireMessageSubscriptions`, and the engine at `bdd795a3`: its source, and a scratch Go program
+running the engine's in-memory `bpmn.Engine` at that commit. GAPS 4 holds:
+`publishCorrelatedMessageByName` in `internal/cluster/node.go` falls back from a correlation key no
+subscription matches to the definition-level subscription of a start event of the same name, with
+a warning. GAPS 4 was missing from `GAPS.md` and is added. The engine reads the key from
+`TMessage.Extension`, `xml:"extensionElements>subscription"`, and evaluates it only where it starts
+with `=` (`evaluateMessageCorrelationKey` in `pkg/bpmn/events.go`); a start event's subscription is
+definition-level and ignores it. Five things did not fit:
+
+1. **Where the subscription goes.** The story writes `<zenbpm:extensionElements>`; the BPMN element
+   is `bpmn:extensionElements`, which the engine matches by local name either way. Built as a
+   `zenbpm:subscription` inside the message's `bpmn:extensionElements`, reused where the message has
+   one, with the `zenbpm` namespace declared on the root where the file does not declare it.
+2. **A catch element inside a multi-instance body sees only the item.** The engine runs a
+   multi-instance body in a child scope whose local variables are the item alone
+   (`pkg/bpmn/multi_instance.go`), and a scope copies the local variables of its parent only
+   (`runtime.NewVariableHolder`). The scratch program showed it: an intermediate catch event, a
+   receive task, a boundary event and the start of an event sub-process inside a multi-instance
+   sub-process fail with "result of correlation key evaluation is not a string: got <nil>" when the
+   key is `=orderId`, and subscribe with `o-1` once the multi-instance sub-process carries the input
+   mapping `=orderId -> orderId`; inside two nested multi-instance sub-processes both need it, either
+   alone fails. A multi-instance receive task subscribes without it. Options: inject keys and let
+   such workflows fail, refuse the shape, or carry the id into the body. Decided: wherever the
+   adapter injects a key, every multi-instance sub-process around a catch element of that message
+   gets the input mapping of the aggregate id, unless the modeller mapped that target there. A key
+   the modeller wrote stays the modeller's: what it reads inside a body is theirs to map.
+3. **The collision is a matter of the workflow module, not of one process.** Under one prefix, a
+   message which starts process B and which process A waits for collides as much as one which
+   starts and is caught by A itself. Decided: the context collects, per workflow module, the start
+   messages of every process and the caught messages of the claimed ones, and the file which
+   completes a pair is refused, naming the message and both elements with their processes. The
+   catch of a process nobody claims does not count, because the application does not correlate it.
+   Across workflow modules the names differ under `use-prefix`; under `none` the warning of S4.2.1
+   covers every identifier two modules share. The message explains in words and cites no GAPS
+   number, because code cites `DECISIONS.md` only.
+4. **The reader gives names, not elements.** The model gains the message start events and the
+   message catch elements with their message (`messageStarts`, `messageCatches`) and, for every
+   element inside a multi-instance sub-process, the ids of the sub-processes around it
+   (`enclosingMultiInstances`), which S4.2.3 needs as well.
+5. **A key has to be a string.** The engine refuses a key whose expression gives anything else.
+   E5 instruction 1 already writes the aggregate id as a String; the marker job of decision 25
+   (E9) has to write `result.variables()` the same way where it holds the id.
+
+Found while checking, not refused: the engine stores at most one active subscription per message
+name and correlation key, engine-wide (the unique index `unique_name_correlation_key_waiting` on
+`message_subscription_pointer(name, correlation_key) WHERE state = 1` in
+`internal/sql/migrations/0001_schema.up.sql`, kept by `0005`; the in-memory storage refuses the
+same). So two waits of one workflow for the same message at the same time, in parallel branches or
+in the iterations of a parallel multi-instance body, cannot both subscribe under the aggregate id:
+the scratch program saw the second iteration fail to store its subscription. The shapes in which
+two waits overlap cannot all be told from a model, so this is GAPS 23, new, and nothing is refused
+for it.
+
+The acceptance criterion holds where the adapter writes nothing: a version-1 model whose caught
+messages all carry a modelled key and which has no multi-instance body around them gets no key and
+no mapping, and under `none` (the only mode which leaves process ids as version 1 deployed them)
+its document stays equal to the file. Whether the serialised bytes are identical is S4.3.2's
+question, which serialises.
+
 **Acceptance criteria**
 
-- [ ] `Camunda8`-style version-1 models with modelled keys deploy byte-identically apart from namespace
-  declarations.
+- [x] `Camunda8`-style version-1 models with modelled keys deploy byte-identically apart from namespace
+  declarations. `ZenBpmDeploymentServiceTest#aVersion1ModelWithItsKeysStaysAsItWasWritten` prepares
+  `models/version-1.bpmn` (the shape the Camunda Modeler exports for Camunda 8, a key on each of
+  its two messages) for a claimed process under `none`: the document stays equal to the file, and
+  the platform is asked nothing but whether the process is claimed.
+  `ZenBpmCorrelationKeysTest#aFileWithEveryKeyModelledIsLeftAsItIs` holds the same for the rewrite
+  alone. That the serialised bytes are the same is open until S4.3.2 serialises and deploys (batch
+  3).
+
+**Implemented 2026-10-16.** Core: the reader gives `messageStarts`, `messageCatches` and
+`enclosingMultiInstances`; `model.ZenBpmCorrelationKeys.apply(model, aggregateIdName)` writes the
+keys and carries the aggregate id into the multi-instance bodies through the new
+`model.ZenBpmInputMappings`, which adds an extension element in the `zenbpm` namespace (declared on
+the root, with a free prefix where the file uses `zenbpm` otherwise) and input mappings in front of
+the outputs, never twice for one target;
+`ZenBpmCorrelationKeys.refuseMessagesWhichStartAndAreAwaited` refuses the collision over the
+messages the context collects for the module. `prepareBpmn` makes, once per file: the collision
+check, the scoping, and in a claimed process the keys, asking the platform for the aggregate id's
+name only where a key is written. `GAPS.md` has GAPS 4 and the new GAPS 23; the README says what
+is built. Tests: `ZenBpmCorrelationKeysTest` (7) with the fixture `models/correlation-keys.bpmn`, two
+more cases in `ZenBpmModelReaderTest` (still 20), 4 new cases in `ZenBpmDeploymentServiceTest` (now
+29, `TestWiring` is the platform's wiring for tests) with the fixture `models/version-1.bpmn`.
+`TZ=Etc/UTC mvn clean install` on OpenJDK 25.0.2 builds green with every integration test run and
+none skipped (core 575 unit and 34 integration tests, Spring Boot 9, smoke test 28, Quarkus runtime
+9, Quarkus deployment 38, coverage gate 35). The gate measures 100 % of 14,682 instructions for
+Spring Boot and 100 % of 14,556 for Quarkus, and `bin/check-deploy-safety.sh` passes both runs. The
+first full build measured 99.99 %: an element without a namespace prefix was never extended;
+`#additionsToAFileInTheDefaultNamespaceHaveNoPrefix` covers it.
+
+Seen to fail, each restored afterwards (15 of 15 mutants), against a green unmutated run. Each
+fails `ZenBpmCorrelationKeysTest` unless named otherwise:
+- a modelled key overwritten (also fails `ZenBpmDeploymentServiceTest`);
+- a start message given a key; the aggregate id not carried into multi-instance bodies;
+- the aggregate id asked where no key is written (also fails `ZenBpmDeploymentServiceTest`);
+- a target the modeller maps mapped again; an input added after the outputs; `extensionElements`
+  put in front of the documentation; the prefix `zenbpm` taken although the file binds it
+  elsewhere;
+- the catch elements of a process nobody claims counted; only the first collision named;
+- `prepareBpmn` without the collision check, with it after the scoping, or writing keys into a
+  process nobody claims: each fails `ZenBpmDeploymentServiceTest`;
+- the reader without the multi-instance sub-processes around an element, or without the message
+  start elements: each fails `ZenBpmModelReaderTest`.
 
 ### S4.2.3 Task-parameter input mappings
 

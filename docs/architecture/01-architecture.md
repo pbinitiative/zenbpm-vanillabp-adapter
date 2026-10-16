@@ -117,11 +117,14 @@ rewrite is idempotent and never overwrites what the modeller wrote (draft decisi
    `by-adapter` is refused for the module (the platform's `validateNativeIsolationSupported`) and for
    a workflow which sets it (decision 24); `readDmn` scopes the decision ids of a DMN file the same
    way.
-2. **Correlation keys**: every `bpmn:message` used by a catch element, boundary event or receive
-   task without `zenbpm:subscription` gets `correlationKey="=<aggregate-id variable>"`. A message
-   used ONLY by a start event gets none. A message a start event AND a catch element share is
-   refused with a guiding message (the engine's fallback from an unmatched key to the start
-   subscription would start a second workflow on a correlation, see GAPS 4).
+2. **Correlation keys** (`ZenBpmCorrelationKeys`, claimed processes only): every `bpmn:message`
+   used by a catch element, boundary event, receive task or event sub-process start without a
+   `subscription` gets `zenbpm:subscription correlationKey="=<aggregate-id variable>"`, and every
+   multi-instance sub-process around such an element an input mapping of that variable, because the
+   engine evaluates the key in the body's scope, which holds the item only. A message used ONLY by
+   a start event gets none. A message which starts a workflow of the module and which a claimed
+   workflow waits for is refused with a guiding message (the engine's fallback from an unmatched
+   key to the start subscription would start a second workflow on a correlation, see GAPS 4).
 3. **Task parameters**: for every job-producing task, one `zenbpm:ioMapping input` per name
    `taskParameterNames` reports (`source="=<name>" target="<name>"`), so the job carries exactly what a
    `@TaskParam` reads; nothing else, because the aggregate is loaded from the application's database.

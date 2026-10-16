@@ -23,6 +23,7 @@ import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -38,6 +39,7 @@ import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
 import org.pbinitiative.zenbpmadapter.TestCollaborators;
 import org.pbinitiative.zenbpmadapter.TestScoping;
+import org.pbinitiative.zenbpmadapter.TestWiring;
 import org.pbinitiative.zenbpmadapter.ZenBpmProcessingContext;
 import org.pbinitiative.zenbpmadapter.client.ZenBpmAdapterConfiguration;
 import org.pbinitiative.zenbpmadapter.client.ZenBpmClientFactory;
@@ -471,6 +473,98 @@ class ZenBpmDeploymentServiceTest {
     }
 
     @Test
+    @DisplayName("A claimed process gets the aggregate id as the key of every message it waits for, once per file, asking the platform for the name once")
+    void aClaimedProcessGetsItsCorrelationKeysOnce() {
+        final var wiring = TestWiring.claiming("Order");
+        final var deploymentService = new ZenBpmDeploymentService("orders", withoutClients("orders"), TestCollaborators
+                .of("orders", TestScoping.of(NameClashAvoidance.USE_PREFIX), wiring.wiring()));
+        final var model = read(deploymentService, "order.bpmn", WAITING_FOR_PAYMENT);
+
+        final var context = deploymentService.prepareBpmn("shop", null, "order.bpmn", "Order", model);
+        deploymentService.prepareBpmn("shop", context, "order.bpmn", "Order", model);
+
+        assertAll(
+                () -> assertEquals(List.of("=orderId"), correlationKeysOf(model)),
+                () -> assertEquals(List.of("isClaimedByAWorkflowService[shop, Order]",
+                        "resolveWorkflowAggregateIdName[shop, Order]"), wiring.calls()),
+                () -> assertEquals("shop__paid", messageNameOf(model)),
+                () -> assertEquals(Map.of("paid", "Order/AwaitPayment"), context.awaitedMessages()));
+    }
+
+    @Test
+    @DisplayName("A process nobody claims is scoped with its file, and gets no key: somebody else correlates its messages")
+    void aProcessNobodyClaimsGetsNoKey() {
+        final var wiring = TestWiring.claiming();
+        final var deploymentService = new ZenBpmDeploymentService("orders", withoutClients("orders"), TestCollaborators
+                .of("orders", TestScoping.of(NameClashAvoidance.USE_PREFIX), wiring.wiring()));
+        final var model = read(deploymentService, "order.bpmn", WAITING_FOR_PAYMENT);
+
+        final var context = deploymentService.prepareBpmn("shop", null, "order.bpmn", "Order", model);
+
+        assertAll(
+                () -> assertEquals(List.of(), correlationKeysOf(model)),
+                () -> assertEquals("shop__Order", processIdOf(model)),
+                () -> assertEquals(List.of("isClaimedByAWorkflowService[shop, Order]"), wiring.calls()),
+                () -> assertEquals(Map.of(), context.awaitedMessages()));
+    }
+
+    @Test
+    @DisplayName("A message one file of the module starts a workflow with, and which a claimed workflow of another file waits for, ends preparing that file before it is rewritten")
+    void aMessageWhichStartsAndIsAwaitedEndsPreparing() {
+        final var deploymentService = new ZenBpmDeploymentService("orders", withoutClients("orders"), TestCollaborators
+                .of("orders", TestScoping.of(NameClashAvoidance.USE_PREFIX), TestWiring
+                        .claiming("Order")
+                        .wiring()));
+        final var waiting = read(deploymentService, "order.bpmn", WAITING_FOR_PAYMENT);
+        final var starting = read(deploymentService, "payment.bpmn", """
+                <bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" id="payment">
+                  <bpmn:message id="Message_Paid" name="paid" />
+                  <bpmn:process id="Payment" isExecutable="true">
+                    <bpmn:startEvent id="PaymentReceived">
+                      <bpmn:messageEventDefinition messageRef="Message_Paid" />
+                    </bpmn:startEvent>
+                  </bpmn:process>
+                </bpmn:definitions>
+                """);
+        final var context = deploymentService.prepareBpmn("shop", null, "order.bpmn", "Order", waiting);
+
+        final var failure = assertThrows(IllegalStateException.class, () -> deploymentService.prepareBpmn("shop",
+                context, "payment.bpmn", "Payment", starting));
+
+        assertAll(
+                () -> assertTrue(failure
+                        .getMessage()
+                        .startsWith(
+                                """
+                                        Workflow module 'shop' uses a message both to start a workflow and as a message a workflow waits for:
+                                          - 'paid': starts Payment/PaymentReceived, awaited by Order/AwaitPayment
+                                        """),
+                        failure.getMessage()),
+                () -> assertEquals("Payment", processIdOf(starting)));
+    }
+
+    @Test
+    @DisplayName("A version-1 model whose messages all carry a key stays as it was written under 'none', and nothing is asked about its aggregate")
+    void aVersion1ModelWithItsKeysStaysAsItWasWritten() throws IOException {
+        final var wiring = TestWiring.claiming("Version1");
+        final var deploymentService = new ZenBpmDeploymentService("orders", withoutClients("orders"), TestCollaborators
+                .of("orders", TestScoping.of(NameClashAvoidance.NONE), wiring.wiring()));
+        final String text;
+        try (var file = getClass().getResourceAsStream("/models/version-1.bpmn")) {
+            text = new String(file.readAllBytes(), StandardCharsets.UTF_8);
+        }
+        final var model = read(deploymentService, "version-1.bpmn", text);
+
+        deploymentService.prepareBpmn("shop", null, "version-1.bpmn", "Version1", model);
+
+        assertAll(
+                () -> assertTrue(read(deploymentService, "version-1.bpmn", text)
+                        .document()
+                        .isEqualNode(model.document())),
+                () -> assertEquals(List.of("isClaimedByAWorkflowService[shop, Version1]"), wiring.calls()));
+    }
+
+    @Test
     @DisplayName("Every step after preparing refuses with the message of the validation where the adapter id has no clients")
     void anAdapterIdWithoutClientsRefusesWithItsValidationMessage() {
         final var deploymentService = new ZenBpmDeploymentService("orders", withoutClients("orders"), TestCollaborators
@@ -608,6 +702,44 @@ class ZenBpmDeploymentServiceTest {
               <decision id="risk" name="Risk" />
             </definitions>
             """;
+
+    private static final String WAITING_FOR_PAYMENT = """
+            <bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" id="order">
+              <bpmn:message id="Message_Paid" name="paid" />
+              <bpmn:process id="Order" isExecutable="true">
+                <bpmn:receiveTask id="AwaitPayment" messageRef="Message_Paid" />
+              </bpmn:process>
+            </bpmn:definitions>
+            """;
+
+    private static ZenBpmBpmnModel read(
+        final ZenBpmDeploymentService deploymentService,
+        final String filename,
+        final String bpmn
+    ) {
+        return deploymentService
+                .readBpmn("shop", filename, new ByteArrayInputStream(bpmn.getBytes(StandardCharsets.UTF_8)), true)
+                .getFirst()
+                .getValue();
+    }
+
+    private static List<String> correlationKeysOf(final ZenBpmBpmnModel model) {
+        final var subscriptions = model
+                .document()
+                .getElementsByTagNameNS("*", "subscription");
+        final var keys = new ArrayList<String>();
+        for (var index = 0; index < subscriptions.getLength(); ++index) {
+            keys.add(((Element) subscriptions.item(index)).getAttribute("correlationKey"));
+        }
+        return keys;
+    }
+
+    private static String messageNameOf(final ZenBpmBpmnModel model) {
+        return ((Element) model
+                .document()
+                .getElementsByTagNameNS(ZenBpmModelReader.BPMN, "message")
+                .item(0)).getAttribute("name");
+    }
 
     private static ByteArrayInputStream dmn() {
         return new ByteArrayInputStream(DMN.getBytes(StandardCharsets.UTF_8));

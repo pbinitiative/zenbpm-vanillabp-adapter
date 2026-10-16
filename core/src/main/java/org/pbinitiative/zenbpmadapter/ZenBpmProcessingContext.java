@@ -17,8 +17,8 @@ import java.util.Set;
  * BPMN file to the start of its workflow processing. It names the type the platform and the
  * extensions match the pipeline by.
  * <p>
- * It holds the files it prepared, the processes of the workflow module and its DMN files as they
- * are deployed. The adapter SPI prepares every process of a file, and all processes of a file share
+ * It holds the files it prepared, the processes of the workflow module, the messages they start
+ * with and wait for, and its DMN files as they are deployed. The adapter SPI prepares every process of a file, and all processes of a file share
  * one model, so what is done to a file is done once: the context remembers the files it prepared. This
  * adapter reads one process per file, because the engine deploys no more, so today every file is
  * prepared once anyway; the guard keeps the SPI's contract should that ever change.
@@ -36,6 +36,10 @@ public final class ZenBpmProcessingContext {
     private final Set<String> processes = new LinkedHashSet<>();
 
     private final Map<String, byte[]> decisions = new LinkedHashMap<>();
+
+    private final Map<String, String> startingMessages = new LinkedHashMap<>();
+
+    private final Map<String, String> awaitedMessages = new LinkedHashMap<>();
 
     /**
      * The context of one workflow module, built for its first BPMN process.
@@ -103,6 +107,27 @@ public final class ZenBpmProcessingContext {
      */
     public Map<String, byte[]> decisions() {
         return Collections.unmodifiableMap(decisions);
+    }
+
+    /**
+     * The names of the messages which start a workflow of the module, each with the first start
+     * event naming it as <code>process/element</code>. The preparation of each file adds its own.
+     *
+     * @return The messages, changed by the caller
+     */
+    public Map<String, String> startingMessages() {
+        return startingMessages;
+    }
+
+    /**
+     * The names of the messages the claimed workflows of the module wait for, each with the first
+     * element waiting for it as <code>process/element</code>. The preparation of each file adds
+     * its own.
+     *
+     * @return The messages, changed by the caller
+     */
+    public Map<String, String> awaitedMessages() {
+        return awaitedMessages;
     }
 
 }
