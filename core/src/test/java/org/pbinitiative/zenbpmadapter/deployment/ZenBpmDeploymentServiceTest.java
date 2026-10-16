@@ -625,7 +625,7 @@ class ZenBpmDeploymentServiceTest {
     }
 
     @Test
-    @DisplayName("Every step after preparing refuses with the message of the validation where the adapter id has no clients")
+    @DisplayName("Every step after wiring refuses with the message of the validation where the adapter id has no clients")
     void anAdapterIdWithoutClientsRefusesWithItsValidationMessage() {
         final var deploymentService = new ZenBpmDeploymentService("orders", withoutClients("orders"), TestCollaborators
                 .of("orders", TestScoping.of(NameClashAvoidance.USE_PREFIX)));
@@ -637,7 +637,7 @@ class ZenBpmDeploymentServiceTest {
     }
 
     @Test
-    @DisplayName("Every step after preparing of a configured adapter id says that it is not built yet, and what it was asked to do")
+    @DisplayName("Every step after wiring of a configured adapter id says that it is not built yet, and what it was asked to do")
     void aConfiguredAdapterIdSaysThatTheStepIsNotBuiltYet() {
         try (var registry = new ZenBpmClientRegistry(List.of(configured("orders", "http://localhost:8080")))) {
             final var deploymentService = new ZenBpmDeploymentService("orders", registry, TestCollaborators.of(
@@ -650,7 +650,6 @@ class ZenBpmDeploymentServiceTest {
                     .toList();
 
             assertEquals(List.of(
-                    "ZenBPM adapter 'orders': wiring BPMN process 'Order' of workflow module 'shop' is implemented in a later story",
                     "ZenBPM adapter 'orders': deploying workflow module 'shop' is implemented in a later story",
                     "ZenBPM adapter 'orders': starting the workflow processing of workflow module 'shop' is implemented in a later story"),
                     messages);
@@ -737,7 +736,6 @@ class ZenBpmDeploymentServiceTest {
 
     private static List<Consumer<ZenBpmDeploymentService>> steps() {
         return List.of(
-                deploymentService -> deploymentService.wireBpmn("shop", "order.bpmn", "Order", null, null),
                 deploymentService -> deploymentService.deployResources("shop", new ZenBpmProcessingContext("shop")),
                 deploymentService -> deploymentService.startWorkflowProcessing("shop", null));
     }

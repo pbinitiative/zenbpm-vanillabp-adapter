@@ -964,7 +964,7 @@ keeps run logs for 90 days, so what they showed is written here as well):
 
 ### S4.3.1 The wiring calls
 
-- [ ] **Depends on:** S4.2.3.
+- [x] **Depends on:** S4.2.3.
 
 **Instructions**
 
@@ -1030,11 +1030,123 @@ message name, an empty one for a process without a message start; every start ev
 called process's too; a method wanting the item of an element without `inputElement` refused; the
 call-activity injection both ways.
 
+*Fit check, 2026-10-16, decided by the Implementor.* Checked against `main` (`ac8dd7c`), all of
+`ADAPTER-AUTHORS.md` and the SPI of the snapshot `2.0.0-20261015.045823-21` the build resolves (the
+platform's `f9505797`), Camunda 8's `wireBpmn` and `refuseHandlersWantingAnItemTheModelHasNot`, the
+SPI mapping in `docs/analysis/02-spi-requirements-mapping.md`, and the engine at `bdd795a3`: its
+source, and a scratch Go program running its in-memory `bpmn.Engine` (a copy of the commit with the
+program in `cmd/probe`, so it can set a business key through `internal/appcontext`). Steps 0 to 6, 8
+and 10 fit as written. Five things did not fit or were left open:
+
+1. **Step 9 asks for less than the engine already does.** The scratch program started a caller with
+   business key `agg-1` and the variables `orderId`, `items`, and read the job of a service task in
+   the called process: a call activity of the process itself handed over every variable and the
+   business key (`{items, orderId}`, `agg-1`); one inside a multi-instance sub-process, and a
+   multi-instance call activity, handed over the business key and the item alone (`{item}`,
+   `agg-1`), and `orderId` as well only where the multi-instance element carried the input mapping
+   `=orderId -> orderId`. The business key is inherited in every case (`resolveChildBusinessKey`,
+   `newChildProcessInstanceData` in `pkg/bpmn/sub_process.go`); `zenbpm:in businessKey` only
+   replaces it. Options: write `in businessKey` and the mapping on every call activity (the story),
+   write nothing, or carry the id only where the engine drops it. Decided: where the called process
+   shares the aggregate, the aggregate id is carried into every multi-instance element the call
+   activity runs in, itself included, with `ZenBpmInputMappings.carry` (`model.ZenBpmCallActivities`),
+   and nothing is written outside a body, so a version-1 model with a call activity stays as it was
+   written. `workflowsShareTheWorkflowAggregate` is asked only about a call activity inside a body,
+   because nowhere else does the answer change the model.
+2. **A process called on an aggregate of its own** gets the caller's business key and variables from
+   the engine as well; the same program showed `in businessKey=""` and `in businessKey="=orderId"`
+   replacing the inherited key. The story writes nothing for it, and nothing is written: how a
+   called workflow of its own gets its aggregate is the start the engine reports, decision 25 and
+   E9. A note under S9.1.1 says so.
+3. **Step 7: which items are judged.** Camunda 8 judges the multi-instance elements the task runs in
+   and asks by element id and by task definition; the SPI says an id the model does not know belongs
+   to a caller. Decided the same way: the elements of `ZenBpmBpmnModel.multiInstanceChainOf` (the
+   multi-instance sub-processes around the task and the task itself) without `inputElement`, for
+   tasks and user tasks (`model.ZenBpmMultiInstanceItems`). An answered element which is in this
+   model but not in the task's chain is not judged. `BpmnTaskSpec.multiInstanceElementsWithoutAnItem`
+   is not filled: the platform reads it only for a version the engine holds (platform decision 94),
+   which is E10's catalog.
+4. **Step 12: which types are remembered.** Job types are the scoped task definitions of the tasks,
+   without the tasks the application marked `implemented-externally` (`isImplementedExternally` is
+   asked per task), because a subscription to such a type would take its jobs from whoever serves
+   them. User-task types are not remembered: E8 decides how user tasks reach the application, and
+   the engine's default type `user-task-type` is not scoped and is shared by every application on
+   the engine, so subscribing it would take the user tasks of all of them. The context keeps
+   `WiredProcess(bpmnProcessId, scopedBpmnProcessId, jobTypes, reportsItsStart, reportsItsEnd)`,
+   where the two answers of step 5 are `false` without the platform's invoker.
+5. **The test doubles.** The story asks for a `TestCollaborators` in Camunda 8's shape implementing
+   `NameClashAvoidanceSupport` and `BpmsInitiatedStartInvoker`. The doubles of this repository are
+   proxies which write down every call (`TestScoping`, `TestWiring`), so `TestWiring` answers the
+   wiring calls as well and a new `TestStarts` stands for the two invokers of the lifecycle. The
+   tests are in `ZenBpmDeploymentWiringTest`, beside `ZenBpmDeploymentServiceTest`, which is long
+   enough already.
+
+Instruction 3 of S9.1.1 (every start event to `validateBpmsInitiatedStarts`, a called process's too)
+and the first paragraph of S9.4.1 (the item refusal) are built by this story; notes there say so.
+
 **Acceptance criteria**
 
-- [ ] Every wiring call of `ADAPTER-AUTHORS.md` section 3.2 the mapping marks SUPPORTED is made, for
+- [x] Every wiring call of `ADAPTER-AUTHORS.md` section 3.2 the mapping marks SUPPORTED is made, for
   claimed processes only.
-- [ ] The expressions reported are the ones the modeller wrote, none of the adapter's own.
+  `ZenBpmDeploymentWiringTest#aClaimedProcessGetsEveryWiringCallOnce` wires `models/wiring.bpmn`
+  and compares every call: `reportModelExpressions`, `validateTaskWiring` in its four-argument form
+  with every task and user task and their names, `reportStartMessages` with the plain name,
+  `validateBpmsInitiatedStarts` with the plain, the message and the timer start event,
+  `startsAWorkflowOfItsOwn`, `workflowEndedHandlerExists`, `reportConcurrentTokenElements`, and
+  `multiInstanceElementNames` by element id and task definition for the one task in a body whose
+  element names no item; the context remembers the scoped process id and the scoped job types
+  without the task served elsewhere. `#aProcessNobodyClaimsGetsNoCall`: nothing is asked but
+  whether the process is claimed. `#aTaskWithoutAMethodEndsWiring` (the platform's refusal ends
+  `wireBpmn` before anything else is reported), `#startMessagesAreReportedOnlyWhereEveryNameCanBeRead`
+  (an empty collection; no call where a name cannot be read), `#theStartEventsOfACalledProcessAreReported`,
+  `#withoutTheInvokersNothingIsReportedAboutStartsAndEnds`, `#aTaskWithoutATaskDefinitionGivesNoJobType`,
+  `#aMethodWantingAnItemNoElementHandsOverIsRefused` (by task definition and by element id, the whole
+  message), `#aMethodWantingAnItemAnElementHandsOverPasses`,
+  `#theAggregateIdIsCarriedToAProcessCalledOnTheSameAggregate` (into the sub-process and the
+  multi-instance call activity around a shared call, not for a process on its own aggregate, a call
+  outside a body or a call naming no process) and `#wiringNeedsNoEngine`. Booted: a task nothing
+  serves ends the start with the platform's message on Spring Boot (`ZenBpmWiringBootTest`) and on
+  Quarkus (`ZenBpmUnwiredTaskTest`).
+- [x] The expressions reported are the ones the modeller wrote, none of the adapter's own.
+  `ZenBpmDeploymentWiringTest#theReportedExpressionsAreTheModellers`: preparing wrote the
+  correlation key `=orderId` and the input mapping of the aggregate id into the file, and the call
+  reports the two collections the modeller wrote and nothing else.
+
+**Implemented 2026-10-16.** Core: `ZenBpmDeploymentService.wireBpmn` makes the calls of the fit
+check for a claimed process and returns at once for one nobody claims; the new
+`model.ZenBpmMultiInstanceItems` refuses an item no element hands over, `model.ZenBpmCallActivities`
+carries the aggregate id to a process called on the same aggregate from inside a body, and
+`ZenBpmBpmnModel.multiInstanceChainOf` gives the multi-instance elements an element runs in, which
+`ZenBpmTaskParameters` uses now as well. `ZenBpmProcessingContext` remembers a `WiredProcess` per
+claimed process. `deployResources` is the first step not built yet, so the boot tests of the S4.1.1
+decision end there with the message of the validation, and
+`ZenBpmStartupValidationBootTest#noneIsWarnedAboutWhileTheModuleIsPrepared` ends at it. Tests:
+`ZenBpmDeploymentWiringTest` (12) with the fixture `models/wiring.bpmn`; `TestWiring` answers the
+wiring calls and the new `TestStarts` stands for the two invokers; boot tests `ZenBpmWiringBootTest`
+(Spring Boot) and `ZenBpmUnwiredTaskTest` (Quarkus) with the fixture `with-unwired-task/` of each
+platform. `TZ=Etc/UTC mvn clean install` on OpenJDK 25.0.2 builds green with every integration test
+run and none skipped (core 600 unit and 34 integration tests, Spring Boot 9, smoke test 30, Quarkus
+runtime 9, Quarkus deployment 40, coverage gate 35). The gate measures 100 % of 15,584 instructions
+for Spring Boot and 100 % of 15,458 for Quarkus, and `bin/check-deploy-safety.sh` passes both runs
+(13 files deployed, nothing after a red gate). The first full build measured 99.99 %: a task
+without a task definition was never wired; `#aTaskWithoutATaskDefinitionGivesNoJobType` covers it.
+
+Seen to fail, each restored afterwards (25 of 25 mutants), against a green unmutated run. Each fails
+`ZenBpmDeploymentWiringTest`:
+- a process nobody claims wired; the expressions not reported; the user tasks not handed to the
+  check of the tasks; the check not made; start messages reported where a name cannot be read; the
+  start events not reported; the start remembered as reported without the invoker; the concurrent
+  tokens not reported;
+- the items not checked; an element with an item judged; the tasks outside a chain without items
+  asked; items not asked by task definition, or by element id; items asked by a missing task
+  definition; elements of other models judged;
+- the call activities not carried; a call outside a body carried; a call naming no process asked; a
+  process on its own aggregate carried; only the innermost body carried; the aggregate id's name
+  asked per call (only after a second shared call was added to the case);
+- a task served elsewhere given a job type; a task without a task definition given one;
+- the chain of an element without the bodies around it, or without the element itself.
+`wireBpmn` wiring nothing, installed and booted, fails `ZenBpmWiringBootTest` and
+`ZenBpmUnwiredTaskTest`.
 
 ### S4.3.2 Deploy resources and report versions
 

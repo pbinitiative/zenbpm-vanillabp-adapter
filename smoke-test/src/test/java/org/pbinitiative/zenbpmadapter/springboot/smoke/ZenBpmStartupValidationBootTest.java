@@ -152,7 +152,7 @@ class ZenBpmStartupValidationBootTest {
                         "Workflow module 'smoke-app' is deployed to ZenBPM (adapter 'zenbpm') with name-clash-avoidance 'none'."),
                         log),
                 () -> assertEquals(
-                        "ZenBPM adapter 'zenbpm': wiring BPMN process 'SampleWorkflowService' of workflow module 'smoke-app' is implemented in a later story",
+                        "ZenBPM adapter 'zenbpm': deploying workflow module 'smoke-app' is implemented in a later story",
                         failure.getMessage()));
     }
 

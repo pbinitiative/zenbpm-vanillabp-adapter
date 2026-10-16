@@ -7,6 +7,7 @@ package org.pbinitiative.zenbpmadapter;
 import java.util.Collections;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -44,6 +45,8 @@ public final class ZenBpmProcessingContext {
     private final Map<String, String> startingMessages = new LinkedHashMap<>();
 
     private final Map<String, String> awaitedMessages = new LinkedHashMap<>();
+
+    private final Map<String, WiredProcess> wiredProcesses = new LinkedHashMap<>();
 
     /**
      * The context of one workflow module, built for its first BPMN process.
@@ -167,6 +170,55 @@ public final class ZenBpmProcessingContext {
      */
     public Map<String, String> awaitedMessages() {
         return Collections.unmodifiableMap(awaitedMessages);
+    }
+
+
+    /**
+     * Remembers what wiring found out about a claimed process of the workflow module.
+     *
+     * @param wiredProcess What was found
+     */
+    public void recordWiring(final WiredProcess wiredProcess) {
+        wiredProcesses.put(wiredProcess.bpmnProcessId(), wiredProcess);
+    }
+
+    /**
+     * The claimed processes of the workflow module as far as they were wired, by their plain ids,
+     * in the order they were wired. A process nobody claims is not wired and not among them.
+     *
+     * @return What wiring found out about each of them
+     */
+    public Map<String, WiredProcess> wiredProcesses() {
+        return Collections.unmodifiableMap(wiredProcesses);
+    }
+
+    /**
+     * What wiring found out about one claimed process.
+     *
+     * @param bpmnProcessId The id of the process as the modeller wrote it
+     * @param scopedBpmnProcessId The id under which the engine holds it
+     * @param jobTypes The job types of its tasks which this application serves, as the engine knows
+     *            them; user tasks and the tasks the application says something else serves are left
+     *            out
+     * @param reportsItsStart Whether the start of one of its instances is the start of a workflow
+     *            somebody listens to: <code>false</code> for a called process
+     * @param reportsItsEnd Whether the application wants to hear about the end of its workflows
+     */
+    public record WiredProcess(
+        String bpmnProcessId,
+        String scopedBpmnProcessId,
+        Set<String> jobTypes,
+        boolean reportsItsStart,
+        boolean reportsItsEnd
+    ) {
+
+        /**
+         * Copies the job types, so what was found stays what it was.
+         */
+        public WiredProcess {
+            jobTypes = Collections.unmodifiableSet(new LinkedHashSet<>(jobTypes));
+        }
+
     }
 
 }

@@ -5,18 +5,24 @@
 package org.pbinitiative.zenbpmadapter.deployment;
 
 import java.io.InputStream;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.stream.Collectors;
+import java.util.stream.Stream;
 
 import org.pbinitiative.zenbpmadapter.ZenBpmAdapter;
 import org.pbinitiative.zenbpmadapter.ZenBpmProcessingContext;
+import org.pbinitiative.zenbpmadapter.ZenBpmProcessingContext.WiredProcess;
 import org.pbinitiative.zenbpmadapter.client.ZenBpmClientFactory;
 import org.pbinitiative.zenbpmadapter.client.ZenBpmClientRegistry;
 import org.pbinitiative.zenbpmadapter.client.ZenBpmInstanceIdentity;
 import org.pbinitiative.zenbpmadapter.health.ZenBpmHealth;
 import org.pbinitiative.zenbpmadapter.model.ZenBpmBpmnModel;
+import org.pbinitiative.zenbpmadapter.model.ZenBpmCallActivities;
 import org.pbinitiative.zenbpmadapter.model.ZenBpmCorrelationKeys;
 import org.pbinitiative.zenbpmadapter.model.ZenBpmModelReader;
+import org.pbinitiative.zenbpmadapter.model.ZenBpmMultiInstanceItems;
 import org.pbinitiative.zenbpmadapter.model.ZenBpmScoping;
 import org.pbinitiative.zenbpmadapter.model.ZenBpmTaskParameters;
 import org.pbinitiative.zenbpmadapter.model.ZenBpmUnsupportedConstructs;
@@ -28,6 +34,8 @@ import io.vanillabp.integration.adapter.spi.DmnDecisionIds;
 import io.vanillabp.integration.adapter.spi.NameClashAvoidance;
 import io.vanillabp.integration.adapter.spi.NameClashAvoidanceSupport.DeployedProcess;
 import io.vanillabp.integration.adapter.spi.health.AdapterHealth;
+import io.vanillabp.integration.adapter.spi.workflowstart.BpmsInitiatedStartInvoker;
+import io.vanillabp.integration.adapter.spi.workflowstart.BpmsInitiatedStartSpec;
 import io.vanillabp.integration.spi.parts.VanillaBpParts;
 import io.vanillabp.integration.spi.startup.StartupReport;
 import lombok.extern.slf4j.Slf4j;
@@ -38,15 +46,15 @@ import lombok.extern.slf4j.Slf4j;
  * <p>
  * This version of the adapter registers, validates its configuration, reports health, reads BPMN
  * files, refuses what ZenBPM cannot run and the name-clash-avoidance mode <code>by-adapter</code>,
- * scopes the identifiers of the files and of the DMN files under <code>use-prefix</code>, checks
- * that no two processes reach the engine under one id, and deploys nothing yet. Reading, preparing
- * and that check need no engine, so an adapter id without clients does them as well, like the
- * Camunda 8 adapter, and the checks done meanwhile speak before the configuration does. Every later
- * step of the pipeline throws: where the adapter id has no clients, the message of its validation,
- * which names the keys to set, so a workflow module with BPMN files ends the start of an
- * application which configured no engine for it; otherwise an
- * {@link UnsupportedOperationException} which says that the step is not built yet. Nothing
- * pretends to have done the work. A workflow module without BPMN files reaches none of the
+ * scopes the identifiers of the files and of the DMN files under <code>use-prefix</code>, wires the
+ * processes with the platform, checks that no two processes reach the engine under one id, and
+ * deploys nothing yet. Reading, preparing, wiring and that check need no engine, so an adapter id
+ * without clients does them as well, like the Camunda 8 adapter, and the checks done meanwhile
+ * speak before the configuration does. Every later step of the pipeline throws: where the adapter
+ * id has no clients, the message of its validation, which names the keys to set, so a workflow
+ * module with BPMN files ends the start of an application which configured no engine for it;
+ * otherwise an {@link UnsupportedOperationException} which says that the step is not built yet.
+ * Nothing pretends to have done the work. A workflow module without BPMN files reaches none of the
  * steps, because the platform skips the adapter for it. It also answers what the platform asks
  * before the deployment: whether two adapter ids of this type are one instance.
  * <p>
@@ -344,6 +352,30 @@ public class ZenBpmDeploymentService implements AdapterDeploymentService<ZenBpmB
         return existingContext;
     }
 
+    /**
+     * Makes the platform's wiring calls for one process, so the start ends over a task nothing
+     * serves, a start event a method names but the model does not hold, or an item no element hands
+     * over, before anything reaches the engine. It needs no engine. A process nobody claims belongs
+     * to somebody else: nothing is asked or written for it.
+     * <p>
+     * For a claimed process it reports the expressions the modeller wrote, read before preparing
+     * added keys and mappings; has every task and user task checked against the methods, with
+     * their names; reports the names of its message start events, where every one can be read, and
+     * every start event of the process itself; reports the elements which give a workflow a second
+     * token; refuses a method which wants the item of an iteration whose element names none, see
+     * {@link ZenBpmMultiInstanceItems}; carries the aggregate id to a process called on the same
+     * aggregate from inside a multi-instance body, see {@link ZenBpmCallActivities}; and remembers
+     * what the start of the workflow processing and the lifecycle of a workflow need. No version
+     * catalog is registered yet, which the platform reads as "not asked yet".
+     *
+     * @param workflowModuleId The workflow module of the process
+     * @param filename The name of the process's file
+     * @param bpmnProcessId The id of the process
+     * @param model The model of the process's file, as preparing left it
+     * @param context The context of the workflow module
+     * @throws IllegalStateException Where the platform refuses the wiring, or a method wants an item
+     *             no element hands over
+     */
     @Override
     public void wireBpmn(
         final String workflowModuleId,
@@ -352,8 +384,54 @@ public class ZenBpmDeploymentService implements AdapterDeploymentService<ZenBpmB
         final ZenBpmBpmnModel model,
         final ZenBpmProcessingContext context
     ) {
-        throw notBuiltYet("wiring BPMN process '%s' of workflow module '%s'".formatted(bpmnProcessId,
-                workflowModuleId));
+        final var wiring = collaborators.workflowTaskWiring();
+        if (!wiring.isClaimedByAWorkflowService(workflowModuleId, bpmnProcessId)) {
+            log.debug(
+                    "ZenBPM[{}]: BPMN process '{}' of file '{}' (workflow module '{}') is claimed by no @WorkflowService and is deployed as it was modelled",
+                    adapterId, bpmnProcessId, filename, workflowModuleId);
+            return;
+        }
+        wiring.reportModelExpressions(workflowModuleId, bpmnProcessId, model.expressions());
+        wiring.validateTaskWiring(adapterId, workflowModuleId, bpmnProcessId, Stream
+                .concat(model
+                        .tasks()
+                        .stream(),
+                        model
+                                .userTasks()
+                                .stream())
+                .toList());
+        final var starts = collaborators.bpmsInitiatedStartInvoker();
+        starts.ifPresent(invoker -> reportTheStarts(invoker, workflowModuleId, bpmnProcessId, model));
+        final boolean reportsItsStart = starts
+                .map(invoker -> invoker.startsAWorkflowOfItsOwn(workflowModuleId, bpmnProcessId))
+                .orElse(false);
+        final boolean reportsItsEnd = collaborators
+                .workflowEndedInvoker()
+                .map(invoker -> invoker.workflowEndedHandlerExists(workflowModuleId, bpmnProcessId))
+                .orElse(false);
+        wiring.reportConcurrentTokenElements(workflowModuleId, bpmnProcessId, model.concurrentTokenElements());
+        ZenBpmMultiInstanceItems.refuseItemsNoElementHandsOver(model, workflowModuleId, wiring);
+        ZenBpmCallActivities.carryTheAggregateId(model, workflowModuleId, wiring);
+        final var scoping = collaborators.scoping();
+        final var jobTypes = model
+                .tasks()
+                .stream()
+                .filter(task -> task.taskDefinition() != null)
+                .filter(task -> !wiring.isImplementedExternally(adapterId, workflowModuleId, bpmnProcessId, task))
+                .map(task -> scoping.scopedTaskDefinition(workflowModuleId, bpmnProcessId, task.taskDefinition(),
+                        adapterId))
+                .collect(Collectors.toCollection(LinkedHashSet::new));
+        context.recordWiring(new WiredProcess(bpmnProcessId, scoping.scopedProcessId(workflowModuleId, bpmnProcessId,
+                adapterId), jobTypes, reportsItsStart, reportsItsEnd));
+        log.info(
+                "ZenBPM[{}]: wired {} task(s) and {} user task(s) of BPMN process '{}' (file '{}', workflow module '{}')",
+                adapterId, model
+                        .tasks()
+                        .size(),
+                model
+                        .userTasks()
+                        .size(),
+                bpmnProcessId, filename, workflowModuleId);
     }
 
     /**
@@ -404,6 +482,25 @@ public class ZenBpmDeploymentService implements AdapterDeploymentService<ZenBpmB
         ZenBpmCorrelationKeys.apply(model, () -> wiring.resolveWorkflowAggregateIdName(workflowModuleId,
                 bpmnProcessId));
         ZenBpmTaskParameters.apply(model, workflowModuleId, wiring);
+    }
+
+    // every start event of the process itself, NONE and MESSAGE included, so the platform can judge
+    // the methods which name one; the message names only where every one of them can be read,
+    // because the platform checks a start by message against a complete list or not at all
+    private void reportTheStarts(
+        final BpmsInitiatedStartInvoker starts,
+        final String workflowModuleId,
+        final String bpmnProcessId,
+        final ZenBpmBpmnModel model
+    ) {
+        if (model.startMessagesAreKnown()) {
+            starts.reportStartMessages(adapterId, workflowModuleId, bpmnProcessId, model.startMessages());
+        }
+        starts.validateBpmsInitiatedStarts(workflowModuleId, bpmnProcessId, model
+                .startEvents()
+                .stream()
+                .map(startEvent -> BpmsInitiatedStartSpec.of(startEvent.elementId(), startEvent.kind()))
+                .toList());
     }
 
     // the platform checks the mode of the workflow module, but a workflow may set a mode of its

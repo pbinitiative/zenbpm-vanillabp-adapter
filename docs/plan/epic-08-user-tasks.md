@@ -23,6 +23,12 @@ Decision 12 (polling).
 
 **Instructions**
 
+*Note from S4.3.1, 2026-10-16.* `wireBpmn` exists; it remembers per claimed process the scoped job
+types of the tasks this application serves (`ZenBpmProcessingContext.WiredProcess#jobTypes`), and no
+user-task type, so the job stream of S4.3.3 subscribes none: a user task is polled here, and the
+engine's default type `user-task-type` is shared by every application on the engine. Add the user
+tasks of instruction 1 to `WiredProcess`, or beside it.
+
 1. In `wireBpmn`, remember per module the user tasks (activity id, scoped type, plain type) and
    whether `workflowTaskHandlerExists(module, process, plainType or activityId)`. Since platform
    decision 119 every user task of a claimed process has a method or is marked

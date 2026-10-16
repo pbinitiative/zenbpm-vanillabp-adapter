@@ -4,7 +4,9 @@
  */
 package org.pbinitiative.zenbpmadapter.model;
 
+import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -104,6 +106,28 @@ public record ZenBpmBpmnModel(
         messageStarts = List.copyOf(messageStarts);
         messageCatches = List.copyOf(messageCatches);
         enclosingMultiInstances = Collections.unmodifiableMap(new LinkedHashMap<>(enclosingMultiInstances));
+    }
+
+    /**
+     * The multi-instance elements an element of the process runs in: the multi-instance
+     * sub-processes around it, the outermost first, and the element itself last where it is a
+     * multi-instance element. The engine runs each of them in a scope of its own, which starts
+     * with the item and nothing else.
+     *
+     * @param elementId The id of the element
+     * @return The multi-instance elements, empty where the element runs in none
+     */
+    public List<MultiInstanceElement> multiInstanceChainOf(final String elementId) {
+        final var byId = new HashMap<String, MultiInstanceElement>();
+        multiInstanceElements.forEach(multiInstance -> byId.put(multiInstance.elementId(), multiInstance));
+        final var chain = new ArrayList<MultiInstanceElement>();
+        enclosingMultiInstances
+                .getOrDefault(elementId, List.of())
+                .forEach(enclosing -> chain.add(byId.get(enclosing)));
+        if (byId.containsKey(elementId)) {
+            chain.add(byId.get(elementId));
+        }
+        return List.copyOf(chain);
     }
 
     private static Set<String> inOrder(final Set<String> values) {

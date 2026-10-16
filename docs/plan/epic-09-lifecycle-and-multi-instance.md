@@ -68,6 +68,20 @@ process)` answers `true` for; a process nobody claims is left as it was modelled
 The cost of the start marker is one job, one transaction in the application and one variable update
 per started workflow, also for the workflows the application starts itself (decision 26).
 
+*Note from S4.3.1, 2026-10-16.* Instruction 3 is built: `wireBpmn` hands every start event of the
+process itself to `validateBpmsInitiatedStarts`, a called process's too, and the context remembers
+the answers of `startsAWorkflowOfItsOwn` and `workflowEndedHandlerExists` per claimed process
+(`ZenBpmProcessingContext.WiredProcess#reportsItsStart` and `#reportsItsEnd`, both `false` where the
+platform hands no invoker). The markers are inserted in `prepareBpmn`, which runs before `wireBpmn`,
+so they cannot read those answers from the context: ask the two invokers in `prepareBpmn`, as
+instructions 1 and 2 say. One more thing found there: the engine hands a called instance the
+caller's business key and a copy of the caller's variables whatever the called process is
+(`resolveChildBusinessKey` and `newChildProcessInstanceData` in `pkg/bpmn/sub_process.go`, proven by
+a scratch program at `bdd795a3`). A process called on an aggregate of its own therefore starts
+named by the caller's aggregate; its start marker has to cut that name, for example with
+`zenbpm:in businessKey=""` on the call activity, which replaces the inherited key, and an input
+mapping which empties the id variable, before the core reads the start.
+
 **Tests**: `ZenBpmMarkerTasksTest` with fixtures: none/error/terminate end events, two end events,
 end and start events inside a sub-process and an event sub-process left alone, a none, a message and
 a timer start each getting a marker, a called process getting neither marker, a process nobody
@@ -170,6 +184,10 @@ the instance key to the probe), `#aWorkflowStartedPastVanillaBpGetsAnAggregate` 
 While wiring, ask `multiInstanceElementNames(module, process, elementId or taskDefinition)` for
 every multi-instance element and refuse the deployment where a method wants the item and the element
 has no `inputElement` (the model reader of S4.1.1 already collects it).
+
+*Note from S4.3.1, 2026-10-16.* The paragraph above is built: `model.ZenBpmMultiInstanceItems`,
+called by `wireBpmn`, asks by element id and by task definition for every task and user task inside
+a multi-instance chain and refuses an element of that chain without `inputElement`.
 
 A job inside a multi-instance element belongs to a child instance (`processType = multiInstance`)
 whose variables carry the input element under the model's `inputElement` name. `ZenBpmMultiInstance`

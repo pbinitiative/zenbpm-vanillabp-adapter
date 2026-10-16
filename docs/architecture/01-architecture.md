@@ -162,11 +162,13 @@ events; an empty collection where there is none, and no call at all where a name
 `validateBpmsInitiatedStarts` with EVERY start event, `validateTaskWiring` in its four-argument form
 (service, send, business-rule-as-job tasks and message throw events as mandatory specs with their
 `name`; user tasks as optional specs; a business rule task with `calledDecision` is engine-served
-and skipped), `multiInstanceElementNames` for every multi-instance element,
-`reportConcurrentTokenElements`, `reportCompensation` (nothing: compensation is refused) and
-`workflowsShareTheWorkflowAggregate` for call activities (a called process on the same aggregate
-gets `zenbpm:in businessKey="=<id var>"` and an input mapping of the id variable injected; one on
-its own aggregate does not). `unsharedWorkflowAggregatePaths` and
+and skipped), `multiInstanceElementNames` by element id and task definition for every task inside
+a multi-instance chain whose element names no `inputElement` (a method wanting that item ends the
+start), `reportConcurrentTokenElements`, `reportCompensation` (nothing: compensation is refused) and
+`workflowsShareTheWorkflowAggregate` for a call activity inside a multi-instance body. The engine
+hands a called instance the caller's business key always and the caller's variables outside a body,
+so only inside a body is the id variable carried, by an input mapping on every multi-instance element
+the call runs in, and only where the called process shares the aggregate. `unsharedWorkflowAggregatePaths` and
 `declaredTypesOfWorkflowAggregatePaths` are not called, as in the Camunda 8 adapter: a model
 expression reading an attribute the aggregate does not share fails at runtime as a FEEL error
 (deviation 14). The process version catalog (`registerProcessVersions`) comes with E10; until then

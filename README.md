@@ -45,7 +45,12 @@ both starts a workflow of the module and is awaited by a claimed one ends the st
 would start a workflow with a correlation which finds none waiting. A job inside a multi-instance
 body carries only what input mappings give it, so the adapter maps the names the methods serving it
 read (theirs and the extensions'), and the aggregate id, into the body; a job anywhere else gets the
-variables of its scope from the engine. It deploys nothing and runs no task yet: every later step
+variables of its scope from the engine. The processes a workflow service claims are wired with
+the platform: a task nothing serves ends the start, the start events, the start messages, the
+expressions the modeller wrote and the elements which give a workflow a second token are reported,
+a method which wants the item of an iteration whose element names none ends the start, and a
+process called on the same aggregate from inside a multi-instance body gets the aggregate id
+carried into that body. It deploys nothing and runs no task yet: every later step
 throws an exception which says that it is not built yet, or, for an adapter id without clients, the
 message of its validation, which names the key to set. What is built next, and in which order, is
 the implementation plan in [`docs/`](docs/README.md).
