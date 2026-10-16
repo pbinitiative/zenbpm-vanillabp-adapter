@@ -27,10 +27,10 @@ import jakarta.enterprise.inject.Instance;
  * BPMN file, so the platform deploys nothing to the adapter and calls none of the steps this
  * version of the adapter refuses.
  * <p>
- * The platform's BPMS double is a test dependency of this module, for the one test of an
- * application without a ZenBPM adapter id. Every other test leaves it out of the application: on
- * Quarkus every adapter extension on the classpath has to be configured, so the double would make
- * each test configure an adapter id it is not about.
+ * The platform's BPMS double is a test dependency of this module, for the tests of an application
+ * with an adapter id of another type: beside a ZenBPM adapter id, or without one. Every other test
+ * leaves it out of the application: on Quarkus every adapter extension on the classpath has to be
+ * configured, so the double would make each test configure an adapter id it is not about.
  */
 final class SmokeApplication {
 

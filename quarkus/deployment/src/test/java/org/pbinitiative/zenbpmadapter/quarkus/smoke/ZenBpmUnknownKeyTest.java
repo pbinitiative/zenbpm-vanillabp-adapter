@@ -18,6 +18,9 @@ import io.vanillabp.integration.test.utils.SuppressOutputExtension;
  * A misspelt key under <code>vanillabp.adapters.&lt;id&gt;.</code> fails the start on Quarkus and
  * names the key, because the adapter's overlay models every key it reads and SmallRye Config
  * refuses a key no mapping knows. That is the difference to Spring Boot, which ignores the key.
+ * The application has no other adapter extension: beside one which declares a build-time
+ * configuration root under <code>vanillabp</code>, as the Camunda 8 adapter does, Quarkus ignores
+ * the key as well.
  */
 @ExtendWith(SuppressOutputExtension.class)
 class ZenBpmUnknownKeyTest {

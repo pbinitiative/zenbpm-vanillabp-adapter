@@ -26,10 +26,10 @@ import io.vanillabp.integration.deployment.processservice.VanillaBpMigratablePro
  * producer of the clients and the observer which builds them at startup, and refuses to build an
  * application whose protobuf runtime cannot run the job stream.
  * <p>
- * The adapter has no build-time configuration root, not even an empty one: with an empty
- * build-time root under the prefix <code>vanillabp</code>, an application booted with a misspelt
- * key anywhere in the <code>vanillabp.*</code> tree, which <code>ZenBpmUnknownKeyTest</code>
- * refuses to let happen.
+ * The adapter has no build-time configuration root, not even an empty one. An empty build-time
+ * root under the prefix <code>vanillabp</code> turns off the check for unknown keys in the whole
+ * <code>vanillabp.*</code> tree, so an application with a misspelt key would start.
+ * <code>ZenBpmUnknownKeyTest</code> fails if that happens.
  */
 class ZenBpmIntegrationProcessor {
 

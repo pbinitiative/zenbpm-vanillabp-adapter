@@ -7,6 +7,7 @@ package org.pbinitiative.zenbpmadapter.springboot.smoke;
 import static org.junit.jupiter.api.Assertions.assertAll;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.util.List;
 import java.util.stream.Stream;
@@ -45,6 +46,7 @@ class ZenBpmWithoutAdapterIdsBootTest {
                             .factories()),
                     () -> assertEquals(0, context.getBeanNamesForType(ZenBpmDeploymentService.class).length),
                     () -> assertEquals(0, context.getBeanNamesForType(ZenBpmProcessService.class).length),
+                    () -> assertTrue(StartupBlock.isWritten(log), log),
                     () -> assertFalse(log.contains("zenbpm adapter '"), log));
         }
     }

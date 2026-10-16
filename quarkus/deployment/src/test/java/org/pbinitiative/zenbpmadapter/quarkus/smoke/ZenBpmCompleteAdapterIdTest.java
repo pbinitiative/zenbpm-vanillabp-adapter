@@ -27,8 +27,9 @@ import jakarta.inject.Inject;
 
 /**
  * A complete adapter id boots on Quarkus with nothing of this adapter in the block at the end of
- * the start, and its clients are closed when the application stops. The smoke application names <code>vanillabp.outbox.housekeeping.zone</code>, because
- * the platform reports a missing zone in the same section wherever the JVM runs on UTC, as on CI.
+ * the start, and its clients are closed when the application stops. The smoke application names
+ * <code>vanillabp.outbox.housekeeping.zone</code>, because the platform reports a missing zone in
+ * the same section wherever the JVM runs on UTC, as on CI.
  */
 @ExtendWith(SuppressOutputExtension.class)
 class ZenBpmCompleteAdapterIdTest {
@@ -43,6 +44,7 @@ class ZenBpmCompleteAdapterIdTest {
             .assertLogRecords(records -> {
                 final var log = SmokeApplication.logOf(records);
                 assertAll(
+                        () -> assertTrue(StartupBlock.isWritten(log), log),
                         () -> assertEquals("", StartupBlock.configuration(log), log),
                         () -> assertFalse(log.contains("zenbpm adapter '"), log));
             })

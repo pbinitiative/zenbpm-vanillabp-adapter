@@ -38,11 +38,16 @@ import io.smallrye.config.ConfigMapping;
  * SmallRye Config refuses a key under <code>vanillabp.</code> which no mapping knows, so a typo
  * under <code>vanillabp.adapters.&lt;id&gt;.</code> fails the start and names the key. That is
  * the difference to Spring Boot, which ignores such a key; this mapping is what makes the keys of
- * this adapter known to that check.
+ * this adapter known to that check. The check is off for the whole <code>vanillabp.*</code> tree
+ * where an extension of the application declares a build-time configuration root under
+ * <code>vanillabp</code>, and the Camunda 8 adapter declares an empty one. Beside it, Quarkus only
+ * warns that it ignores the key, and the start warns about the key the adapter misses, as on Spring
+ * Boot.
  * <p>
- * The mapping is never injected: an injected mapping is validated while Quarkus initializes its
- * static configuration, before the mappings of the adapters are registered, and every adapter key
- * fails as unknown. It is read through
+ * The mapping is never injected: an injected mapping makes Quarkus check the
+ * <code>vanillabp.*</code> tree while it initializes its static configuration, before the
+ * platform's own mappings are registered, so every start fails with the platform's keys, such as
+ * <code>vanillabp.prioritized-adapters</code>, named as unknown. It is read through
  * <code>ConfigProvider.getConfig().unwrap(SmallRyeConfig.class).getConfigMapping(...)</code>.
  * <p>
  * The adapter ids are NEVER taken from this mapping's maps. They come from the platform's core

@@ -361,10 +361,13 @@ BPMN files reaches no step of the adapter there either.
 - [x] No class injects the `@ConfigMapping` (a test greps the runtime sources for `@Inject` next to
   the mapping type, or a comment in `AGENTS.md` plus review; choose the grep test).
   `QuarkusOverlayTest#theOverlayIsNeverInjected` in the coverage gate reads the main sources of every
-  Quarkus module and fails on a field or parameter marked `@Inject` (imported or written out) whose
-  declaration names `VanillaBpZenBpmProperties`, and on a parameter of that type, plain or inside
-  `Instance<>` or `Provider<>`, because CDI fills the parameters of a producer, an observer or a
-  constructor; `#theSourcesAreFound` fails where no source reads the mapping at all.
+  Quarkus module, comments left out, and fails on a field marked `@Inject` (imported or written out)
+  whose declaration names `VanillaBpZenBpmProperties`, and on a parameter of that type, plain or
+  inside `Instance<>` or `Provider<>`, of a constructor or of a method marked `@Produces`,
+  `@Disposes`, `@Observes`, `@ObservesAsync` or `@Inject`, because CDI fills those; a helper the
+  adapter calls itself may take the overlay. `#theRuleTellsAnInjectionFromAHelper` holds the rule
+  against sample declarations, and `#theSourcesAreFound` fails where no source reads the mapping at
+  all.
 - [x] The Quarkus overlay knows every key the Spring overlay knows (a test lists both and compares).
   `QuarkusOverlayTest#theQuarkusOverlayKnowsEveryKeyOfTheSpringBootOverlay` walks both overlays by
   reflection (a getter with a setter on Spring Boot, a method without parameters and body on
@@ -390,10 +393,14 @@ alone; in `quarkus/deployment` the boot tests `ZenBpmAdapterDiscoveryTest` (4),
 `ZenBpmDegradedBootTest` (1), `ZenBpmUnworkableNumberTest` (1), `ZenBpmNegativeScopedValueTest`
 (1), `ZenBpmNoticeOnceTest` (1), `ZenBpmCompleteAdapterIdTest` (2) and
 `ZenBpmOverlayResolutionTest` (4), and the build-step tests `ZenBpmIntegrationProcessorTest` (3)
-and `ZenBpmNativeImageProcessorTest` (2); `QuarkusOverlayTest` (3) in the coverage gate. `TZ=Etc/UTC mvn clean
-install` on OpenJDK 25.0.2 builds green with every integration test run and none skipped (core 461
-unit and 34 integration tests, Spring Boot 8, smoke test 18, Quarkus runtime 8, Quarkus deployment
-26, coverage gate 32); the gate measures 100 % of 10,112 instructions for Spring Boot and 100 % of
+and `ZenBpmNativeImageProcessorTest` (2); `QuarkusOverlayTest` (3) in the coverage gate. After the
+fixes of the reviews below, `ZenBpmAdapterDiscoveryTest` has 5 tests,
+`ZenBpmBesideAnotherAdapterTypeTest` (2) and `ZenBpmHealthDownTest` (1) are new,
+`QuarkusOverlayTest` has 4, and the smoke test of Spring Boot gains
+`ZenBpmBesideAnotherAdapterTypeBootTest` (1). `TZ=Etc/UTC mvn clean install` on OpenJDK 25.0.2
+builds green with every integration test run and none skipped (core 461 unit and 34 integration
+tests, Spring Boot 8, smoke test 19, Quarkus runtime 8, Quarkus deployment 30, coverage gate 33);
+the gate measures 100 % of 10,112 instructions for Spring Boot and 100 % of
 9,998 for Quarkus, which now counts the extension and not only the core (9,308 before), and
 `bin/check-deploy-safety.sh` passes both runs (13 files deployed, nothing after a red gate). The run
 before it failed in `ZenBpmJobStreamIT` alone, because the pinned engine's container did not start
@@ -418,13 +425,56 @@ because the platform's deployment runner asks for the deployment services, and w
 registry, in the same start; the observer stays, because nothing in the platform's contract says
 when the runner asks.
 
+**Answers to two reviews, 2026-10-16** (one by Claude, one by Copilot; both approve). Every
+finding was checked against the code, and every one held. Each fix below has a mutant seen to fail
+and restored afterwards, unless it is wording only:
+
+- **A misspelt key is ignored beside the Camunda 8 adapter.** Reproduced, not only derived: in a
+  scratch copy of this commit, with Camunda 8's Quarkus extension (built from the local
+  `camunda8-adapter` at `fd67a1d`) as a second adapter type, an application with
+  `vanillabp.adapters.zenbpm.rest-adress` and one with `vanillabp.bogus-top-level-key` both
+  started. Quarkus only logged "Unrecognized configuration key ... it will be ignored", and the
+  block said that `vanillabp.adapters.zenbpm.rest-address` is missing; the same application with
+  the right key started too. Camunda 8's empty build-time root under `vanillabp` is the cause, as in
+  this story's own mutant. The javadoc of both overlays and of `ZenBpmUnknownKeyTest`, and the E12
+  note, now say so. It is no test of this repository: the Camunda 8 adapter is not published where
+  this build can resolve it, and nothing in this adapter can turn the check back on.
+- **A mixed boot** (Copilot): `ZenBpmBesideAnotherAdapterTypeTest` on Quarkus and
+  `ZenBpmBesideAnotherAdapterTypeBootTest` on Spring Boot boot a ZenBPM id beside the BPMS double,
+  each with a key of its own under `vanillabp.adapters.`. The platform keeps one list per type, the
+  ZenBPM registry and services hold only the ZenBPM id, and the block has no configuration finding.
+  Mutants: the registry fed every configured id, on each platform (the registry holds `dummy`, and
+  the block warns about it); the Quarkus deployment and process services fed every id (the start
+  fails on the core's "No ZenBPM adapter with id 'dummy' is configured").
+- **Two Spring cases were not mirrored**: `ZenBpmHealthDownTest` boots a complete id on a free port
+  nothing listens on and asks the deployment service for its health, and
+  `ZenBpmAdapterDiscoveryTest` gains `theSmokeApplicationPersistsNothing`.
+- **The injection guard blamed a helper.** It flagged every parameter of the overlay's type; now
+  only one CDI fills (see the acceptance block). Each part of the rule switched off fails
+  `theRuleTellsAnInjectionFromAHelper`: any parameter counted, constructors not counted, comments
+  kept, an annotation's array kept, `new` taken for a constructor, `Instance<? extends>` not read.
+- **"Nothing in the block" also passed without a block.** `StartupBlock.isWritten` finds the head
+  line of the block, and the tests which expect an empty `CONFIGURATION` (both complete-id tests,
+  both mixed boots, Spring's boot without ZenBPM ids) assert it; with the head line changed,
+  `ZenBpmCompleteAdapterIdTest` fails.
+- **The reason the overlay is never injected was wrong in its detail.** The mutant (the overlay as
+  a parameter of the client producer) fails every boot, but with the platform's keys,
+  `vanillabp.prioritized-adapters` and `vanillabp.outbox.housekeeping.zone`, named as unknown
+  (`SRCFG00050`, while Quarkus initializes its static configuration), not the adapter's keys as the
+  javadoc said. The javadoc of the overlay and the gate's message now say what happens.
+- Wording: `everyLevelReachesTheConfiguration` is `theAdapterLevelReachesTheConfiguration`, named
+  for what it asserts; the processor's sentence about the missing root and the one above are
+  rewritten; one javadoc line is wrapped and the root POM's licence comment reflowed.
+
 Where the code differs from the instructions:
 
 - **No build-time configuration root.** Instruction 2 asks for an empty BUILD_TIME
-  `ZenBpmProperties` "for symmetry", as Camunda 8 has one. With it, an application booted with
-  `vanillabp.adapters.zenbpm.rest-adress` set, and with any other unknown key under `vanillabp.`;
-  without it, the start fails with `SRCFG00050` naming the key (`ZenBpmUnknownKeyTest`; adding the
-  empty root back is one of the mutants above). The deployment module has no public class then, so
+  `ZenBpmProperties` "for symmetry", as Camunda 8 has one. With it, an application with
+  `vanillabp.adapters.zenbpm.rest-adress` set still started, and so did one with any other unknown
+  key under `vanillabp.`. Without it, the start fails with `SRCFG00050` naming the key
+  (`ZenBpmUnknownKeyTest`; adding the empty root back is one of the mutants above). The root of
+  another extension does the same: beside Camunda 8's adapter, Quarkus ignores the key (see the
+  reviews below). The deployment module has no public class then, so
   its javadoc check documents the package-private build steps (`<show>package</show>`).
 - **No adapter id of type `zenbpm` cannot boot on Quarkus.** The platform refuses an application
   whose adapter extension on the classpath has no configured id ("VanillaBP Quarkus adapter
@@ -441,12 +491,14 @@ Where the code differs from the instructions:
   build naming it. `ZenBpmIntegrationProcessorTest` runs the real step in a class loader without
   `RuntimeVersion`.
 - **The tests mirror every case of the Spring smoke tests**, one boot each (the user's decision),
-  beyond the six the instructions name. The block at the end of the start is read from the log
+  beyond the six the instructions name. The first commit left out two (an address nothing listens
+  on is DOWN, and the smoke application persists nothing); both came with the reviews below. The block at the end of the start is read from the log
   records the extension test keeps, which end where the application begins to stop, so what the
   factory says while it closes is heard on its own logger. The platform's phase-two outbox needs a
   datasource, so the tests run the JDBC outbox on H2, as the Spring smoke application does.
 - **Health** is the produced deployment service's `checkHealth()` (UNKNOWN with the missing key in
-  `ZenBpmStartupValidationTest`), the user's decision: the readiness endpoint is the platform's and
+  `ZenBpmStartupValidationTest`, DOWN naming the address, the request timeout and the job stream in
+  `ZenBpmHealthDownTest`), the user's decision: the readiness endpoint is the platform's and
   exists only where the application has SmallRye Health.
 - **The two acceptance tests live in the coverage gate** (the user's decision), the one module which
   sees both platforms. Its test classpath has the core and the two overlay jars without anything

@@ -112,8 +112,8 @@ class ZenBpmOverlayResolutionTest {
     }
 
     @Test
-    @DisplayName("Every value below the adapter level reaches the validation, the adapter's own the configuration")
-    void everyLevelReachesTheConfiguration() {
+    @DisplayName("The adapter's own values reach the configuration, and the values below it pass the validation")
+    void theAdapterLevelReachesTheConfiguration() {
         final var configuration = overlay().configurationOf("zenbpm");
 
         assertAll(

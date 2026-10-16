@@ -27,8 +27,7 @@
        jar and the jars of both platforms ship classes adapted from the VanillaBP adapters, which
        keep the Apache License 2.0 (the client factory, the executor, the health check, the Spring
        Boot registration and the Quarkus producers and build steps among them; each says so in
-       its header), so MIT alone is not the whole
-       truth: the <comments> above names the rest. How
+       its header), so MIT alone is not the whole truth: the <comments> above names the rest. How
        the published POMs should say "MIT and Apache 2.0" is open with the maintainers; the
        jars already carry both licence texts and the NOTICE, see <resources> below. The core jar
        also ships the gRPC classes generated from a copy of the engine's proto, and under which

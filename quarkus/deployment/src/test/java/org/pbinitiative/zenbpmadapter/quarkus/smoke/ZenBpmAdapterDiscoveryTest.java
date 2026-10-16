@@ -8,6 +8,7 @@ import static org.junit.jupiter.api.Assertions.assertAll;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertSame;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.util.List;
@@ -125,6 +126,17 @@ class ZenBpmAdapterDiscoveryTest {
         assertAll(
                 () -> assertEquals(1, listsHolding(deploymentServices, ZenBpmDeploymentService.class)),
                 () -> assertEquals(1, listsHolding(processServices, ZenBpmProcessService.class)));
+    }
+
+    @Test
+    @DisplayName("The persistence of the smoke application fails loudly, so a test which starts to persist hears about it")
+    void theSmokeApplicationPersistsNothing() {
+        assertAll(
+                () -> assertSame(Aggregate.class, sampleWorkflowService.getAggregateClass()),
+                () -> assertThrows(UnsupportedOperationException.class, () -> sampleWorkflowService.save(
+                        new Aggregate())),
+                () -> assertThrows(UnsupportedOperationException.class, () -> sampleWorkflowService
+                        .getAggregateId(new Aggregate())));
     }
 
     // the platform's way to collect the lists of every adapter type on the classpath

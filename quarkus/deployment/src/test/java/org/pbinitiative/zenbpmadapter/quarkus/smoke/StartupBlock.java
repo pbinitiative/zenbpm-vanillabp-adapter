@@ -15,9 +15,27 @@ import io.vanillabp.integration.spi.startup.StartupTopic;
  */
 final class StartupBlock {
 
+    private static final Pattern HEAD_LINE = Pattern
+            .compile("^VanillaBP \\S+ looked at this application and found \\d+ things? worth a look\\. .*$");
+
     private static final Pattern END_OF_A_TOPIC = Pattern.compile("^([A-Z][A-Z ]+ \\(\\d+\\)|-{20,})$");
 
     private StartupBlock() {
+    }
+
+    /**
+     * Whether the start wrote the block. A test which reads that a topic is empty checks this too,
+     * because the topic of a block which was never written is empty as well.
+     *
+     * @param log What the start wrote
+     * @return <code>true</code> where the log holds the head line of the block
+     */
+    static boolean isWritten(final String log) {
+        return log
+                .lines()
+                .anyMatch(line -> HEAD_LINE
+                        .matcher(line)
+                        .matches());
     }
 
     /**
