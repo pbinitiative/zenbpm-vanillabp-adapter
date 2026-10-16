@@ -204,7 +204,7 @@ unless named otherwise:
 
 ### S4.1.2 Refuse what the engine cannot run
 
-- [ ] **Depends on:** S4.1.1.
+- [x] **Depends on:** S4.1.1.
 
 **Instructions**
 
@@ -229,9 +229,81 @@ application marked.
 unclaimed process with a construct the engine rejects is refused, the same process with an
 instantiating receive task is not.
 
+*Fit check, 2026-10-16.* Every construct was run through the engine's own parser
+(`bpmn20.TDefinitions`, whose `UnmarshalXML` calls `ResolveReferences`) at the model code of
+`bdd795a3`, in a scratch Go program. The engine refuses with a `400`: signal, conditional,
+escalation, compensation and cancel definitions on intermediate catch, throw and boundary events;
+`scriptTask`, `manualTask`, `task` and `complexGateway` with flows; a condition leaving an
+event-based gateway. It ACCEPTS and runs something else: a signal or conditional start event and a
+signal, escalation, compensation or cancel end event (`UnmarshalXML` keeps only message, timer and
+error definitions on a start event and terminate, message and error on an end event, so the event
+runs as a plain one); a condition on a flow leaving anything but an exclusive or inclusive gateway
+(read nowhere else); a standard loop (runs once). It accepts and fails later: a timer written as
+`=...` (`timer.go` reads ISO 8601 only), and an intermediate throw event without a definition
+(`events.go`). A `completionCondition` is parsed and never read. So the story's message ("the
+engine rejects them (`400`) or would run them without an aggregate") missed a third reason. Two
+more things did not fit: `AGENTS.md` lets code cite DECISIONS.md only, so the message cannot name
+GAPS 13/14/19; and no refusal here is about a task which marking it `implemented-externally` would
+change, because the engine refuses or ignores the construct whoever serves it, and an instantiating
+receive task is no job a method serves. GAPS 19 was missing from `GAPS.md`.
+
+Decided by the maintainer:
+- Refused are the story's list, the start and end event definitions the engine drops, and three
+  more: a timer written as an expression, a `completionCondition`, and an intermediate throw event
+  without a definition. All of them in every process of the file, a process nobody claims
+  included, because the adapter deploys the whole file and whoever serves that process would get
+  something other than its model. Only the instantiating receive task (GAPS 19) is refused in a
+  claimed process alone.
+- The message gives each element's reason in its own words, under one of three headings (refused
+  by the engine; deployed but run differently, saying how; would start a workflow without an
+  aggregate), cites no GAPS number, and has no `howToMark` and no `isImplementedExternally`
+  exemption.
+
 **Acceptance criteria**
 
-- [ ] The message names file, process and every element; the boot ends before the engine is asked.
+- [x] The message names file, process and every element; the boot ends before the engine is asked.
+  `ZenBpmUnsupportedConstructsTest` (27 tests): one case per construct (24) asserts the heading of
+  its reason and the line `<process>/<element> (<construct>)`; `three-offences.bpmn` asserts the
+  whole message for one offence of each reason, grouped and in the order of the file; what ZenBPM
+  runs as modelled passes (conditions at exclusive and inclusive gateways, a literal timer, message
+  and link throw events, a waiting receive task, terminate and error end events); a process nobody
+  claims is refused for the constructs the engine cannot run as modelled, but not for an
+  instantiating receive task. The check runs in `prepareBpmn`, before anything reaches the
+  engine, for an adapter id without clients as well, once per file
+  (`ZenBpmDeploymentServiceTest#preparingRefusesWhatZenBpmCannotRunOncePerFile`); the message is an
+  `IllegalStateException`, so the `deployment-failure` policy applies.
+
+**Implemented 2026-10-16.** Core: `model.ZenBpmUnsupportedConstructs.check(workflowModuleId,
+model, claimed)` walks the one process of the file, its sub-processes included, and collects
+every offence by its reason; `ZenBpmDeploymentService.prepareBpmn` calls it once per file, asking
+`isClaimedByAWorkflowService` for the process, and rewrites nothing yet. `ZenBpmProcessingContext`
+is a class now: the workflow module and the files it prepared (`firstPreparationOf`), which the
+rewriting of S4.2.1 needs as well. `wireBpmn` is now the first step not built yet, so the boot
+tests of the S4.1.1 decision end there with the message of the validation. Tests:
+`ZenBpmUnsupportedConstructsTest` (27) with the fixture `three-offences.bpmn`, two new cases in
+`ZenBpmDeploymentServiceTest` (now 13; `TestCollaborators.of(adapterId, workflowTaskWiring)`).
+`TZ=Etc/UTC mvn clean install` on OpenJDK 25.0.2 builds green with every integration test run and
+none skipped (core 517 unit and 34 integration tests, Spring Boot 8, smoke test 23, Quarkus
+runtime 8, Quarkus deployment 34, coverage gate 33). The gate measures 100 % of 12,291
+instructions for Spring Boot and 100 % of 12,176 for Quarkus, and `bin/check-deploy-safety.sh`
+passes both runs. Two earlier full builds were red or short: one on a case added for a condition
+leaving no element, whose source the check looked up in a `Set.of` before testing it for
+`null`; one at 99.85 %, because a search for the process could not fail and a helper was left
+unused. Both were fixed.
+
+Seen to fail, each restored afterwards (11 of 11 mutants), against a green unmutated run (a first
+round ran after the case above was added and before it passed, so it was repeated):
+- the instantiating receive task refused in a process nobody claims, a construct the engine
+  refuses, or one it runs differently, refused only in a claimed process: each fails
+  `#aProcessNobodyClaimsIsRefusedOnlyForWhatTheEngineCannotRun`;
+- a condition at an exclusive or inclusive gateway refused, a literal timer refused, a throw
+  event with any definition refused: each fails `#whatZenBpmRunsPasses`;
+- the sub-processes not walked: fails the cases of an event sub-process start and of an end event
+  inside a sub-process;
+- end events not checked: fails the four end-event cases;
+- only the first offence named: fails `#severalOffencesAreNamedInOneMessage`;
+- `prepareBpmn` checking nothing, or checking a file again for each of its processes: each fails
+  `ZenBpmDeploymentServiceTest#preparingRefusesWhatZenBpmCannotRunOncePerFile`.
 
 ---
 

@@ -24,6 +24,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Consumer;
 
 import org.junit.jupiter.api.DisplayName;
@@ -42,14 +43,15 @@ import io.vanillabp.integration.adapter.spi.BpmnParseException;
 import io.vanillabp.integration.adapter.spi.NameClashAvoidance;
 import io.vanillabp.integration.adapter.spi.NameClashAvoidanceSupport;
 import io.vanillabp.integration.adapter.spi.health.AdapterHealth;
+import io.vanillabp.integration.adapter.spi.workflowtask.WorkflowTaskWiring;
 import io.vanillabp.integration.spi.startup.StartupReport;
 import io.vanillabp.integration.spi.startup.StartupTopic;
 import io.vanillabp.integration.test.utils.SuppressOutputExtension;
 
 /**
  * The deployment service of this version of the adapter: it says who it is, reports health, reads
- * BPMN files whether or not its adapter id has clients, and refuses every later step of the
- * pipeline with words which say why, instead of pretending to deploy.
+ * and prepares BPMN files whether or not its adapter id has clients, and refuses every later step
+ * of the pipeline with words which say why, instead of pretending to deploy.
  */
 @ExtendWith(SuppressOutputExtension.class)
 class ZenBpmDeploymentServiceTest {
@@ -191,7 +193,60 @@ class ZenBpmDeploymentServiceTest {
     }
 
     @Test
-    @DisplayName("Every step after reading refuses with the message of the validation where the adapter id has no clients")
+    @DisplayName("Preparing needs no engine: the first process of a module gets a new context, a later one the context it was given")
+    void preparingKeepsOneContextPerModule() {
+        final var deploymentService = new ZenBpmDeploymentService("orders", withoutClients("orders"), TestCollaborators
+                .of("orders", claiming(new AtomicInteger())));
+        final var model = deploymentService
+                .readBpmn("shop", "order.bpmn", bpmn(), true)
+                .getFirst()
+                .getValue();
+
+        final var first = deploymentService.prepareBpmn("shop", null, "order.bpmn", "Order", model);
+        final var later = deploymentService.prepareBpmn("shop", first, "invoice.bpmn", "Order", model);
+
+        assertAll(
+                () -> assertEquals("shop", first.workflowModuleId()),
+                () -> assertSame(first, later));
+    }
+
+    @Test
+    @DisplayName("Preparing refuses a file which uses what ZenBPM cannot run, asking once per file whether a workflow service claims its process")
+    void preparingRefusesWhatZenBpmCannotRunOncePerFile() {
+        final var claimsAsked = new AtomicInteger();
+        final var deploymentService = new ZenBpmDeploymentService("orders", withoutClients("orders"), TestCollaborators
+                .of("orders", claiming(claimsAsked)));
+        final var model = deploymentService
+                .readBpmn("shop", "order.bpmn", new ByteArrayInputStream("""
+                        <bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" id="order">
+                          <bpmn:process id="Order" isExecutable="true">
+                            <bpmn:receiveTask id="Received" instantiate="true" />
+                          </bpmn:process>
+                        </bpmn:definitions>
+                        """.getBytes(StandardCharsets.UTF_8)), true)
+                .getFirst()
+                .getValue();
+
+        final var failure = assertThrows(IllegalStateException.class, () -> deploymentService.prepareBpmn("shop",
+                null, "order.bpmn", "Order", model));
+        final var context = new ZenBpmProcessingContext("shop");
+        context.firstPreparationOf("order.bpmn");
+        final var again = deploymentService.prepareBpmn("shop", context, "order.bpmn", "Order", model);
+
+        assertAll(
+                () -> assertTrue(failure
+                        .getMessage()
+                        .startsWith("BPMN file 'order.bpmn' of workflow module 'shop' uses what ZenBPM cannot run:"),
+                        failure.getMessage()),
+                () -> assertTrue(failure
+                        .getMessage()
+                        .contains("Order/Received (receiveTask with instantiate=\"true\")"), failure.getMessage()),
+                () -> assertSame(context, again),
+                () -> assertEquals(1, claimsAsked.get()));
+    }
+
+    @Test
+    @DisplayName("Every step after preparing refuses with the message of the validation where the adapter id has no clients")
     void anAdapterIdWithoutClientsRefusesWithItsValidationMessage() {
         final var deploymentService = new ZenBpmDeploymentService("orders", withoutClients("orders"), TestCollaborators
                 .of("orders"));
@@ -203,7 +258,7 @@ class ZenBpmDeploymentServiceTest {
     }
 
     @Test
-    @DisplayName("Every step after reading of a configured adapter id says that it is not built yet, and what it was asked to do")
+    @DisplayName("Every step after preparing of a configured adapter id says that it is not built yet, and what it was asked to do")
     void aConfiguredAdapterIdSaysThatTheStepIsNotBuiltYet() {
         try (var registry = new ZenBpmClientRegistry(List.of(configured("orders", "http://localhost:8080")))) {
             final var deploymentService = new ZenBpmDeploymentService("orders", registry, TestCollaborators.of(
@@ -216,7 +271,6 @@ class ZenBpmDeploymentServiceTest {
                     .toList();
 
             assertEquals(List.of(
-                    "ZenBPM adapter 'orders': preparing BPMN process 'Order' of workflow module 'shop' is implemented in a later story",
                     "ZenBPM adapter 'orders': wiring BPMN process 'Order' of workflow module 'shop' is implemented in a later story",
                     "ZenBPM adapter 'orders': deploying workflow module 'shop' is implemented in a later story",
                     "ZenBPM adapter 'orders': starting the workflow processing of workflow module 'shop' is implemented in a later story"),
@@ -296,7 +350,6 @@ class ZenBpmDeploymentServiceTest {
 
     private static List<Consumer<ZenBpmDeploymentService>> steps() {
         return List.of(
-                deploymentService -> deploymentService.prepareBpmn("shop", null, "order.bpmn", "Order", null),
                 deploymentService -> deploymentService.wireBpmn("shop", "order.bpmn", "Order", null, null),
                 deploymentService -> deploymentService.deployResources("shop", null),
                 deploymentService -> deploymentService.startWorkflowProcessing("shop", null));
@@ -310,6 +363,25 @@ class ZenBpmDeploymentServiceTest {
                   </bpmn:process>
                 </bpmn:definitions>
                 """.getBytes(StandardCharsets.UTF_8));
+    }
+
+    // the platform's wiring, as far as preparing asks it: every process is claimed, and the
+    // questions are counted
+    private static WorkflowTaskWiring claiming(final AtomicInteger asked) {
+        return (WorkflowTaskWiring) Proxy.newProxyInstance(ZenBpmDeploymentServiceTest.class.getClassLoader(),
+                new Class<?>[]{
+                        WorkflowTaskWiring.class
+                }, (
+                    proxy,
+                    method,
+                    arguments) -> {
+                    if (!"isClaimedByAWorkflowService".equals(method.getName())) {
+                        throw new AssertionError("WorkflowTaskWiring.%s is not expected to be called".formatted(method
+                                .getName()));
+                    }
+                    asked.incrementAndGet();
+                    return true;
+                });
     }
 
     // a registry with the one adapter id, which has no clients

@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL"
+    xmlns:zeebe="http://camunda.org/schema/zeebe/1.0" id="threeOffences" targetNamespace="http://bpmn.io/schema/bpmn">
+  <bpmn:message id="Message_Order" name="order" />
+  <bpmn:signal id="Signal_Recall" name="recall" />
+  <bpmn:process id="Orders" isExecutable="true">
+    <bpmn:receiveTask id="OrderReceived" instantiate="true" messageRef="Message_Order">
+      <bpmn:outgoing>Flow_1</bpmn:outgoing>
+    </bpmn:receiveTask>
+    <bpmn:scriptTask id="Calculate" scriptFormat="feel">
+      <bpmn:incoming>Flow_1</bpmn:incoming>
+      <bpmn:outgoing>Flow_2</bpmn:outgoing>
+      <bpmn:script>=amount * 2</bpmn:script>
+    </bpmn:scriptTask>
+    <bpmn:serviceTask id="Retry">
+      <bpmn:extensionElements>
+        <zeebe:taskDefinition type="retry" />
+      </bpmn:extensionElements>
+      <bpmn:incoming>Flow_2</bpmn:incoming>
+      <bpmn:outgoing>Flow_3</bpmn:outgoing>
+      <bpmn:standardLoopCharacteristics />
+    </bpmn:serviceTask>
+    <bpmn:boundaryEvent id="Recalled" attachedToRef="Retry">
+      <bpmn:signalEventDefinition id="Recalled_Definition" signalRef="Signal_Recall" />
+    </bpmn:boundaryEvent>
+    <bpmn:endEvent id="Done">
+      <bpmn:incoming>Flow_3</bpmn:incoming>
+    </bpmn:endEvent>
+    <bpmn:sequenceFlow id="Flow_1" sourceRef="OrderReceived" targetRef="Calculate" />
+    <bpmn:sequenceFlow id="Flow_2" sourceRef="Calculate" targetRef="Retry" />
+    <bpmn:sequenceFlow id="Flow_3" sourceRef="Retry" targetRef="Done" />
+  </bpmn:process>
+</bpmn:definitions>

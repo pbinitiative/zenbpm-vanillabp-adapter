@@ -29,11 +29,12 @@ Two adapter ids on one `rest-address` boot only where their `name-clash-avoidanc
 level differs, the setup of a migration from one mode to the other; with the same mode they end the
 start, naming the keys which tell them apart. The address is compared as configured, so two
 addresses of one engine (an alias, a proxy, two nodes of one cluster) are not recognised as one.
-The adapter reads the BPMN files of a workflow module, also for an adapter id without an engine,
-and refuses a file holding an executable process and any other process, because the engine would
-read them as one. It deploys nothing and runs no task yet: every later step throws an exception
-which says that it is not built yet, or, for an adapter id without clients, the message of its
-validation, which names the key to set. What is built next, and in which order, is the
+The adapter reads the BPMN files of a workflow module, also for an adapter id without an engine, and
+refuses a file holding an executable process and any other process, because the engine would read
+them as one, and a file which uses what ZenBPM cannot run or would run differently from the model,
+as [`GAPS.md`](./GAPS.md) lists. It deploys nothing and runs no task yet: every later step throws an
+exception which says that it is not built yet, or, for an adapter id without clients, the message of
+its validation, which names the key to set. What is built next, and in which order, is the
 implementation plan in [`docs/`](docs/README.md).
 
 ## Modules
