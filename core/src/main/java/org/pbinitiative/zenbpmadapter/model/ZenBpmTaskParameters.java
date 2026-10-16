@@ -25,8 +25,10 @@ import io.vanillabp.integration.adapter.spi.workflowtask.WorkflowTaskWiring;
  * nothing else but what input mappings give it. Those are evaluated in the scope around the element
  * which declares them, so a name reaches the job only where the element itself, if it is a
  * multi-instance element, and every multi-instance sub-process around it map it in, see
- * {@link ZenBpmInputMappings}. The names of the items of those elements are left out, because the
- * engine sets them; a target the modeller maps already is left as well.
+ * {@link ZenBpmInputMappings}. An element maps in the items of the multi-instance elements around
+ * it, which are variables of the scope around it, but neither its own item, which the engine sets
+ * inside its body, nor the items of the elements inside it, which do not exist yet where its
+ * mappings are evaluated; a target the modeller maps already is left as well.
  * <p>
  * The names are asked of the platform with the element id and with the task definition, as a method
  * may be wired by either, and of the extensions with both keys, element id first, because the
@@ -85,15 +87,19 @@ public final class ZenBpmTaskParameters {
             }
             names.addAll(wiring.extensionTaskParameterNames(workflowModuleId, process, keys));
             names.add(aggregateIdName);
-            names.removeAll(chain
-                    .stream()
-                    .map(elementId -> multiInstances
-                            .get(elementId)
-                            .inputElement())
-                    .filter(Objects::nonNull)
-                    .toList());
-            for (final var elementId : chain) {
-                ZenBpmInputMappings.carry(elements.get(elementId), names);
+            // the chain runs from the outermost element inwards: an element maps in the items of
+            // the elements around it, and neither its own nor those of the elements inside it
+            for (var position = 0; position < chain.size(); ++position) {
+                final var carried = new TreeSet<String>(names);
+                carried.removeAll(chain
+                        .subList(position, chain.size())
+                        .stream()
+                        .map(elementId -> multiInstances
+                                .get(elementId)
+                                .inputElement())
+                        .filter(Objects::nonNull)
+                        .toList());
+                ZenBpmInputMappings.carry(elements.get(chain.get(position)), carried);
             }
         }
     }

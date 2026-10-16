@@ -438,8 +438,8 @@ class ZenBpmDeploymentServiceTest {
     }
 
     @Test
-    @DisplayName("A file which is no DMN ends reading it under use-prefix, naming file and workflow module")
-    void aFileWhichIsNoDmnIsRefusedWhereItsIdsAreScoped() {
+    @DisplayName("A DMN file which is no XML ends reading it under use-prefix, naming file and workflow module")
+    void aDmnFileWhichIsNoXmlIsRefusedWhereItsIdsAreScoped() {
         final var deploymentService = new ZenBpmDeploymentService("orders", withoutClients("orders"), TestCollaborators
                 .of("orders", TestScoping.of(NameClashAvoidance.USE_PREFIX)));
 
@@ -488,7 +488,11 @@ class ZenBpmDeploymentServiceTest {
                 () -> assertEquals(List.of("isClaimedByAWorkflowService[shop, Order]",
                         "resolveWorkflowAggregateIdName[shop, Order]"), wiring.calls()),
                 () -> assertEquals("shop__paid", messageNameOf(model)),
-                () -> assertEquals(Map.of("paid", "Order/AwaitPayment"), context.awaitedMessages()));
+                () -> assertEquals(Map.of("paid", "Order/AwaitPayment"), context.awaitedMessages()),
+                () -> assertEquals(Map.of(), context.startingMessages()),
+                () -> assertThrows(UnsupportedOperationException.class, () -> context
+                        .awaitedMessages()
+                        .clear()));
     }
 
     @Test

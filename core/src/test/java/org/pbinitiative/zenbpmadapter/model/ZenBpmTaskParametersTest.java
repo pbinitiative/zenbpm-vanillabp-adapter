@@ -43,7 +43,7 @@ class ZenBpmTaskParametersTest {
     }
 
     @Test
-    @DisplayName("A job inside multi-instance sub-processes gets its names mapped into every one of them, a target the modeller maps already and the items left out")
+    @DisplayName("A job inside multi-instance sub-processes gets its names mapped into every one of them, a target the modeller maps already left out, and an item only into the sub-processes inside the one which declares it")
     void theNamesOfAJobInsideABodyAreMappedIntoEveryBodyAroundIt() {
         final var model = read();
 
@@ -54,8 +54,8 @@ class ZenBpmTaskParametersTest {
                         "=itemCode -> itemCode", "=printer -> printer", "=signature -> signature"),
                         inputsOf(model,
                                 "EveryParcel")),
-                () -> assertEquals(List.of("=itemCode -> itemCode", "=orderId -> orderId", "=printer -> printer"),
-                        inputsOf(model, "EveryItem")),
+                () -> assertEquals(List.of("=itemCode -> itemCode", "=orderId -> orderId", "=parcel -> parcel",
+                        "=printer -> printer"), inputsOf(model, "EveryItem")),
                 () -> assertEquals(List.of("=parcel.address -> address"), inputsOf(model, "Ship")));
     }
 
@@ -126,7 +126,7 @@ class ZenBpmTaskParametersTest {
                 .withTaskParameters("notify", "customer", "channel")
                 .withTaskParameters("ship", "weight", "address", "parcel")
                 .withExtensionTaskParameters("Sign", "signature")
-                .withTaskParameters("Label", "itemCode")
+                .withTaskParameters("Label", "itemCode", "parcel", "item")
                 .withExtensionTaskParameters("Label", "printer");
     }
 

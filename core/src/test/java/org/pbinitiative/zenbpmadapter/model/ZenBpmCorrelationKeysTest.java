@@ -86,6 +86,43 @@ class ZenBpmCorrelationKeysTest {
     }
 
     @Test
+    @DisplayName("A multi-instance body around an element waiting for a message whose key the modeller wrote gets no mapping: what that key reads is the modeller's to map")
+    void aBodyAroundAModelledKeyGetsNoMapping() {
+        final var model = readInline("""
+                <bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL"
+                    xmlns:zeebe="http://camunda.org/schema/zeebe/1.0" id="keyedInABody">
+                  <bpmn:message id="Message_Paid" name="paid" />
+                  <bpmn:message id="Message_Shipped" name="shipped">
+                    <bpmn:extensionElements>
+                      <zeebe:subscription correlationKey="=parcel.id" />
+                    </bpmn:extensionElements>
+                  </bpmn:message>
+                  <bpmn:process id="Orders" isExecutable="true">
+                    <bpmn:receiveTask id="AwaitPayment" messageRef="Message_Paid" />
+                    <bpmn:subProcess id="EveryParcel">
+                      <bpmn:multiInstanceLoopCharacteristics>
+                        <bpmn:extensionElements>
+                          <zeebe:loopCharacteristics inputCollection="=parcels" inputElement="parcel" />
+                        </bpmn:extensionElements>
+                      </bpmn:multiInstanceLoopCharacteristics>
+                      <bpmn:intermediateCatchEvent id="Shipped">
+                        <bpmn:messageEventDefinition id="Shipped_Definition" messageRef="Message_Shipped" />
+                      </bpmn:intermediateCatchEvent>
+                    </bpmn:subProcess>
+                  </bpmn:process>
+                </bpmn:definitions>
+                """);
+
+        ZenBpmCorrelationKeys.apply(model, () -> "orderId");
+
+        final var document = model.document();
+        assertAll(
+                () -> assertEquals(List.of(), mappingsOf(elementOf(document, "EveryParcel"))),
+                () -> assertEquals(List.of("=parcel.id"), keysOf(document, "Message_Shipped")),
+                () -> assertEquals(List.of("=orderId"), keysOf(document, "Message_Paid")));
+    }
+
+    @Test
     @DisplayName("A file whose messages all carry a key is left as it is, and the aggregate id is not even asked for")
     void aFileWithEveryKeyModelledIsLeftAsItIs() {
         final var text = """

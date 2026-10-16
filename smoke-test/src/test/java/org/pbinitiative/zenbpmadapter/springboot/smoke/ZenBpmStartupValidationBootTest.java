@@ -50,6 +50,15 @@ class ZenBpmStartupValidationBootTest {
             The same key may be set per workflow module and workflow \
             (vanillabp.workflow-modules.smoke-app.adapters.zenbpm.name-clash-avoidance).""";
 
+    // the adapter's refusal of 'by-adapter' which one workflow sets for itself
+    private static final String WORKFLOW_BY_ADAPTER_REFUSED = """
+            ZenBPM has no isolation mechanism of its own, so the name-clash-avoidance mode 'by-adapter' \
+            cannot be served by adapter 'zenbpm' - but it is configured for workflow 'SampleWorkflowService' of \
+            workflow module 'smoke-app'. Choose explicitly:
+              vanillabp.workflow-modules.smoke-app.workflows.SampleWorkflowService.adapters.zenbpm.name-clash-avoidance: use-prefix   # VanillaBP prefixes the identifiers
+              vanillabp.workflow-modules.smoke-app.workflows.SampleWorkflowService.adapters.zenbpm.name-clash-avoidance: none         # your identifiers are unique already
+            or remove the key, so the mode of the workflow module applies.""";
+
     @Test
     @DisplayName("An adapter id without an address boots with a warning naming the key, and a use of the adapter fails with the same words")
     void anUnconfiguredAdapterIdBootsWithAWarning(final CapturedOutput output) {
@@ -113,6 +122,19 @@ class ZenBpmStartupValidationBootTest {
                 .close()));
 
         assertEquals(BY_ADAPTER_REFUSED.formatted(""), failure.getMessage());
+    }
+
+    @Test
+    @DisplayName("A workflow which sets name-clash-avoidance 'by-adapter' of its own, in a module under use-prefix, ends the start naming the workflow's key")
+    void byAdapterOfOneWorkflowEndsTheStartNamingItsKey() {
+        final var failure = rootOf(assertThrows(Exception.class, () -> run("vanillabp.prioritized-adapters=zenbpm",
+                "vanillabp.adapters.zenbpm.rest-address=http://localhost:8080",
+                "vanillabp.adapters.zenbpm.name-clash-avoidance=use-prefix",
+                "vanillabp.workflow-modules.smoke-app.workflows.SampleWorkflowService.adapters.zenbpm.name-clash-avoidance=by-adapter",
+                "vanillabp.adapters.zenbpm.resources-location=%s".formatted(WITH_BPMN))
+                .close()));
+
+        assertEquals(WORKFLOW_BY_ADAPTER_REFUSED, failure.getMessage());
     }
 
     @Test

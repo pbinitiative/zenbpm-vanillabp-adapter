@@ -508,7 +508,7 @@ adapterId)` rewrites the identifiers listed in the fit check through the platfor
 pool and the diagram pointing at the process included; `ZenBpmDeploymentService.prepareBpmn`
 refuses constructs (once per file), then `by-adapter` for the module and for the workflow, then
 scopes the file (once per file) and records the process; `readDmn` keeps each DMN file in the
-context, its decision ids scoped under `use-prefix` (a file which is no DMN then ends the start
+context, its decision ids scoped under `use-prefix` (a file which is no XML then ends the start
 naming file and module); `deployResources` hands the module's processes to
 `validateNoCollidingProcessIds` and throws as before; `defaultNameClashAvoidance` answers
 `by-adapter` (decision 24); `warnAboutUnscopedIdentifiers` names ZenBPM's alternatives or writes the
@@ -536,7 +536,7 @@ fails `ZenBpmDeploymentServiceTest` unless named otherwise:
   `extensionElements`, a `zeebe:` task definition not scoped: each fails `ZenBpmScopingTest`;
 - the adapter's `accept-unscoped-identifiers` winning over the module's, and an accepted `none`
   warned about (`#acceptedUnscopedIdentifiersAreNotWarnedAbout`);
-- a DMN file rewritten under every mode, and a file which is no DMN not named;
+- a DMN file rewritten under every mode, and a file which is no XML not named;
 - the module's processes not handed to the collision check;
 - a group sharing `by-adapter` told to give each id its own mode: fails `ZenBpmInstanceIdentityTest`;
 - the module's `accept-unscoped-identifiers` not handed on: fails `VanillaBpZenBpmPropertiesTest` on
@@ -787,10 +787,16 @@ question 2 was left to this fit check; four things did not fit:
 2. **The aggregate id travels with the names.** Inside a body a job carries no variable it is not
    given, and a workflow the engine started (decision 25) can be named by its aggregate id variable
    only, so the id is part of the names, as Camunda 8 fetches it with every job.
-3. **The item is not mapped.** The name an enclosing element's `inputElement` gives is the item the
-   engine sets itself; a mapping of it would read the scope around the element, where it is not.
-   How an iteration's item reaches a job inside a nested body is a question of E9's multi-instance
-   support, not of this story: a job of an inner multi-instance element gets its own item only.
+3. **An item is mapped only into the elements inside the one which declares it.** *Corrected
+   after the reviews of F4.2: this item first said that no item is mapped, because "a mapping of it
+   would read the scope around the element, where it is not", which holds for the declaring element
+   only.* The engine sets an element's own item inside its body, and the items of the elements
+   inside it do not exist yet where its mappings are evaluated, so neither is mapped on it. The item
+   of an outer element is a variable of the scope around every element inside it, so where a method
+   reads it as a `@TaskParam` it is mapped into each of them: a scratch program at `bdd795a3` gave a
+   job of an inner multi-instance task the item `order` of the sequential multi-instance
+   sub-process around it, mapped on the inner task only. How an iteration reaches a method through
+   `@MultiInstanceElement` stays E9's.
 4. **How a name is written.** The scratch program evaluated `=order-id`, `=order id` and `=if` as
    the variables of those names, and failed on a name in backticks; a source without `=` is taken
    literally. So every mapping is `source="=<name>" target="<name>"`, whatever the name.
@@ -834,6 +840,81 @@ fails `ZenBpmTaskParametersTest` unless named otherwise:
   fails `ZenBpmDeploymentServiceTest`.
 
 **F4.2 built 2026-10-16** on the branch `feature/f4.2-rewriting`, one commit per story, not pushed.
+
+**Answers to two reviews of F4.2, 2026-10-16** (one by Claude, 9 findings; one by Copilot, 1
+finding, the same as Claude 5). Every claim about the engine was checked in its source at
+`bdd795a3`, the one about nested items again with a scratch program against its in-memory runtime.
+
+Valid and fixed:
+
+- **A decision id the engine splits** (Claude 1, Major). For the bindings `latest` and none,
+  `FindAndEvaluateDRD` in `pkg/dmn/dmn_engine.go` reads a decision id holding one `.` as
+  `<DMN definitions id>.<decision id>` and fails on more than one; the binding `deployment` and any
+  unknown one always fail; `versionTag` looks the whole id up. Under `use-prefix` the scoping
+  prefixes the ids of the decisions, not those of the DMN definitions, so `pricing.rating` became
+  `shop__pricing.rating`, which names DMN definitions that do not exist. The review did not see the
+  second way into the same failure: the platform forbids only `__` in a workflow module id, so in a
+  module `com.shop` even `rating` became `com.shop__rating`, which the engine splits. Decided by
+  recommendation, because scoping the id of the DMN definitions as well would mean rewriting what
+  the platform's `DmnDecisionIds` does not touch, for a form which is only useful for two decisions
+  of one id in one workflow module: `ZenBpmScoping` refuses, before it rewrites anything, every
+  called decision whose id holds a `.` once it is scoped, unless it is bound by `versionTag`,
+  naming each task, what the id becomes and the three ways out. `ZenBpmUnsupportedConstructs`
+  refuses, in every mode and every process, a binding other than `latest`, `versionTag` or none,
+  and a decision id with more than one `.` under `latest` or none, as GAPS 14 now lists. Tests:
+  `ZenBpmScopingTest#aDecisionIdTheEngineWouldSplitIsRefusedUnderUsePrefix`, two more cases of
+  `ZenBpmUnsupportedConstructsTest#everyConstructIsRefused` and two more elements in
+  `#whatZenBpmRunsPasses`.
+- **The items of outer multi-instance elements** (Claude 2). The engine evaluates the input
+  mappings of an element in the scope around it, and the multi-instance instance of an inner
+  element copies the variables of the outer iteration, the outer item included. The scratch
+  program gave the job of an inner multi-instance task `order`, the item of the sub-process around
+  it, mapped on the inner task only. So an element now maps in the items of the elements around it
+  and leaves out only its own and those of the elements inside it. Fit-check item 3 of S4.2.3, the
+  S9.4.1 note, the javadoc and the architecture say so; `ZenBpmTaskParametersTest` maps `parcel`
+  into `EveryItem` and not into `EveryParcel`.
+- **A modelled key inside a body** (Claude 3). The guard leaving a body without the aggregate id
+  where the message it waits for carries the modeller's key had no test; now
+  `ZenBpmCorrelationKeysTest#aBodyAroundAModelledKeyGetsNoMapping` holds it.
+- **`by-adapter` set for one workflow** (Claude 4). `ZenBpmWorkflowByAdapterRefusedTest` boots
+  Quarkus and `ZenBpmStartupValidationBootTest#byAdapterOfOneWorkflowEndsTheStartNamingItsKey`
+  Spring Boot with `use-prefix` on the adapter id and `by-adapter` on the workflow; both end the
+  start with the message naming the workflow's key. That Quarkus accepts the key is proven by it.
+- **"Every rewrite is idempotent"** (Claude 5, Copilot 1). The architecture now says that the file
+  is rewritten once because the scoping is not idempotent, and that every boot rewrites the file
+  as read, so the same file gives the same deployment. Draft decision 4 is left as it is: its
+  "idempotently" is that same-file-same-deployment promise, which holds, and a decision is not
+  edited.
+- **Lines the formatter did not rewrap** (Claude 6). The javadoc of `ZenBpmProcessingContext` and
+  the README paragraph are rewrapped. The formatter never wraps the arguments of a constructor call
+  (`alignment_for_arguments_in_allocation_expression` is 0) and joins them, so the call building
+  `ZenBpmBpmnModel` is kept one argument per line between `@formatter:off` and `@formatter:on`.
+- **Three ids on one engine** (Claude 7). Both messages of `ZenBpmInstanceIdentity` tell more than
+  two ids to set `use-prefix` on one, `none` on another, and give every further id an engine of its
+  own; `ZenBpmInstanceIdentityTest#threeIdsOnOneEngineAreToldAboutTheTwoModes` for `by-adapter`
+  and `none`.
+- **"No DMN"** (Claude 8). `DmnDecisionIds` refuses what is no XML only; the javadoc, the test and
+  this plan say "no XML" now.
+- **The context's maps** (Claude 9). `ZenBpmProcessingContext` keeps its message maps and hands out
+  read-only views; `addMessagesOf(model, claimed)` adds a file's messages and refuses a collision.
+
+Claude's notes for later stories are no findings: that a call activity in a body needs the
+aggregate id carried as well is now a note under instruction 9 of S4.3.1; that an unconfigured
+application meets two refusals one start after the other is what fit-check item 2 of S4.2.1
+decided.
+
+Seen to fail, each restored afterwards (10 of 10 mutants), against a green unmutated run: the
+binding check off, the two-dot check off, the two-dot check applied under `versionTag` (each fails
+`ZenBpmUnsupportedConstructsTest`); the scoping's refusal off, a `versionTag` binding refused, an
+unscoped id refused, the refusal after the rewrite (each fails `ZenBpmScopingTest`); the items of
+outer elements left out, an element's own item mapped (`ZenBpmTaskParametersTest`); the guard of a
+modelled key off (`ZenBpmCorrelationKeysTest`); three ids treated as two
+(`ZenBpmInstanceIdentityTest`); the context's map handed out for writing
+(`ZenBpmDeploymentServiceTest`). `TZ=Etc/UTC mvn clean install` on OpenJDK 25.0.2 builds green with
+every integration test run and none skipped (core 587 unit and 34 integration tests, Spring Boot 9,
+smoke test 29, Quarkus runtime 9, Quarkus deployment 39, coverage gate 35). The gate measures 100 %
+of 15,059 instructions for Spring Boot and 100 % of 14,933 for Quarkus, and
+`bin/check-deploy-safety.sh` passes both runs.
 
 ---
 
@@ -884,7 +965,10 @@ fails `ZenBpmTaskParametersTest` unless named otherwise:
    inject `<zenbpm:in businessKey="=<aggregateIdName>"/>` on the call activity and an input mapping of
    the id variable into the called instance: a task of a called process is bound by its own process
    and loads the caller's aggregate (platform decision 123), so the child needs the caller's name;
-   if false, nothing.
+   if false, nothing. *Note from the reviews of F4.2:* a call activity inside a multi-instance body
+   sees only the body's variables, as a job does, so the aggregate id it hands on must also be
+   carried into every multi-instance element around it, with `ZenBpmInputMappings.carry` as S4.2.2
+   does for correlation keys.
 10. No `unsharedWorkflowAggregatePaths` and no `declaredTypesOfWorkflowAggregatePaths` (deviation
     14).
 11. `registerProcessVersions(adapterId, module, process, catalog)` waits for the catalog of E10.

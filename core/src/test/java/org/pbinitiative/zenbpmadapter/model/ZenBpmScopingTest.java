@@ -6,6 +6,7 @@ package org.pbinitiative.zenbpmadapter.model;
 
 import static org.junit.jupiter.api.Assertions.assertAll;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.ByteArrayInputStream;
@@ -123,6 +124,64 @@ class ZenBpmScopingTest {
                         .getElementsByTagNameNS("*", "participant")
                         .item(2)).getAttribute("processRef")),
                 () -> assertEquals("a note", attributeOf(document, "taskDefinition", "type")));
+    }
+
+    @Test
+    @DisplayName("Under use-prefix a decision named with the id of its DMN definitions, and any decision of a module whose id holds a '.', is refused before anything is rewritten, naming each task, unless it is bound by its version tag")
+    void aDecisionIdTheEngineWouldSplitIsRefusedUnderUsePrefix() {
+        final var named = """
+                <bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL"
+                    xmlns:zenbpm="http://zenbpm.pbinitiative.org/1.0" id="decisions">
+                  <bpmn:process id="Orders" isExecutable="true">
+                    <bpmn:businessRuleTask id="ByDefinitions">
+                      <bpmn:extensionElements><zenbpm:calledDecision decisionId="pricing.rating" /></bpmn:extensionElements>
+                    </bpmn:businessRuleTask>
+                    <bpmn:businessRuleTask id="ByLatest">
+                      <bpmn:extensionElements>
+                        <zenbpm:calledDecision decisionId="rating" bindingType="latest" />
+                      </bpmn:extensionElements>
+                    </bpmn:businessRuleTask>
+                    <bpmn:businessRuleTask id="ByVersion">
+                      <bpmn:extensionElements>
+                        <zenbpm:calledDecision decisionId="pricing.rating" bindingType="versionTag" versionTag="1" />
+                      </bpmn:extensionElements>
+                    </bpmn:businessRuleTask>
+                    <bpmn:businessRuleTask id="Unnamed">
+                      <bpmn:extensionElements><zenbpm:calledDecision /></bpmn:extensionElements>
+                    </bpmn:businessRuleTask>
+                  </bpmn:process>
+                </bpmn:definitions>
+                """;
+        final var prefixing = TestScoping.of(NameClashAvoidance.USE_PREFIX);
+
+        final var ofTheDefinitions = assertThrows(IllegalStateException.class, () -> ZenBpmScoping.apply(read(
+                named), "shop", "Orders", prefixing, "orders"));
+        final var document = read(named);
+        final var ofTheModule = assertThrows(IllegalStateException.class, () -> ZenBpmScoping.apply(document,
+                "com.shop", "Orders", prefixing, "orders"));
+        final var unscoped = read(named);
+        ZenBpmScoping.apply(unscoped, "com.shop", "Orders", TestScoping.of(NameClashAvoidance.NONE), "orders");
+
+        assertAll(
+                () -> assertEquals(
+                        """
+                                Under name-clash-avoidance 'use-prefix', business rule tasks of workflow module 'shop' would \
+                                call decisions ZenBPM does not find:
+                                  - Orders/ByDefinitions: decisionId 'pricing.rating' becomes 'shop__pricing.rating'
+                                ZenBPM reads a decision id holding a '.' as '<DMN definitions id>.<decision id>', and VanillaBP \
+                                prefixes the ids of the decisions with the workflow module id but not the ids of the DMN \
+                                definitions. Name each decision by its own id alone, give the workflow module an id without \
+                                a '.', or bind the decision by its version tag (bindingType="versionTag"), under which the \
+                                engine does not split the id.""",
+                        ofTheDefinitions.getMessage()),
+                () -> assertTrue(ofTheModule
+                        .getMessage()
+                        .contains("""
+                                  - Orders/ByDefinitions: decisionId 'pricing.rating' becomes 'com.shop__pricing.rating'
+                                  - Orders/ByLatest: decisionId 'rating' becomes 'com.shop__rating'
+                                ZenBPM reads"""), ofTheModule::getMessage),
+                () -> assertEquals("Orders", attributeOf(document, "process", "id")),
+                () -> assertTrue(read(named).isEqualNode(unscoped), () -> serialized(unscoped)));
     }
 
     private static String attributeOf(

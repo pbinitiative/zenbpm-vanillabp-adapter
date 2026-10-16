@@ -19,6 +19,8 @@ import java.util.Map;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.EnumSource;
 
 import io.vanillabp.integration.adapter.spi.NameClashAvoidance;
 import io.vanillabp.integration.adapter.spi.NameClashAvoidanceSupport;
@@ -78,6 +80,27 @@ class ZenBpmInstanceIdentityTest {
                     on one id and 'none' on the other: 'vanillabp.adapters.new.name-clash-avoidance', \
                     'vanillabp.adapters.old.name-clash-avoidance';
                       - or remove all but one of these adapter ids.""", failure.getMessage());
+        }
+    }
+
+    @ParameterizedTest
+    @EnumSource(value = NameClashAvoidance.class, names = {
+            "BY_ADAPTER", "NONE"
+    })
+    @DisplayName("Three adapter ids on one engine cannot each get a mode of their own, as ZenBPM serves two, so the message gives every further id an engine of its own")
+    void threeIdsOnOneEngineAreToldAboutTheTwoModes(final NameClashAvoidance mode) {
+        try (var registry = registryOf(configured("a", "http://zenbpm:8080"), configured("b", "http://zenbpm:8080"),
+                configured("c", "http://zenbpm:8080"))) {
+            final var failure = assertThrows(IllegalStateException.class, () -> ZenBpmInstanceIdentity
+                    .validateDistinct(List.of("a", "b", "c"), registry, modes(Map.of("a", mode, "b", mode, "c",
+                            mode))));
+
+            assertTrue(failure
+                    .getMessage()
+                    .contains("""
+                              - for one engine on purpose, as in a migration from 'none' to 'use-prefix', set \
+                            'use-prefix' on one id and 'none' on another, and give every further id an engine of its \
+                            own: 'vanillabp.adapters.a.name-clash-avoidance',"""), failure::getMessage);
         }
     }
 

@@ -317,7 +317,7 @@ public class ZenBpmDeploymentService implements AdapterDeploymentService<ZenBpmB
      * @param dmn The content of the file, which is not closed
      * @return The context, with the file added
      * @throws IllegalStateException Where the decision ids are to be scoped and the file cannot be
-     *             read as DMN, naming file and workflow module
+     *             read as XML, naming file and workflow module
      */
     @Override
     public ZenBpmProcessingContext readDmn(
@@ -393,8 +393,7 @@ public class ZenBpmDeploymentService implements AdapterDeploymentService<ZenBpmB
         final ZenBpmBpmnModel model,
         final boolean claimed
     ) {
-        ZenBpmCorrelationKeys.refuseMessagesWhichStartAndAreAwaited(workflowModuleId, context.startingMessages(),
-                context.awaitedMessages(), model, claimed);
+        context.addMessagesOf(model, claimed);
         ZenBpmScoping.apply(model.document(), workflowModuleId, bpmnProcessId, collaborators.scoping(), adapterId);
         if (!claimed) {
             return;

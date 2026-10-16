@@ -44,6 +44,13 @@ import io.vanillabp.integration.adapter.spi.NameClashAvoidanceSupport;
  * changed under {@link NameClashAvoidance#USE_PREFIX}. It resolves the mode per workflow for the
  * process id and the task definitions, and per workflow module for the rest. The rewrite is not
  * idempotent, so the pipeline applies it once per file.
+ * <p>
+ * Before it rewrites anything, it refuses a called decision the engine would not find once its id is
+ * scoped: the engine reads a decision id holding a <code>.</code> as
+ * <code>&lt;DMN definitions id&gt;.&lt;decision id&gt;</code>, and the scoping prefixes the ids of
+ * the decisions alone, so a decision named with the id of its DMN definitions, or any decision of a
+ * workflow module whose id holds a <code>.</code>, would be looked for in DMN definitions which do
+ * not exist. A decision bound by its version tag is looked for by its whole id.
  */
 public final class ZenBpmScoping {
 
@@ -58,6 +65,8 @@ public final class ZenBpmScoping {
      * @param bpmnProcessId The plain id of the file's process
      * @param scoping The platform's name-clash scoping
      * @param adapterId The adapter id the file is deployed by
+     * @throws IllegalStateException Where a called decision would not be found once its id is
+     *             scoped, naming every such business rule task
      */
     public static void apply(
         final Document document,
@@ -68,6 +77,8 @@ public final class ZenBpmScoping {
     ) {
         final UnaryOperator<String> processId = id -> scoping.scopedProcessId(workflowModuleId, id, adapterId);
         final UnaryOperator<String> identifier = name -> scoping.scopedIdentifier(workflowModuleId, name, adapterId);
+        refuseDecisionIdsTheEngineWouldSplit(extensions(document, "calledDecision"), workflowModuleId, bpmnProcessId,
+                identifier);
         final var scopedProcessId = processId.apply(bpmnProcessId);
         final UnaryOperator<String> referenceToTheProcess = reference -> reference.equals(bpmnProcessId)
                 ? scopedProcessId
@@ -83,6 +94,44 @@ public final class ZenBpmScoping {
         rewrite(extensions(document, "calledDecision"), "decisionId", identifier);
         rewrite(extensions(document, "taskDefinition"), "type", type -> scoping.scopedTaskDefinition(
                 workflowModuleId, bpmnProcessId, type, adapterId));
+    }
+
+    // the engine reads a decision id holding a '.' as '<id of the DMN definitions>.<id of the
+    // decision>' unless the decision is bound by its version tag, and the scoping prefixes the ids
+    // of the decisions alone, so such an id is refused once it is scoped
+    private static void refuseDecisionIdsTheEngineWouldSplit(
+        final List<Element> calledDecisions,
+        final String workflowModuleId,
+        final String bpmnProcessId,
+        final UnaryOperator<String> identifier
+    ) {
+        final var refused = new ArrayList<String>();
+        for (final var calledDecision : calledDecisions) {
+            final var decisionId = calledDecision.getAttribute("decisionId");
+            if (decisionId.isEmpty() || "versionTag".equals(calledDecision.getAttribute("bindingType"))) {
+                continue;
+            }
+            final var scoped = identifier.apply(decisionId);
+            if (!scoped.equals(decisionId) && scoped.contains(".")) {
+                refused.add("  - %s/%s: decisionId '%s' becomes '%s'".formatted(bpmnProcessId,
+                        ((Element) calledDecision
+                                .getParentNode()
+                                .getParentNode()).getAttribute("id"),
+                        decisionId, scoped));
+            }
+        }
+        if (refused.isEmpty()) {
+            return;
+        }
+        throw new IllegalStateException("""
+                Under name-clash-avoidance 'use-prefix', business rule tasks of workflow module '%s' would \
+                call decisions ZenBPM does not find:
+                %s
+                ZenBPM reads a decision id holding a '.' as '<DMN definitions id>.<decision id>', and VanillaBP \
+                prefixes the ids of the decisions with the workflow module id but not the ids of the DMN \
+                definitions. Name each decision by its own id alone, give the workflow module an id without \
+                a '.', or bind the decision by its version tag (bindingType="versionTag"), under which the \
+                engine does not split the id.""".formatted(workflowModuleId, String.join("\n", refused)));
     }
 
     private static void rewrite(

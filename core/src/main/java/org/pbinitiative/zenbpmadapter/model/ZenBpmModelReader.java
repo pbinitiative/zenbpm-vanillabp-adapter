@@ -350,9 +350,28 @@ public final class ZenBpmModelReader {
                 readTopLevel(element);
             }
             walk(process, List.of());
+            // the formatter never wraps the arguments of a constructor call, so they are kept one per
+            // line by hand
+            // @formatter:off
             return new ZenBpmBpmnModel(
-                    filename, document, attribute(process,
-                            "id"), tasks, userTasks, catchMessages, startMessages, startMessagesAreKnown, startEvents, endEventIds, multiInstanceElements, callActivities, concurrentTokenElements, expressions, messageStarts, messageCatches, enclosingMultiInstances);
+                    filename,
+                    document,
+                    attribute(process, "id"),
+                    tasks,
+                    userTasks,
+                    catchMessages,
+                    startMessages,
+                    startMessagesAreKnown,
+                    startEvents,
+                    endEventIds,
+                    multiInstanceElements,
+                    callActivities,
+                    concurrentTokenElements,
+                    expressions,
+                    messageStarts,
+                    messageCatches,
+                    enclosingMultiInstances);
+            // @formatter:on
         }
 
         private void countOutgoingFlows(final Element container) {

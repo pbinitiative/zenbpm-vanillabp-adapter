@@ -107,13 +107,17 @@ events, concurrent-token elements, the model's expressions with their place). Re
 name in either extension namespace (`zeebe:` or `zenbpm:`); writing uses the `zenbpm` namespace,
 declared on the root once.
 
-`prepareBpmn` rewrites the document ONCE per file (the context remembers the filename) and every
-rewrite is idempotent and never overwrites what the modeller wrote (draft decision 4):
+`prepareBpmn` rewrites the document ONCE per file (the context remembers the filename), because the
+scoping is not idempotent (a second pass would prefix twice); every boot rewrites the file as it was
+read, so the same file gives the same deployment, and no rewrite overwrites what the modeller wrote
+(draft decision 4):
 
 1. **Scoping** (`ZenBpmScoping`, from `PeaScoping`): under `use-prefix` rewrite `process@id` (and
    the `participant@processRef` and `BPMNPlane@bpmnElement` pointing at it), `message@name`,
    `error@errorCode`, `escalation@escalationCode`, `taskDefinition@type` (scoped per process by
-   default), `calledElement@processId`, `calledDecision@decisionId`; unchanged in `none`. Before it,
+   default), `calledElement@processId`, `calledDecision@decisionId`; unchanged in `none`. A
+   `decisionId` the engine would split once it is scoped (`<dmn-id>.<decision-id>`, or any decision
+   of a workflow module whose id holds a `.`) is refused unless bound by `versionTag`. Before it,
    `by-adapter` is refused for the module (the platform's `validateNativeIsolationSupported`) and for
    a workflow which sets it (decision 24); `readDmn` scopes the decision ids of a DMN file the same
    way.
@@ -129,8 +133,9 @@ rewrite is idempotent and never overwrites what the modeller wrote (draft decisi
    task inside a multi-instance body, one `ioMapping input` per name `taskParameterNames` (by
    element id and task definition) and `extensionTaskParameterNames` report, plus the aggregate id
    (`source="=<name>" target="<name>"`), on the task where it is a multi-instance element and on
-   every multi-instance sub-process around it; the items and the targets the modeller maps are left
-   out. A job anywhere else gets a copy of its scope's variables from the engine and needs none.
+   every multi-instance sub-process around it; an element maps in the items of the multi-instance
+   elements around it, never its own or those of the elements inside it, and the targets the
+   modeller maps are left out. A job anywhere else gets a copy of its scope's variables from the engine and needs none.
 4. **Marker tasks** (decision 26), only in a process a workflow service claims
    (`isClaimedByAWorkflowService`). Where `workflowEndedHandlerExists` for the process (it also
    answers `true` when `release-on-workflow-end` is on), a service task

@@ -72,7 +72,7 @@ class ZenBpmUnsupportedConstructsTest {
     }
 
     @Test
-    @DisplayName("What ZenBPM runs as modelled passes: an expression at a gateway, a default flow without one, a literal timer, a message throw event, a receive task waiting for a message, flags spelt as Go reads them, a blank condition, an unknown element without flows, an event definition on a task, which the engine never reads")
+    @DisplayName("What ZenBPM runs as modelled passes: an expression at a gateway, a default flow without one, a literal timer, a message throw event, a receive task waiting for a message, flags spelt as Go reads them, a blank condition, an unknown element without flows, an event definition on a task, which the engine never reads, a decision named with the id of its DMN definitions, a decision id the engine does not split")
     void whatZenBpmRunsPasses() {
         assertDoesNotThrow(() -> ZenBpmUnsupportedConstructs.check("shop",
                 model("""
@@ -110,6 +110,14 @@ class ZenBpmUnsupportedConstructsTest {
                         <bpmn:boundaryEvent id="Reminder" attachedToRef="Pay" cancelActivity="false">
                           <bpmn:timerEventDefinition><bpmn:timeDuration>PT1H</bpmn:timeDuration></bpmn:timerEventDefinition>
                         </bpmn:boundaryEvent>
+                        <bpmn:businessRuleTask id="RateByItsDefinitions">
+                          <bpmn:extensionElements><zenbpm:calledDecision decisionId="pricing.rating" /></bpmn:extensionElements>
+                        </bpmn:businessRuleTask>
+                        <bpmn:businessRuleTask id="RateByVersion">
+                          <bpmn:extensionElements>
+                            <zenbpm:calledDecision decisionId="a.b.c" bindingType="versionTag" versionTag="1" />
+                          </bpmn:extensionElements>
+                        </bpmn:businessRuleTask>
                         <bpmn:callActivity id="Invoice">
                           <bpmn:extensionElements>
                             <zenbpm:calledElement processId="Invoicing" />
@@ -353,6 +361,18 @@ class ZenBpmUnsupportedConstructsTest {
                                 """,
                         RUN_DIFFERENTLY,
                         "Orders/E (decisionId of calledDecision written as an expression, which the engine takes literally)"),
+                Arguments.of("decision bound by deployment",
+                        """
+                                <bpmn:businessRuleTask id="E"><bpmn:extensionElements><zenbpm:calledDecision decisionId="rating" bindingType="deployment" /></bpmn:extensionElements></bpmn:businessRuleTask>
+                                """,
+                        RUN_DIFFERENTLY,
+                        "Orders/E (bindingType=\"deployment\" of calledDecision, which the engine fails on when a workflow reaches it)"),
+                Arguments.of("decision id with two dots",
+                        """
+                                <bpmn:businessRuleTask id="E"><bpmn:extensionElements><zenbpm:calledDecision decisionId="dmn.pricing.rating" bindingType="latest" /></bpmn:extensionElements></bpmn:businessRuleTask>
+                                """,
+                        RUN_DIFFERENTLY,
+                        "Orders/E (decisionId of calledDecision with more than one '.', which the engine fails on when a workflow reaches it: it reads '<decision id>' or '<DMN definitions id>.<decision id>')"),
                 Arguments.of("candidate groups written as an expression",
                         """
                                 <bpmn:userTask id="E"><bpmn:extensionElements><zenbpm:assignmentDefinition candidateGroups="=groups" /></bpmn:extensionElements></bpmn:userTask>

@@ -12,14 +12,18 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
+import org.pbinitiative.zenbpmadapter.model.ZenBpmBpmnModel;
+import org.pbinitiative.zenbpmadapter.model.ZenBpmCorrelationKeys;
+
 /**
  * What the deployment pipeline of this adapter collects about one workflow module, from its first
  * BPMN file to the start of its workflow processing. It names the type the platform and the
  * extensions match the pipeline by.
  * <p>
  * It holds the files it prepared, the processes of the workflow module, the messages they start
- * with and wait for, and its DMN files as they are deployed. The adapter SPI prepares every process of a file, and all processes of a file share
- * one model, so what is done to a file is done once: the context remembers the files it prepared. This
+ * with and wait for, and its DMN files as they are deployed; what it hands out cannot be changed.
+ * The adapter SPI prepares every process of a file, and all processes of a file share one model,
+ * so what is done to a file is done once: the context remembers the files it prepared. This
  * adapter reads one process per file, because the engine deploys no more, so today every file is
  * prepared once anyway; the guard keeps the SPI's contract should that ever change.
  * <p>
@@ -110,24 +114,40 @@ public final class ZenBpmProcessingContext {
     }
 
     /**
-     * The names of the messages which start a workflow of the module, each with the first start
-     * event naming it as <code>process/element</code>. The preparation of each file adds its own.
+     * Adds the messages of a file to those of the workflow module, and ends the deployment where a
+     * message then both starts a workflow of the module and is one a claimed workflow waits for, see
+     * {@link ZenBpmCorrelationKeys#refuseMessagesWhichStartAndAreAwaited}.
      *
-     * @return The messages, changed by the caller
+     * @param model The model of the file
+     * @param claimed Whether a workflow service claims the process of the file
+     * @throws IllegalStateException Naming every message used both ways, and where
+     */
+    public void addMessagesOf(
+        final ZenBpmBpmnModel model,
+        final boolean claimed
+    ) {
+        ZenBpmCorrelationKeys.refuseMessagesWhichStartAndAreAwaited(workflowModuleId, startingMessages,
+                awaitedMessages, model, claimed);
+    }
+
+    /**
+     * The names of the messages which start a workflow of the module, each with the first start
+     * event naming it as <code>process/element</code>.
+     *
+     * @return The messages, as far as the files were prepared
      */
     public Map<String, String> startingMessages() {
-        return startingMessages;
+        return Collections.unmodifiableMap(startingMessages);
     }
 
     /**
      * The names of the messages the claimed workflows of the module wait for, each with the first
-     * element waiting for it as <code>process/element</code>. The preparation of each file adds
-     * its own.
+     * element waiting for it as <code>process/element</code>.
      *
-     * @return The messages, changed by the caller
+     * @return The messages, as far as the files were prepared
      */
     public Map<String, String> awaitedMessages() {
-        return awaitedMessages;
+        return Collections.unmodifiableMap(awaitedMessages);
     }
 
 }
