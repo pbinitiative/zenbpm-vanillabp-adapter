@@ -20,7 +20,9 @@ import io.vanillabp.integration.adapter.spi.NameClashAvoidanceSupport;
  * different engines, or one engine with different <code>name-clash-avoidance</code> modes:
  * <ul>
  * <li>The engine is {@link ZenBpmAdapterConfiguration#instanceIdentity()}, the normalised
- * <code>rest-address</code>, so one engine stays one engine however its address is spelled.</li>
+ * <code>rest-address</code>, so one address stays one address however it is spelled. It is the
+ * address as configured: two addresses of one engine, such as an alias, a proxy in front of a node
+ * or two nodes of one cluster, are not recognised as one.</li>
  * <li>The mode is the one of the adapter id as a whole. The identifiers of the same workflow
  * module reach the engine differently in each mode, plain or prefixed. That is exactly the setup
  * of a migration from one mode to the other: two ids on one engine which differ only in that
@@ -31,8 +33,10 @@ import io.vanillabp.integration.adapter.spi.NameClashAvoidanceSupport;
  * deploy the same processes and work the same jobs, so configuring them as two adapters is an
  * error.
  * <p>
- * An adapter id without clients has no engine. It is not compared: its start already reported
- * the keys it misses, and it refuses all work until they are set.
+ * An adapter id without a valid <code>rest-address</code> names no engine. It is not compared: its
+ * start already reported the key it misses, and it refuses all work until the key is set. An id
+ * which boots degraded because of another key has no clients either, but its address names an
+ * engine, so it is compared: once the other key is fixed, the two ids would be one instance.
  */
 public final class ZenBpmInstanceIdentity {
 
@@ -40,12 +44,13 @@ public final class ZenBpmInstanceIdentity {
     }
 
     /**
-     * Ends the start where two of the given adapter ids address the same engine with the same
-     * mode. Every such group is named in one message, so one restart shows them all. The adapter
-     * SPI hook <code>AdapterDeploymentService#validateDistinctAdapterInstances</code> calls it.
+     * Ends the start where two of the given adapter ids name the same <code>rest-address</code>
+     * with the same mode. Every such group is named in one message, so one restart shows them
+     * all. The adapter SPI hook
+     * <code>AdapterDeploymentService#validateDistinctAdapterInstances</code> calls it.
      *
      * @param adapterIds The configured adapter ids of type <code>zenbpm</code>, in the order of
-     *            their priority
+     *            their priority where all of them are prioritized
      * @param registry The factories of the adapter ids
      * @param scoping The platform's name-clash scoping, which knows the mode of each adapter id
      * @throws IllegalStateException Where two adapter ids are one instance, naming the keys which
@@ -60,31 +65,33 @@ public final class ZenBpmInstanceIdentity {
         adapterIds
                 .stream()
                 .map(registry::getFactory)
-                .filter(ZenBpmClientFactory::isConfigured)
+                .filter(factory -> factory
+                        .configuration()
+                        .hasValidRestAddress())
                 .forEach(factory -> idsByInstance
                         .computeIfAbsent(new Instance(factory
                                 .configuration()
                                 .instanceIdentity(), scoping.modeFor(null, null, factory.getAdapterId())),
                                 instance -> new LinkedList<>())
                         .add(factory.getAdapterId()));
-        final var oneInstance = idsByInstance
+        final var messages = idsByInstance
                 .entrySet()
                 .stream()
                 .filter(group -> group
                         .getValue()
                         .size() > 1)
-                .map(group -> sameInstance(group.getKey(), group.getValue()))
+                .map(group -> whyTheyAreOneInstance(group.getKey(), group.getValue()))
                 .toList();
-        if (!oneInstance.isEmpty()) {
-            throw new IllegalStateException(String.join("\n\n", oneInstance));
+        if (!messages.isEmpty()) {
+            throw new IllegalStateException(String.join("\n\n", messages));
         }
     }
 
-    private static String sameInstance(
+    private static String whyTheyAreOneInstance(
         final Instance instance,
         final List<String> adapterIds
     ) {
-        final var mode = keyOf(instance.mode());
+        final var mode = asConfigured(instance.mode());
         return """
                 ZenBPM adapter ids %s address the same engine, '%s', with the same name-clash-avoidance \
                 '%s', so they reach it with the same identifiers: they would deploy the same processes and \
@@ -116,7 +123,7 @@ public final class ZenBpmInstanceIdentity {
     }
 
     // the mode as the application writes it, e.g. use-prefix
-    private static String keyOf(final NameClashAvoidance mode) {
+    private static String asConfigured(final NameClashAvoidance mode) {
         return mode
                 .name()
                 .toLowerCase(Locale.ROOT)

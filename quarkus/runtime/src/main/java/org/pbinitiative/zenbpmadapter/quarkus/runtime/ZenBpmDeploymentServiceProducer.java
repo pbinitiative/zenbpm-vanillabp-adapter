@@ -81,10 +81,10 @@ public class ZenBpmDeploymentServiceProducer {
                 .adapterIdsOfType(ZenBpmAdapter.ADAPTER_TYPE)
                 .stream()
                 .<AdapterDeploymentService<Object, Object>>map(adapterId -> {
-                    final var deploymentService = new ZenBpmDeploymentService(adapterId, registry, AdapterCollaboratorsSupport
-                            .collaborators(adapterId, workflowTaskRegistry,
-                                    workflowTaskRegistry, scoping, workflowAggregateSync, preCommitRegistrar,
-                                    workflowEndedInvoker, bpmsInitiatedStartInvoker));
+                    final var collaborators = AdapterCollaboratorsSupport.collaborators(adapterId,
+                            workflowTaskRegistry, workflowTaskRegistry, scoping, workflowAggregateSync,
+                            preCommitRegistrar, workflowEndedInvoker, bpmsInitiatedStartInvoker);
+                    final var deploymentService = new ZenBpmDeploymentService(adapterId, registry, collaborators);
                     // the block both platform integrations write at the end of a start
                     deploymentService.setStartupReport(startupReport);
                     return asListElement(deploymentService);

@@ -92,10 +92,28 @@ class ZenBpmInstanceIdentityTest {
     }
 
     @Test
-    @DisplayName("An adapter id without clients is not compared: it has no engine, and its start already said so")
-    void anAdapterIdWithoutClientsIsNotCompared() {
-        try (var registry = registryOf(unconfigured("a"), unconfigured("b"), configured("c",
-                "http://zenbpm:8080"))) {
+    @DisplayName("An adapter id which boots degraded is compared by its address: it names an engine, and the collision would end the next start")
+    void aDegradedAdapterIdIsComparedByItsAddress() {
+        final var degraded = new ZenBpmAdapterConfiguration();
+        degraded.setRestAddress("http://zenbpm:8080");
+        degraded.setGrpcAddress("zenbpm:no-port");
+        try (var registry = registryOf(configured("new", "http://zenbpm:8080"), ZenBpmClientFactory.unconfigured(
+                "old", degraded, "ZenBPM adapter 'old' is configured inconsistently"))) {
+            final var failure = assertThrows(IllegalStateException.class, () -> ZenBpmInstanceIdentity
+                    .validateDistinct(List.of("new", "old"), registry, modes(Map.of("new",
+                            NameClashAvoidance.USE_PREFIX, "old", NameClashAvoidance.USE_PREFIX))));
+
+            assertEquals(SAME_ENGINE, failure.getMessage());
+        }
+    }
+
+    @Test
+    @DisplayName("An adapter id without a valid address is not compared: it names no engine, and its start already said so")
+    void anAdapterIdWithoutAnAddressIsNotCompared() {
+        final var malformed = new ZenBpmAdapterConfiguration();
+        malformed.setRestAddress("ftp://zenbpm:8080");
+        try (var registry = registryOf(unconfigured("a"), ZenBpmClientFactory.unconfigured("b", malformed,
+                "ZenBPM adapter 'b' is configured inconsistently"), configured("c", "http://zenbpm:8080"))) {
             final var asked = new ArrayList<String>();
 
             assertDoesNotThrow(() -> ZenBpmInstanceIdentity.validateDistinct(List.of("a", "b", "c"), registry,

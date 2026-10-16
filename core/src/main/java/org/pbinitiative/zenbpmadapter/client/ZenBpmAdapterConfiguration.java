@@ -917,6 +917,17 @@ public class ZenBpmAdapterConfiguration {
     }
 
     /**
+     * Whether <code>rest-address</code> names an engine, so that {@link #instanceIdentity()} and
+     * the addresses derived from it can be asked. It may, where the configuration as a whole is not
+     * complete: an adapter id which boots degraded because of another key still names its engine.
+     *
+     * @return <code>true</code> where <code>rest-address</code> is set and well-formed
+     */
+    public boolean hasValidRestAddress() {
+        return !isBlank(restAddress) && (restAddressDefect() == null);
+    }
+
+    /**
      * Which engine this adapter instance talks to. Two adapter ids with equal identities address
      * one engine, however their <code>rest-address</code> is spelled.
      *

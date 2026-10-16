@@ -31,8 +31,8 @@ import io.vanillabp.integration.spi.startup.StartupReport;
  * the message of its validation, which names the keys to set; otherwise an
  * {@link UnsupportedOperationException} which says that the step is not built yet. Nothing
  * pretends to have done the work. A workflow module without BPMN files reaches none of the steps,
- * because the platform skips the adapter for it. What the platform asks before the deployment is
- * answered: whether two adapter ids of this type are one instance.
+ * because the platform skips the adapter for it. It also answers what the platform asks before the
+ * deployment: whether two adapter ids of this type are one instance.
  * <p>
  * Each field has an accessor of its own and no Lombok getter on the class, see decision 13 in the
  * repository's DECISIONS.md.
@@ -111,12 +111,13 @@ public class ZenBpmDeploymentService implements AdapterDeploymentService<ZenBpmB
     }
 
     /**
-     * Ends the start where two adapter ids of this type are one instance: the same engine with the
-     * same name-clash-avoidance mode, see {@link ZenBpmInstanceIdentity}. The platform asks the
+     * Ends the start where two adapter ids of this type are one instance: the same
+     * <code>rest-address</code> with the same name-clash-avoidance mode, see
+     * {@link ZenBpmInstanceIdentity}. The platform asks the
      * first deployment service of the type, before anything is deployed.
      *
      * @param adapterIdsOfThisType The adapter ids of type <code>zenbpm</code>, in the order of
-     *            their priority
+     *            their priority where all of them are prioritized
      * @throws IllegalStateException Where two of them are one instance
      */
     @Override

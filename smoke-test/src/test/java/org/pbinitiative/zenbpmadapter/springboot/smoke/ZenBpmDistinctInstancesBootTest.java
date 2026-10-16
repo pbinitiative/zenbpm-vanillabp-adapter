@@ -78,12 +78,15 @@ class ZenBpmDistinctInstancesBootTest {
         final String newMode,
         final String oldMode
     ) {
-        return new String[]{
-                "vanillabp.prioritized-adapters=zenbpm-new,zenbpm-old", "vanillabp.adapters.zenbpm-new.type=zenbpm", "vanillabp.adapters.zenbpm-new.rest-address=http://localhost:8080", "vanillabp.adapters.zenbpm-new.name-clash-avoidance=%s"
-                        .formatted(
-                                newMode), "vanillabp.adapters.zenbpm-old.type=zenbpm", "vanillabp.adapters.zenbpm-old.rest-address=http://localhost:8080", "vanillabp.adapters.zenbpm-old.name-clash-avoidance=%s"
-                                        .formatted(oldMode)
-        };
+        return List
+                .of("vanillabp.prioritized-adapters=zenbpm-new,zenbpm-old",
+                        "vanillabp.adapters.zenbpm-new.type=zenbpm",
+                        "vanillabp.adapters.zenbpm-new.rest-address=http://localhost:8080",
+                        "vanillabp.adapters.zenbpm-new.name-clash-avoidance=%s".formatted(newMode),
+                        "vanillabp.adapters.zenbpm-old.type=zenbpm",
+                        "vanillabp.adapters.zenbpm-old.rest-address=http://localhost:8080",
+                        "vanillabp.adapters.zenbpm-old.name-clash-avoidance=%s".formatted(oldMode))
+                .toArray(String[]::new);
     }
 
     private static ConfigurableApplicationContext run(final String... properties) {
