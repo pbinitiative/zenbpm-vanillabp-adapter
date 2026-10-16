@@ -1,6 +1,9 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" id="startAndEnd"
-    targetNamespace="http://bpmn.io/schema/bpmn">
+    targetNamespace="http://bpmn.io/schema/bpmn"
+    xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI"
+    xmlns:dc="http://www.omg.org/spec/DD/20100524/DC"
+    xmlns:di="http://www.omg.org/spec/DD/20100524/DI">
   <bpmn:message id="Message_Ordered" name="ordered" />
   <bpmn:message id="Message_Complaint" name="complaint" />
   <bpmn:process id="Orders" isExecutable="true">
@@ -34,4 +37,47 @@
       <bpmn:terminateEventDefinition id="Rejected_Definition" />
     </bpmn:endEvent>
   </bpmn:process>
+  <bpmndi:BPMNDiagram id="BPMNDiagram_1">
+    <bpmndi:BPMNPlane id="BPMNPlane_1" bpmnElement="Orders">
+      <bpmndi:BPMNShape id="Plain_di" bpmnElement="Plain">
+        <dc:Bounds x="160" y="122" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="ByMessage_di" bpmnElement="ByMessage">
+        <dc:Bounds x="256" y="122" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="ByTimer_di" bpmnElement="ByTimer">
+        <dc:Bounds x="352" y="122" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="BySignal_di" bpmnElement="BySignal">
+        <dc:Bounds x="448" y="122" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="ByCondition_di" bpmnElement="ByCondition">
+        <dc:Bounds x="544" y="122" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Packing_di" bpmnElement="Packing" isExpanded="true">
+        <dc:Bounds x="640" y="80" width="200" height="120" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Packing_Start_di" bpmnElement="Packing_Start">
+        <dc:Bounds x="670" y="110" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Packing_End_di" bpmnElement="Packing_End">
+        <dc:Bounds x="766" y="110" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Complaints_di" bpmnElement="Complaints" isExpanded="true">
+        <dc:Bounds x="900" y="80" width="200" height="120" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Complaint_di" bpmnElement="Complaint">
+        <dc:Bounds x="930" y="110" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Complaint_End_di" bpmnElement="Complaint_End">
+        <dc:Bounds x="1026" y="110" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Shipped_di" bpmnElement="Shipped">
+        <dc:Bounds x="1160" y="122" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Rejected_di" bpmnElement="Rejected">
+        <dc:Bounds x="1256" y="122" width="36" height="36" />
+      </bpmndi:BPMNShape>
+    </bpmndi:BPMNPlane>
+  </bpmndi:BPMNDiagram>
 </bpmn:definitions>

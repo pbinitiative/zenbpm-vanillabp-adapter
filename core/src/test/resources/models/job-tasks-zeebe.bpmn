@@ -1,6 +1,9 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL"
-    xmlns:zeebe="http://camunda.org/schema/zeebe/1.0" id="jobTasks" targetNamespace="http://bpmn.io/schema/bpmn">
+    xmlns:zeebe="http://camunda.org/schema/zeebe/1.0" id="jobTasks" targetNamespace="http://bpmn.io/schema/bpmn"
+    xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI"
+    xmlns:dc="http://www.omg.org/spec/DD/20100524/DC"
+    xmlns:di="http://www.omg.org/spec/DD/20100524/DI">
   <bpmn:message id="Message_Shipped" name="shipped" />
   <bpmn:process id="Orders" name="Orders" isExecutable="true">
     <bpmn:extensionElements>
@@ -87,4 +90,71 @@
     </bpmn:endEvent>
     <bpmn:endEvent id="Done" />
   </bpmn:process>
+  <bpmndi:BPMNDiagram id="BPMNDiagram_1">
+    <bpmndi:BPMNPlane id="BPMNPlane_1" bpmnElement="Orders">
+      <bpmndi:BPMNShape id="Start_di" bpmnElement="Start">
+        <dc:Bounds x="160" y="132" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Charge_di" bpmnElement="Charge">
+        <dc:Bounds x="256" y="110" width="100" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Unwired_di" bpmnElement="Unwired">
+        <dc:Bounds x="416" y="110" width="100" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Notify_di" bpmnElement="Notify">
+        <dc:Bounds x="576" y="110" width="100" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Rate_di" bpmnElement="Rate">
+        <dc:Bounds x="736" y="110" width="100" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Decide_di" bpmnElement="Decide">
+        <dc:Bounds x="896" y="110" width="100" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="RateWithoutDecision_di" bpmnElement="RateWithoutDecision">
+        <dc:Bounds x="1056" y="110" width="100" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="DecideBlank_di" bpmnElement="DecideBlank">
+        <dc:Bounds x="1216" y="110" width="100" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Invoice_di" bpmnElement="Invoice">
+        <dc:Bounds x="1376" y="110" width="100" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="EveryParcel_di" bpmnElement="EveryParcel" isExpanded="true">
+        <dc:Bounds x="1536" y="90" width="200" height="120" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="EveryParcel_Start_di" bpmnElement="EveryParcel_Start">
+        <dc:Bounds x="1566" y="120" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Announce_di" bpmnElement="Announce">
+        <dc:Bounds x="1796" y="132" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="AwaitShipping_di" bpmnElement="AwaitShipping">
+        <dc:Bounds x="1892" y="110" width="100" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Approve_di" bpmnElement="Approve">
+        <dc:Bounds x="2052" y="110" width="100" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Review_di" bpmnElement="Review">
+        <dc:Bounds x="2212" y="110" width="100" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Packing_di" bpmnElement="Packing" isExpanded="true">
+        <dc:Bounds x="2372" y="80" width="352" height="140" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Packing_Start_di" bpmnElement="Packing_Start">
+        <dc:Bounds x="2402" y="132" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Pack_di" bpmnElement="Pack">
+        <dc:Bounds x="2498" y="110" width="100" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Packing_End_di" bpmnElement="Packing_End">
+        <dc:Bounds x="2658" y="132" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Shipped_di" bpmnElement="Shipped">
+        <dc:Bounds x="2784" y="132" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Done_di" bpmnElement="Done">
+        <dc:Bounds x="2880" y="132" width="36" height="36" />
+      </bpmndi:BPMNShape>
+    </bpmndi:BPMNPlane>
+  </bpmndi:BPMNDiagram>
 </bpmn:definitions>
