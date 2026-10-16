@@ -317,7 +317,7 @@ class ZenBpmUnsupportedConstructsTest {
                         </bpmn:sequenceFlow>
                         <bpmn:sequenceFlow id="E" sourceRef="Which" targetRef="Pay" />
                         """, RUN_DIFFERENTLY,
-                        "Orders/E (sequenceFlow without a condition leaving a exclusiveGateway with more flows, which the engine never takes: give it a condition or make it the default flow)"),
+                        "Orders/E (sequenceFlow without a condition leaving an exclusiveGateway with more flows, which the engine never takes: give it a condition or make it the default flow)"),
                 Arguments.of("multi-instance with a literal collection",
                         """
                                 <bpmn:serviceTask id="E">

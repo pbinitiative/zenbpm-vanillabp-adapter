@@ -137,6 +137,11 @@ public final class ZenBpmUnsupportedConstructs {
                 .toList();
     }
 
+    // an element kind with its article: 'an exclusiveGateway', 'a serviceTask'
+    private static String withArticle(final String kind) {
+        return "%s %s".formatted("aeiou".indexOf(kind.charAt(0)) >= 0 ? "an" : "a", kind);
+    }
+
     private static boolean writtenAsAnExpression(final String value) {
         return value
                 .trim()
@@ -453,8 +458,8 @@ public final class ZenBpmUnsupportedConstructs {
             }
             if (!GATEWAYS_WHICH_READ_CONDITIONS.contains(source)) {
                 runDifferently.add(line(flow,
-                        "condition on a sequenceFlow leaving a %s, which the engine ignores: it reads conditions only on the flows leaving an exclusive or inclusive gateway"
-                                .formatted(source)));
+                        "condition on a sequenceFlow leaving %s, which the engine ignores: it reads conditions only on the flows leaving an exclusive or inclusive gateway"
+                                .formatted(withArticle(source))));
                 return;
             }
             final var text = ZenBpmModelReader.plainTextOf(condition);
@@ -485,8 +490,8 @@ public final class ZenBpmUnsupportedConstructs {
                             .get(sourceRef)
                             .getAttribute("default"))) {
                 runDifferently.add(line(flow,
-                        "sequenceFlow without a condition leaving a %s with more flows, which the engine never takes: give it a condition or make it the default flow"
-                                .formatted(source)));
+                        "sequenceFlow without a condition leaving %s with more flows, which the engine never takes: give it a condition or make it the default flow"
+                                .formatted(withArticle(source))));
             }
         }
 

@@ -155,7 +155,12 @@ class BpmnDiagramTest {
         for (final var process : bpmnElements(document, "process")) {
             checkContainer(name, process, shapes, edges, missing);
         }
-        for (final var drawnId : union(shapes, edges)) {
+        final var planes = new HashSet<String>();
+        final var planeElements = document.getElementsByTagNameNS(BPMNDI, "BPMNPlane");
+        for (var index = 0; index < planeElements.getLength(); index++) {
+            planes.add(((Element) planeElements.item(index)).getAttribute("bpmnElement"));
+        }
+        for (final var drawnId : union(union(shapes, edges), planes)) {
             if (!ids.contains(drawnId)) {
                 missing.add("  %s: the diagram draws '%s', which the model does not hold".formatted(name, drawnId));
             }

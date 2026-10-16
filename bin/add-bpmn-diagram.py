@@ -240,9 +240,12 @@ def main(path):
 
 
 if __name__ == '__main__':
-    if len(sys.argv) < 2 or any(argument.startswith('-') for argument in sys.argv[1:]):
+    if sys.argv[1:] in (['-h'], ['--help']):
         print('usage: bin/add-bpmn-diagram.py path/to/a.bpmn [more.bpmn ...]')
-        sys.exit(0 if len(sys.argv) > 1 else 2)
+        sys.exit(0)
+    if len(sys.argv) < 2 or any(argument.startswith('-') for argument in sys.argv[1:]):
+        print('usage: bin/add-bpmn-diagram.py path/to/a.bpmn [more.bpmn ...]', file=sys.stderr)
+        sys.exit(2)
     for p in sys.argv[1:]:
         main(p)
         print('diagram added:', p)
