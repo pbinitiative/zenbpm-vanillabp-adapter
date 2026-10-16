@@ -30,10 +30,36 @@
       <groupId>io.vanillabp</groupId>
       <artifactId>vanillabp-quarkus-integration</artifactId>
     </dependency>
+    <dependency>
+      <groupId>io.vanillabp</groupId>
+      <artifactId>test-utils</artifactId>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.junit.jupiter</groupId>
+      <artifactId>junit-jupiter</artifactId>
+      <scope>test</scope>
+    </dependency>
+    <!-- SmallRye writes the implementation of a mapping with ASM; Quarkus does that while it
+         builds the application, VanillaBpZenBpmPropertiesTest builds the mapping without it -->
+    <dependency>
+      <groupId>org.ow2.asm</groupId>
+      <artifactId>asm</artifactId>
+      <scope>test</scope>
+    </dependency>
   </dependencies>
 
   <build>
     <plugins>
+      <plugin>
+        <artifactId>maven-surefire-plugin</artifactId>
+        <configuration>
+          <!-- the log manager Quarkus logs through, which the configuration classes look for -->
+          <systemPropertyVariables>
+            <java.util.logging.manager>org.jboss.logmanager.LogManager</java.util.logging.manager>
+          </systemPropertyVariables>
+        </configuration>
+      </plugin>
       <plugin>
         <groupId>io.quarkus</groupId>
         <artifactId>quarkus-extension-maven-plugin</artifactId>

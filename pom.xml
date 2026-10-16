@@ -24,9 +24,10 @@
   </licenses>
   <!-- One entry on purpose: Maven reads several <license> entries as alternatives a user may
        choose between, and "MIT or Apache 2.0" would be wrong for an adapted file. The core
-       jar and the Spring Boot jar ship classes adapted from the VanillaBP adapters, which keep
-       the Apache License 2.0 (the client factory, the executor, the health check and the Spring
-       Boot registration among them; each says so in its header), so MIT alone is not the whole
+       jar and the jars of both platforms ship classes adapted from the VanillaBP adapters, which
+       keep the Apache License 2.0 (the client factory, the executor, the health check, the Spring
+       Boot registration and the Quarkus producers and build steps among them; each says so in
+       its header), so MIT alone is not the whole
        truth: the <comments> above names the rest. How
        the published POMs should say "MIT and Apache 2.0" is open with the maintainers; the
        jars already carry both licence texts and the NOTICE, see <resources> below. The core jar
@@ -402,6 +403,9 @@
                  GeneratedStubPackageTest fails where a module writes a class of its own
                  into it -->
             <exclude>org/pbinitiative/zenbpmadapter/client/grpc/**</exclude>
+            <!-- the class the Quarkus extension processor writes next to every class of build
+                 steps, whose private constructor nothing calls; generated, like the stubs above -->
+            <exclude>**/*$$accessor.class</exclude>
           </excludes>
         </configuration>
         <executions>

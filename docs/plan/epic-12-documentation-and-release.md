@@ -42,6 +42,14 @@ stays unconfigured and the start warns about the key it misses
 (S3.2.1's `ZenBpmUnknownKeyTest`). Until the page exists, the javadoc of
 `VanillaBpZenBpmProperties` says it.
 
+*Note from S3.2.1, 2026-10-16.* Two more differences of the platform belong on the same page. On
+Quarkus an application whose classpath holds the adapter but which configures adapter ids of
+another type only does not start: the platform wants an id of every adapter extension on the
+classpath and names `vanillabp.adapters.*.type=zenbpm` (`ZenBpmWithoutAdapterIdsTest`); Spring Boot
+starts it, and the adapter has nothing. And on Quarkus every configured id has to be listed in
+`vanillabp.prioritized-adapters`. An application which configures nothing starts on both platforms
+with the derived id `zenbpm`.
+
 **Acceptance criteria**: every claim names its test; a reviewer following the wiki alone boots an
 application against a fresh engine container.
 

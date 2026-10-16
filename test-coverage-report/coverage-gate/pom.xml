@@ -33,6 +33,45 @@
       <artifactId>junit-jupiter</artifactId>
       <scope>test</scope>
     </dependency>
+    <!-- the two overlays of the configuration, which QuarkusOverlayTest compares by
+         reflection: the jars alone, without anything they bring, so no class of one platform
+         meets the other, and the core for the types their methods name -->
+    <dependency>
+      <groupId>org.pbinitiative.zenbpm</groupId>
+      <artifactId>zenbpm-vanillabp-adapter</artifactId>
+      <version>${project.version}</version>
+      <scope>test</scope>
+      <exclusions>
+        <exclusion>
+          <groupId>*</groupId>
+          <artifactId>*</artifactId>
+        </exclusion>
+      </exclusions>
+    </dependency>
+    <dependency>
+      <groupId>org.pbinitiative.zenbpm</groupId>
+      <artifactId>zenbpm-vanillabp-adapter-spring-boot</artifactId>
+      <version>${project.version}</version>
+      <scope>test</scope>
+      <exclusions>
+        <exclusion>
+          <groupId>*</groupId>
+          <artifactId>*</artifactId>
+        </exclusion>
+      </exclusions>
+    </dependency>
+    <dependency>
+      <groupId>org.pbinitiative.zenbpm</groupId>
+      <artifactId>zenbpm-vanillabp-adapter-quarkus</artifactId>
+      <version>${project.version}</version>
+      <scope>test</scope>
+      <exclusions>
+        <exclusion>
+          <groupId>*</groupId>
+          <artifactId>*</artifactId>
+        </exclusion>
+      </exclusions>
+    </dependency>
   </dependencies>
 
   <build>
