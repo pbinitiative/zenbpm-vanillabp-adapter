@@ -4,7 +4,9 @@
  */
 package org.pbinitiative.zenbpmadapter.model;
 
+import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -27,6 +29,8 @@ import io.vanillabp.spi.service.BpmsStartTrigger;
  *
  * @param filename The name of the file the process was read from
  * @param document The file, which the pipeline rewrites and deploys
+ * @param content The bytes the file was read from, which are deployed where the pipeline changes
+ *            nothing, see {@link ZenBpmModelWriter}
  * @param bpmnProcessId The id of the process as the modeller wrote it
  * @param tasks The elements which make the engine create a job a worker serves, user tasks
  *            excepted: service, send and business rule tasks and the intermediate throw and end
@@ -70,6 +74,7 @@ import io.vanillabp.spi.service.BpmsStartTrigger;
 public record ZenBpmBpmnModel(
     String filename,
     Document document,
+    byte[] content,
     String bpmnProcessId,
     List<BpmnTaskSpec> tasks,
     List<BpmnTaskSpec> userTasks,
@@ -88,9 +93,10 @@ public record ZenBpmBpmnModel(
 ) {
 
     /**
-     * Copies every collection, so a model stays what was read.
+     * Copies every collection and the bytes, so a model stays what was read.
      */
     public ZenBpmBpmnModel {
+        content = content.clone();
         tasks = List.copyOf(tasks);
         userTasks = List.copyOf(userTasks);
         catchMessages = inOrder(catchMessages);
@@ -104,6 +110,38 @@ public record ZenBpmBpmnModel(
         messageStarts = List.copyOf(messageStarts);
         messageCatches = List.copyOf(messageCatches);
         enclosingMultiInstances = Collections.unmodifiableMap(new LinkedHashMap<>(enclosingMultiInstances));
+    }
+
+    /**
+     * The bytes the file was read from, as a copy.
+     *
+     * @return The bytes
+     */
+    @Override
+    public byte[] content() {
+        return content.clone();
+    }
+
+    /**
+     * The multi-instance elements an element of the process runs in: the multi-instance
+     * sub-processes around it, the outermost first, and the element itself last where it is a
+     * multi-instance element. The engine runs each of them in a scope of its own, which starts
+     * with the item and nothing else.
+     *
+     * @param elementId The id of the element
+     * @return The multi-instance elements, empty where the element runs in none
+     */
+    public List<MultiInstanceElement> multiInstanceChainOf(final String elementId) {
+        final var byId = new HashMap<String, MultiInstanceElement>();
+        multiInstanceElements.forEach(multiInstance -> byId.put(multiInstance.elementId(), multiInstance));
+        final var chain = new ArrayList<MultiInstanceElement>();
+        enclosingMultiInstances
+                .getOrDefault(elementId, List.of())
+                .forEach(enclosing -> chain.add(byId.get(enclosing)));
+        if (byId.containsKey(elementId)) {
+            chain.add(byId.get(elementId));
+        }
+        return List.copyOf(chain);
     }
 
     private static Set<String> inOrder(final Set<String> values) {

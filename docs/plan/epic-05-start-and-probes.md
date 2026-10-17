@@ -219,6 +219,14 @@ is ACTIVE for its scope and UNKNOWN for a scope naming another process; after co
   `aStartCreatesTheInstanceAfterTheCommit`, `aRolledBackStartCreatesNothing`. This class grows with
   every later epic (one boot per class, the Camunda 8 rule).
 
+  *Note from the reviews of F4.3, 2026-10-17.* E4 proves the pipeline on Quarkus without the engine
+  (`ZenBpmDeploymentPipelineTest`, `ZenBpmRefusedFileTest` and `ZenBpmStopOrderTest` against a
+  server standing in for it), as its "Done when" asks; no Quarkus test hands a DMN file to the
+  adapter yet. Give the workflow module of this test one BPMN and one DMN file, and assert after the
+  boot that the engine holds both under their scoped ids, the reported process version, and a job
+  type subscribed over the engine's gRPC API, so the packaged extension is proved against the real
+  engine for deploying as well as for starting.
+
 **Acceptance criteria**
 
 - [ ] Both platforms prove the two-phase start against the real engine.

@@ -88,6 +88,59 @@ public final class TestCollaborators {
                 .build();
     }
 
+    /**
+     * A complete set of collaborators, of which the scoping, the wiring and the two invokers of the
+     * lifecycle of a workflow may be called.
+     *
+     * @param adapterId The adapter id they are handed to
+     * @param scoping The platform's name-clash scoping, as the test wants it to answer
+     * @param workflowTaskWiring The platform's wiring, as the test wants it to answer
+     * @param starts The invokers of starts and ends, as the test wants them to answer
+     * @return The collaborators
+     */
+    public static AdapterCollaborators of(
+        final String adapterId,
+        final NameClashAvoidanceSupport scoping,
+        final WorkflowTaskWiring workflowTaskWiring,
+        final TestStarts starts
+    ) {
+        return AdapterCollaborators
+                .forAdapter(adapterId)
+                .workflowTaskWiring(workflowTaskWiring)
+                .workflowTaskInvoker(unused(WorkflowTaskInvoker.class))
+                .scoping(scoping)
+                .workflowAggregateSync(unused(WorkflowAggregateSync.class))
+                .preCommitRegistrar(unused(PreCommitRegistrar.class))
+                .workflowEndedInvoker(starts.endedInvoker())
+                .bpmsInitiatedStartInvoker(starts.startInvoker())
+                .build();
+    }
+
+    /**
+     * A set of collaborators without the two optional invokers of the lifecycle of a workflow, as a
+     * platform builds it for an application which asks for neither, of which the scoping and the
+     * wiring may be called.
+     *
+     * @param adapterId The adapter id they are handed to
+     * @param scoping The platform's name-clash scoping, as the test wants it to answer
+     * @param workflowTaskWiring The platform's wiring, as the test wants it to answer
+     * @return The collaborators
+     */
+    public static AdapterCollaborators withoutLifecycleInvokers(
+        final String adapterId,
+        final NameClashAvoidanceSupport scoping,
+        final WorkflowTaskWiring workflowTaskWiring
+    ) {
+        return AdapterCollaborators
+                .forAdapter(adapterId)
+                .workflowTaskWiring(workflowTaskWiring)
+                .workflowTaskInvoker(unused(WorkflowTaskInvoker.class))
+                .scoping(scoping)
+                .workflowAggregateSync(unused(WorkflowAggregateSync.class))
+                .preCommitRegistrar(unused(PreCommitRegistrar.class))
+                .build();
+    }
+
     private static <T> T unused(final Class<T> type) {
         return type.cast(Proxy.newProxyInstance(TestCollaborators.class.getClassLoader(), new Class<?>[]{
                 type

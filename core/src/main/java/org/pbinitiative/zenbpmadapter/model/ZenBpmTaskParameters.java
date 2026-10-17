@@ -5,7 +5,6 @@
 package org.pbinitiative.zenbpmadapter.model;
 
 import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.List;
 import java.util.Objects;
 import java.util.TreeSet;
@@ -51,10 +50,6 @@ public final class ZenBpmTaskParameters {
         final String workflowModuleId,
         final WorkflowTaskWiring wiring
     ) {
-        final var multiInstances = new HashMap<String, MultiInstanceElement>();
-        model
-                .multiInstanceElements()
-                .forEach(multiInstance -> multiInstances.put(multiInstance.elementId(), multiInstance));
         final var process = model.bpmnProcessId();
         final var elements = ZenBpmInputMappings.elementsById(model.document());
         String aggregateIdName = null;
@@ -67,12 +62,7 @@ public final class ZenBpmTaskParameters {
                                 .stream())
                 .toList()) {
             final var activityId = task.activityId();
-            final var chain = new ArrayList<>(model
-                    .enclosingMultiInstances()
-                    .getOrDefault(activityId, List.of()));
-            if (multiInstances.containsKey(activityId)) {
-                chain.add(activityId);
-            }
+            final var chain = model.multiInstanceChainOf(activityId);
             if (chain.isEmpty()) {
                 continue;
             }
@@ -94,12 +84,12 @@ public final class ZenBpmTaskParameters {
                 carried.removeAll(chain
                         .subList(position, chain.size())
                         .stream()
-                        .map(elementId -> multiInstances
-                                .get(elementId)
-                                .inputElement())
+                        .map(MultiInstanceElement::inputElement)
                         .filter(Objects::nonNull)
                         .toList());
-                ZenBpmInputMappings.carry(elements.get(chain.get(position)), carried);
+                ZenBpmInputMappings.carry(elements.get(chain
+                        .get(position)
+                        .elementId()), carried);
             }
         }
     }

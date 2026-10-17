@@ -157,29 +157,38 @@ read, so the same file gives the same deployment, and no rewrite overwrites what
 the core ends the start over such a process unless it is marked `implemented-externally`, and the
 adapter makes no call for it (platform decision 120). For a claimed process it makes the core calls,
 reading the model BEFORE its own rewrites add keys and mappings: `reportModelExpressions` (every `=`
-expression with its `ExpressionPlace`), `reportStartMessages` (the plain names of the message start
-events; an empty collection where there is none, and no call at all where a name is an expression),
-`validateBpmsInitiatedStarts` with EVERY start event, `validateTaskWiring` in its four-argument form
-(service, send, business-rule-as-job tasks and message throw events as mandatory specs with their
-`name`; user tasks as optional specs; a business rule task with `calledDecision` is engine-served
-and skipped), `multiInstanceElementNames` for every multi-instance element,
-`reportConcurrentTokenElements`, `reportCompensation` (nothing: compensation is refused) and
-`workflowsShareTheWorkflowAggregate` for call activities (a called process on the same aggregate
-gets `zenbpm:in businessKey="=<id var>"` and an input mapping of the id variable injected; one on
-its own aggregate does not). `unsharedWorkflowAggregatePaths` and
-`declaredTypesOfWorkflowAggregatePaths` are not called, as in the Camunda 8 adapter: a model
-expression reading an attribute the aggregate does not share fails at runtime as a FEEL error
-(deviation 14). The process version catalog (`registerProcessVersions`) comes with E10; until then
-nothing is registered, which the core reads as "not asked yet".
+expression with its `ExpressionPlace`), the refusal of an element which creates a job and names no
+task definition, unless it is marked `implemented-externally` (the engine would give it a job of the
+type `''`, which nothing subscribes, GAPS 25), `reportStartMessages` (the plain names of the message
+start events; an empty collection where there is none, and no call at all where a name is an
+expression), `validateBpmsInitiatedStarts` with EVERY start event, `validateTaskWiring` in its
+four-argument form (service, send, business-rule-as-job tasks and message throw events as mandatory
+specs with their `name`; user tasks as optional specs; a business rule task with `calledDecision` is
+engine-served and skipped), `multiInstanceElementNames` by element id and task definition for every
+task inside a multi-instance chain whose element names no `inputElement` (a method wanting that item
+ends the start), `reportConcurrentTokenElements`, `reportCompensation` (nothing: compensation is
+refused) and `workflowsShareTheWorkflowAggregate` for a call activity inside a multi-instance body.
+The engine hands a called instance the caller's business key always and the caller's variables
+outside a body, so only inside a body is the id variable carried, by an input mapping on every
+multi-instance element the call runs in, and only where the called process shares the aggregate.
+`unsharedWorkflowAggregatePaths` and `declaredTypesOfWorkflowAggregatePaths` are not called, as in
+the Camunda 8 adapter: a model expression reading an attribute the aggregate does not share fails at
+runtime as a FEEL error (deviation 14). The process version catalog (`registerProcessVersions`)
+comes with E10; until then nothing is registered, which the core reads as "not asked yet".
 
-`deployResources`: `ZenBpmEngineWait`, then `validateNoCollidingProcessIds` (before anything is
-sent), then one `POST /v1/process-definitions` per file and one `POST /v1/dmn-resource-definitions`
-per DMN, then `GET /v1/process-definitions/{key}` per process to learn the version,
-`registerDeployedVersion` (the core ends the start where the deployed version has a task without a
-method, platform decision 126), the identifier reports `reportIdentifiersTheBpmsAlreadyHolds` and
-`reportIdentifiersTheModelsDeclare` (a failed lookup never fails the deployment and is logged at
-debug), and the `ZenBpmDeployedProcesses` record (scoped id, key, version, model as deployed) which
-serves the viewer and the ownership checks.
+`deployResources`: `validateNoCollidingProcessIds` (before anything is sent), then
+`ZenBpmEngineWait` and `ZenBpmEnvironmentInfo`, then one `POST /v1/dmn-resource-definitions` per DMN
+first, so no new process version calls a decision the engine does not hold yet, then one `POST
+/v1/process-definitions` per BPMN file (the bytes as read where the pipeline changed nothing, the
+document written out otherwise) with a `GET /v1/process-definitions/{key}` to learn its version.
+Only once the engine took every file come `registerDeployedVersion` (unchanged files included) and
+the `ZenBpmDeployedProcesses` record (scoped id, key, version, version tag, model as the engine
+holds it) in the client factory, which serves the viewer and the ownership checks, and
+`reportIdentifiersTheModelsDeclare`. The identifiers the engine held before are not reported: every
+REST deployment is recorded under the resource name `process.bpmn` and a definition carries no
+owner, so nothing tells this application's earlier deployments from another's (GAPS 24). A file the
+engine refuses ends the deployment with the engine's reason; the files sent before it stay deployed,
+because the engine takes one file per request, so a module's deployment is not atomic.
 
 Name-clash mode (decision 24): ZenBPM has no tenant, so `by-adapter` cannot be served. It stays the
 default, as the platform's contract asks of a BPMS without isolation of its own, and is refused

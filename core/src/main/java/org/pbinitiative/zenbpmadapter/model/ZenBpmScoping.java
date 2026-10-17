@@ -5,6 +5,7 @@
 package org.pbinitiative.zenbpmadapter.model;
 
 import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.function.UnaryOperator;
 
@@ -13,6 +14,8 @@ import org.w3c.dom.Element;
 
 import io.vanillabp.integration.adapter.spi.NameClashAvoidance;
 import io.vanillabp.integration.adapter.spi.NameClashAvoidanceSupport;
+import io.vanillabp.integration.adapter.spi.NameClashAvoidanceSupport.ModelIdentifier;
+import io.vanillabp.integration.adapter.spi.NameClashAvoidanceSupport.ScopedIdentifierKind;
 
 /**
  * Applies {@link NameClashAvoidance#USE_PREFIX} to a BPMN file of this adapter: every identifier
@@ -45,6 +48,12 @@ import io.vanillabp.integration.adapter.spi.NameClashAvoidanceSupport;
  * process id and the task definitions, and per workflow module for the rest. The rewrite is not
  * idempotent, so the pipeline applies it once per file.
  * <p>
+ * It hands back the identifiers of the file which the workflow module declares, in their plain
+ * form, in every mode: what the platform needs to warn where two workflow modules of the
+ * application end up under one scoped identifier. They are the names of messages, the codes of
+ * errors and escalations, and the task definitions with their process. Process ids have a check of
+ * their own, and a called process or decision is declared by another file.
+ * <p>
  * Before it rewrites anything, it refuses a called decision the engine would not find once its id is
  * scoped: the engine reads a decision id holding a <code>.</code> as
  * <code>&lt;DMN definitions id&gt;.&lt;decision id&gt;</code>, and the scoping prefixes the ids of
@@ -58,17 +67,18 @@ public final class ZenBpmScoping {
     }
 
     /**
-     * Rewrites the identifiers of one file in place.
+     * Rewrites the identifiers of one file in place, and hands back those the file declares.
      *
      * @param document The file, holding one process
      * @param workflowModuleId The workflow module of the file
      * @param bpmnProcessId The plain id of the file's process
      * @param scoping The platform's name-clash scoping
      * @param adapterId The adapter id the file is deployed by
+     * @return The identifiers the file declares, plain, each once, in the order of the file
      * @throws IllegalStateException Where a called decision would not be found once its id is
      *             scoped, naming every such business rule task
      */
-    public static void apply(
+    public static List<ModelIdentifier> apply(
         final Document document,
         final String workflowModuleId,
         final String bpmnProcessId,
@@ -87,13 +97,19 @@ public final class ZenBpmScoping {
         rewrite(bpmnElements(document, "process"), "id", processId);
         rewrite(bpmnElements(document, "participant"), "processRef", referenceToTheProcess);
         rewrite(elements(document, "*", "BPMNPlane"), "bpmnElement", referenceToTheProcess);
-        rewrite(bpmnElements(document, "message"), "name", identifier);
-        rewrite(bpmnElements(document, "error"), "errorCode", identifier);
-        rewrite(bpmnElements(document, "escalation"), "escalationCode", identifier);
+        final var declared = new LinkedHashSet<ModelIdentifier>();
+        rewrite(bpmnElements(document, "message"), "name", identifier).forEach(name -> declared.add(
+                new ModelIdentifier(ScopedIdentifierKind.MESSAGE_NAME, name, null)));
+        rewrite(bpmnElements(document, "error"), "errorCode", identifier).forEach(code -> declared.add(
+                new ModelIdentifier(ScopedIdentifierKind.ERROR_CODE, code, null)));
+        rewrite(bpmnElements(document, "escalation"), "escalationCode", identifier).forEach(code -> declared
+                .add(new ModelIdentifier(ScopedIdentifierKind.ESCALATION_CODE, code, null)));
         rewrite(extensions(document, "calledElement"), "processId", processId);
         rewrite(extensions(document, "calledDecision"), "decisionId", identifier);
         rewrite(extensions(document, "taskDefinition"), "type", type -> scoping.scopedTaskDefinition(
-                workflowModuleId, bpmnProcessId, type, adapterId));
+                workflowModuleId, bpmnProcessId, type, adapterId)).forEach(type -> declared.add(
+                        new ModelIdentifier(ScopedIdentifierKind.TASK_DEFINITION, type, bpmnProcessId)));
+        return List.copyOf(declared);
     }
 
     // the engine reads a decision id holding a '.' as '<id of the DMN definitions>.<id of the
@@ -134,17 +150,21 @@ public final class ZenBpmScoping {
                 engine does not split the id.""".formatted(workflowModuleId, String.join("\n", refused)));
     }
 
-    private static void rewrite(
+    // the values it rewrote, as they were before
+    private static List<String> rewrite(
         final List<Element> elements,
         final String attribute,
         final UnaryOperator<String> scoped
     ) {
+        final var plain = new ArrayList<String>();
         for (final var element : elements) {
             final var value = element.getAttribute(attribute);
             if (!value.isEmpty()) {
                 element.setAttribute(attribute, scoped.apply(value));
+                plain.add(value);
             }
         }
+        return plain;
     }
 
     private static List<Element> bpmnElements(

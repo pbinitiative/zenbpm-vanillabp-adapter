@@ -5,6 +5,7 @@
 package org.pbinitiative.zenbpmadapter.model;
 
 import static org.junit.jupiter.api.Assertions.assertAll;
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertSame;
@@ -427,6 +428,39 @@ class ZenBpmModelReaderTest {
                     () -> assertFalse(stream.closed),
                     () -> assertEquals(-1, stream.read()));
         }
+    }
+
+    @Test
+    @DisplayName("A stream which fails while it is read is refused naming file and workflow module")
+    void aStreamWhichFailsIsRefused() {
+        final var failure = assertThrows(BpmnParseException.class, () -> ZenBpmModelReader.read("shop",
+                "order.bpmn", new InputStream() {
+
+                    @Override
+                    public int read() throws IOException {
+                        throw new IOException("disk gone");
+                    }
+
+                }));
+
+        assertEquals("BPMN file 'order.bpmn' of workflow module 'shop' cannot be read: disk gone", failure
+                .getMessage());
+    }
+
+    @Test
+    @DisplayName("The model keeps the bytes it was read from and hands out copies of them")
+    void theModelKeepsTheBytesItWasReadFrom() throws IOException {
+        final byte[] file;
+        try (var stream = fixture("messages.bpmn")) {
+            file = stream.readAllBytes();
+        }
+        final var model = ZenBpmModelReader
+                .read("shop", "messages.bpmn", new ByteArrayInputStream(file))
+                .getFirst();
+
+        model.content()[0] = 0;
+
+        assertArrayEquals(file, model.content());
     }
 
     @Test

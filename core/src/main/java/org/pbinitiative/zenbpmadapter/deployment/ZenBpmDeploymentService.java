@@ -5,18 +5,36 @@
 package org.pbinitiative.zenbpmadapter.deployment;
 
 import java.io.InputStream;
+import java.time.Duration;
+import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
+import java.util.function.Supplier;
+import java.util.stream.Collectors;
+import java.util.stream.Stream;
 
 import org.pbinitiative.zenbpmadapter.ZenBpmAdapter;
+import org.pbinitiative.zenbpmadapter.ZenBpmDeployedProcesses;
 import org.pbinitiative.zenbpmadapter.ZenBpmProcessingContext;
+import org.pbinitiative.zenbpmadapter.ZenBpmProcessingContext.StartedProcessing;
+import org.pbinitiative.zenbpmadapter.ZenBpmProcessingContext.WiredProcess;
+import org.pbinitiative.zenbpmadapter.client.ReceivedJob;
 import org.pbinitiative.zenbpmadapter.client.ZenBpmClientFactory;
 import org.pbinitiative.zenbpmadapter.client.ZenBpmClientRegistry;
+import org.pbinitiative.zenbpmadapter.client.ZenBpmEngineWait;
+import org.pbinitiative.zenbpmadapter.client.ZenBpmEnvironmentInfo;
+import org.pbinitiative.zenbpmadapter.client.ZenBpmErrors;
 import org.pbinitiative.zenbpmadapter.client.ZenBpmInstanceIdentity;
+import org.pbinitiative.zenbpmadapter.client.api.DeployedResource;
 import org.pbinitiative.zenbpmadapter.health.ZenBpmHealth;
 import org.pbinitiative.zenbpmadapter.model.ZenBpmBpmnModel;
+import org.pbinitiative.zenbpmadapter.model.ZenBpmCallActivities;
 import org.pbinitiative.zenbpmadapter.model.ZenBpmCorrelationKeys;
 import org.pbinitiative.zenbpmadapter.model.ZenBpmModelReader;
+import org.pbinitiative.zenbpmadapter.model.ZenBpmModelWriter;
+import org.pbinitiative.zenbpmadapter.model.ZenBpmMultiInstanceItems;
 import org.pbinitiative.zenbpmadapter.model.ZenBpmScoping;
 import org.pbinitiative.zenbpmadapter.model.ZenBpmTaskParameters;
 import org.pbinitiative.zenbpmadapter.model.ZenBpmUnsupportedConstructs;
@@ -27,7 +45,12 @@ import io.vanillabp.integration.adapter.spi.BpmnParseException;
 import io.vanillabp.integration.adapter.spi.DmnDecisionIds;
 import io.vanillabp.integration.adapter.spi.NameClashAvoidance;
 import io.vanillabp.integration.adapter.spi.NameClashAvoidanceSupport.DeployedProcess;
+import io.vanillabp.integration.adapter.spi.NameClashAvoidanceSupport.ModelIdentifier;
+import io.vanillabp.integration.adapter.spi.NameClashAvoidanceSupport.ScopedIdentifierKind;
 import io.vanillabp.integration.adapter.spi.health.AdapterHealth;
+import io.vanillabp.integration.adapter.spi.workflowstart.BpmsInitiatedStartInvoker;
+import io.vanillabp.integration.adapter.spi.workflowstart.BpmsInitiatedStartSpec;
+import io.vanillabp.integration.adapter.spi.workflowtask.WorkflowTaskWiring;
 import io.vanillabp.integration.spi.parts.VanillaBpParts;
 import io.vanillabp.integration.spi.startup.StartupReport;
 import lombok.extern.slf4j.Slf4j;
@@ -38,17 +61,17 @@ import lombok.extern.slf4j.Slf4j;
  * <p>
  * This version of the adapter registers, validates its configuration, reports health, reads BPMN
  * files, refuses what ZenBPM cannot run and the name-clash-avoidance mode <code>by-adapter</code>,
- * scopes the identifiers of the files and of the DMN files under <code>use-prefix</code>, checks
- * that no two processes reach the engine under one id, and deploys nothing yet. Reading, preparing
- * and that check need no engine, so an adapter id without clients does them as well, like the
- * Camunda 8 adapter, and the checks done meanwhile speak before the configuration does. Every later
- * step of the pipeline throws: where the adapter id has no clients, the message of its validation,
- * which names the keys to set, so a workflow module with BPMN files ends the start of an
- * application which configured no engine for it; otherwise an
- * {@link UnsupportedOperationException} which says that the step is not built yet. Nothing
- * pretends to have done the work. A workflow module without BPMN files reaches none of the
- * steps, because the platform skips the adapter for it. It also answers what the platform asks
- * before the deployment: whether two adapter ids of this type are one instance.
+ * scopes the identifiers of the files and of the DMN files under <code>use-prefix</code>, wires the
+ * processes with the platform, deploys the files once the engine is ready and reports the version
+ * of each process, and starts and stops the workflow processing of a module by subscribing and
+ * unsubscribing the job types of its claimed processes. It handles no job yet: a job which arrives
+ * is logged and left to its lock. Reading, preparing and wiring need no engine, so an adapter id
+ * without clients does them as well, like the Camunda 8 adapter, and the checks done meanwhile speak
+ * before the configuration does; its deployment then ends with the message of its validation, which
+ * names the keys to set, so a workflow module with BPMN files ends the start of an application which
+ * configured no engine for it. A workflow module without BPMN files reaches none of the steps,
+ * because the platform skips the adapter for it. It also answers what the platform asks before the
+ * deployment: whether two adapter ids of this type are one instance.
  * <p>
  * Each field has an accessor of its own and no Lombok getter on the class, see decision 13 in the
  * repository's DECISIONS.md.
@@ -308,8 +331,9 @@ public class ZenBpmDeploymentService implements AdapterDeploymentService<ZenBpmB
     }
 
     /**
-     * Keeps one DMN file of the workflow module for its deployment. Under <code>use-prefix</code>
-     * the ids of the decisions it declares are scoped by the workflow module, as the
+     * Keeps one DMN file of the workflow module for its deployment, and the ids of the decisions it
+     * declares, which the platform's check of the identifiers two workflow modules share needs.
+     * Under <code>use-prefix</code> those ids are scoped by the workflow module, as the
      * <code>calledDecision</code> of a business rule task is (see {@link ZenBpmScoping}); otherwise
      * the file is kept as it was read. It needs no engine.
      *
@@ -318,8 +342,8 @@ public class ZenBpmDeploymentService implements AdapterDeploymentService<ZenBpmB
      * @param filename The name of the file
      * @param dmn The content of the file, which is not closed
      * @return The context, with the file added
-     * @throws IllegalStateException Where the decision ids are to be scoped and the file cannot be
-     *             read as XML, naming file and workflow module
+     * @throws IllegalStateException Where the file cannot be read as XML, naming file and workflow
+     *             module
      */
     @Override
     public ZenBpmProcessingContext readDmn(
@@ -330,20 +354,52 @@ public class ZenBpmDeploymentService implements AdapterDeploymentService<ZenBpmB
     ) {
         final var file = DmnDecisionIds.bytesOf(dmn);
         final var scoping = collaborators.scoping();
-        if (scoping.modeFor(workflowModuleId, null, adapterId) != NameClashAvoidance.USE_PREFIX) {
-            existingContext.addDecisions(filename, file);
-            return existingContext;
-        }
+        final Set<String> decisionIds;
+        final byte[] deployable;
         try {
-            existingContext.addDecisions(filename, DmnDecisionIds.rewrite(file, decisionId -> scoping
-                    .scopedIdentifier(workflowModuleId, decisionId, adapterId)));
+            decisionIds = DmnDecisionIds.of(file);
+            deployable = scoping.modeFor(workflowModuleId, null, adapterId) == NameClashAvoidance.USE_PREFIX
+                    ? DmnDecisionIds.rewrite(file, decisionId -> scoping.scopedIdentifier(workflowModuleId, decisionId,
+                            adapterId))
+                    : file;
         } catch (final IllegalArgumentException e) {
             throw new IllegalStateException("DMN file '%s' of workflow module '%s' cannot be read: %s"
                     .formatted(filename, workflowModuleId, e.getMessage()), e);
         }
+        existingContext.addDecisions(filename, deployable);
+        existingContext.addDeclaredIdentifiers(decisionIds
+                .stream()
+                .map(decisionId -> new ModelIdentifier(ScopedIdentifierKind.DMN_DECISION_ID, decisionId, null))
+                .toList());
         return existingContext;
     }
 
+    /**
+     * Makes the platform's wiring calls for one process, so the start ends over a task nothing
+     * serves, a start event a method names but the model does not hold, or an item no element hands
+     * over, before anything reaches the engine. It needs no engine. A process nobody claims belongs
+     * to somebody else: nothing is asked or written for it.
+     * <p>
+     * For a claimed process it reports the expressions the modeller wrote, read before preparing
+     * added keys and mappings; refuses an element which creates a job and names no task
+     * definition, because the engine gives it a job of the type '' which nothing subscribes, unless
+     * the task is served elsewhere; has every task and user task checked against the methods, with
+     * their names; reports the names of its message start events, where every one can be read, and
+     * every start event of the process itself; reports the elements which give a workflow a second
+     * token; refuses a method which wants the item of an iteration whose element names none, see
+     * {@link ZenBpmMultiInstanceItems}; carries the aggregate id to a process called on the same
+     * aggregate from inside a multi-instance body, see {@link ZenBpmCallActivities}; and remembers
+     * what the start of the workflow processing and the lifecycle of a workflow need. No version
+     * catalog is registered yet, which the platform reads as "not asked yet".
+     *
+     * @param workflowModuleId The workflow module of the process
+     * @param filename The name of the process's file
+     * @param bpmnProcessId The id of the process
+     * @param model The model of the process's file, as preparing left it
+     * @param context The context of the workflow module
+     * @throws IllegalStateException Where an element which creates a job names no task definition,
+     *             the platform refuses the wiring, or a method wants an item no element hands over
+     */
     @Override
     public void wireBpmn(
         final String workflowModuleId,
@@ -352,16 +408,81 @@ public class ZenBpmDeploymentService implements AdapterDeploymentService<ZenBpmB
         final ZenBpmBpmnModel model,
         final ZenBpmProcessingContext context
     ) {
-        throw notBuiltYet("wiring BPMN process '%s' of workflow module '%s'".formatted(bpmnProcessId,
-                workflowModuleId));
+        final var wiring = collaborators.workflowTaskWiring();
+        if (!wiring.isClaimedByAWorkflowService(workflowModuleId, bpmnProcessId)) {
+            log.debug(
+                    "ZenBPM[{}]: BPMN process '{}' of file '{}' (workflow module '{}') is claimed by no @WorkflowService and is deployed as it was modelled",
+                    adapterId, bpmnProcessId, filename, workflowModuleId);
+            return;
+        }
+        wiring.reportModelExpressions(workflowModuleId, bpmnProcessId, model.expressions());
+        refuseJobsOfNoType(wiring, workflowModuleId, filename, bpmnProcessId, model);
+        wiring.validateTaskWiring(adapterId, workflowModuleId, bpmnProcessId, Stream
+                .concat(model
+                        .tasks()
+                        .stream(),
+                        model
+                                .userTasks()
+                                .stream())
+                .toList());
+        final var starts = collaborators.bpmsInitiatedStartInvoker();
+        starts.ifPresent(invoker -> reportTheStarts(invoker, workflowModuleId, bpmnProcessId, model));
+        final boolean reportsItsStart = starts
+                .map(invoker -> invoker.startsAWorkflowOfItsOwn(workflowModuleId, bpmnProcessId))
+                .orElse(false);
+        final boolean reportsItsEnd = collaborators
+                .workflowEndedInvoker()
+                .map(invoker -> invoker.workflowEndedHandlerExists(workflowModuleId, bpmnProcessId))
+                .orElse(false);
+        wiring.reportConcurrentTokenElements(workflowModuleId, bpmnProcessId, model.concurrentTokenElements());
+        ZenBpmMultiInstanceItems.refuseItemsNoElementHandsOver(model, workflowModuleId, wiring);
+        ZenBpmCallActivities.carryTheAggregateId(model, workflowModuleId, wiring);
+        final var scoping = collaborators.scoping();
+        final var jobTypes = model
+                .tasks()
+                .stream()
+                .filter(task -> !wiring.isImplementedExternally(adapterId, workflowModuleId, bpmnProcessId, task))
+                .map(task -> scoping.scopedTaskDefinition(workflowModuleId, bpmnProcessId, task.taskDefinition(),
+                        adapterId))
+                .collect(Collectors.toCollection(LinkedHashSet::new));
+        context.recordWiring(new WiredProcess(bpmnProcessId, scoping.scopedProcessId(workflowModuleId, bpmnProcessId,
+                adapterId), jobTypes, reportsItsStart, reportsItsEnd));
+        log.info(
+                "ZenBPM[{}]: wired {} task(s) and {} user task(s) of BPMN process '{}' (file '{}', workflow module '{}')",
+                adapterId, model
+                        .tasks()
+                        .size(),
+                model
+                        .userTasks()
+                        .size(),
+                bpmnProcessId, filename, workflowModuleId);
     }
 
     /**
-     * Ends the start where two processes of this application would reach the engine under one id,
-     * before anything is sent to it. It needs no engine. The deployment itself is not built yet.
+     * Deploys the BPMN and DMN files of a workflow module, one request per file, and tells the
+     * platform which version of each process the engine ended up with, also where a file was
+     * unchanged and the engine kept the version it held.
+     * <p>
+     * First it ends the start where two processes of this application would reach the engine under
+     * one id, before anything is sent to it. Then it waits until the engine is ready, once per
+     * adapter id (see {@link ZenBpmEngineWait}; an adapter id without clients ends the start there
+     * with the message of its validation), and says which engine it reached, see
+     * {@link ZenBpmEnvironmentInfo}. The DMN files go first, so no new version of a process calls a
+     * decision the engine does not hold yet. A file reaches the engine as it was read where the
+     * pipeline changed nothing, see {@link ZenBpmModelWriter}. A file the engine refuses ends the
+     * deployment with the engine's reason, naming file, workflow module and process; any other
+     * failure names file and engine address. The engine keeps the files it took before, because it
+     * deploys one file per request. Only where it took every file are the versions registered with
+     * the platform and remembered in {@link ZenBpmClientFactory#deployedProcesses()}; the
+     * identifiers the files declare go to the platform, which warns where two workflow modules
+     * share one. Which of them the engine held before is not reported: a definition carries no
+     * owner, so this application's own earlier deployments could not be told from those of another
+     * application.
      *
      * @param workflowModuleId The workflow module
      * @param context The context its files were prepared into
+     * @throws IllegalStateException Where two processes would share an id, where the adapter id has
+     *             no clients or the engine is not ready, or where a file cannot be deployed
      */
     @Override
     public void deployResources(
@@ -375,15 +496,127 @@ public class ZenBpmDeploymentService implements AdapterDeploymentService<ZenBpmB
                         .stream()
                         .map(bpmnProcessId -> new DeployedProcess(workflowModuleId, bpmnProcessId))
                         .toList());
-        throw notBuiltYet("deploying workflow module '%s'".formatted(workflowModuleId));
+        ZenBpmEngineWait.awaitReady(factory);
+        ZenBpmEnvironmentInfo.logOnce(factory, startupReport);
+        final var rest = factory.rest();
+        final var wiring = collaborators.workflowTaskWiring();
+        final var deployed = new ArrayList<String>();
+        // decisions first, so no new version of a process calls a decision the engine does not
+        // hold yet
+        for (final var decisions : context
+                .decisions()
+                .entrySet()) {
+            final var file = "DMN file '%s' of workflow module '%s'".formatted(decisions.getKey(), workflowModuleId);
+            final var resource = answerTo(file, () -> rest.deployDmn(decisions.getValue()));
+            deployed.add("%s as DMN resource definition key %d%s".formatted(decisions.getKey(), resource.key(),
+                    unchangedOrNot(resource)));
+        }
+        final var versions = new ArrayList<ZenBpmDeployedProcesses.DeployedProcess>();
+        for (final var model : context
+                .bpmnFiles()
+                .values()) {
+            final var bpmnProcessId = model.bpmnProcessId();
+            final var file = "BPMN file '%s' of workflow module '%s' (process '%s')".formatted(model.filename(),
+                    workflowModuleId, bpmnProcessId);
+            final var resource = answerTo(file, () -> rest.deployBpmn(ZenBpmModelWriter.bytesOf(model)));
+            final var definition = answerTo(file, () -> rest.processDefinition(resource.key()));
+            versions.add(new ZenBpmDeployedProcesses.DeployedProcess(workflowModuleId, bpmnProcessId, definition
+                    .bpmnProcessId(), definition.key(), definition.version(), definition.versionTag(), definition
+                            .bpmnData()));
+            deployed.add("%s as process '%s', version %d, definition key %d%s".formatted(model.filename(), definition
+                    .bpmnProcessId(), definition.version(), definition.key(), unchangedOrNot(resource)));
+        }
+        // only a deployment the engine took as a whole tells the platform its versions
+        versions.forEach(version -> {
+            wiring.registerDeployedVersion(adapterId, workflowModuleId, version.bpmnProcessId(), String.valueOf(
+                    version.version()));
+            factory
+                    .deployedProcesses()
+                    .record(version);
+        });
+        log.info("ZenBPM[{}]: workflow module '{}' is deployed to the engine at {}:\n  {}", adapterId,
+                workflowModuleId, factory
+                        .configuration()
+                        .engineAddress(),
+                String.join("\n  ", deployed));
+        collaborators
+                .scoping()
+                .reportIdentifiersTheModelsDeclare(adapterId, workflowModuleId, List.copyOf(context
+                        .declaredIdentifiers()));
     }
 
+    /**
+     * Starts the workflow processing of a workflow module: subscribes every job type of its claimed
+     * processes on the job stream of this adapter id, a process nobody claims left to whoever serves
+     * it. The hook which stops the module where the client factory closes first is registered
+     * before the first subscription, so a factory which closes already refuses the module before
+     * anything is subscribed. A job type two workflow modules share stays subscribed until both
+     * stopped. A module without a job type subscribes nothing and asks the engine nothing.
+     * <p>
+     * No job is handled yet: a job which arrives is logged at WARN and left to its lock, after which
+     * the engine hands it out again. Every type is subscribed with the engine's default lock and
+     * cap of active jobs.
+     *
+     * @param workflowModuleId The workflow module
+     * @param context What its deployment collected
+     * @throws IllegalStateException Where the client factory is closing, or a job type cannot be
+     *             subscribed; then nothing of the module stays subscribed
+     */
     @Override
     public void startWorkflowProcessing(
         final String workflowModuleId,
         final ZenBpmProcessingContext context
     ) {
-        throw notBuiltYet("starting the workflow processing of workflow module '%s'".formatted(workflowModuleId));
+        final var jobTypes = context.jobTypes();
+        if (jobTypes.isEmpty()) {
+            log.info("ZenBPM[{}]: workflow module '{}' has no job type to subscribe", adapterId, workflowModuleId);
+            return;
+        }
+        final var stream = factory.stream();
+        stream.onJob(this::leaveAJobNothingHandles);
+        context.processingStarted(new StartedProcessing(jobTypes, factory.workflowModuleStarted(workflowModuleId,
+                () -> stopWorkflowProcessing(workflowModuleId, context))));
+        try {
+            jobTypes.forEach(jobType -> stream.subscribe(workflowModuleId, jobType, Duration.ZERO, 0));
+        } catch (final RuntimeException e) {
+            stopWorkflowProcessing(workflowModuleId, context);
+            throw e;
+        }
+        log.info("ZenBPM[{}]: workflow module '{}' subscribed the job type(s) {}", adapterId, workflowModuleId,
+                String.join(", ", jobTypes));
+    }
+
+    /**
+     * Stops the workflow processing of a workflow module: unsubscribes its job types, where no other
+     * module of this adapter id subscribes them, and removes the hook of the client factory after
+     * the last of them. It is idempotent, because the platform and the closing client factory may
+     * both stop a module. Jobs delivered before keep their locks.
+     *
+     * @param workflowModuleId The workflow module
+     * @param context What its deployment collected
+     */
+    @Override
+    public void stopWorkflowProcessing(
+        final String workflowModuleId,
+        final ZenBpmProcessingContext context
+    ) {
+        final var started = context.processingStopped();
+        if (started.isEmpty()) {
+            return;
+        }
+        final var stream = factory.stream();
+        started
+                .get()
+                .jobTypes()
+                .forEach(jobType -> stream.unsubscribe(workflowModuleId, jobType));
+        started
+                .get()
+                .registration()
+                .close();
+        log.info("ZenBPM[{}]: workflow module '{}' unsubscribed the job type(s) {}", adapterId, workflowModuleId,
+                String.join(", ", started
+                        .get()
+                        .jobTypes()));
     }
 
     // what is done to a file once, the refusals before anything is written: a process nobody
@@ -396,7 +629,9 @@ public class ZenBpmDeploymentService implements AdapterDeploymentService<ZenBpmB
         final boolean claimed
     ) {
         context.addMessagesOf(model, claimed);
-        ZenBpmScoping.apply(model.document(), workflowModuleId, bpmnProcessId, collaborators.scoping(), adapterId);
+        context.addDeclaredIdentifiers(ZenBpmScoping.apply(model.document(), workflowModuleId, bpmnProcessId,
+                collaborators.scoping(), adapterId));
+        context.addBpmnFile(model);
         if (!claimed) {
             return;
         }
@@ -404,6 +639,81 @@ public class ZenBpmDeploymentService implements AdapterDeploymentService<ZenBpmB
         ZenBpmCorrelationKeys.apply(model, () -> wiring.resolveWorkflowAggregateIdName(workflowModuleId,
                 bpmnProcessId));
         ZenBpmTaskParameters.apply(model, workflowModuleId, wiring);
+    }
+
+    // the engine gives an element which creates a job and names no task definition a job of the
+    // type '', which nothing of this application subscribes, so a workflow would wait there for
+    // good; a task served elsewhere is left to whoever serves it
+    private void refuseJobsOfNoType(
+        final WorkflowTaskWiring wiring,
+        final String workflowModuleId,
+        final String filename,
+        final String bpmnProcessId,
+        final ZenBpmBpmnModel model
+    ) {
+        final var untyped = model
+                .tasks()
+                .stream()
+                .filter(task -> task.taskDefinition() == null)
+                .filter(task -> !wiring.isImplementedExternally(adapterId, workflowModuleId, bpmnProcessId, task))
+                .map(task -> "  - %s".formatted(task.activityId()))
+                .toList();
+        if (untyped.isEmpty()) {
+            return;
+        }
+        throw new IllegalStateException("""
+                BPMN file '%s' of workflow module '%s' holds elements of process '%s' which create a job and \
+                name no task definition:
+                %s
+                ZenBPM gives each of them a job of the type '', which no worker of this application subscribes, \
+                so a workflow would wait there for good. Give each of them a task definition, \
+                <zenbpm:taskDefinition type="..." />, and serve that type with a @WorkflowTask method."""
+                .formatted(filename, workflowModuleId, bpmnProcessId, String.join("\n", untyped)));
+    }
+
+    // every start event of the process itself, NONE and MESSAGE included, so the platform can judge
+    // the methods which name one; the message names only where every one of them can be read,
+    // because the platform checks a start by message against a complete list or not at all
+    private void reportTheStarts(
+        final BpmsInitiatedStartInvoker starts,
+        final String workflowModuleId,
+        final String bpmnProcessId,
+        final ZenBpmBpmnModel model
+    ) {
+        if (model.startMessagesAreKnown()) {
+            starts.reportStartMessages(adapterId, workflowModuleId, bpmnProcessId, model.startMessages());
+        }
+        starts.validateBpmsInitiatedStarts(workflowModuleId, bpmnProcessId, model
+                .startEvents()
+                .stream()
+                .map(startEvent -> BpmsInitiatedStartSpec.of(startEvent.elementId(), startEvent.kind()))
+                .toList());
+    }
+
+    // what the engine answered about one file: a file it refuses as it is ends the deployment with
+    // its reason, every other failure with the address the file did not reach
+    private <T> T answerTo(
+        final String file,
+        final Supplier<T> call
+    ) {
+        try {
+            return call.get();
+        } catch (final RuntimeException e) {
+            if (ZenBpmErrors.permanentFailure(e)) {
+                throw new IllegalStateException("""
+                        ZenBPM refuses %s: %s. Correct the model where the engine's reason points, or \
+                        take the file out of the workflow module.""".formatted(file, ZenBpmErrors.withoutAdapterId(
+                        adapterId, e)), e);
+            }
+            throw new IllegalStateException("ZenBPM adapter '%s' could not deploy %s to the engine at %s: %s"
+                    .formatted(adapterId, file, factory
+                            .configuration()
+                            .engineAddress(), ZenBpmErrors.withoutAdapterId(adapterId, e)), e);
+        }
+    }
+
+    private static String unchangedOrNot(final DeployedResource resource) {
+        return resource.created() ? "" : " (unchanged)";
     }
 
     // the platform checks the mode of the workflow module, but a workflow may set a mode of its
@@ -429,15 +739,12 @@ public class ZenBpmDeploymentService implements AdapterDeploymentService<ZenBpmB
                 bpmnProcessId, workflowModuleId, key, key));
     }
 
-    // an adapter id without clients answers with the message of its validation, which names the
-    // keys to set, before it says what this version cannot do
-    private RuntimeException notBuiltYet(final String what) {
-        final var unconfigured = factory.unconfiguredMessage();
-        if (unconfigured.isPresent()) {
-            return new IllegalStateException(unconfigured.get());
-        }
-        return new UnsupportedOperationException(
-                "ZenBPM adapter '%s': %s is implemented in a later story".formatted(adapterId, what));
+    // no task is handled yet: a job is left to its lock, after which the engine hands it out again,
+    // because closing the stream would hand it to another client at once
+    private void leaveAJobNothingHandles(final ReceivedJob received) {
+        final var job = received.job();
+        log.warn("ZenBPM[{}]: a job of type '{}' (key {}) arrived, which nothing handles yet; it is left to its lock",
+                adapterId, job.getType(), job.getKey());
     }
 
 }

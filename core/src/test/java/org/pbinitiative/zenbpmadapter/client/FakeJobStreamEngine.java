@@ -42,7 +42,7 @@ import io.grpc.stub.StreamObserver;
  * under the same name, which a channel built before finds again, like an engine which restarted.
  * That the requests are what the engine expects is proven by {@link ZenBpmJobStreamIT}.
  */
-final class FakeJobStreamEngine implements AutoCloseable {
+public final class FakeJobStreamEngine implements AutoCloseable {
 
     private static final Context.Key<String> CLIENT_ID = Context.key("client_id");
 
@@ -82,7 +82,7 @@ final class FakeJobStreamEngine implements AutoCloseable {
      *
      * @return This engine
      */
-    FakeJobStreamEngine startOverTcp() {
+    public FakeJobStreamEngine startOverTcp() {
         try {
             server = Grpc
                     .newServerBuilderForPort(0, InsecureServerCredentials.create())
@@ -101,7 +101,7 @@ final class FakeJobStreamEngine implements AutoCloseable {
      *
      * @return <code>localhost:port</code>
      */
-    String address() {
+    public String address() {
         return "localhost:%d".formatted(server.getPort());
     }
 
@@ -171,7 +171,7 @@ final class FakeJobStreamEngine implements AutoCloseable {
      *
      * @return The number of calls
      */
-    int callCount() {
+    public int callCount() {
         return calls.size();
     }
 
@@ -181,14 +181,14 @@ final class FakeJobStreamEngine implements AutoCloseable {
      * @param index 0 for the first call
      * @return The call
      */
-    FakeCall call(final int index) {
+    public FakeCall call(final int index) {
         return eventually(() -> calls.size() > index ? Optional.of(calls.get(index)) : Optional.empty());
     }
 
     /**
      * One call of a job stream: what it sent, and the way back to it.
      */
-    static final class FakeCall {
+    public static final class FakeCall {
 
         private final String clientId;
 
@@ -222,7 +222,7 @@ final class FakeJobStreamEngine implements AutoCloseable {
          *
          * @return The requests in the order they arrived
          */
-        List<StreamSubscriptionRequest> subscriptions() {
+        public List<StreamSubscriptionRequest> subscriptions() {
             return requests
                     .stream()
                     .map(JobStreamRequest::getSubscription)
@@ -235,7 +235,7 @@ final class FakeJobStreamEngine implements AutoCloseable {
          * @param count How many
          * @return The subscriptions and unsubscriptions, at least <code>count</code>
          */
-        List<StreamSubscriptionRequest> subscriptions(final int count) {
+        public List<StreamSubscriptionRequest> subscriptions(final int count) {
             eventually(() -> requests.size() >= count ? Optional.of(requests.size()) : Optional.empty());
             return subscriptions();
         }
@@ -264,7 +264,7 @@ final class FakeJobStreamEngine implements AutoCloseable {
          *
          * @param response The frame
          */
-        void send(final JobStreamResponse response) {
+        public void send(final JobStreamResponse response) {
             responses.onNext(response);
         }
 

@@ -88,7 +88,14 @@ public final class ZenBpmModelReader {
         final InputStream bpmn
     ) {
         final var file = "BPMN file '%s' of workflow module '%s'".formatted(filename, workflowModuleId);
-        final var document = parse(file, bpmn);
+        final byte[] content;
+        try {
+            // a parser closes the stream it reads, and the stream belongs to the caller
+            content = bpmn.readAllBytes();
+        } catch (final IOException e) {
+            throw new BpmnParseException("%s cannot be read: %s".formatted(file, e.getMessage()), e);
+        }
+        final var document = parse(file, content);
         final var definitions = document.getDocumentElement();
         if (!isBpmn(definitions, "definitions")) {
             throw new BpmnParseException(
@@ -129,7 +136,18 @@ public final class ZenBpmModelReader {
             throw new BpmnParseException("%s cannot be deployed: its executable process has no id."
                     .formatted(file));
         }
-        return List.of(new ProcessReading(filename, document, definitions, process).model());
+        return List.of(new ProcessReading(filename, document, content, definitions, process).model());
+    }
+
+    /**
+     * Whether the pipeline left the document of a model as the file was written: equal to the
+     * document its bytes give when they are read again.
+     *
+     * @param model The model
+     * @return <code>true</code> where nothing in the document was changed
+     */
+    static boolean isAsWritten(final ZenBpmBpmnModel model) {
+        return parse("BPMN file '%s'".formatted(model.filename()), model.content()).isEqualNode(model.document());
     }
 
     /**
@@ -189,10 +207,10 @@ public final class ZenBpmModelReader {
     }
 
     // a hardened parser: no DOCTYPE at all, so no entity can be declared, and nothing external
-    // is ever fetched. The bytes are read first, because a parser closes the stream it reads
+    // is ever fetched
     private static Document parse(
         final String file,
-        final InputStream bpmn
+        final byte[] content
     ) {
         try {
             final var factory = DocumentBuilderFactory.newInstance();
@@ -207,7 +225,7 @@ public final class ZenBpmModelReader {
             // the parser reports to standard error unless told otherwise; this handler throws a
             // fatal error, which the message names, and writes nothing
             builder.setErrorHandler(new DefaultHandler());
-            return builder.parse(new ByteArrayInputStream(bpmn.readAllBytes()));
+            return builder.parse(new ByteArrayInputStream(content));
         } catch (final SAXException | IOException | ParserConfigurationException e) {
             throw new BpmnParseException("%s cannot be read: %s".formatted(file, e.getMessage()), e);
         }
@@ -286,6 +304,8 @@ public final class ZenBpmModelReader {
 
         private final Document document;
 
+        private final byte[] content;
+
         private final Element process;
 
         // the name of every message of the file, by its id; null where a message has no name
@@ -329,11 +349,13 @@ public final class ZenBpmModelReader {
         private ProcessReading(
             final String filename,
             final Document document,
+            final byte[] content,
             final Element definitions,
             final Element process
         ) {
             this.filename = filename;
             this.document = document;
+            this.content = content;
             this.process = process;
             for (final var message : bpmnChildren(definitions, "message")) {
                 final var id = attribute(message, "id");
@@ -356,6 +378,7 @@ public final class ZenBpmModelReader {
             return new ZenBpmBpmnModel(
                     filename,
                     document,
+                    content,
                     attribute(process, "id"),
                     tasks,
                     userTasks,

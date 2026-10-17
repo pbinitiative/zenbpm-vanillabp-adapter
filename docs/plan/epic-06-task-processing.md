@@ -31,6 +31,12 @@ Template: `Camunda8JobHandler`, `Camunda8CommandRetry`, `Camunda8Drain`,
    naming both, as on Camunda 8) and `max_active_jobs` = the handler slots. A `WaitingJob` is queued
    for the executor; the queue is bounded by what the subscriptions allow, so nothing is dropped
    (decision 9). A type without a handler is the WARN of S4.3.3.
+   *Note from S4.3.3, 2026-10-17.* `startWorkflowProcessing` subscribes the job types of a module's
+   claimed processes (`ZenBpmProcessingContext#jobTypes()`, no user task and no task served
+   elsewhere) with the engine's defaults, `Duration.ZERO` and `0`, and hands every job to a private
+   method of `ZenBpmDeploymentService` which logs it at WARN and leaves it to its lock. Replace that
+   consumer with the `JobDispatcher`, and the defaults with the resolved `job-timeout` and the handler
+   slots; the hook of the client factory, the stop and the shared types stay as they are.
 2. `ZenBpmLockRenewal` (per adapter id, on a timing thread): when a handler starts it extends the
    job's lock by `job-timeout` where less than half of it is left (a job which waited in the queue
    starts with a full lock), then every `job-timeout / 2` while the handler runs, through

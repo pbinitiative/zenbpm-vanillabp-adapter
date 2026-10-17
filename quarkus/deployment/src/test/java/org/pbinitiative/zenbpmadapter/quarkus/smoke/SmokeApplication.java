@@ -53,6 +53,12 @@ final class SmokeApplication {
      */
     static final String WITH_REFUSED_BPMN = "classpath*:with-bpmn-refused";
 
+    /**
+     * Where the BPMN file of {@link #withAModuleWhichSubscribes()} is: the process of the shipping
+     * workflow service, with one service task.
+     */
+    static final String WITH_SHIPPING = "classpath*:with-shipping";
+
     private SmokeApplication() {
     }
 
@@ -122,6 +128,26 @@ final class SmokeApplication {
                 .setArchiveProducer(() -> archive().addAsResource("%s/SampleWorkflowService.bpmn".formatted(
                         directory)))
                 .setLogRecordPredicate(record -> true);
+    }
+
+    /**
+     * A test of an application whose workflow module subscribes a job type when it starts: the
+     * {@link ShippingWorkflowService} instead of the sample workflow service, and its BPMN file
+     * under {@link #WITH_SHIPPING}, without the BPMS double. It holds {@link StandInEngine}, so a
+     * test which boots it finds the engine from the application's class loader as well.
+     *
+     * @return The test, to be given the keys of the case
+     */
+    static QuarkusExtensionTest withAModuleWhichSubscribes() {
+        return withoutTheBpmsDouble(new QuarkusExtensionTest()
+                .setArchiveProducer(() -> ShrinkWrap
+                        .create(JavaArchive.class)
+                        .addClasses(Aggregate.class, ShippingWorkflowService.class, SmokeApplication.class,
+                                StartupBlock.class, FactoryLog.class, StandInEngine.class)
+                        .addAsResource("application.yaml")
+                        .addAsResource("workflow-module-descriptor/workflow-module", "META-INF/workflow-module")
+                        .addAsResource("with-shipping/Shipping.bpmn"))
+                .setLogRecordPredicate(record -> true));
     }
 
     /**
