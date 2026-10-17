@@ -191,6 +191,43 @@ class ZenBpmInstanceCacheTest {
     }
 
     @Test
+    @DisplayName("The way up from an instance names every instance on it, its own first and the workflow's root last, and ends at an instance a call activity started")
+    void theWayUpNamesEveryInstanceOnIt() {
+        holds(CALLED, "callActivity", ROOT, Map.of());
+        holds(BODY, "subprocess", CALLED, Map.of());
+        holds(ITERATION, "multiInstance", BODY, Map.of());
+        final var cache = new ZenBpmInstanceCache(rest, 10);
+
+        assertAll(
+                () -> assertEquals(Optional.of(List.of(ITERATION, BODY, CALLED)), cache.instancesUpToTheWorkflow(
+                        ITERATION)),
+                () -> assertEquals(Optional.of(List.of(CALLED)), cache.instancesUpToTheWorkflow(CALLED)));
+    }
+
+    @Test
+    @DisplayName("The variable of the id is chosen by the process of the instance: one read keeps it, a process wanting none takes the kept facts, and a kept entry without it is read again")
+    void theIdVariableIsChosenByTheProcess() {
+        holds(ROOT, "default", null, Map.of("orderId", "order-1", "amount", 1000));
+        final var cache = new ZenBpmInstanceCache(rest, 10);
+
+        final var withTheId = cache.facts(ROOT, process -> "shop__Order".equals(process) ? "orderId" : null);
+        final var again = cache.facts(ROOT, process -> "orderId");
+        final var noneWanted = cache.facts(ROOT, process -> null);
+        final var anotherName = cache.facts(ROOT, process -> "invoiceId");
+
+        assertAll(
+                () -> assertEquals(Map.of("orderId", "order-1"), withTheId
+                        .orElseThrow()
+                        .variables()),
+                () -> assertEquals(withTheId, again),
+                () -> assertEquals(withTheId, noneWanted),
+                () -> assertEquals(Map.of(), anotherName
+                        .orElseThrow()
+                        .variables()),
+                () -> assertEquals(2, requestsFor(ROOT)));
+    }
+
+    @Test
     @DisplayName("The walk stops at an instance a call activity started: a task of a called process names the called instance")
     void theWalkStopsAtACallActivity() {
         holds(CALLED, "callActivity", ROOT, Map.of());

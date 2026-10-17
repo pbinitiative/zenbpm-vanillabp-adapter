@@ -4,6 +4,7 @@
  */
 package org.pbinitiative.zenbpmadapter.client;
 
+import static org.junit.jupiter.api.Assertions.assertAll;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
@@ -111,6 +112,7 @@ class ZenBpmAdapterConfigurationTest {
         configuration.setStartupWait(Duration.ofMinutes(1));
         configuration.setWorkerThreads("virtual");
         configuration.setWorkerThreadsBound(16);
+        configuration.setJobTimeout(Duration.ofSeconds(30));
         configuration.setRetryBackoff(Duration.ofSeconds(1));
         configuration.setMaxRedeliveries(0);
         configuration.setShutdownGrace(Duration.ZERO);
@@ -133,6 +135,7 @@ class ZenBpmAdapterConfigurationTest {
         assertEquals("virtual", configuration.getWorkerThreads());
         assertEquals(Integer.valueOf(16), configuration.getWorkerThreadsBound());
         assertEquals(16, configuration.workerThreadsBoundInUse());
+        assertEquals(Duration.ofSeconds(30), configuration.getJobTimeout());
         assertEquals(Duration.ofSeconds(1), configuration.getRetryBackoff());
         assertEquals(0, configuration.getMaxRedeliveries());
         assertEquals(Duration.ZERO, configuration.getShutdownGrace());
@@ -148,6 +151,7 @@ class ZenBpmAdapterConfigurationTest {
         configuration.setStartupWait(null);
         configuration.setWorkerThreads(null);
         configuration.setWorkerThreadsBound(null);
+        configuration.setJobTimeout(null);
         configuration.setRetryBackoff(null);
         configuration.setMaxRedeliveries(null);
         configuration.setShutdownGrace(null);
@@ -163,6 +167,7 @@ class ZenBpmAdapterConfigurationTest {
         assertEquals(defaults.getStartupWait(), configuration.getStartupWait());
         assertEquals(defaults.getWorkerThreads(), configuration.getWorkerThreads());
         assertEquals(defaults.getWorkerThreadsBound(), configuration.getWorkerThreadsBound());
+        assertEquals(ZenBpmAdapterConfiguration.DEFAULT_JOB_TIMEOUT, configuration.getJobTimeout());
         assertEquals(defaults.getRetryBackoff(), configuration.getRetryBackoff());
         assertEquals(defaults.getMaxRedeliveries(), configuration.getMaxRedeliveries());
         assertEquals(defaults.getShutdownGrace(), configuration.getShutdownGrace());
@@ -649,6 +654,31 @@ class ZenBpmAdapterConfigurationTest {
     }
 
     @Test
+    @DisplayName("A job-timeout of zero below the adapter level ends the boot naming its full key; one above zero passes")
+    void aZeroJobTimeoutBelowTheAdapterIsADefect() {
+        final var configuration = configured("http://localhost:8080");
+        configuration.addScopedValue(
+                "vanillabp.workflow-modules.shop.workflows.Order.tasks.ship.adapters.orders.job-timeout",
+                Duration.ZERO);
+        configuration.addScopedValue("vanillabp.workflow-modules.shop.adapters.orders.job-timeout", Duration
+                .ofSeconds(1));
+
+        final var validation = configuration.validate(ADAPTER_ID, false, false);
+
+        assertAll(
+                () -> assertTrue(validation.endsTheBoot()),
+                () -> assertTrue(validation
+                        .message()
+                        .contains(
+                                "  - vanillabp.workflow-modules.shop.workflows.Order.tasks.ship.adapters.orders.job-timeout is PT0S, but a job has to stay locked for a while to the node which runs it; without the key the level above applies\n"),
+                        validation.message()),
+                () -> assertFalse(validation
+                        .message()
+                        .contains("vanillabp.workflow-modules.shop.adapters.orders.job-timeout"),
+                        validation.message()));
+    }
+
+    @Test
     @DisplayName("A history-time-to-live below the adapter level which the engine would change ends the boot naming its full key; a fraction of another key does not")
     void aScopedTimeToLiveTheEngineWouldChangeIsAValueDefect() {
         final var configuration = configured("http://localhost:8080");
@@ -838,6 +868,11 @@ class ZenBpmAdapterConfigurationTest {
                         c -> c.setWorkerThreadsBound(16)),
                 defect("startup-wait", "a negative duration", "must not be negative; the default is PT10M",
                         c -> c.setStartupWait(Duration.ofSeconds(-1))),
+                defect("job-timeout", "a negative duration", "must not be negative; the default is PT5M",
+                        c -> c.setJobTimeout(Duration.ofSeconds(-1))),
+                defect("job-timeout", "zero",
+                        "is PT0S, but a job has to stay locked for a while to the node which runs it; the default is PT5M",
+                        c -> c.setJobTimeout(Duration.ZERO)),
                 defect("retry-backoff", "a negative duration", "must not be negative; the default is PT10S",
                         c -> c.setRetryBackoff(Duration.ofSeconds(-1))),
                 defect("shutdown-grace", "a negative duration", "must not be negative; the default is PT20S",

@@ -4,7 +4,9 @@
  */
 package org.pbinitiative.zenbpmadapter.client;
 
+import java.time.Duration;
 import java.time.Instant;
+import java.util.Map;
 import java.util.Objects;
 
 import org.pbinitiative.zenbpmadapter.client.grpc.Zenbpm.WaitingJob;
@@ -31,6 +33,39 @@ public record ReceivedJob(
     public ReceivedJob {
         Objects.requireNonNull(job, "job");
         Objects.requireNonNull(receivedAt, "receivedAt");
+    }
+
+    /**
+     * When the lock of this delivery lapses, counted the careful way: the earlier of the job's
+     * <code>lock_until</code> and the moment of receipt plus the lock duration the job was
+     * subscribed with. So neither an engine clock ahead of the application's nor a lock the engine
+     * lowered to its maximum makes the lock look longer than it is. A job without a
+     * <code>lock_until</code> counts from the moment of receipt alone.
+     *
+     * @param lockDuration The lock duration of the subscription the job came under
+     * @return The moment, on the application's clock
+     */
+    public Instant lockEnd(final Duration lockDuration) {
+        final var counted = receivedAt.plus(lockDuration);
+        if (job.getLockUntil() <= 0) {
+            return counted;
+        }
+        final var lockUntil = Instant.ofEpochMilli(job.getLockUntil());
+        return lockUntil.isBefore(counted) ? lockUntil : counted;
+    }
+
+    /**
+     * The input variables of the job, which the engine sends as a JSON object, decoded to the
+     * types {@link org.pbinitiative.zenbpmadapter.client.api.Variables} describes, as the REST
+     * answers are.
+     *
+     * @return The variables, which cannot be changed; empty where the job carries none
+     * @throws IllegalStateException Where the job carries something which is no JSON object
+     */
+    public Map<String, Object> inputVariables() {
+        return ZenBpmRestClient.variablesIn(job
+                .getInputVariables()
+                .toByteArray());
     }
 
 }

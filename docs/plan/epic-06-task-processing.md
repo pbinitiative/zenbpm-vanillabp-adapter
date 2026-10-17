@@ -21,7 +21,7 @@ Template: `Camunda8JobHandler`, `Camunda8CommandRetry`, `Camunda8Drain`,
 
 ### S6.1.1 `JobDispatcher` and `ZenBpmJobHandler` - the happy path
 
-- [ ] **Depends on:** E5.
+- [x] **Depends on:** E5.
 
 **Instructions**
 
@@ -133,6 +133,106 @@ engine hands it out again, for as long as the instance lives. Camunda 8 fails su
 Decide before this story is built which of the two the adapter does; with decision 27 failing it
 costs one request and makes the instance visible as an incident.
 
+*Fit check, 2026-10-17, decided by the Implementor.* Checked against `main` (`0cecfaa`),
+`ADAPTER-AUTHORS.md` (sections 3.3, 3.4 and 5), the platform's code (`TaskInvocationContext`,
+`WorkflowTaskInvoker`, `WorkflowTaskOutcome`, `DeliveryOfAnUnknownWorkflowException`,
+`MigrationProcessService#invokeWorkflowTask`, `JdbcTaskDeliveryStore`, `TaskDeliveryLogReader` of
+`test-utils`), Camunda 8's `Camunda8JobHandler`, `Camunda8CommandRetry`,
+`Camunda8JobTimeoutResolver`, `Camunda8ListenerJobs`, `Camunda8DeploymentService` and its Quarkus
+`Camunda8JobTimeoutOverlayTest`, and the engine at the pin `bdd795a3` (source exported with
+`git archive`, image run by `ZenBpmJobHandlingIT`). What did not fit, and what was decided:
+
+1. **Names and places.** The plan's `JobDispatcher` is `wiring/ZenBpmJobDispatcher`, as every class
+   of the repository carries the prefix; `ZenBpmLockRenewal`, `ZenBpmJobHandler` and
+   `ZenBpmJobTimeoutResolver` are in `wiring` (the architecture's layout), `ZenBpmCommandRetry` in
+   `client`, where Camunda 8 keeps its own.
+2. **One handler per workflow module, routed by the instance's process.** A job names its instance
+   and its type, and a type may be served by two processes, or two modules, under
+   `name-clash-avoidance: none`; the name of the id variable belongs to the process. So the
+   dispatcher reads the facts of the job's instance on the handler thread, picking the id variable
+   by the instance's process in the same read (`ZenBpmInstanceCache#facts(long, Function)`), and
+   hands the job to the module which claims that process and serves the job's type in it; a job of
+   a process no module serves that way is logged (WARN, pointing at `use-prefix`) and left to its
+   lock. The handler's constructor takes the adapter id, the client factory, the collaborators and
+   the module's processing context instead of the plan's list. The `failure` of S6.2.1 and the
+   `drain` of S6.2.2 are not built: the handler has one method per outcome where they plug in, and
+   the smallest module state the command retry needs, `ZenBpmJobHandler#stopping()`, which the
+   module's stop sets (brief, question 3). The grace wait stays with S6.2.2.
+3. **The executor's real API** (note from S2.4.2) is used as the note says: a job waits in the
+   dispatcher, `tryExecute` takes a slot or refuses, a refused job is put back before the next look
+   for a free slot, and `onSlotFreed` hands over the next one. A job whose lock lapsed while it
+   waited is not started (INFO); the lock's end is the earlier of `lock_until` and the moment of
+   receipt plus the job-timeout (`ReceivedJob#lockEnd`), so neither a clock ahead of the
+   application's nor a lock the engine lowered makes a lock look longer than it is.
+4. **The lock renewal** is scheduled on the timing threads, but each extension is sent from a
+   virtual thread of its own: a REST call may take `request-timeout`, and the executor allows nothing
+   longer than a hand-over on its timing threads. A lock is extended whenever half of the
+   job-timeout is left, so at once for a job which waited that long, and at half of what is left
+   where the engine granted less than the job-timeout. `502` and I/O are repeated after 50 ms,
+   doubling up to an eighth of the job-timeout, while the lock lasts; `409` ends it with a WARN
+   naming job, task, aggregate and the possible second delivery; a job the engine no longer holds
+   (`404`) ends it quietly; anything else ends it with a WARN.
+5. **The child instance** (note from S5.2.1). Measured (`ZenBpmJobHandlingIT`): an instance of an
+   embedded sub-process and an instance a call activity started both carry the business key and the
+   id variable of their workflow. So the handler reads the aggregate in the job's own instance and
+   reads the workflow's root only where that names neither (a workflow the engine started and
+   VanillaBP named later). `workflowId` is the root of decision 28, pinned for a job of a
+   sub-process by `ZenBpmJobHandlerTest` and end to end by `ZenBpmTaskProcessingIT` through the
+   platform's delivery log; for a job of a called process by `ZenBpmProbesIT`.
+6. **The aggregate is named by the id variable first, the business key is reported beside it.** The
+   plan wrote `facts.businessKey ?? facts.variables[idName]`. Then the core's check of platform
+   decision 69 could never fire, because the two values reported would always be the same one.
+   Decision 25 has every start carry both, Camunda 8 reads the variable, and an instance started
+   past VanillaBP with nothing but a business key is still served by it
+   (`#theAggregateIdIsBoundFromTheBusinessKey`).
+7. **The `PATCH` before `complete`** (note from S2.2.2, brief question 2): measured `409` for a
+   completed and a cancelled workflow and `404` for a key nobody holds; read in the code that the
+   engine looks the instance up on a follower before it updates it on the leader. So a `404` is
+   repeated within the lock and a `409` ends the delivery with a WARN; the read of the job's
+   instance is treated the same way: decision 34 (new).
+8. **Where the values are written.** Measured: a sub-process holds a copy of the variables taken
+   when it started, and what is written into it is gone once it ended. The plan's single `PATCH` of
+   `facts.key` would leave a gateway behind a sub-process deciding on stale values. The handler
+   writes them into every instance from the job's own up to the workflow's root before it
+   completes: decision 35 (new), pinned by `ZenBpmJobHandlerTest` and by
+   `ZenBpmTaskProcessingIT#aTaskInASubProcessNamesTheRootAndTheGatewayBehindItSeesTheValues`.
+9. **A job whose instance names no aggregate** (the open point, brief question 1): failed at once
+   with `retries: 0`, a message naming the instance, the missing business key and the id variable,
+   the delivery's `deliveryToken` and the stream's `clientId`, WARN without stack trace: decision 33
+   (new). A delivery the core refuses with `DeliveryOfAnUnknownWorkflowException` is failed the same
+   way with the core's message. `ZenBpmRestClient#failJob(long, JobFailure)` carries the message,
+   the retries, the token and the client id; `retryBackoff` is left to S6.2.1, which needs it.
+10. **BPMN_ERROR, COMPLETION_PENDING and a thrown handler** (brief question 3) are logged at WARN
+   and left to the job's lock, pinned by
+   `ZenBpmJobHandlerTest#aBpmnErrorAndAnOpenTaskAreLeftToTheirLocks` and
+   `#aThrowingHandlerIsLeftToItsLock`; left for S6.1.2 and S6.2.1.
+11. **`job-timeout`.** Validated by the core configuration (a negative duration and `PT0S` end the
+   start, at the adapter level and below it), bound on both platforms at the four levels
+   (`jobTimeoutFor` of both overlays, `ZenBpmDeploymentService#jobTimeoutOf`), and handed to the
+   deployment service as a `ZenBpmJobTimeoutResolver`. Two tasks of one job type with different
+   job-timeouts end the start while the processes are wired, before anything reaches the engine,
+   naming both values and both task-level keys; Camunda 8 checks this only when its workers start.
+   Under `use-prefix` a job type belongs to one process, so the conflict needs
+   `name-clash-avoidance: none`. Proven on Spring Boot (`ZenBpmJobTimeoutBootTest`, and the
+   resolution in `ZenBpmTaskProcessingIT`) and on Quarkus (`ZenBpmJobTimeoutTest`,
+   `ZenBpmOverlayResolutionTest#jobTimeoutThroughTheFourLevels`), brief question 5.
+12. **Where the Spring IT lives** (brief question 4): not a module `task-it`, but the `spring-boot`
+   module's `it` package with its application in `it/task`, as F5.3 placed its own; one module per
+   IT would repeat the POM and the coverage wiring for nothing. The fixture `task-it/task-matrix.bpmn`
+   has the plan's shape plus an embedded sub-process with a service task and a second gateway
+   behind it, which pins decision 35 and the workflow id of a sub-process's job end to end.
+13. **What the earlier ITs assumed.** The Quarkus prod-mode case waited for the WARN line of a job
+   nothing handled; it now waits for the call of `E2eWorkflow#prepare` (`introspect/prepared/{id}`)
+   and for the completion of that instance's own job (`introspect/jobs/{key}` now names each job's
+   state), and the instance is `COMPLETED` instead of `ACTIVE` (note under S6.5.1). The Spring
+   `Ordering` process of `ZenBpmDeploymentAndStartIT` got a timer of one hour behind its task, so its
+   instance stays active once the task is handled. `ZenBpmDeploymentIT`'s application now names its
+   id variable and holds no shipment, so the job of the instance it starts over REST is failed as a
+   workflow the application does not own, and that WARN is what the test waits for.
+14. **README.** The status names the job-timeout of a subscription and what a job runs; the table
+   "Which phase-two failures are repeated" is unchanged, because the handler reads the update of the
+   variables itself and no phase-two operation sends one yet.
+
 **Tests**
 
 - `ZenBpmJobHandlerTest` (fake server + a `TestCollaborators` invoker): the context's fields
@@ -150,13 +250,86 @@ costs one request and makes the instance visible as an incident.
 
 **Acceptance criteria**
 
-- [ ] A gateway behind a `@WorkflowTask` decides on what the handler computed (the PATCH).
-- [ ] `deliveryId` equals the job key and `activationId` equals the job key (pinned, so a later
+- [x] A gateway behind a `@WorkflowTask` decides on what the handler computed (the PATCH).
+  `ZenBpmTaskProcessingIT#gatewayAfterTaskSeesTheNewValues`: the workflow starts with `express`
+  false, the handler of `Weigh` makes the parcel express, and the gateway behind it takes the branch
+  to `NotifyCourier`, which runs. `#aTaskInASubProcessNamesTheRootAndTheGatewayBehindItSeesTheValues`:
+  the handler of `Pack` inside the embedded sub-process sets `packed`, and the gateway behind the
+  sub-process ends in `Packed` (decision 35; with the values written into the job's own instance
+  only, this case fails). `ZenBpmJobHandlerTest#aCompletedTaskWritesTheValuesUpToTheWorkflowBeforeItCompletes`
+  pins the order: `PATCH` of the sub-process, `PATCH` of the root, then the completion, each with
+  the shared values and the id.
+- [x] `deliveryId` equals the job key and `activationId` equals the job key (pinned, so a later
   change to the element instance key is deliberate).
-- [ ] A job inside an embedded sub-process reports the root instance key as `workflowId`; a job of a
+  `ZenBpmJobHandlerTest#theContextNamesWhatTheJobAndItsInstanceSay` asserts `getTaskId()`,
+  `getDeliveryId()` and `getActivationId()` are the job key `42`, beside every other field of the
+  context.
+- [x] A job inside an embedded sub-process reports the root instance key as `workflowId`; a job of a
   called process reports the called instance's key (decision 28).
-- [ ] A job of a workflow this application does not own ends in an incident at once, whose message
+  End to end: the platform's delivery log of the booted Spring Boot application records the
+  instance key of the workflow for the delivery of `Pack`, whose job names the sub-process's
+  instance (`ZenBpmTaskProcessingIT#aTaskInASubProcessNamesTheRootAndTheGatewayBehindItSeesTheValues`);
+  `ZenBpmJobHandlerTest#theContextNamesWhatTheJobAndItsInstanceSay` with the fake engine. The
+  walk itself ends at the instance a call activity started (`ZenBpmProbesIT#theWorkflowIdOfATaskIsItsRootUpToACallActivity`,
+  `ZenBpmInstanceCacheTest#theWayUpNamesEveryInstanceOnIt`), and the handler takes the workflow id
+  from that walk.
+- [x] A job of a workflow this application does not own ends in an incident at once, whose message
   is the core's.
+  `ZenBpmTaskProcessingIT#aJobOfAWorkflowThisApplicationDoesNotOwnEndsInAnIncident`: an instance
+  started over REST with the business key of a parcel nobody stored gets an incident on `Weigh`
+  whose message holds the core's "This application was given a task of a workflow it does not own."
+  and the aggregate id, its job is `FAILED` after the first delivery, and the delivery log holds no
+  record of it. `ZenBpmDeploymentIT#aStartedModuleSubscribesItsJobTypeAndStopsFirst` sees the same
+  failure for its own application. `ZenBpmJobHandlerTest#aJobOfAWorkflowNobodyOwnsHereIsFailedWithTheCoresMessage`
+  pins the request: the core's message, `retries: 0`, the delivery token and the stream's client id,
+  and a WARN without stack trace.
+
+**Implemented 2026-10-17.** Core: `wiring/ZenBpmJobDispatcher`, `wiring/ZenBpmJobHandler`,
+`wiring/ZenBpmLockRenewal`, `wiring/ZenBpmJobTimeoutResolver`, `client/ZenBpmCommandRetry`,
+`client/api/JobFailure`; `ZenBpmRestClient#failJob(long, JobFailure)` and the decoding of a job's
+input variables (`ReceivedJob#inputVariables`, `ReceivedJob#lockEnd`);
+`ZenBpmErrors#variablesFoundNoInstance` and `#variablesFoundTheInstanceEnded`;
+`ZenBpmInstanceCache#facts(long, Function)` and `#instancesUpToTheWorkflow`;
+`ZenBpmProcessingContext#recordJobTimeout` and `#jobTimeouts`; `job-timeout` in
+`ZenBpmAdapterConfiguration`; `ZenBpmDeploymentService` records the job-timeouts while wiring,
+subscribes with them and the slot count, registers the module's handler with the dispatcher, and
+answers `jobTimeoutOf`. Spring Boot and Quarkus: `job-timeout` at the four levels and the resolver
+handed to the deployment service. Decisions 33, 34 and 35 (new); the README's status. No
+`ZenBpmJobTimeoutResolverTest`: the resolver is an interface, and the resolution it stands for is
+tested in both platforms' `VanillaBpZenBpmPropertiesTest` and their boot tests.
+
+New tests: `ZenBpmJobHandlerTest` (18), `ZenBpmJobDispatcherTest` (10), `ZenBpmLockRenewalTest` (11),
+`ZenBpmCommandRetryTest` (8), `ReceivedJobTest` (3), `ZenBpmJobHandlingIT` (3, pinned engine),
+cases in `ZenBpmAdapterConfigurationTest`, `ZenBpmRestClientTest`, `ZenBpmErrorsTest`,
+`ZenBpmInstanceCacheTest`, `ZenBpmDeploymentWiringTest` and `ZenBpmWorkflowProcessingTest`; Spring
+Boot `ZenBpmTaskProcessingIT` (7: `happyPathRunsEveryTaskKind`, `gatewayAfterTaskSeesTheNewValues`,
+`aTaskInASubProcessNamesTheRootAndTheGatewayBehindItSeesTheValues`, `aDeclaredTaskParameterIsBound`,
+`theAggregateIdIsBoundFromTheBusinessKey`, `aJobOfAWorkflowThisApplicationDoesNotOwnEndsInAnIncident`,
+`theJobTimeoutOfATaskComesFromItsMostSpecificLevel`) with the application `it/task` and
+`task-it/task-matrix.bpmn`, `ZenBpmJobTimeoutBootTest` (1) with the application `it/timeouts`, the
+job-timeout cases of `VanillaBpZenBpmPropertiesTest`; Quarkus `ZenBpmJobTimeoutTest` (1),
+`ZenBpmOverlayResolutionTest#jobTimeoutThroughTheFourLevels`, the job-timeout cases of the runtime's
+`VanillaBpZenBpmPropertiesTest`, and `ZenBpmWorkflowLifecycleTest#aStartCreatesTheInstanceAfterTheCommit`
+now waiting for the handler.
+
+Seen to fail, each restored afterwards (19 of 19 mutants, against green unmutated runs): a job whose
+lock lapsed while it waited started; a refused job forgotten instead of put back; a job of a type no
+module subscribes queued; a job served by a process which does not serve its type; a stopped module
+which keeps repeating its commands; the failure of a job naming no aggregate without `retries: 0`;
+the core's refusal of an unknown workflow handled like a thrown handler; the values written into
+the job's own instance only (also against the engine: fails
+`ZenBpmTaskProcessingIT#aTaskInASubProcessNamesTheRootAndTheGatewayBehindItSeesTheValues`); a `404`
+of the update not repeated; a `409` of the update not read as an ended workflow; the command retry
+repeating while the module shuts down, and ignoring the lock; the renewal extending a full lock at
+once, going on after a lost lock, and reporting after the handler ended; two job-timeouts of one
+type accepted; a job-timeout of zero accepted; the job types subscribed with the engine's defaults.
+
+`TZ=Etc/UTC mvn clean install` on OpenJDK 25.0.2 builds green with every integration test run and
+none skipped (engine test support 12 unit and 3 integration tests, core 837 unit and 73 integration
+tests, Spring Boot 11 unit and 13 integration tests, smoke test 35, Quarkus runtime 10, Quarkus
+deployment 48, Quarkus integration tests 3, coverage gate 37). The gate measures 100 % of 20,769
+instructions for Spring Boot and 100 % of 20,643 for Quarkus, and `bin/check-deploy-safety.sh`
+passes. No flake was hit.
 
 ### S6.1.2 BPMN error and pending outcomes
 
@@ -424,6 +597,12 @@ secondary with model B, the old workflow's task is served).
   more often, move its status-checked JSON read (`ZenBpmWorkflowLifecycleTest#engine`) into
   `engine-test-support` and let the Spring `ZenBpmDeploymentIT` use it instead of its substring
   checks.
+
+  *Note from S6.1.1, 2026-10-17.* Done in S6.1.1, because the dispatcher removed the WARN line:
+  `#aStartCreatesTheInstanceAfterTheCommit` waits for `E2eWorkflow#prepare` to run for its aggregate
+  (`introspect/prepared/{id}`) and for the completion of its instance's own job
+  (`introspect/jobs/{key}` names each job's key and state), and the instance is `COMPLETED`. The
+  move of the status-checked read into `engine-test-support` and the other Quarkus cases stay here.
 
 **Acceptance criteria**
 

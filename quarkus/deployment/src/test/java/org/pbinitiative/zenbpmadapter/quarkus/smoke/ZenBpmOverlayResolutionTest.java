@@ -18,11 +18,13 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.junit.jupiter.api.extension.RegisterExtension;
 import org.pbinitiative.zenbpmadapter.client.ZenBpmAdapterConfiguration;
+import org.pbinitiative.zenbpmadapter.deployment.ZenBpmDeploymentService;
 import org.pbinitiative.zenbpmadapter.processservice.ZenBpmProcessService;
 import org.pbinitiative.zenbpmadapter.quarkus.runtime.VanillaBpZenBpmProperties;
 
 import io.quarkus.test.QuarkusExtensionTest;
 import io.smallrye.config.SmallRyeConfig;
+import io.vanillabp.integration.adapter.spi.AdapterDeploymentService;
 import io.vanillabp.integration.adapter.spi.MigratableProcessService;
 import io.vanillabp.integration.test.utils.SuppressOutputExtension;
 import jakarta.enterprise.inject.Any;
@@ -49,6 +51,13 @@ class ZenBpmOverlayResolutionTest {
             .extensionTest()
             .overrideConfigKey("vanillabp.prioritized-adapters", "zenbpm")
             .overrideConfigKey("vanillabp.adapters.zenbpm.rest-address", "http://localhost:8080")
+            .overrideConfigKey("vanillabp.adapters.zenbpm.job-timeout", "PT4M")
+            .overrideConfigKey(MODULE
+                    + ".adapters.zenbpm.job-timeout", "PT3M")
+            .overrideConfigKey(WORKFLOW
+                    + ".adapters.zenbpm.job-timeout", "PT2M")
+            .overrideConfigKey(WORKFLOW
+                    + ".tasks.ship.adapters.zenbpm.job-timeout", "PT1M")
             .overrideConfigKey("vanillabp.adapters.zenbpm.retry-backoff", "PT4S")
             .overrideConfigKey("vanillabp.adapters.zenbpm.max-redeliveries", "4")
             .overrideConfigKey("vanillabp.adapters.zenbpm.history-time-to-live", "PT4H")
@@ -75,6 +84,34 @@ class ZenBpmOverlayResolutionTest {
     @Inject
     @Any
     Instance<List<MigratableProcessService<Object>>> processServices;
+
+    @Inject
+    @Any
+    Instance<List<AdapterDeploymentService<Object, Object>>> deploymentServices;
+
+    @Test
+    @DisplayName("job-timeout is read from the most specific of the four levels which sets it, and the deployment service resolves a task's the same way")
+    void jobTimeoutThroughTheFourLevels() {
+        final var overlay = overlay();
+        final ZenBpmDeploymentService deploymentService = SmokeApplication.only(deploymentServices,
+                ZenBpmDeploymentService.class);
+
+        assertAll(
+                () -> assertEquals(Duration.ofMinutes(1), overlay.jobTimeoutFor("smoke-app", "SampleWorkflowService",
+                        "ship", "zenbpm")),
+                () -> assertEquals(Duration.ofMinutes(2), overlay.jobTimeoutFor("smoke-app", "SampleWorkflowService",
+                        "pack", "zenbpm")),
+                () -> assertEquals(Duration.ofMinutes(3), overlay.jobTimeoutFor("smoke-app", "OtherWorkflow", "ship",
+                        "zenbpm")),
+                () -> assertEquals(Duration.ofMinutes(4), overlay.jobTimeoutFor("other-module",
+                        "SampleWorkflowService", "ship", "zenbpm")),
+                () -> assertEquals(ZenBpmAdapterConfiguration.DEFAULT_JOB_TIMEOUT, overlay.jobTimeoutFor("smoke-app",
+                        "SampleWorkflowService", "ship", "other")),
+                () -> assertEquals(Duration.ofMinutes(1), deploymentService.jobTimeoutOf("smoke-app",
+                        "SampleWorkflowService", "ship")),
+                () -> assertEquals(Duration.ofMinutes(4), deploymentService.jobTimeoutOf("other-module",
+                        "SampleWorkflowService", "ship")));
+    }
 
     @Test
     @DisplayName("retry-backoff is read from the most specific of the four levels which sets it")
@@ -159,6 +196,7 @@ class ZenBpmOverlayResolutionTest {
         final var configuration = overlay().configurationOf("zenbpm");
 
         assertAll(
+                () -> assertEquals(Duration.ofMinutes(4), configuration.getJobTimeout()),
                 () -> assertEquals(Duration.ofSeconds(4), configuration.getRetryBackoff()),
                 () -> assertEquals(4, configuration.getMaxRedeliveries()),
                 () -> assertEquals(Duration.ofHours(4), configuration.getHistoryTimeToLive()),

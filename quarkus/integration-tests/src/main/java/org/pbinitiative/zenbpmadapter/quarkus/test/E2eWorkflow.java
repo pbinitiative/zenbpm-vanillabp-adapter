@@ -4,6 +4,9 @@
  */
 package org.pbinitiative.zenbpmadapter.quarkus.test;
 
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
+
 import io.vanillabp.spi.process.ProcessService;
 import io.vanillabp.spi.service.BpmnProcess;
 import io.vanillabp.spi.service.WorkflowService;
@@ -13,9 +16,10 @@ import jakarta.inject.Inject;
 
 /**
  * The workflow service of the Quarkus end-to-end application. Its process <code>StartProcess</code>
- * evaluates the decision <code>rating</code> of the workflow module and then waits in the task
- * <code>Prepare</code>, so a started instance shows that the engine holds both files under the ids
- * the adapter deployed them with.
+ * evaluates the decision <code>rating</code> of the workflow module and then reaches the task
+ * <code>Prepare</code>, whose job the adapter delivers to {@link #prepare(E2eAggregate)}; once that
+ * completed, the workflow ends. So a started instance shows that the engine holds both files under
+ * the ids the adapter deployed them with, and that its task reaches the application.
  */
 @ApplicationScoped
 @WorkflowService(workflowAggregateClass = E2eAggregate.class,
@@ -24,6 +28,11 @@ public class E2eWorkflow {
 
     @Inject
     ProcessService<E2eAggregate> processService;
+
+    /**
+     * The aggregates whose task <code>Prepare</code> ran, by id.
+     */
+    private final Set<String> prepared = ConcurrentHashMap.newKeySet();
 
     /**
      * Built by CDI.
@@ -42,14 +51,23 @@ public class E2eWorkflow {
     }
 
     /**
-     * Serves the task <code>Prepare</code>, so the adapter wires it and subscribes its job type. No
-     * job reaches it before the adapter delivers tasks, so the instance stays in it.
+     * Serves the task <code>Prepare</code>, and writes down that it ran for the aggregate.
      *
      * @param aggregate The workflow aggregate
      */
     @WorkflowTask(taskDefinition = "prepare")
     public void prepare(final E2eAggregate aggregate) {
-        // nothing to do: the tests are about deploying and starting the workflow
+        prepared.add(aggregate.getId());
+    }
+
+    /**
+     * Whether the task <code>Prepare</code> ran for an aggregate.
+     *
+     * @param id The aggregate's id
+     * @return <code>true</code> once it ran
+     */
+    public boolean hasPrepared(final String id) {
+        return prepared.contains(id);
     }
 
 }

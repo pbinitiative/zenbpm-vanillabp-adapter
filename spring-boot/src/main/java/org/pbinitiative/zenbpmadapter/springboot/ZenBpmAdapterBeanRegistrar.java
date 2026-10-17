@@ -29,7 +29,8 @@ import io.vanillabp.integration.spi.startup.StartupReport;
  * <p>
  * A process service reads the <code>history-time-to-live</code> of a workflow from
  * {@link VanillaBpZenBpmProperties}, which resolves it from the workflow, the workflow module and
- * the adapter id.
+ * the adapter id, and a deployment service the <code>job-timeout</code> of a task, which it
+ * resolves from the task as well.
  * <p>
  * The ids come from the configuration at runtime, so the beans are registered in code, through
  * {@link AdapterBeanRegistrarSupport#forEachConfiguredAdapterId}, which reads the same ids the
@@ -62,9 +63,14 @@ public class ZenBpmAdapterBeanRegistrar implements BeanRegistrar {
 
             registry.registerBean("ZenBpm_DeploymentService_%s".formatted(adapterId), ZenBpmDeploymentService.class,
                     spec -> spec.supplier(supplierContext -> {
+                        final var overlay = supplierContext.bean(VanillaBpZenBpmProperties.class);
                         final var deploymentService = new ZenBpmDeploymentService(adapterId, supplierContext
                                 .bean(ZenBpmClientRegistry.class), AdapterBeanRegistrarSupport.collaborators(
-                                        supplierContext, adapterId));
+                                        supplierContext, adapterId), (
+                                            workflowModuleId,
+                                            bpmnProcessId,
+                                            taskDefinition) -> overlay.jobTimeoutFor(workflowModuleId,
+                                                    bpmnProcessId, taskDefinition, adapterId));
                         // the block both platform integrations write at the end of a start
                         deploymentService.setStartupReport(supplierContext
                                 .beanProvider(StartupReport.class)

@@ -170,7 +170,11 @@ final class ZenBpmWire {
 
     record FailJob(
         String errorCode,
-        Map<String, Object> variables
+        String message,
+        Map<String, Object> variables,
+        Integer retries,
+        Long deliveryToken,
+        String clientId
     ) {
     }
 

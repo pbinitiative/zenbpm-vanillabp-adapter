@@ -14,6 +14,7 @@ import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.nio.charset.StandardCharsets;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -52,6 +53,19 @@ class ZenBpmDeploymentWiringTest {
     private static final String NOT_CONFIGURED = "ZenBPM adapter 'orders' is not configured: set the key";
 
     // elements which create a job, all of them but Charge naming no task definition
+    private static final String PACKING = """
+            <bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL"
+                xmlns:zenbpm="http://zenbpm.pbinitiative.org/1.0" id="definitions">
+              <bpmn:process id="%s" isExecutable="true">
+                <bpmn:serviceTask id="Pack">
+                  <bpmn:extensionElements>
+                    <zenbpm:taskDefinition type="pack" />
+                  </bpmn:extensionElements>
+                </bpmn:serviceTask>
+              </bpmn:process>
+            </bpmn:definitions>
+            """;
+
     private static final String JOBS_OF_NO_TYPE = """
             <bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL"
                 xmlns:zenbpm="http://zenbpm.pbinitiative.org/1.0" id="order">
@@ -477,6 +491,38 @@ class ZenBpmDeploymentWiringTest {
     }
 
     @Test
+    @DisplayName("Two tasks of one job type with different job-timeouts end wiring, naming both values and the keys to set; with the same one, the type keeps it")
+    void twoTasksOfOneJobTypeNeedTheSameJobTimeout() {
+        final var wiring = TestWiring.claiming("Packing", "Returns");
+        final var collaborators = TestCollaborators.of(ADAPTER_ID, TestScoping.of(NameClashAvoidance.NONE), wiring
+                .wiring(), TestStarts.everyProcessStartingAWorkflow());
+        final var registry = new ZenBpmClientRegistry(List.of(ZenBpmClientFactory.unconfigured(ADAPTER_ID,
+                new ZenBpmAdapterConfiguration(), NOT_CONFIGURED)));
+        final var conflicting = new ZenBpmDeploymentService(ADAPTER_ID, registry, collaborators, (
+            workflowModuleId,
+            bpmnProcessId,
+            taskDefinition) -> "Returns".equals(bpmnProcessId) ? Duration.ofMinutes(2) : Duration.ofMinutes(1));
+        final var agreeing = new ZenBpmDeploymentService(ADAPTER_ID, registry, collaborators, (
+            workflowModuleId,
+            bpmnProcessId,
+            taskDefinition) -> Duration.ofMinutes(1));
+
+        final var refusal = assertThrows(IllegalStateException.class, () -> wireBoth(conflicting));
+        final var context = wireBoth(agreeing);
+
+        assertAll(
+                () -> assertEquals("""
+                        Job type 'pack' of workflow module 'shop' is served by two tasks with different job-timeouts: \
+                        PT1M for task 'pack' of process 'Packing' and PT2M for task 'pack' of process 'Returns'. The \
+                        engine locks the jobs of a type for one duration, so give both tasks the same job-timeout, for \
+                        example:
+                          vanillabp.workflow-modules.shop.workflows.Packing.tasks.pack.adapters.orders.job-timeout
+                          vanillabp.workflow-modules.shop.workflows.Returns.tasks.pack.adapters.orders.job-timeout""",
+                        refusal.getMessage()),
+                () -> assertEquals(Map.of("pack", Duration.ofMinutes(1)), context.jobTimeouts()));
+    }
+
+    @Test
     @DisplayName("Wiring needs no engine: an adapter id without clients wires like a configured one")
     void wiringNeedsNoEngine() {
         final var wiring = TestWiring.claiming("Orders");
@@ -491,6 +537,14 @@ class ZenBpmDeploymentWiringTest {
         assertTrue(context
                 .wiredProcesses()
                 .containsKey("Orders"));
+    }
+
+    private static ZenBpmProcessingContext wireBoth(final ZenBpmDeploymentService deploymentService) {
+        final var context = wire(deploymentService, "packing.bpmn", PACKING.formatted("Packing"), "Packing");
+        final var returns = read(deploymentService, "returns.bpmn", PACKING.formatted("Returns"));
+        deploymentService.prepareBpmn("shop", context, "returns.bpmn", "Returns", returns);
+        deploymentService.wireBpmn("shop", "returns.bpmn", "Returns", returns, context);
+        return context;
     }
 
     private static ZenBpmDeploymentService deploymentService(final AdapterCollaborators collaborators) {

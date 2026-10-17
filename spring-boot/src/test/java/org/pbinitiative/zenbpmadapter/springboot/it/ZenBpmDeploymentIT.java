@@ -42,8 +42,8 @@ import io.vanillabp.integration.test.utils.SuppressOutputExtension;
  * one DMN file, to the pinned engine under <code>use-prefix</code> and starts its workflow
  * processing: the engine holds the process under the prefixed id and the decision under the prefixed
  * decision id, an unchanged start keeps version 1 and registers it, a changed file gets version 2,
- * the job type of the module's task reaches the engine, and stopping the application stops the module
- * before the clients close.
+ * the job type of the module's task reaches the engine, whose job reaches the adapter, and stopping
+ * the application stops the module before the clients close.
  */
 @ExtendWith(SuppressOutputExtension.class)
 @Testcontainers(disabledWithoutDocker = true)
@@ -98,9 +98,9 @@ class ZenBpmDeploymentIT {
     }
 
     @Test
-    @DisplayName("A started module subscribes its job type at the engine, whose job of a new instance arrives and is left to its lock; stopping the application stops the module before its clients close")
+    @DisplayName("A started module subscribes its job type at the engine, whose job of a new instance arrives and, belonging to no shipment of the application, is failed; stopping the application stops the module before its clients close")
     void aStartedModuleSubscribesItsJobTypeAndStopsFirst(final CapturedOutput output) {
-        final String warning = "a job of type 'deploy-it__DeployIt__ship'";
+        final String warning = "(task 'ship') is about a workflow this application does not own";
         try (var context = run(VERSION_1)) {
             context
                     .getBean(ZenBpmClientRegistry.class)
@@ -125,7 +125,7 @@ class ZenBpmDeploymentIT {
 
         assertAll(
                 () -> assertTrue(log.contains(
-                        "ZenBPM[zenbpm]: workflow module 'deploy-it' subscribed the job type(s) deploy-it__DeployIt__ship"),
+                        "ZenBPM[zenbpm]: workflow module 'deploy-it' subscribed the job type(s) deploy-it__DeployIt__ship (job-timeout PT5M), each with at most 4 active job(s)"),
                         log),
                 () -> assertTrue(log.contains(warning), log),
                 () -> assertTrue(log.contains(

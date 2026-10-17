@@ -24,10 +24,10 @@ import io.smallrye.config.ConfigMapping;
  * mapping of the tree beside the platform's own, which models only the keys of this adapter.
  * <p>
  * The keys of an adapter id live at <code>vanillabp.adapters.&lt;id&gt;.*</code>
- * ({@link ZenBpmAdapterKeys}). Three of them may also be set below the adapter level, and the most
+ * ({@link ZenBpmAdapterKeys}). Four of them may also be set below the adapter level, and the most
  * specific level wins for a task (task &gt; workflow &gt; workflow module &gt; adapter):
  * <ul>
- * <li><code>retry-backoff</code> and <code>max-redeliveries</code> at
+ * <li><code>job-timeout</code>, <code>retry-backoff</code> and <code>max-redeliveries</code> at
  * <code>vanillabp.workflow-modules.&lt;module&gt;.adapters.&lt;id&gt;.*</code>,
  * <code>vanillabp.workflow-modules.&lt;module&gt;.workflows.&lt;process&gt;.adapters.&lt;id&gt;.*</code>
  * and
@@ -126,6 +126,27 @@ public interface VanillaBpZenBpmProperties {
     }
 
     /**
+     * How long a job of a task stays locked to the node which received it: the most specific level
+     * which sets <code>job-timeout</code>, else the adapter's, else the default.
+     *
+     * @param workflowModuleId The workflow module the task belongs to
+     * @param bpmnProcessId The BPMN process the task belongs to
+     * @param taskId The task, as the BPMN model names its job type
+     * @param adapterId The adapter id whose keys are read
+     * @return The duration, never <code>null</code>
+     */
+    default Duration jobTimeoutFor(
+        final String workflowModuleId,
+        final String bpmnProcessId,
+        final String taskId,
+        final String adapterId
+    ) {
+        return mostSpecific(workflowModuleId, bpmnProcessId, taskId, adapterId, ZenBpmScopedKeys::jobTimeout)
+                .or(() -> adapterLevel(adapterId, ZenBpmAdapterKeys::jobTimeout))
+                .orElse(ZenBpmAdapterConfiguration.DEFAULT_JOB_TIMEOUT);
+    }
+
+    /**
      * The first wait after a failed handler of a task: the most specific level which sets
      * <code>retry-backoff</code>, else the adapter's, else the default.
      *
@@ -198,6 +219,9 @@ public interface VanillaBpZenBpmProperties {
         if (keys == null) {
             return;
         }
+        configuration.addScopedValue("%s.job-timeout".formatted(prefix), keys
+                .jobTimeout()
+                .orElse(null));
         configuration.addScopedValue("%s.retry-backoff".formatted(prefix), keys
                 .retryBackoff()
                 .orElse(null));
@@ -349,6 +373,14 @@ public interface VanillaBpZenBpmProperties {
         Optional<Integer> workerThreadsBound();
 
         /**
+         * <code>job-timeout</code>: how long a job stays locked to the node which received it, at
+         * the adapter level.
+         *
+         * @return The value, empty where the application did not set the key
+         */
+        Optional<Duration> jobTimeout();
+
+        /**
          * <code>retry-backoff</code>: the first wait after a failed handler, at the adapter level.
          *
          * @return The value, empty where the application did not set the key
@@ -432,6 +464,7 @@ public interface VanillaBpZenBpmProperties {
             configuration.setStartupWait(startupWait().orElse(null));
             configuration.setWorkerThreads(workerThreads().orElse(null));
             configuration.setWorkerThreadsBound(workerThreadsBound().orElse(null));
+            configuration.setJobTimeout(jobTimeout().orElse(null));
             configuration.setRetryBackoff(retryBackoff().orElse(null));
             configuration.setMaxRedeliveries(maxRedeliveries().orElse(null));
             configuration.setShutdownGrace(shutdownGrace().orElse(null));
@@ -449,6 +482,13 @@ public interface VanillaBpZenBpmProperties {
      * The keys of an adapter id which a task may set for itself.
      */
     interface ZenBpmScopedKeys {
+
+        /**
+         * <code>job-timeout</code> at this level.
+         *
+         * @return The duration, empty where this level does not set it
+         */
+        Optional<Duration> jobTimeout();
 
         /**
          * <code>retry-backoff</code> at this level.

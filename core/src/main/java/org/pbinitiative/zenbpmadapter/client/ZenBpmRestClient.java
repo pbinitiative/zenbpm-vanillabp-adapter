@@ -42,6 +42,7 @@ import org.pbinitiative.zenbpmadapter.client.api.DeployedResource;
 import org.pbinitiative.zenbpmadapter.client.api.EngineStatus;
 import org.pbinitiative.zenbpmadapter.client.api.HistoryEntry;
 import org.pbinitiative.zenbpmadapter.client.api.InstanceFilter;
+import org.pbinitiative.zenbpmadapter.client.api.JobFailure;
 import org.pbinitiative.zenbpmadapter.client.api.JobFilter;
 import org.pbinitiative.zenbpmadapter.client.api.JobRef;
 import org.pbinitiative.zenbpmadapter.client.api.Page;
@@ -53,6 +54,7 @@ import com.fasterxml.jackson.annotation.JsonInclude;
 import com.fasterxml.jackson.annotation.JsonSetter;
 import com.fasterxml.jackson.annotation.Nulls;
 import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.introspect.Annotated;
@@ -109,6 +111,14 @@ public class ZenBpmRestClient implements AutoCloseable {
     private static final IntPredicate SUCCESS = status -> (status >= 200) && (status < 300);
 
     private static final IntPredicate SUCCESS_OR_NOT_FOUND = SUCCESS.or(status -> status == 404);
+
+    /**
+     * Reads the variables of a job the job stream handed over, which carries them as JSON. A value
+     * of no declared type is decoded as the REST answers decode it.
+     */
+    private static final ObjectMapper JOB_VARIABLES = JsonMapper
+            .builder()
+            .build();
 
     private final String adapterId;
 
@@ -479,8 +489,28 @@ public class ZenBpmRestClient implements AutoCloseable {
         final String errorCode,
         final Map<String, Object> variables
     ) {
+        failJob(key, JobFailure
+                .withErrorCode(errorCode)
+                .withVariables(variables));
+    }
+
+    /**
+     * Fails a job (<code>POST /v1/jobs/{key}/fail</code>) with everything a failure may say: why,
+     * how many retries the job has left, and which delivery of the job stream it belongs to.
+     *
+     * @param key The job key
+     * @param failure The failure
+     * @throws ZenBpmApiException With status 404 where the engine knows no such job, 409 where the
+     *             job no longer waits or another delivery of it decides, 400 where the engine does
+     *             not take a value of the failure, such as a delivery token it never handed out
+     */
+    public void failJob(
+        final long key,
+        final JobFailure failure
+    ) {
         final var call = new Call(POST, "/v1/jobs/%d/fail".formatted(key));
-        call.send(JSON, call.jsonBody(new ZenBpmWire.FailJob(errorCode, variables)), SUCCESS);
+        call.send(JSON, call.jsonBody(new ZenBpmWire.FailJob(failure.errorCode(), failure.message(), failure
+                .variables(), failure.retries(), failure.deliveryToken(), failure.clientId())), SUCCESS);
     }
 
     /**
@@ -552,6 +582,30 @@ public class ZenBpmRestClient implements AutoCloseable {
     public void close() {
         closed = true;
         http.close();
+    }
+
+    /**
+     * The variables of a job as the job stream hands them over, a JSON object, decoded to the
+     * types {@link org.pbinitiative.zenbpmadapter.client.api.Variables} describes, the same as the
+     * variables of the REST answers.
+     *
+     * @param json The JSON object; empty for none
+     * @return The variables, which cannot be changed
+     * @throws IllegalStateException Where the bytes are no JSON object
+     */
+    static Map<String, Object> variablesIn(final byte[] json) {
+        if (json.length == 0) {
+            return Map.of();
+        }
+        final Map<String, Object> read;
+        try {
+            read = JOB_VARIABLES.readValue(json, new TypeReference<LinkedHashMap<String, Object>>() {
+            });
+        } catch (final IOException e) {
+            throw new IllegalStateException("The variables of a job are no JSON object: %s".formatted(e
+                    .getMessage()), e);
+        }
+        return variables(Objects.requireNonNullElse(read, Map.of()));
     }
 
     private Page<ProcessDefinitionRef> processDefinitionsPage(

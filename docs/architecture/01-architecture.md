@@ -84,7 +84,7 @@ from the pinned proto), because a hand-written gRPC client is not a reasonable t
 | `ZenBpmClientFactory` | builds ONE `ZenBpmClient` per adapter id eagerly; owns its lifecycle; closes what a module never stopped |
 | `ZenBpmClientRegistry` | id -> factory, the platform's lookup; knows whether two ids address one engine |
 | `ZenBpmRestClient` | `java.net.http.HttpClient` + Jackson; one method per used endpoint returning typed records (`ProcessDefinitionRef`, `ProcessInstanceRef`, `JobRef`, `HistoryPage`, ...); `request-timeout` on every call; maps `{code,message}` into `ZenBpmApiException(status, code, message, path)` |
-| `ZenBpmJobStream` | one bidirectional `JobStream` per adapter id and node, metadata `client_id`; subscribe/unsubscribe per job type with reference counting across modules, each subscription carrying `lock_duration_ms` (the resolved `job-timeout`) and `max_active_jobs` (the handler slots); reconnect with backoff; hands `WaitingJob`s (with `lock_until`) to a `JobDispatcher` |
+| `ZenBpmJobStream` | one bidirectional `JobStream` per adapter id and node, metadata `client_id`; subscribe/unsubscribe per job type with reference counting across modules, each subscription carrying `lock_duration_ms` (the resolved `job-timeout`) and `max_active_jobs` (the handler slots); reconnect with backoff; hands `WaitingJob`s (with `lock_until`) to the `ZenBpmJobDispatcher` |
 | `ZenBpmJobLocks` | extends locks over REST `POST /v1/jobs/{key}/extend-lock` with the stream's client id: renewal of running handlers, parking of open asynchronous tasks, "come back after the backoff" of a failed handler; `409` = the lock is lost (a second delivery may be under way), `502` = repeat, `404` = gone; warns once per adapter id where the answered deadline shows the engine capped the request (`JOB_MANAGER_MAX_LOCK_DURATION_MS`) |
 | `ZenBpmErrors` | the one classification: `permanentFailure(Throwable)` (400, 413, 415, 404 of `POST /v1/process-instances`, key not a number) and `isRepeatable` (everything else), `isGoneJob(Throwable)` (404 on a job, 409 on its completion or failure), `nobodyWaits(Throwable)` (404 on a message), `lockLost(Throwable)` (409 on a lock extension), `isUnavailable(Throwable)` (no answer, timeout, 502, 503, 504); read from status, method and path, never from text (decision 30, which superseded decision 10; Camunda 8 decision 16 applies verbatim) |
 | `ZenBpmEngineWait` | before the first deployment round per adapter id: poll `GET /system/health/ready` until 200, `startup-wait` runs out, or a permanent answer; log the address and the last answer every few seconds |
@@ -251,7 +251,7 @@ instance the leader just created (GAPS 20).
 ### 4.3 Delivering a task
 
 ```
-JobStream ──WaitingJob──▶ JobDispatcher ──(queue, bounded by the subscriptions' caps)──▶ ZenBpmExecutor ──▶ ZenBpmJobHandler
+JobStream ──WaitingJob──▶ ZenBpmJobDispatcher ──(queue, bounded by the subscriptions' caps)──▶ ZenBpmExecutor ──▶ ZenBpmJobHandler
                           subscription per job type: lock_duration_ms = job-timeout, max_active_jobs = slots
 ZenBpmJobHandler, before invoking:
   lock renewal: if lock_until - now < job-timeout / 2, extend by job-timeout (a job which waited in the
@@ -261,12 +261,13 @@ ZenBpmJobHandler:
   context = TaskInvocationContext{ taskDefinition = plain(job.type), bpmnElementId = job.element_id,
             taskKind = TASK, workflowId = root instance key (decision 28),
             businessKey = facts.businessKey,
-            aggregateId = facts.businessKey ?? facts.variables[idName], taskId = job.key,
+            aggregateId = facts.variables[idName] ?? facts.businessKey, taskId = job.key,
             deliveryId = job.key, activationId = job.key, processVersion = facts.version, adapterId,
             taskParameters = job.input_variables, multiInstances = from parent chain,
             predatesDeployedVersion = facts.version < deployed }
   outcome = workflowTaskInvoker.invokeWorkflowTask(module, plainProcess, context)   (own transaction)
-  COMPLETED           → PATCH /process-instances/{facts.key}/variables {shared values + id var}
+  COMPLETED           → PATCH /process-instances/{key}/variables {shared values + id var} for the
+                        job's instance and every instance above it up to the root (decision 35)
                         POST /jobs/{key}/complete {same values}
   BPMN_ERROR          → PATCH variables; POST /jobs/{key}/fail {errorCode: scoped code,
                         deliveryToken, clientId}
@@ -467,7 +468,7 @@ org.pbinitiative.zenbpmadapter
   processservice/ZenBpmWorkflowViewer  definitions, XML, history
   processservice/ZenBpmSharedValues    shared values + id variable for every command
   processservice/ZenBpmValueTypes      whatThisBpmsDoesWith: what a value type becomes in the engine
-  wiring/JobDispatcher                 stream -> bounded queue -> slots
+  wiring/ZenBpmJobDispatcher           stream -> bounded queue -> slots, routes by the instance's process
   wiring/ZenBpmLockRenewal             renews locks of running handlers, parks async tasks
   wiring/ZenBpmJobHandler              section 4.3
   wiring/ZenBpmOpenTaskProbe           OpenTaskProbe: is a task the core believes open still there

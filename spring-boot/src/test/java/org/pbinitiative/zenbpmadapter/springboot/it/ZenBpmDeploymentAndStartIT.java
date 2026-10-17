@@ -55,8 +55,9 @@ import io.vanillabp.spi.process.ProcessService;
  * nobody started one for.
  * <p>
  * The application runs the workflow module <code>deploy-it</code> under <code>use-prefix</code> with
- * the process <code>Ordering</code>, whose instance waits in its one task, configured by
- * <code>start-it.yaml</code>. It is started once for the class, against an engine of its own.
+ * the process <code>Ordering</code>, configured by <code>start-it.yaml</code>. Its instance stays
+ * active for an hour behind its one task, which the adapter runs, so the tests see a workflow which
+ * runs. It is started once for the class, against an engine of its own.
  */
 @ExtendWith(SuppressOutputExtension.class)
 @Testcontainers(disabledWithoutDocker = true)

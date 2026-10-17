@@ -4,6 +4,7 @@
  */
 package org.pbinitiative.zenbpmadapter;
 
+import java.time.Duration;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.HashSet;
@@ -14,6 +15,7 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 
+import org.pbinitiative.zenbpmadapter.client.ZenBpmAdapterConfiguration;
 import org.pbinitiative.zenbpmadapter.client.ZenBpmClientFactory.WorkflowModuleShutdownRegistration;
 import org.pbinitiative.zenbpmadapter.model.ZenBpmBpmnModel;
 import org.pbinitiative.zenbpmadapter.model.ZenBpmCorrelationKeys;
@@ -52,6 +54,8 @@ public final class ZenBpmProcessingContext {
     private final Map<String, String> awaitedMessages = new LinkedHashMap<>();
 
     private final Map<String, WiredProcess> wiredProcesses = new LinkedHashMap<>();
+
+    private final Map<String, JobTimeout> jobTimeouts = new LinkedHashMap<>();
 
     private final Map<String, ZenBpmBpmnModel> bpmnFiles = new LinkedHashMap<>();
 
@@ -259,6 +263,60 @@ public final class ZenBpmProcessingContext {
     }
 
     /**
+     * Remembers the <code>job-timeout</code> of a task a claimed process of the module serves, by
+     * the job type the task's jobs come under, and ends the deployment where another task of the
+     * module comes under the same job type with another one: the engine locks the jobs of a type for
+     * one duration per subscription.
+     *
+     * @param jobType The job type as the engine knows it
+     * @param jobTimeout The <code>job-timeout</code> resolved for the task
+     * @param bpmnProcessId The plain id of the task's process
+     * @param taskDefinition The plain task definition of the task
+     * @param adapterId The adapter id, for the keys the message names
+     * @throws IllegalStateException Where another task of the job type has another
+     *             <code>job-timeout</code>, naming both and the keys which set them
+     */
+    public void recordJobTimeout(
+        final String jobType,
+        final Duration jobTimeout,
+        final String bpmnProcessId,
+        final String taskDefinition,
+        final String adapterId
+    ) {
+        final var recorded = jobTimeouts.putIfAbsent(jobType,
+                new JobTimeout(jobTimeout, bpmnProcessId, taskDefinition));
+        if ((recorded == null) || recorded.duration.equals(jobTimeout)) {
+            return;
+        }
+        throw new IllegalStateException("""
+                Job type '%s' of workflow module '%s' is served by two tasks with different job-timeouts: %s for \
+                task '%s' of process '%s' and %s for task '%s' of process '%s'. The engine locks the jobs of a type \
+                for one duration, so give both tasks the same job-timeout, for example:
+                  vanillabp.workflow-modules.%s.workflows.%s.tasks.%s.adapters.%s.job-timeout
+                  vanillabp.workflow-modules.%s.workflows.%s.tasks.%s.adapters.%s.job-timeout"""
+                .formatted(jobType, workflowModuleId, recorded.duration, recorded.taskDefinition,
+                        recorded.bpmnProcessId, jobTimeout, taskDefinition, bpmnProcessId, workflowModuleId,
+                        recorded.bpmnProcessId, recorded.taskDefinition, adapterId, workflowModuleId, bpmnProcessId,
+                        taskDefinition, adapterId));
+    }
+
+    /**
+     * The <code>job-timeout</code> of each job type of the workflow module's claimed processes, the
+     * duration its subscription asks the engine to lock a job for. A type no task recorded one for
+     * has the default, {@value ZenBpmAdapterConfiguration#DEFAULT_JOB_TIMEOUT_ISO}.
+     *
+     * @return The durations by job type, in the order of {@link #jobTypes()}
+     */
+    public Map<String, Duration> jobTimeouts() {
+        final var byJobType = new LinkedHashMap<String, Duration>();
+        jobTypes().forEach(jobType -> byJobType.put(jobType, Optional
+                .ofNullable(jobTimeouts.get(jobType))
+                .map(JobTimeout::duration)
+                .orElse(ZenBpmAdapterConfiguration.DEFAULT_JOB_TIMEOUT)));
+        return Collections.unmodifiableMap(byJobType);
+    }
+
+    /**
      * Remembers that the workflow processing of the module started: the job types it subscribes
      * and the registration of the hook which stops it where the client factory closes first.
      *
@@ -299,6 +357,16 @@ public final class ZenBpmProcessingContext {
             jobTypes = Collections.unmodifiableSet(new LinkedHashSet<>(jobTypes));
         }
 
+    }
+
+    /**
+     * The <code>job-timeout</code> of a job type, with the first task it was resolved for.
+     */
+    private record JobTimeout(
+        Duration duration,
+        String bpmnProcessId,
+        String taskDefinition
+    ) {
     }
 
     /**

@@ -129,23 +129,25 @@ public class E2eIntrospection {
      */
     @GET
     @Path("/jobs/{instanceKey}")
-    public List<String> jobs(@PathParam("instanceKey") final long instanceKey) {
+    public List<Map<String, Object>> jobs(@PathParam("instanceKey") final long instanceKey) {
         return rest()
                 .jobs(JobFilter
                         .anyJob()
                         .withProcessInstanceKey(instanceKey))
                 .items()
                 .stream()
-                .map(job -> String.valueOf(job.key()))
+                .map(job -> Map.<String, Object>of("key", String.valueOf(job.key()), "state", job
+                        .state()
+                        .name()))
                 .toList();
     }
 
-    /**
-     * Whether the database holds an aggregate.
-     *
-     * @param id The id of the aggregate
-     * @return <code>exists</code>, <code>true</code> or <code>false</code>
-     */
+    @GET
+    @Path("/prepared/{id}")
+    public Map<String, Object> prepared(@PathParam("id") final String id) {
+        return Map.of("prepared", workflow.hasPrepared(id));
+    }
+
     @GET
     @Path("/aggregates/{id}")
     @Transactional

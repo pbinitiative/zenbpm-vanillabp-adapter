@@ -167,6 +167,32 @@ public final class TestCollaborators {
                 .build();
     }
 
+    /**
+     * A complete set of collaborators, of which only the scoping and the invoker of tasks may be
+     * called: what the handler of a job meets.
+     *
+     * @param adapterId The adapter id they are handed to
+     * @param scoping The platform's name-clash scoping, as the test wants it to answer
+     * @param workflowTaskInvoker The platform's core as a job handler calls it
+     * @return The collaborators
+     */
+    public static AdapterCollaborators withInvoker(
+        final String adapterId,
+        final NameClashAvoidanceSupport scoping,
+        final WorkflowTaskInvoker workflowTaskInvoker
+    ) {
+        return AdapterCollaborators
+                .forAdapter(adapterId)
+                .workflowTaskWiring(unused(WorkflowTaskWiring.class))
+                .workflowTaskInvoker(workflowTaskInvoker)
+                .scoping(scoping)
+                .workflowAggregateSync(unused(WorkflowAggregateSync.class))
+                .preCommitRegistrar(unused(PreCommitRegistrar.class))
+                .workflowEndedInvoker(unused(WorkflowEndedInvoker.class))
+                .bpmsInitiatedStartInvoker(unused(BpmsInitiatedStartInvoker.class))
+                .build();
+    }
+
     private static <T> T unused(final Class<T> type) {
         return type.cast(Proxy.newProxyInstance(TestCollaborators.class.getClassLoader(), new Class<?>[]{
                 type
