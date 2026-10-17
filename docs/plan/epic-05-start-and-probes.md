@@ -697,6 +697,29 @@ measures 100 % of 18,092 instructions for Spring Boot and 100 % of 17,970 for Qu
 because the pinned engine's container did not start ("failed to bootstrap cluster: boot timeout",
 as under S3.2.1); nothing of this batch runs there, and the next run passed.
 
+**F5.2 done 2026-10-17**, merged to `main` as `0db8ea4` (pull request #38, after two reviews and
+CodeRabbit's review, which left no comment). On that commit (GitHub keeps run logs for 90 days, so
+what they showed is written here as well):
+
+- `Checks`, run
+  [39040857073](https://github.com/pbinitiative/zenbpm-vanillabp-adapter/actions/runs/39040857073):
+  green on both JDKs. `bin/check-engine-copies.sh` reported both copies as the engine's files of
+  `bdd795a3...`. `ZenBpmInstanceCacheTest` ran 11 tests, `ZenBpmWorkflowProbesTest` 29,
+  `ZenBpmTaskProbesTest` 26, `ZenBpmProbesIT` 10, `ZenBpmProcessServiceTest` 12,
+  `ZenBpmRestClientTest` 96, `ZenBpmRestClientContractIT` 18, `ZenBpmEnvironmentInfoTest` 10,
+  `ZenBpmClientFactoryTest` 17, `ZenBpmUnsupportedModelBootTest` 2 and `ZenBpmUnsupportedModelTest`
+  1, none skipped (engine test support 12 unit and 3 integration tests, core 779 unit and 70
+  integration tests, Spring Boot 9 unit and 2 integration tests, smoke test 35, Quarkus runtime 9,
+  Quarkus deployment 46, coverage gate 35). The gate measured 100 % on both platforms: of 18,092
+  instructions for Spring Boot and 17,970 for Quarkus on JDK 25, of 18,084 and 17,962 on JDK 21.
+- `Publish snapshots`, run
+  [39040857084](https://github.com/pbinitiative/zenbpm-vanillabp-adapter/actions/runs/39040857084):
+  green. The core snapshot it published to GitHub Packages, `2.0.0-20261017.142805-34`, contains
+  `ZenBpmInstanceCache` with its nested `InstanceFacts`, `client/api/EngineStatus` and
+  `processservice/ZenBpmProcessService`, and holds no test class, fake, fixture or BPMN file. Both
+  report pages (`spring-boot-report/index.html`, `quarkus-report/index.html`) answer HTTP 200 and
+  show 0 of 18,092 (Spring Boot) and 0 of 17,970 (Quarkus) instructions missed.
+
 ## F5.3 Exemplary end-to-end start
 
 ### S5.3.1 The two-phase start on both platforms
