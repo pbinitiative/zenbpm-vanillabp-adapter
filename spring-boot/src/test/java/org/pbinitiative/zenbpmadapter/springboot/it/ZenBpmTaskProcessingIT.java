@@ -46,6 +46,8 @@ import org.pbinitiative.zenbpmadapter.springboot.it.task.Claim;
 import org.pbinitiative.zenbpmadapter.springboot.it.task.ClaimRepository;
 import org.pbinitiative.zenbpmadapter.springboot.it.task.Parcel;
 import org.pbinitiative.zenbpmadapter.springboot.it.task.ParcelRepository;
+import org.pbinitiative.zenbpmadapter.springboot.it.task.Reservation;
+import org.pbinitiative.zenbpmadapter.springboot.it.task.ReservationRepository;
 import org.pbinitiative.zenbpmadapter.springboot.it.task.TaskItApplication;
 import org.pbinitiative.zenbpmadapter.test.EngineUnderTest;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -76,11 +78,13 @@ import io.vanillabp.spi.process.ProcessService;
  * job-timeout of a task is resolved from the most specific level of the configuration. A BPMN error
  * is routed by the error boundary event which catches its code, or ends in an incident where none
  * does, and a task left open for its asynchronous completion is parked, and parked again whenever
- * the engine hands its job out once more.
+ * the engine hands its job out once more. A task which a timer boundary event took away is reported
+ * cancelled at the next delivery of its workflow.
  * <p>
  * The application runs the workflow module <code>deploy-it</code> under <code>use-prefix</code> with
  * the process <code>TaskMatrix</code> of <code>task-it/task-matrix.bpmn</code> and the process
- * <code>TaskOutcomes</code> of <code>task-it/task-outcomes.bpmn</code>, configured by
+ * <code>TaskOutcomes</code> of <code>task-it/task-outcomes.bpmn</code> and the process
+ * <code>TaskTakenAway</code> of <code>task-it/task-taken-away.bpmn</code>, configured by
  * <code>task-it.yaml</code>. It is started once for the class, against an engine of its own.
  */
 @ExtendWith(SuppressOutputExtension.class)
@@ -111,6 +115,12 @@ class ZenBpmTaskProcessingIT {
 
     @Autowired
     private ClaimRepository claims;
+
+    @Autowired
+    private ProcessService<Reservation> reservationProcessService;
+
+    @Autowired
+    private ReservationRepository reservations;
 
     @Autowired
     private ZenBpmClientRegistry clients;
@@ -360,6 +370,41 @@ class ZenBpmTaskProcessingIT {
                         .stream()
                         .map(TaskDeliveryLogReader.Delivery::outcome)
                         .toList()));
+    }
+
+    @Test
+    @DisplayName("A task an interrupting timer boundary event took away reaches the application as cancelled at the next delivery of its workflow, and only once")
+    void aTaskTakenAwayByABoundaryEventIsReportedCanceled() {
+        final var reservationId = "reservation-%s".formatted(UUID.randomUUID());
+        transactionTemplate.executeWithoutResult(status -> reservationProcessService.startWorkflow(new Reservation(
+                reservationId)));
+        final var holdTaskId = eventually(() -> reservations
+                .findById(reservationId)
+                .map(Reservation::getHoldTaskId));
+        final var checkTaskId = eventually(() -> reservations
+                .findById(reservationId)
+                .map(Reservation::getCheckTaskId));
+
+        // the check comes back every two seconds, and the timer takes the hold away after two
+        eventually(() -> reservations
+                .findById(reservationId)
+                .filter(reservation -> reservation.getHoldCancellations() > 0));
+        final var deliveredBefore = deliveryTokenOf(Long.parseLong(checkTaskId));
+        eventually(() -> Optional
+                .of(deliveryTokenOf(Long.parseLong(checkTaskId)))
+                .filter(token -> token >= deliveredBefore + 2));
+
+        assertAll(
+                () -> assertEquals(1, reservations
+                        .findById(reservationId)
+                        .orElseThrow()
+                        .getHoldCancellations()),
+                () -> assertEquals("terminated", engineJson("/v1/jobs/%s".formatted(holdTaskId))
+                        .path("state")
+                        .asText()),
+                () -> assertEquals("active", engineJson("/v1/jobs/%s".formatted(checkTaskId))
+                        .path("state")
+                        .asText()));
     }
 
     // only the test knows the ports the container was given

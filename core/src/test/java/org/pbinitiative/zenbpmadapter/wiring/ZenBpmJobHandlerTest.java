@@ -31,6 +31,7 @@ import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.json.JsonMapper;
 
 import io.vanillabp.integration.adapter.spi.workflowtask.DeliveryOfAnUnknownWorkflowException;
+import io.vanillabp.integration.adapter.spi.workflowtask.TaskExistence;
 import io.vanillabp.integration.adapter.spi.workflowtask.TaskKind;
 import io.vanillabp.integration.adapter.spi.workflowtask.WorkflowTaskOutcome;
 import io.vanillabp.integration.test.utils.CapturedOutput;
@@ -43,7 +44,9 @@ import io.vanillabp.integration.test.utils.SuppressOutputExtension;
  * workflow this application does not own, what at-least-once delivery leaves over, a BPMN error
  * sent with its scoped code after the values were written, a task left open parked by its window or,
  * overdue under the incident action, failed without retries, and a handler which throws, which it
- * leaves to the job's lock. Every job gives its handler slot back.
+ * leaves to the job's lock. Once an outcome reached the engine, and only then, the core looks at the
+ * other open tasks of the workflow with the probe of the job's process. Every job gives its handler
+ * slot back.
  */
 @ExtendWith(SuppressOutputExtension.class)
 class ZenBpmJobHandlerTest {
@@ -617,6 +620,93 @@ class ZenBpmJobHandlerTest {
                             .contains("job 42 is failed without retries, so an incident shows it: Task 'ship'"),
                             output::getAllOfThisTest));
         }
+    }
+
+    @Test
+    @DisplayName("After a completion, a BPMN error and a parked task the core looks at the other open tasks of the workflow, with the context of the delivery and the probe of its process, which asks the engine about a task the process serves by a job and about nothing else")
+    void theOtherOpenTasksAreLookedAtOnceTheOutcomeReachedTheEngine() {
+        jobs.holds(ROOT, "default", null, "order-1", "\"id\": \"order-1\"");
+        jobs.takesTheCommands(ROOT);
+        jobs.engine.answers("GET", "/v1/jobs/42", 200, job42("terminated"));
+        jobs.engine.answers("POST", "/v1/jobs/42/extend-lock", 200, "{\"lockUntil\":\"%s\"}".formatted(Instant
+                .now()
+                .plus(Duration.ofHours(1))));
+
+        jobs.runs(JobRunning.job(ROOT));
+        jobs.invoker.answers(context -> WorkflowTaskOutcome.bpmnError("out-of-stock", "Out of stock"));
+        jobs.runs(JobRunning.job(ROOT));
+        jobs.invoker.answers(context -> WorkflowTaskOutcome.completionPending());
+        jobs.runs(JobRunning.job(ROOT));
+
+        final var reports = jobs.invoker.reports();
+        final var probe = reports
+                .getFirst()
+                .probe();
+        assertAll(
+                () -> assertEquals(3, reports.size()),
+                () -> assertTrue(reports
+                        .stream()
+                        .allMatch(report -> "shop".equals(report.workflowModuleId()) && "Order".equals(report
+                                .bpmnProcessId()) && "42".equals(
+                                        report
+                                                .wakeUp()
+                                                .getTaskId()) && "100".equals(
+                                                        report
+                                                                .wakeUp()
+                                                                .getWorkflowId())),
+                        reports::toString),
+                () -> assertEquals(TaskExistence.GONE, probe.stillExists("100", "42", "ship")),
+                () -> assertEquals(TaskExistence.CANNOT_SAY, probe.stillExists("100", "42", "approve")));
+    }
+
+    @Test
+    @DisplayName("Nothing is looked at after a delivery the handler refused, nor after an outcome which did not reach the engine")
+    void nothingIsLookedAtWhereNoOutcomeReachedTheEngine() {
+        jobs.holds(ROOT, "default", null, "order-1", "\"id\": \"order-1\"");
+        jobs.holds(SUB_PROCESS, "default", null, null, "");
+        jobs.engine.answers("POST", "/v1/jobs/42/fail", 204, null);
+        jobs.engine.answers("POST", "/v1/jobs/42/complete", 404, "{\"code\":\"NOT_FOUND\",\"message\":\"no job\"}");
+        jobs.engine.answers("POST", "/v1/jobs/42/extend-lock", 409,
+                "{\"code\":\"CONFLICT\",\"message\":\"lock not held\"}");
+        jobs.engine.answers("PATCH", "/v1/process-instances/100/variables", 204, null);
+
+        // a job of an instance which names no aggregate, a workflow nobody owns here, a thrown
+        // handler, a gone job at the completion, a lost lock at the parking
+        jobs.runs(JobRunning.job(SUB_PROCESS));
+        jobs.invoker.answers(context -> {
+            throw new DeliveryOfAnUnknownWorkflowException("orders", "shop", "Order", "ship", "org.example.Order", "order-1", "100");
+        });
+        jobs.runs(JobRunning.job(ROOT));
+        jobs.invoker.answers(context -> {
+            throw new IllegalStateException("the warehouse is closed");
+        });
+        jobs.runs(JobRunning.job(ROOT));
+        jobs.invoker.answers(context -> WorkflowTaskOutcome.completed());
+        jobs.runs(JobRunning.job(ROOT));
+        jobs.invoker.answers(context -> WorkflowTaskOutcome.completionPending());
+        jobs.runs(JobRunning.job(ROOT));
+
+        assertEquals(List.of(), jobs.invoker.reports());
+    }
+
+    @Test
+    @DisplayName("A look at the other open tasks which fails costs the delivery nothing")
+    void aFailingLookCostsTheDeliveryNothing(final CapturedOutput output) {
+        jobs.holds(ROOT, "default", null, "order-1", "\"id\": \"order-1\"");
+        jobs.takesTheCommands(ROOT);
+        jobs.invoker.failsToReport(new IllegalStateException("no connection to the delivery log"));
+
+        jobs.runs(JobRunning.job(ROOT));
+
+        assertAll(
+                () -> assertEquals(1, jobs.invoker
+                        .reports()
+                        .size()),
+                () -> assertEquals(List.of("PATCH /v1/process-instances/100/variables", "POST /v1/jobs/42/complete"),
+                        jobs.commands()),
+                () -> assertFalse(output
+                        .getAllOfThisTest()
+                        .contains("could not be answered"), output::getAllOfThisTest));
     }
 
     @Test

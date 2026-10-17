@@ -99,7 +99,11 @@ locked for `async-task-lock-renewal` (`PT1H` by default; one not shorter than
 it is locked once more without running the method again; with `async-task-max-age-action:
 incident` a task open longer than `vanillabp.delivery.max-task-age` is failed without retries
 instead, so an incident names it. A method which throws is not carried out yet: the job is left to
-its lock, after which the engine hands it out again. What is built next, and in which order, is the implementation plan in
+its lock, after which the engine hands it out again. Once the outcome of a delivery reached the
+engine, the platform asks the adapter about the other tasks it believes open in the same workflow:
+a task the engine took away, as an interrupting boundary event does, is reported to the application
+as `CANCELED`, once; only a task served by a job of the job stream is asked about, and an engine
+which cannot be asked, or a job of another workflow, reports nothing. What is built next, and in which order, is the implementation plan in
 [`docs/`](docs/README.md).
 
 ## Modules

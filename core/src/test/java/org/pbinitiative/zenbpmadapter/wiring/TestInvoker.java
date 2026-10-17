@@ -10,6 +10,7 @@ import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.function.Function;
 
 import io.vanillabp.integration.adapter.spi.AggregateSyncMode;
+import io.vanillabp.integration.adapter.spi.workflowtask.OpenTaskProbe;
 import io.vanillabp.integration.adapter.spi.workflowtask.TaskInvocationContext;
 import io.vanillabp.integration.adapter.spi.workflowtask.WorkflowTaskInvoker;
 import io.vanillabp.integration.adapter.spi.workflowtask.WorkflowTaskOutcome;
@@ -30,6 +31,10 @@ final class TestInvoker implements WorkflowTaskInvoker {
 
     private volatile Map<String, Object> sharedValues = Map.of();
 
+    private final List<Report> reports = new CopyOnWriteArrayList<>();
+
+    private volatile RuntimeException reportFailure;
+
     /**
      * Answers every invocation from now on the way the function does, which may throw.
      *
@@ -46,6 +51,24 @@ final class TestInvoker implements WorkflowTaskInvoker {
      */
     void shares(final Map<String, Object> sharedValues) {
         this.sharedValues = sharedValues;
+    }
+
+    /**
+     * Fails every look at the other open tasks of a workflow from now on.
+     *
+     * @param failure What the look throws
+     */
+    void failsToReport(final RuntimeException failure) {
+        this.reportFailure = failure;
+    }
+
+    /**
+     * The looks at the other open tasks of a workflow the core was asked for, in the order asked.
+     *
+     * @return The reports
+     */
+    List<Report> reports() {
+        return List.copyOf(reports);
     }
 
     /**
@@ -89,6 +112,19 @@ final class TestInvoker implements WorkflowTaskInvoker {
     }
 
     @Override
+    public void reportTasksTheBpmsNoLongerHas(
+        final String workflowModuleId,
+        final String bpmnProcessId,
+        final TaskInvocationContext wakeUp,
+        final OpenTaskProbe probe
+    ) {
+        reports.add(new Report(workflowModuleId, bpmnProcessId, wakeUp, probe));
+        if (reportFailure != null) {
+            throw reportFailure;
+        }
+    }
+
+    @Override
     public String resolveWorkflowAggregateIdName(
         final String workflowModuleId,
         final String bpmnProcessId
@@ -124,6 +160,22 @@ final class TestInvoker implements WorkflowTaskInvoker {
         final String propertyName
     ) {
         throw new AssertionError("a job handler reads no property of an aggregate");
+    }
+
+    /**
+     * One look at the other open tasks of a workflow, as the core was asked for it.
+     *
+     * @param workflowModuleId The workflow module
+     * @param bpmnProcessId The process
+     * @param wakeUp The context of the delivery which led to it
+     * @param probe What the core asks about each task
+     */
+    record Report(
+        String workflowModuleId,
+        String bpmnProcessId,
+        TaskInvocationContext wakeUp,
+        OpenTaskProbe probe
+    ) {
     }
 
     /**

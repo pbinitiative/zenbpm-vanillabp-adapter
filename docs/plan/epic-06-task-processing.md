@@ -588,7 +588,7 @@ passes. No flake was hit.
 
 ### S6.1.3 Report the tasks the engine no longer has
 
-- [ ] **Depends on:** S6.1.1.
+- [x] **Depends on:** S6.1.1.
 
 The engine cannot say per element what it took away: a boundary event, an instance cancelled over
 REST or a terminate end event removes jobs, and nobody tells the application. The contract's answer
@@ -632,10 +632,104 @@ fail: no `CANCELED`).
 
 **Acceptance criteria**
 
-- [ ] A service task the engine took away reaches the application as `@TaskEvent CANCELED` at the
+- [x] A service task the engine took away reaches the application as `@TaskEvent CANCELED` at the
   next delivery of the same workflow, once.
-- [ ] An unavailable engine never produces a `CANCELED`.
-- [ ] A user task is never reported twice (the poller of S8.1.1 and this probe).
+  `ZenBpmTaskProcessingIT#aTaskTakenAwayByABoundaryEventIsReportedCanceled`: the interrupting timer
+  boundary event of `Hold` (`task-it/task-taken-away.bpmn`) terminates its job after two seconds;
+  at a following delivery of `Check`, the other task left open of the workflow, the method of
+  `hold` is called with `CANCELED`, and after two more deliveries of `Check` it was called so once.
+  With the handler never handing the core a probe, the cancellation does not come (mutant).
+- [x] An unavailable engine never produces a `CANCELED`.
+  `ZenBpmProbeOutageIT#aProbeOutageCancelsNothing`: behind a proxy which answers every read of a job
+  with `502`, the same workflow's hold is terminated, the check is delivered twice more, the probe's
+  read of the hold's job was refused, and the hold is never reported cancelled. With a failure read
+  as gone it is (mutant). `ZenBpmOpenTaskProbeTest#whatIsNoAnswerCannotSay` pins `502`, `500`, a job
+  of another workflow and an instance the cache cannot place as `CANNOT_SAY`.
+- [x] A user task is never reported twice (the poller of S8.1.1 and this probe).
+  The probe answers `CANNOT_SAY` without a request for every task definition its process does not
+  serve by a job of the job stream, user tasks among them, and for a question without a definition
+  (`ZenBpmOpenTaskProbeTest#whatIsNotAJobOfThisProcessCannotSay`); the handler's probe is built
+  from the process's job types, which hold no user task
+  (`ZenBpmJobHandlerTest#theOtherOpenTasksAreLookedAtOnceTheOutcomeReachedTheEngine`). The poller
+  of S8.1.1 does not exist yet.
+
+*Fit check, 2026-10-17, decided by the Implementor.* Checked against `main` with S6.1.2 on the
+branch, `ADAPTER-AUTHORS.md` section 3.4, the platform's SPI as the adapter resolves it (the jar
+of `vanillabp-adapter-spi` 2.0.0-SNAPSHOT: `OpenTaskProbe#stillExists` with two arguments, abstract,
+and with three, the default the core calls; `TaskExistence`;
+`WorkflowTaskInvoker#reportTasksTheBpmsNoLongerHas(String, String, TaskInvocationContext,
+OpenTaskProbe)`), Camunda 8's `Camunda8OpenTaskProbe` and its call in `Camunda8JobHandler`, and the
+engine at the pin `bdd795a3` (`handleBoundaryTimer` in `pkg/bpmn/timer.go`, the `Job` resource of
+`openapi/api.yaml`). What did not fit, and what was decided:
+
+1. **One probe per claimed process, not per adapter id.** The rule of brief question 5 needs the
+   task definitions a process serves by jobs, which are the module's, so the handler of a module
+   builds one `ZenBpmOpenTaskProbe` per claimed process at its start, from the process's job types
+   (`WiredProcess#jobTypes`, which holds no user task) named as the application knows them
+   (`plainTaskDefinition`, the definition the core recorded). The probe holds the adapter id's REST
+   client and instance cache only; it costs no client of its own.
+2. **A user task, and anything else no job of the process serves** (brief question 5): answered
+   `CANNOT_SAY` without a request, and so is a question without a task definition (the abstract
+   two-argument method, which the core does not call). Pinned by
+   `ZenBpmOpenTaskProbeTest#whatIsNotAJobOfThisProcessCannotSay`; S8.1.1's note 4 holds from now on.
+3. **The job's workflow.** The probe compares the root of the job's instance (decision 28, through
+   `ZenBpmInstanceCache#workflowIdOf`) with the workflow the core names; another one, and an
+   instance the cache cannot place, is `CANNOT_SAY`. A job of a sub-process of the same workflow
+   is answered (`#aJobOfASubProcessBelongsToTheWorkflow`).
+4. **A `404` is gone** as the plan says, although the engine answers a read on a follower which may
+   lag behind (GAPS 20): the core asks only about a task it recorded a delivery of, so the job
+   existed for at least as long as that delivery took. GAPS 20's adapter behaviour now says so.
+   Every other failure, the engine's `502` and `500` among them, is `CANNOT_SAY`.
+5. **When the core is asked** (instruction 2). After a completion the engine took, a BPMN error it
+   took and a parked task; not after a delivery the handler refused (no aggregate, a workflow
+   nobody owns here), a thrown handler, a gone job, an ended workflow, a lost lock at the parking,
+   nor the incident action (Camunda 8 does not either). A look which throws is logged at DEBUG and
+   costs the delivery nothing (`ZenBpmJobHandlerTest#theOtherOpenTasksAreLookedAtOnceTheOutcomeReachedTheEngine`,
+   `#nothingIsLookedAtWhereNoOutcomeReachedTheEngine`, `#aFailingLookCostsTheDeliveryNothing`).
+6. **The timer boundary event** (brief question 7). Read at the pin: an interrupting timer boundary
+   event sets the active jobs of its activity to `terminated`. Measured: the hold of
+   `#aTaskTakenAwayByABoundaryEventIsReportedCanceled` is `terminated` once its timer of two seconds
+   fired. The IT models the plan's two parallel tasks as two tasks left open (`@TaskId`), because
+   the core asks only about a task whose record is open; the wake-up is the redelivery of the
+   second task every `async-task-lock-renewal`, Camunda 8's shape (`Camunda8OtherOpenTasksIT`).
+   The aggregate `Reservation` is `@DynamicUpdate`: the two branches' handlers save it side by side,
+   which the platform warns about at startup, and each writes an attribute of its own.
+7. **The probe outage** (brief question 6) has an IT class of its own, `ZenBpmProbeOutageIT`, with
+   the same application and fixture, whose REST address is a proxy of the test,
+   `JobReadsRefusingProxy`, which answers every `GET /v1/jobs/{key}` with `502` and passes
+   everything else on; the job stream goes to the engine directly. No switch in main code. The test
+   waits until the hold is terminated, then for two more deliveries of the check and for the proxy
+   to have refused the read of the hold's job, and finds the hold never reported cancelled.
+8. Instructions 3 and 4 hold as written: the adapter reads neither platform setting, and the probe
+   sends a read only.
+
+**Implemented 2026-10-18.** Core: `wiring/ZenBpmOpenTaskProbe`; `ZenBpmJobHandler` builds one per
+claimed process and hands it to `reportTasksTheBpmsNoLongerHas` once an outcome reached the engine.
+GAPS 20's adapter behaviour names the probe; the README's status and the `OpenTaskProbe` row of
+`docs/analysis/02-spi-requirements-mapping.md`.
+
+New tests: `ZenBpmOpenTaskProbeTest` (8); in `ZenBpmJobHandlerTest`
+`#theOtherOpenTasksAreLookedAtOnceTheOutcomeReachedTheEngine`,
+`#nothingIsLookedAtWhereNoOutcomeReachedTheEngine` and `#aFailingLookCostsTheDeliveryNothing`;
+Spring Boot `ZenBpmTaskProcessingIT#aTaskTakenAwayByABoundaryEventIsReportedCanceled` with the
+process `TaskTakenAway` of `task-it/task-taken-away.bpmn`, and `ZenBpmProbeOutageIT` (1) with the
+proxy `JobReadsRefusingProxy`. The Quarkus twin, `ZenBpmWorkflowLifecycleTest#aTaskTakenAwayIsReportedCanceled`,
+belongs to S6.5.1.
+
+Seen to fail, each restored afterwards (14 of 14 mutants, against green unmutated runs): the probe
+asking about a task its process does not serve by a job, and about one without a definition;
+answering for a job of another workflow, and for one whose instance the cache cannot place; a
+failure read as gone (also against the engine: `ZenBpmProbeOutageIT` sees the hold cancelled); a
+failed job gone; a terminated job still there; a `404` that cannot say; the handler never handing
+the core the probe (also against the engine), handing it after every outcome, and after a completion
+which found the job gone; a failing look costing the delivery.
+
+`TZ=Etc/UTC mvn clean install` on OpenJDK 25.0.2 builds green with every integration test run and
+none skipped (engine test support 12 unit and 3 integration tests, core 873 unit and 74 integration
+tests, Spring Boot 11 unit and 18 integration tests, smoke test 36, Quarkus runtime 10, Quarkus
+deployment 49, Quarkus integration tests 3, coverage gate 37). The gate measures 100 % of 21,980
+instructions for Spring Boot and 100 % of 21,846 for Quarkus, and `bin/check-deploy-safety.sh`
+passes. No flake was hit.
 
 ## F6.2 Failures and shutdown
 

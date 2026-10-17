@@ -10,6 +10,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.stream.Collectors;
 
 import org.pbinitiative.zenbpmadapter.ZenBpmDeployedProcesses;
 import org.pbinitiative.zenbpmadapter.ZenBpmInstanceCache;
@@ -81,6 +82,12 @@ import lombok.extern.slf4j.Slf4j;
  * <li><b>A handler which threw</b> is not carried out yet: logged at WARN, and the job is left to
  * its lock, after which the engine hands it out again.</li>
  * </ul>
+ * <b>The tasks the engine took away.</b> The engine tells nobody about a job it ended, as an
+ * interrupting boundary event or a cancelled instance does. So once the outcome of a delivery
+ * reached the engine (a completion, a BPMN error, a parked task), the core is handed a
+ * {@link ZenBpmOpenTaskProbe} of the job's process, with which it asks about the other tasks it
+ * believes open in the same workflow and reports the ones which are gone as cancelled. Not after a
+ * delivery the handler refused, nor after one whose outcome did not reach the engine.
  * Every command goes through a {@link ZenBpmCommandRetry}, bounded by the job's lock and stopped at
  * once while the module shuts down. A command which fails all the same leaves the job to its lock.
  */
@@ -113,6 +120,11 @@ public final class ZenBpmJobHandler {
     private final Duration asyncTaskLockRenewal;
 
     private final AsyncTaskMaxAgeAction asyncTaskMaxAgeAction;
+
+    /**
+     * What the core asks about the other open tasks of a workflow, by plain process id.
+     */
+    private final Map<String, ZenBpmOpenTaskProbe> probes = new LinkedHashMap<>();
 
     /**
      * The name of the variable of the aggregate's id, by plain process id, as the core answered it.
@@ -154,6 +166,16 @@ public final class ZenBpmJobHandler {
         this.asyncTaskMaxAgeAction = factory
                 .configuration()
                 .asyncTaskMaxAgeActionInUse();
+        // the core names a task by the definition it was reported under, which is the plain one
+        processes
+                .values()
+                .forEach(process -> probes.put(process.bpmnProcessId(),
+                        new ZenBpmOpenTaskProbe(adapterId, rest, instances, process
+                                .jobTypes()
+                                .stream()
+                                .map(jobType -> scoping.plainTaskDefinition(workflowModuleId, process.bpmnProcessId(),
+                                        jobType, adapterId))
+                                .collect(Collectors.toSet()))));
     }
 
     /**
@@ -307,10 +329,13 @@ public final class ZenBpmJobHandler {
             leaveAThrownHandlerToItsLock(delivery, aggregate, e);
             return;
         }
-        switch (outcome.kind()) {
+        final var reachedTheEngine = switch (outcome.kind()) {
             case COMPLETED -> complete(job.getKey(), path.get(), idVariableName, aggregate, delivery);
             case BPMN_ERROR -> throwBpmnError(received, path.get(), idVariableName, aggregate, outcome, delivery);
             case COMPLETION_PENDING -> keepOpen(received, aggregate, outcome, delivery, renewal);
+        };
+        if (reachedTheEngine) {
+            reportTheTasksTheEngineNoLongerHas(delivery, context);
         }
     }
 
@@ -333,7 +358,7 @@ public final class ZenBpmJobHandler {
                 .flatMap(root -> Aggregate.namedIn(root, idVariableName));
     }
 
-    private void complete(
+    private boolean complete(
         final long jobKey,
         final List<Long> path,
         final String idVariableName,
@@ -342,7 +367,7 @@ public final class ZenBpmJobHandler {
     ) {
         final var variables = sharedValuesOf(idVariableName, aggregate, delivery);
         if (!wroteTheValues(jobKey, path, variables, aggregate, delivery, "completed")) {
-            return;
+            return false;
         }
         try {
             delivery.retry().send("completion", () -> rest.completeJob(jobKey, variables));
@@ -355,12 +380,14 @@ public final class ZenBpmJobHandler {
                     another delivery of it answered first, or its element or workflow ended meanwhile. The handler's \
                     work is committed: this is what at-least-once delivery leaves over.""", adapterId, jobKey,
                     delivery.taskDefinition(), aggregate.id());
+            return false;
         }
+        return true;
     }
 
     // the outgoing flow of an error boundary event may branch on the aggregate as much as the flow
     // behind a completed task, so a BPMN error carries the same values
-    private void throwBpmnError(
+    private boolean throwBpmnError(
         final ReceivedJob received,
         final List<Long> path,
         final String idVariableName,
@@ -374,7 +401,7 @@ public final class ZenBpmJobHandler {
         final var errorCode = scoping.scopedIdentifier(workflowModuleId, outcome.errorCode(), adapterId);
         final var variables = sharedValuesOf(idVariableName, aggregate, delivery);
         if (!wroteTheValues(job.getKey(), path, variables, aggregate, delivery, "failed with its BPMN error")) {
-            return;
+            return false;
         }
         // the engine puts the message into the incident only, which it raises where nothing catches
         // the code, and appends the code to it
@@ -396,9 +423,10 @@ public final class ZenBpmJobHandler {
                     be sent: another delivery of it answered first, or its element or workflow ended meanwhile. The \
                     handler's work is committed: this is what at-least-once delivery leaves over.""", adapterId, job
                     .getKey(), delivery.taskDefinition(), aggregate.id(), outcome.errorCode());
-            return;
+            return false;
         }
         warnWhereNothingCaughtIt(job.getKey(), errorCode, aggregate, outcome, delivery);
+        return true;
     }
 
     // the engine answers a BPMN error alike whether an event caught it or it raised an incident, so
@@ -434,7 +462,7 @@ public final class ZenBpmJobHandler {
 
     // the task is completed later through the process service, and the redelivery after the window
     // is answered from the record of this delivery, which parks the job again
-    private void keepOpen(
+    private boolean keepOpen(
         final ReceivedJob received,
         final Aggregate aggregate,
         final WorkflowTaskOutcome outcome,
@@ -446,7 +474,7 @@ public final class ZenBpmJobHandler {
                 .getKey();
         if (outcome.maxAgeExceeded() && (asyncTaskMaxAgeAction == AsyncTaskMaxAgeAction.INCIDENT)) {
             failAsOverdue(received, aggregate, outcome.openFor(), delivery);
-            return;
+            return false;
         }
         try {
             renewal.park(asyncTaskLockRenewal, delivery.retry());
@@ -458,10 +486,11 @@ public final class ZenBpmJobHandler {
             // the job out again, which parks it then
             log.debug("ZenBPM[{}]: job {} (task '{}') was not locked any more when it was to stay open: {}",
                     adapterId, jobKey, delivery.taskDefinition(), e.getMessage());
-            return;
+            return false;
         }
         log.debug("ZenBPM[{}]: job {} (task '{}') stays open for its asynchronous completion, locked for {}",
                 adapterId, jobKey, delivery.taskDefinition(), asyncTaskLockRenewal);
+        return true;
     }
 
     // where operators look: the core says it in a log line, and an incident names it at the
@@ -483,6 +512,23 @@ public final class ZenBpmJobHandler {
                 .job()
                 .getKey(), message);
         failWithoutRetries(received, message, delivery);
+    }
+
+    // after the outcome, because answering this very job can be what takes another task away, such
+    // as the completion which fires a boundary event. Nothing of it may cost the delivery, whose
+    // outcome reached the engine already
+    private void reportTheTasksTheEngineNoLongerHas(
+        final Delivery delivery,
+        final Invocation wakeUp
+    ) {
+        try {
+            invoker.reportTasksTheBpmsNoLongerHas(workflowModuleId, delivery.plainProcessId(), wakeUp, probes.get(
+                    delivery.plainProcessId()));
+        } catch (final RuntimeException e) {
+            log.debug(
+                    "ZenBPM[{}]: the other open tasks of the workflow of job {} (task '{}') could not be looked at; the next delivery of the workflow looks again",
+                    adapterId, delivery.jobKey(), delivery.taskDefinition(), e);
+        }
     }
 
     private Map<String, Object> sharedValuesOf(
