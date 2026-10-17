@@ -231,9 +231,27 @@ class ZenBpmWorkflowProbesTest {
 
         assertAll(
                 () -> assertEquals(List.of(
-                        "ZenBPM[orders]: the engine could not be asked for the workflow of aggregate 'order-1', so the probe reports BPMS_UNAVAILABLE; further failures are logged at DEBUG until the engine answers a probe again"),
+                        "ZenBPM[orders]: the engine could not be asked for the workflow of aggregate 'order-1', so the probe reports BPMS_UNAVAILABLE; check that the engine at vanillabp.adapters.orders.rest-address answers within vanillabp.adapters.orders.request-timeout; further failures are logged at DEBUG until the engine answers a probe again"),
                         warnedWhileAway),
                 () -> assertEquals(2, warnings(output).size()),
+                () -> assertTrue(warnings(output)
+                        .getLast()
+                        .contains("aggregate 'order-3'"), output::getAllOfThisTest));
+    }
+
+    @Test
+    @DisplayName("An answer from the key alone counts as an answer, so the next failure is a WARN again")
+    void anAnswerFromTheKeyAloneEndsTheFailures(final CapturedOutput output) {
+        engine.answers("GET", SEARCH_PATH, 503, null);
+        processService.awarenessOfWorkflow(SCOPE, persistence(), "order-1");
+        engine.answers("GET", INSTANCE_PATH, 200, instanceAt(4503599627370501L, "shop__Order", "active", "order-1",
+                "{}"));
+        final var fromTheKey = processService.awarenessOfWorkflow(SCOPE, persistence(), "order-1", WORKFLOW_ID);
+        processService.awarenessOfWorkflow(SCOPE, persistence(), "order-3");
+
+        assertAll(
+                () -> assertEquals(WorkflowAwareness.ACTIVE, fromTheKey),
+                () -> assertEquals(2, warnings(output).size(), output::getAllOfThisTest),
                 () -> assertTrue(warnings(output)
                         .getLast()
                         .contains("aggregate 'order-3'"), output::getAllOfThisTest));

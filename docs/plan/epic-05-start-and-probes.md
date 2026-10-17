@@ -575,12 +575,18 @@ not fit, and what was decided:
    `processDefinitionId`. `ZenBpmProbesIT#aWaitingJobIsActiveForItsScopeOnly` asks about a job
    which waits in an embedded sub-process.
 5. **A job whose instance the engine does not answer** is BPMS_UNAVAILABLE, not UNKNOWN: the engine
-   holds the job, and only whose it is cannot be said now (a node which lags behind, GAPS 20).
+   holds the job, and only whose it is cannot be said now (a node which lags behind, GAPS 20). A
+   `404` for the job itself is UNKNOWN_TO_BPMS, although it may come from such a node too: a key of
+   another engine or of Camunda 8 which falls on a partition this engine has is answered `404` as
+   well, and it must let the core ask the next adapter. The core gives a task no visibility window,
+   so a job created a moment ago and asked about on a follower which lags is reported gone (GAPS
+   20). Camunda 8 answers a job it does not find the same way.
 6. **The aggregate id is not compared**, as on Camunda 8: the scope decides.
 7. **The tests of the task probes** are `ZenBpmTaskProbesTest`, beside `ZenBpmWorkflowProbesTest`.
 8. **The startup question reaches the engine before a refused model ends the start.** Because the
-   platform asks before anything is deployed (item 2), an application whose BPMN file the adapter refuses now sends the engine one read, the
-   list of versions of `openTaskCount`, before the refusal ends its start, which an engine that
+   platform asks before anything is deployed (item 2), an application whose BPMN file the adapter
+   refuses now sends the engine one read, the list of versions of `openTaskCount`, before the
+   refusal ends its start, which an engine that
    answers nothing turns into `null`. The three boot tests which held that the engine is asked
    nothing (`ZenBpmUnsupportedModelBootTest` on Spring Boot, `ZenBpmUnsupportedModelTest` on
    Quarkus, and the javadoc of `ZenBpmUnsupportedModelWarnTest`) now hold what the refusal is for:
@@ -639,6 +645,57 @@ inside the `try` and the count answers `null` all the same, so the guard went; a
 model of the version this start deployed went with fit-check item 2, because the platform asks before
 anything is deployed.
 
+
+**Answers to two reviews of F5.2, 2026-10-17** (one by Claude, 5 findings; one by Copilot, 3
+findings, its first the same as Claude 2). Every claim was checked in the code of the branch, the
+platform's code and the engine's source at `bdd795a3`.
+
+Valid and fixed:
+
+- **A status naming no partition turned every `502` for a job into UNKNOWN_TO_BPMS** (Copilot 1,
+  Major; Claude 2, Minor). `ZenBpmRestClient#status` reads a missing or `null` `partitions` as an
+  empty list, and the task probe then found the key's partition "not reported" for every key, so a
+  `502` of a leaderless partition let the core ask the next adapter. An engine always has a
+  partition, so a status without one says nothing about the key: the failure stays
+  BPMS_UNAVAILABLE. Copilot asked to keep a valid empty map apart from a missing one; not taken,
+  because an empty inventory never proves a key foreign either. Decision 32 says so. Test, red
+  before the fix: `ZenBpmTaskProbesTest#everyOtherFailureIsUnavailable` with a status without
+  `partitions`, with `null` and with `{}` (now nine failures, both probes).
+- **A cached `null` id variable was never read again** (Copilot 2, Minor). `InstanceFacts` kept
+  `orderId: null`, and `facts(key, "orderId")` took it as present, so the id written after the
+  start would not have been seen until the entry was evicted. Only an id with a value is kept now.
+  Test, red before the fix: `ZenBpmInstanceCacheTest#anIdVariableWhichIsNullIsNotKept`.
+- **An ACTIVE from the key did not end the failures** (Copilot 3, Minor). The key's fast path of
+  `awarenessOfWorkflow` returned without marking the probe answered, so the first failure of the
+  next outage was a DEBUG line instead of a WARN. Test, red before the fix:
+  `ZenBpmWorkflowProbesTest#anAnswerFromTheKeyAloneEndsTheFailures`.
+- **A job `404` from a node which lags was not recorded** (Claude 1, Minor). The answer stays
+  UNKNOWN_TO_BPMS, because a key of another BPMS on a partition this engine has is answered `404`
+  too and must let the core ask the next adapter; Camunda 8 answers a job it does not find the same
+  way. GAPS 20 and fit-check item 5 of S5.2.2 now say that a task has no visibility window and what
+  that costs.
+- **The probe's WARN named no property key** (Claude 5, Nit): it names
+  `vanillabp.adapters.<id>.rest-address` and `vanillabp.adapters.<id>.request-timeout`; the two
+  captured-output tests assert the text.
+- **Wording** (Claude 3 and 4, Nit): two javadoc lines of `ZenBpmProcessService` and one line of
+  fit-check item 8 re-wrapped; the architecture's class table says the walk keeps the facts on the
+  way, not the walk.
+
+Seen to fail, each restored afterwards (3 of 3 mutants of the new guards, against a green unmutated
+run of `ZenBpmTaskProbesTest`, `ZenBpmWorkflowProbesTest` and `ZenBpmInstanceCacheTest`): the empty
+partition list read as an answer (killed by `#everyOtherFailureIsUnavailable`); the key's ACTIVE
+without marking the probe answered (`#anAnswerFromTheKeyAloneEndsTheFailures`); a `null` id kept
+(`#anIdVariableWhichIsNullIsNotKept`).
+
+`TZ=Etc/UTC mvn clean install` on OpenJDK 25.0.2 on the review fixes builds green with every
+integration test run and none skipped (engine test support 12 unit and 3 integration tests, core
+779 unit and 70 integration tests, Spring Boot 9 and 2 integration tests, smoke test 35, Quarkus
+runtime 9, Quarkus deployment 46, coverage gate 35; `ZenBpmTaskProbesTest` 26,
+`ZenBpmWorkflowProbesTest` 29, `ZenBpmInstanceCacheTest` 11, `ZenBpmProbesIT` 10). The gate
+measures 100 % of 18,092 instructions for Spring Boot and 100 % of 17,970 for Quarkus, and
+`bin/check-deploy-safety.sh` passes. The run before it failed in `ZenBpmEngineWaitIT` alone,
+because the pinned engine's container did not start ("failed to bootstrap cluster: boot timeout",
+as under S3.2.1); nothing of this batch runs there, and the next run passed.
 
 ## F5.3 Exemplary end-to-end start
 

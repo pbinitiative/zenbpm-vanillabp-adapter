@@ -200,7 +200,7 @@ class ZenBpmTaskProbesTest {
         processService.awarenessOfUserTask(SCOPE, "order-1", String.valueOf(JOB));
 
         assertEquals(List.of(
-                "ZenBPM[orders]: the engine could not be asked for task '4503599627375192', so the probe reports BPMS_UNAVAILABLE; further failures are logged at DEBUG until the engine answers a probe again"),
+                "ZenBPM[orders]: the engine could not be asked for task '4503599627375192', so the probe reports BPMS_UNAVAILABLE; check that the engine at vanillabp.adapters.orders.rest-address answers within vanillabp.adapters.orders.request-timeout; further failures are logged at DEBUG until the engine answers a probe again"),
                 output
                         .getAllOfThisTest()
                         .lines()
@@ -308,6 +308,15 @@ class ZenBpmTaskProbesTest {
                         {"code":"CLUSTER_ERROR","message":"no leader"}"""), found, onePartition),
                 Arguments.of("a 502 for the job and no status", answer(502, """
                         {"code":"CLUSTER_ERROR","message":"partition not found"}"""), found, answer(503, null)),
+                Arguments.of("a 502 for the job and a status without partitions", answer(502, """
+                        {"code":"CLUSTER_ERROR","message":"partition not found"}"""), found, answer(200,
+                        statusWith(""))),
+                Arguments.of("a 502 for the job and a status whose partitions are null", answer(502, """
+                        {"code":"CLUSTER_ERROR","message":"partition not found"}"""), found, answer(200,
+                        statusWith(", \"partitions\": null"))),
+                Arguments.of("a 502 for the job and a status naming no partition", answer(502, """
+                        {"code":"CLUSTER_ERROR","message":"partition not found"}"""), found, answer(200,
+                        statusWith(", \"partitions\": {}"))),
                 Arguments.of("a job whose instance the engine does not know", waiting, answer(404, """
                         {"code":"NOT_FOUND","message":"process instance not found"}"""), onePartition),
                 Arguments.of("a job whose instance cannot be read", waiting, answer(503, null), onePartition));
@@ -343,9 +352,13 @@ class ZenBpmTaskProbesTest {
     }
 
     private static String status(final int partition) {
+        return statusWith(", \"partitions\": {\"%d\": {\"id\": %d}}".formatted(partition, partition));
+    }
+
+    private static String statusWith(final String partitions) {
         return """
-                {"git": {"commitId": "bdd795a399b6"}, "build": {"version": "v1.8.0"}, "nodes": {"zen-1": {}},
-                 "partitions": {"%d": {"id": %d}}}""".formatted(partition, partition);
+                {"git": {"commitId": "bdd795a399b6"}, "build": {"version": "v1.8.0"}, "nodes": {"zen-1": {}}%s}"""
+                .formatted(partitions);
     }
 
     private static String versions(final long... keys) {

@@ -10,6 +10,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -95,6 +96,28 @@ class ZenBpmInstanceCacheTest {
                         .orElseThrow()
                         .variables()
                         .clear()));
+    }
+
+    @Test
+    @DisplayName("An id variable which is null is not kept, so the id written after the start is read")
+    void anIdVariableWhichIsNullIsNotKept() {
+        final var withoutAValue = new HashMap<String, Object>();
+        withoutAValue.put("orderId", null);
+        holds(ROOT, "default", null, withoutAValue);
+        final var cache = new ZenBpmInstanceCache(rest, 10);
+
+        final var beforeTheId = cache.facts(ROOT, "orderId");
+        holds(ROOT, "default", null, Map.of("orderId", "order-1"));
+        final var afterTheId = cache.facts(ROOT, "orderId");
+
+        assertAll(
+                () -> assertEquals(Map.of(), beforeTheId
+                        .orElseThrow()
+                        .variables()),
+                () -> assertEquals(Map.of("orderId", "order-1"), afterTheId
+                        .orElseThrow()
+                        .variables()),
+                () -> assertEquals(2, requestsFor(ROOT)));
     }
 
     @Test

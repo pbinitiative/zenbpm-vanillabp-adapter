@@ -427,7 +427,8 @@ to the next adapter, so the adapter which holds the task would never be asked.
 So after a `502` for a job, the task probes read the engine's partitions from `GET /system/status`.
 A key whose partition the engine does not report is `UNKNOWN_TO_BPMS`: this engine handed it out to
 nobody. A `502` for a partition the engine reports stays `BPMS_UNAVAILABLE`, and so does a status
-which does not come. The extra request is made only after a `502`, so a task id of this engine costs
+which does not come or names no partition at all: an engine always has a partition, so a status
+without one says nothing about the key. The extra request is made only after a `502`, so a task id of this engine costs
 what it cost before. A partition the engine adds later is reported by the next status, which is read
 fresh every time and never kept. Decision 30 is not changed: what a failed call means is still read
 from its status, and this entry only answers what the task probes make of a `502` once they asked

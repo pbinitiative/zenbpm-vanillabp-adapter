@@ -60,9 +60,9 @@ import lombok.extern.slf4j.Slf4j;
  * operation the core requires of each adapter, so the core accepts it while the application
  * starts. Every other handler and every method of the viewer/history API throw: where the adapter
  * id has no clients, the message of its validation, which names the keys to set; otherwise an
- * {@link UnsupportedOperationException} which says that the call is not built yet. Nothing pretends to have done the work. The operations a BPMS may lack, sending a signal and
- * telling the BPMS about a changed aggregate, are left out, so the core answers them as not
- * supported. A probe of an adapter id without clients throws the message of its validation as
+ * {@link UnsupportedOperationException} which says that the call is not built yet. Nothing
+ * pretends to have done the work. The operations a BPMS may lack, sending a signal and telling the
+ * BPMS about a changed aggregate, are left out, so the core answers them as not supported. A probe of an adapter id without clients throws the message of its validation as
  * well.
  * <p>
  * A start asks the engine nothing in phase one, because there is nothing to ask before an
@@ -289,8 +289,8 @@ public class ZenBpmProcessService<A> implements MigratableProcessService<A> {
      * one for its model and one for its statistics. The platform asks before the application
      * deployed anything, so every model is read from the engine. A task with an incident is not
      * counted. Where the engine does not answer, the number is lost and nothing else, so the
-     * answer is <code>null</code> and the failure a DEBUG line. An adapter id without clients has no engine to ask and answers
-     * <code>null</code> the same way.
+     * answer is <code>null</code> and the failure a DEBUG line. An adapter id without clients has
+     * no engine to ask and answers <code>null</code> the same way.
      *
      * @param workflowModuleId The workflow module
      * @param bpmnProcessId The process, as the workflow module names it
@@ -399,6 +399,7 @@ public class ZenBpmProcessService<A> implements MigratableProcessService<A> {
         final var scopedIds = scopedIdsOf(scope);
         final var aggregateId = String.valueOf(workflowAggregateId);
         if (theEngineRunsTheWorkflowOfTheKey(rest, scopedIds, aggregatePersistence, aggregateId, workflowId)) {
+            probeAnswered();
             return WorkflowAwareness.ACTIVE;
         }
         try {
@@ -681,7 +682,8 @@ public class ZenBpmProcessService<A> implements MigratableProcessService<A> {
 
     // a 502 is all the engine answers for a key of a partition it does not have, and also for a
     // partition which has no leader right now, so the partitions it reports tell the two apart; a
-    // status which does not come leaves the failure as it was
+    // status which does not come, or names no partition at all, leaves the failure as it was,
+    // because an engine always has a partition and one which names none has not said which
     private boolean isAKeyOfAPartitionTheEngineDoesNotHave(
         final ZenBpmRestClient rest,
         final long key,
@@ -691,10 +693,10 @@ public class ZenBpmProcessService<A> implements MigratableProcessService<A> {
             return false;
         }
         try {
-            return !rest
+            final var partitions = rest
                     .status()
-                    .partitions()
-                    .contains(partitionOf(key));
+                    .partitions();
+            return !partitions.isEmpty() && !partitions.contains(partitionOf(key));
         } catch (final RuntimeException statusFailure) {
             failure.addSuppressed(statusFailure);
             return false;
@@ -877,8 +879,9 @@ public class ZenBpmProcessService<A> implements MigratableProcessService<A> {
     ) {
         if (probesFail.compareAndSet(false, true)) {
             log.warn(
-                    "ZenBPM[{}]: the engine could not be asked for {}, so the probe reports BPMS_UNAVAILABLE; further failures are logged at DEBUG until the engine answers a probe again",
-                    adapterId, subject, failure);
+                    "ZenBPM[{}]: the engine could not be asked for {}, so the probe reports BPMS_UNAVAILABLE; check that the engine at {} answers within {}; further failures are logged at DEBUG until the engine answers a probe again",
+                    adapterId, subject, ZenBpmAdapterConfiguration.propertyKey(adapterId, "rest-address"),
+                    ZenBpmAdapterConfiguration.propertyKey(adapterId, "request-timeout"), failure);
         } else {
             log.debug("ZenBPM[{}]: the engine could not be asked for {}, so the probe reports BPMS_UNAVAILABLE",
                     adapterId, subject, failure);

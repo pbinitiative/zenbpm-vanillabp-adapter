@@ -98,8 +98,8 @@ public final class ZenBpmInstanceCache {
                 .containsKey(idVariableName)) {
             return Optional.of(cached);
         }
-        // not kept yet, or not there when the instance was read: a workflow the engine started
-        // gets its id written after the start, and a present id never changes
+        // not kept yet, or not there or null when the instance was read: a workflow the engine
+        // started gets its id written after the start, and a present id never changes
         return read(instanceKey, idVariableName);
     }
 
@@ -200,7 +200,7 @@ public final class ZenBpmInstanceCache {
             final String idVariableName
         ) {
             final var variables = instance.variables();
-            final Map<String, Object> kept = (idVariableName != null) && variables.containsKey(idVariableName)
+            final Map<String, Object> kept = (idVariableName != null) && (variables.get(idVariableName) != null)
                     ? Collections.singletonMap(idVariableName, variables.get(idVariableName))
                     : Map.of();
             return new InstanceFacts(instance.key(), instance.bpmnProcessId(), instance.version(), instance
