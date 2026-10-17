@@ -26,6 +26,7 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
 import org.junit.jupiter.params.provider.ValueSource;
+import org.pbinitiative.zenbpmadapter.client.ZenBpmAdapterConfiguration.AsyncTaskMaxAgeAction;
 import org.pbinitiative.zenbpmadapter.client.ZenBpmAdapterConfiguration.MessageStartLookup;
 import org.pbinitiative.zenbpmadapter.client.ZenBpmAdapterConfiguration.ValidationResult.Kind;
 
@@ -113,6 +114,8 @@ class ZenBpmAdapterConfigurationTest {
         configuration.setWorkerThreads("virtual");
         configuration.setWorkerThreadsBound(16);
         configuration.setJobTimeout(Duration.ofSeconds(30));
+        configuration.setAsyncTaskLockRenewal(Duration.ofMinutes(10));
+        configuration.setAsyncTaskMaxAgeAction(" Incident ");
         configuration.setRetryBackoff(Duration.ofSeconds(1));
         configuration.setMaxRedeliveries(0);
         configuration.setShutdownGrace(Duration.ZERO);
@@ -136,6 +139,9 @@ class ZenBpmAdapterConfigurationTest {
         assertEquals(Integer.valueOf(16), configuration.getWorkerThreadsBound());
         assertEquals(16, configuration.workerThreadsBoundInUse());
         assertEquals(Duration.ofSeconds(30), configuration.getJobTimeout());
+        assertEquals(Duration.ofMinutes(10), configuration.getAsyncTaskLockRenewal());
+        assertEquals(" Incident ", configuration.getAsyncTaskMaxAgeAction());
+        assertEquals(AsyncTaskMaxAgeAction.INCIDENT, configuration.asyncTaskMaxAgeActionInUse());
         assertEquals(Duration.ofSeconds(1), configuration.getRetryBackoff());
         assertEquals(0, configuration.getMaxRedeliveries());
         assertEquals(Duration.ZERO, configuration.getShutdownGrace());
@@ -152,6 +158,8 @@ class ZenBpmAdapterConfigurationTest {
         configuration.setWorkerThreads(null);
         configuration.setWorkerThreadsBound(null);
         configuration.setJobTimeout(null);
+        configuration.setAsyncTaskLockRenewal(null);
+        configuration.setAsyncTaskMaxAgeAction(null);
         configuration.setRetryBackoff(null);
         configuration.setMaxRedeliveries(null);
         configuration.setShutdownGrace(null);
@@ -168,6 +176,8 @@ class ZenBpmAdapterConfigurationTest {
         assertEquals(defaults.getWorkerThreads(), configuration.getWorkerThreads());
         assertEquals(defaults.getWorkerThreadsBound(), configuration.getWorkerThreadsBound());
         assertEquals(ZenBpmAdapterConfiguration.DEFAULT_JOB_TIMEOUT, configuration.getJobTimeout());
+        assertEquals(Duration.ofHours(1), configuration.getAsyncTaskLockRenewal());
+        assertEquals(AsyncTaskMaxAgeAction.REPORT, configuration.asyncTaskMaxAgeActionInUse());
         assertEquals(defaults.getRetryBackoff(), configuration.getRetryBackoff());
         assertEquals(defaults.getMaxRedeliveries(), configuration.getMaxRedeliveries());
         assertEquals(defaults.getShutdownGrace(), configuration.getShutdownGrace());
@@ -203,6 +213,35 @@ class ZenBpmAdapterConfigurationTest {
         assertTrue(line
                 .get()
                 .contains(fix), line.get());
+    }
+
+    @Test
+    @DisplayName("An async-task-lock-renewal not shorter than the platform's delivery retention ends the boot, naming both keys and a window which fits; a shorter one passes, and without a retention nothing is checked against it")
+    void theAsyncTaskLockRenewalStaysBelowTheDeliveryRetention() {
+        final var configuration = configured("http://zenbpm:8080");
+        configuration.setAsyncTaskLockRenewal(Duration.ofDays(7));
+
+        final var validation = configuration.validate(ADAPTER_ID, false, false, Duration.ofDays(7));
+
+        assertAll(
+                () -> assertTrue(validation.endsTheBoot()),
+                () -> assertTrue(validation
+                        .message()
+                        .contains("""
+                                  - vanillabp.adapters.orders.async-task-lock-renewal is PT168H, which is not shorter \
+                                than vanillabp.delivery.retention (PT168H)."""), validation::message),
+                () -> assertTrue(validation
+                        .message()
+                        .contains("""
+                                Set vanillabp.adapters.orders.async-task-lock-renewal well below the retention, at \
+                                most a tenth of it (PT16H48M here), or raise vanillabp.delivery.retention"""),
+                        validation::message),
+                () -> assertEquals(Kind.COMPLETE, configuration
+                        .validate(ADAPTER_ID, false, false, Duration.ofDays(7).plusSeconds(1))
+                        .kind()),
+                () -> assertEquals(Kind.COMPLETE, configuration
+                        .validate(ADAPTER_ID, false, false)
+                        .kind()));
     }
 
     @Test
@@ -873,6 +912,15 @@ class ZenBpmAdapterConfigurationTest {
                 defect("job-timeout", "zero",
                         "is PT0S, but a job has to stay locked for a while to the node which runs it; the default is PT5M",
                         c -> c.setJobTimeout(Duration.ZERO)),
+                defect("async-task-lock-renewal", "zero",
+                        "is PT0S, but the job of a task left open for its asynchronous completion has to stay locked for a while, or the engine hands it out again at once; the default is PT1H",
+                        c -> c.setAsyncTaskLockRenewal(Duration.ZERO)),
+                defect("async-task-lock-renewal", "a negative duration",
+                        "is PT-1S, but the job of a task left open for its asynchronous completion has to stay locked",
+                        c -> c.setAsyncTaskLockRenewal(Duration.ofSeconds(-1))),
+                defect("async-task-max-age-action", "a value which names no action",
+                        "is 'fail'; it is 'report', the default, or 'incident'",
+                        c -> c.setAsyncTaskMaxAgeAction(" fail ")),
                 defect("retry-backoff", "a negative duration", "must not be negative; the default is PT10S",
                         c -> c.setRetryBackoff(Duration.ofSeconds(-1))),
                 defect("shutdown-grace", "a negative duration", "must not be negative; the default is PT20S",

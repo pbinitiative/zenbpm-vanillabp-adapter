@@ -45,6 +45,11 @@ class ZenBpmStartupValidationTest {
 
     private static final String ADDRESS = "http://localhost:8080";
 
+    /**
+     * The platform's <code>vanillabp.delivery.retention</code> by default.
+     */
+    private static final Duration RETENTION = Duration.ofDays(7);
+
     @Test
     @DisplayName("An adapter id without an address is a warning naming the key, and its factory refuses work with the same words")
     void anUnconfiguredAdapterIdIsAWarning() {
@@ -114,7 +119,7 @@ class ZenBpmStartupValidationTest {
         final var report = new CollectedStartupReport();
 
         try (var registry = ZenBpmStartupValidation.registryOf(List.of("old"), id -> configured("ftp://engine"),
-                id -> false, id -> true, () -> "shop", report)) {
+                id -> false, id -> true, RETENTION, () -> "shop", report)) {
             final var factory = registry.getFactory("old");
             final var message = factory
                     .unconfiguredMessage()
@@ -141,7 +146,7 @@ class ZenBpmStartupValidationTest {
                 .of("orders", "billing", "shipping"),
                 Map.of("orders", configured("ftp://engine"), "billing",
                         workerThreads, "shipping", configured(ADDRESS))::get,
-                id -> true, id -> false, report,
+                id -> true, id -> false, RETENTION, report,
                 Optional::empty, building(built)));
 
         assertAll(
@@ -184,7 +189,8 @@ class ZenBpmStartupValidationTest {
         final var built = new ArrayList<String>();
 
         final var failure = assertThrows(IllegalStateException.class, () -> ZenBpmStartupValidation.registryOf(List
-                .of("orders"), id -> configured(ADDRESS), id -> true, id -> false, new CollectedStartupReport(),
+                .of("orders"), id -> configured(ADDRESS), id -> true, id -> false, RETENTION,
+                new CollectedStartupReport(),
                 () -> Optional.of("raise com.google.protobuf:protobuf-java"), building(built)));
 
         assertAll(
@@ -199,7 +205,7 @@ class ZenBpmStartupValidationTest {
 
         try (var registry = ZenBpmStartupValidation.registryOf(List.of("orders"),
                 id -> new ZenBpmAdapterConfiguration(),
-                id -> true, id -> false, new CollectedStartupReport(), () -> {
+                id -> true, id -> false, RETENTION, new CollectedStartupReport(), () -> {
                     asked.set(true);
                     return Optional.of("raise com.google.protobuf:protobuf-java");
                 }, building(new ArrayList<>()))) {
@@ -224,11 +230,12 @@ class ZenBpmStartupValidationTest {
                 .getMethod("setRestAddress", String.class)
                 .invoke(configuration, ADDRESS);
         final var registryOf = validation.getMethod("registryOf", List.class, Function.class, Predicate.class,
-                Predicate.class, Supplier.class, StartupReport.class);
+                Predicate.class, Duration.class, Supplier.class, StartupReport.class);
 
         final var failure = assertThrows(InvocationTargetException.class, () -> registryOf.invoke(null, List.of(
                 "orders"), (Function<String, Object>) id -> configuration, (Predicate<String>) id -> true,
-                (Predicate<String>) id -> false, (Supplier<String>) () -> "shop", new CollectedStartupReport()));
+                (Predicate<String>) id -> false, RETENTION, (Supplier<String>) () -> "shop",
+                new CollectedStartupReport()));
 
         final var cause = assertInstanceOf(IllegalStateException.class, failure.getCause());
         assertTrue(cause
@@ -243,7 +250,7 @@ class ZenBpmStartupValidationTest {
         final var refused = new IllegalStateException("no HTTP client today");
 
         final var failure = assertThrows(IllegalStateException.class, () -> ZenBpmStartupValidation.registryOf(List
-                .of("orders", "billing"), id -> configured(ADDRESS), id -> true, id -> false,
+                .of("orders", "billing"), id -> configured(ADDRESS), id -> true, id -> false, RETENTION,
                 new CollectedStartupReport(), Optional::empty, (
                     adapterId,
                     configuration) -> {
@@ -269,7 +276,7 @@ class ZenBpmStartupValidationTest {
         final var closed = new ArrayList<String>();
 
         final var failure = assertThrows(IllegalArgumentException.class, () -> ZenBpmStartupValidation.registryOf(
-                List.of("orders", "orders"), id -> configured(ADDRESS), id -> true, id -> false,
+                List.of("orders", "orders"), id -> configured(ADDRESS), id -> true, id -> false, RETENTION,
                 new CollectedStartupReport(), Optional::empty, (
                     adapterId,
                     configuration) -> new ZenBpmClientFactory(adapterId, configuration, "client", null, null, null) {
@@ -318,6 +325,25 @@ class ZenBpmStartupValidationTest {
                 failure.getMessage());
     }
 
+    @Test
+    @DisplayName("The platform's delivery retention reaches the validation: an async-task-lock-renewal not below it ends the start, naming both keys")
+    void theDeliveryRetentionReachesTheValidation() {
+        final var configuration = configured(ADDRESS);
+        configuration.setAsyncTaskLockRenewal(Duration.ofHours(2));
+
+        final var failure = assertThrows(IllegalStateException.class, () -> ZenBpmStartupValidation.registryOf(List
+                .of("orders"), id -> configuration, id -> true, id -> false, Duration.ofHours(2), () -> "shop",
+                new CollectedStartupReport()));
+
+        assertAll(
+                () -> assertTrue(failure
+                        .getMessage()
+                        .contains("vanillabp.adapters.orders.async-task-lock-renewal is PT2H"), failure::getMessage),
+                () -> assertTrue(failure
+                        .getMessage()
+                        .contains("vanillabp.delivery.retention (PT2H)"), failure::getMessage));
+    }
+
     private static ZenBpmClientRegistry registryOf(
         final List<String> adapterIds,
         final Map<String, ZenBpmAdapterConfiguration> configurations,
@@ -326,6 +352,7 @@ class ZenBpmStartupValidationTest {
         return ZenBpmStartupValidation.registryOf(adapterIds, configurations == null
                 ? id -> null
                 : id -> configurations.getOrDefault(id, new ZenBpmAdapterConfiguration()), id -> true, id -> false,
+                RETENTION,
                 () -> "shop", report);
     }
 

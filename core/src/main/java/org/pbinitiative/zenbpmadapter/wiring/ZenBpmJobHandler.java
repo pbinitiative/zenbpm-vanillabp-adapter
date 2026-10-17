@@ -17,11 +17,14 @@ import org.pbinitiative.zenbpmadapter.ZenBpmInstanceCache.InstanceFacts;
 import org.pbinitiative.zenbpmadapter.ZenBpmProcessingContext;
 import org.pbinitiative.zenbpmadapter.ZenBpmProcessingContext.WiredProcess;
 import org.pbinitiative.zenbpmadapter.client.ReceivedJob;
+import org.pbinitiative.zenbpmadapter.client.ZenBpmAdapterConfiguration;
+import org.pbinitiative.zenbpmadapter.client.ZenBpmAdapterConfiguration.AsyncTaskMaxAgeAction;
 import org.pbinitiative.zenbpmadapter.client.ZenBpmClientFactory;
 import org.pbinitiative.zenbpmadapter.client.ZenBpmCommandRetry;
 import org.pbinitiative.zenbpmadapter.client.ZenBpmErrors;
 import org.pbinitiative.zenbpmadapter.client.ZenBpmRestClient;
 import org.pbinitiative.zenbpmadapter.client.api.JobFailure;
+import org.pbinitiative.zenbpmadapter.client.api.JobRef;
 import org.pbinitiative.zenbpmadapter.processservice.ZenBpmSharedValues;
 
 import io.vanillabp.integration.adapter.spi.AdapterCollaborators;
@@ -61,9 +64,22 @@ import lombok.extern.slf4j.Slf4j;
  * sub-process and one behind it see the new values only that way, see decision 35 in the
  * repository's DECISIONS.md. An update which finds the workflow ended, and a completion which finds
  * the job gone, are what at-least-once delivery leaves over: logged, and nothing else.</li>
- * <li><b>Everything else</b>, a BPMN error, a task which stays open for its asynchronous
- * completion, and a handler which threw, is not carried out yet: logged at WARN, and the job is
- * left to its lock, after which the engine hands it out again.</li>
+ * <li><b>A BPMN error.</b> The values are written as for a completed task, and the job is failed
+ * with the error code as the model carries it, scoped, with the same values, the delivery's token
+ * and the job stream's client id: the failure releases the stream's lock, and a repeat after a lost
+ * answer changes nothing. An error boundary event or an error event sub-process of the model takes
+ * over; where none catches the code, the engine raises an incident, which a WARN names where the
+ * job read right after shows it. A failure with an error code neither reads nor spends the job's
+ * retries.</li>
+ * <li><b>A task which stays open</b> for its asynchronous completion. The job is parked: the
+ * renewal of its lock ends, and the lock is extended once by <code>async-task-lock-renewal</code>.
+ * When that lapses, the engine hands the job out again, the core answers from the record of this
+ * delivery that the task is still open, and the job is parked again: the engine's redelivery
+ * drives the renewal, and no timer of the adapter's does. Where the task waited longer than the
+ * platform's maximum age and <code>async-task-max-age-action</code> is <code>incident</code>, the
+ * job is failed without retries instead, so an incident names the aggregate and the age.</li>
+ * <li><b>A handler which threw</b> is not carried out yet: logged at WARN, and the job is left to
+ * its lock, after which the engine hands it out again.</li>
  * </ul>
  * Every command goes through a {@link ZenBpmCommandRetry}, bounded by the job's lock and stopped at
  * once while the module shuts down. A command which fails all the same leaves the job to its lock.
@@ -93,6 +109,10 @@ public final class ZenBpmJobHandler {
     private final ZenBpmDeployedProcesses deployedProcesses;
 
     private final String clientId;
+
+    private final Duration asyncTaskLockRenewal;
+
+    private final AsyncTaskMaxAgeAction asyncTaskMaxAgeAction;
 
     /**
      * The name of the variable of the aggregate's id, by plain process id, as the core answered it.
@@ -128,6 +148,12 @@ public final class ZenBpmJobHandler {
         this.rest = factory.rest();
         this.deployedProcesses = factory.deployedProcesses();
         this.clientId = factory.clientId();
+        this.asyncTaskLockRenewal = factory
+                .configuration()
+                .getAsyncTaskLockRenewal();
+        this.asyncTaskMaxAgeAction = factory
+                .configuration()
+                .asyncTaskMaxAgeActionInUse();
     }
 
     /**
@@ -283,7 +309,8 @@ public final class ZenBpmJobHandler {
         }
         switch (outcome.kind()) {
             case COMPLETED -> complete(job.getKey(), path.get(), idVariableName, aggregate, delivery);
-            case BPMN_ERROR, COMPLETION_PENDING -> leaveAnOutcomeToItsLock(delivery, aggregate, outcome);
+            case BPMN_ERROR -> throwBpmnError(received, path.get(), idVariableName, aggregate, outcome, delivery);
+            case COMPLETION_PENDING -> keepOpen(received, aggregate, outcome, delivery, renewal);
         }
     }
 
@@ -313,25 +340,9 @@ public final class ZenBpmJobHandler {
         final Aggregate aggregate,
         final Delivery delivery
     ) {
-        final var variables = ZenBpmSharedValues.forCommand(idVariableName, aggregate.id(), invoker
-                .syncedWorkflowAggregateValues(workflowModuleId, delivery.plainProcessId(), aggregate.id(),
-                        AggregateSyncMode.FULL));
-        for (final var instanceKey : path) {
-            try {
-                // a 404 comes from a node which lags behind: the job of the instance was just delivered
-                delivery.retry().send("update of the variables of instance %d".formatted(instanceKey),
-                        ZenBpmErrors::variablesFoundNoInstance, () -> rest.patchVariables(instanceKey, variables));
-            } catch (final RuntimeException e) {
-                if (!ZenBpmErrors.variablesFoundTheInstanceEnded(e)) {
-                    throw e;
-                }
-                log.warn("""
-                        ZenBPM[{}]: the workflow of job {} (task '{}', workflow aggregate '{}') ended or was cancelled \
-                        while the handler ran, so the job is not completed. The handler's work is committed: this is \
-                        what at-least-once delivery leaves over.""", adapterId, jobKey, delivery.taskDefinition(),
-                        aggregate.id());
-                return;
-            }
+        final var variables = sharedValuesOf(idVariableName, aggregate, delivery);
+        if (!wroteTheValues(jobKey, path, variables, aggregate, delivery, "completed")) {
+            return;
         }
         try {
             delivery.retry().send("completion", () -> rest.completeJob(jobKey, variables));
@@ -345,6 +356,171 @@ public final class ZenBpmJobHandler {
                     work is committed: this is what at-least-once delivery leaves over.""", adapterId, jobKey,
                     delivery.taskDefinition(), aggregate.id());
         }
+    }
+
+    // the outgoing flow of an error boundary event may branch on the aggregate as much as the flow
+    // behind a completed task, so a BPMN error carries the same values
+    private void throwBpmnError(
+        final ReceivedJob received,
+        final List<Long> path,
+        final String idVariableName,
+        final Aggregate aggregate,
+        final WorkflowTaskOutcome outcome,
+        final Delivery delivery
+    ) {
+        final var job = received.job();
+        // the error codes of the model were scoped while it was deployed, and the catching event is
+        // in the same workflow module as the task
+        final var errorCode = scoping.scopedIdentifier(workflowModuleId, outcome.errorCode(), adapterId);
+        final var variables = sharedValuesOf(idVariableName, aggregate, delivery);
+        if (!wroteTheValues(job.getKey(), path, variables, aggregate, delivery, "failed with its BPMN error")) {
+            return;
+        }
+        // the engine puts the message into the incident only, which it raises where nothing catches
+        // the code, and appends the code to it
+        final var message = """
+                BPMN error '%s' of task '%s' (workflow aggregate '%s') is caught by no error boundary event and no \
+                error event sub-process, its code""".formatted(outcome.errorName(), delivery.taskDefinition(),
+                aggregate.id());
+        try {
+            delivery.retry().send("BPMN error", () -> rest.failJob(job.getKey(), JobFailure
+                    .withErrorCode(errorCode, message)
+                    .withVariables(variables)
+                    .ofTheDelivery(job.getDeliveryToken(), clientId)));
+        } catch (final RuntimeException e) {
+            if (!ZenBpmErrors.isGoneJob(e)) {
+                throw e;
+            }
+            log.warn("""
+                    ZenBPM[{}]: job {} (task '{}', workflow aggregate '{}') was gone when its BPMN error '{}' was to \
+                    be sent: another delivery of it answered first, or its element or workflow ended meanwhile. The \
+                    handler's work is committed: this is what at-least-once delivery leaves over.""", adapterId, job
+                    .getKey(), delivery.taskDefinition(), aggregate.id(), outcome.errorCode());
+            return;
+        }
+        warnWhereNothingCaughtIt(job.getKey(), errorCode, aggregate, outcome, delivery);
+    }
+
+    // the engine answers a BPMN error alike whether an event caught it or it raised an incident, so
+    // the job is read once: a node which lags behind may still answer it active, and then nothing is
+    // said, but the incident is there all the same
+    private void warnWhereNothingCaughtIt(
+        final long jobKey,
+        final String errorCode,
+        final Aggregate aggregate,
+        final WorkflowTaskOutcome outcome,
+        final Delivery delivery
+    ) {
+        final Optional<JobRef> job;
+        try {
+            job = rest.job(jobKey);
+        } catch (final RuntimeException e) {
+            log.debug("ZenBPM[{}]: job {} (task '{}') could not be read after its BPMN error: {}", adapterId, jobKey,
+                    delivery.taskDefinition(), e.getMessage());
+            return;
+        }
+        if (job
+                .map(JobRef::state)
+                .filter(JobRef.State.FAILED::equals)
+                .isEmpty()) {
+            return;
+        }
+        log.warn("""
+                ZenBPM[{}]: no error boundary event and no error event sub-process catches the BPMN error '{}' of job \
+                {} (task '{}', workflow aggregate '{}'), whose code is '{}' at the engine, so the engine raised an \
+                incident on the task. Model an event which catches the code, or resolve or cancel the instance.""",
+                adapterId, outcome.errorCode(), jobKey, delivery.taskDefinition(), aggregate.id(), errorCode);
+    }
+
+    // the task is completed later through the process service, and the redelivery after the window
+    // is answered from the record of this delivery, which parks the job again
+    private void keepOpen(
+        final ReceivedJob received,
+        final Aggregate aggregate,
+        final WorkflowTaskOutcome outcome,
+        final Delivery delivery,
+        final ZenBpmLockRenewal.Renewal renewal
+    ) {
+        final var jobKey = received
+                .job()
+                .getKey();
+        if (outcome.maxAgeExceeded() && (asyncTaskMaxAgeAction == AsyncTaskMaxAgeAction.INCIDENT)) {
+            failAsOverdue(received, aggregate, outcome.openFor(), delivery);
+            return;
+        }
+        try {
+            renewal.park(asyncTaskLockRenewal, delivery.retry());
+        } catch (final RuntimeException e) {
+            if (!ZenBpmErrors.lockLost(e) && !ZenBpmErrors.isGoneJob(e)) {
+                throw e;
+            }
+            // the application completed the task meanwhile, or the lock lapsed and the engine hands
+            // the job out again, which parks it then
+            log.debug("ZenBPM[{}]: job {} (task '{}') was not locked any more when it was to stay open: {}",
+                    adapterId, jobKey, delivery.taskDefinition(), e.getMessage());
+            return;
+        }
+        log.debug("ZenBPM[{}]: job {} (task '{}') stays open for its asynchronous completion, locked for {}",
+                adapterId, jobKey, delivery.taskDefinition(), asyncTaskLockRenewal);
+    }
+
+    // where operators look: the core says it in a log line, and an incident names it at the
+    // engine. Without retries: with retries left the job would come back only after its backoff
+    private void failAsOverdue(
+        final ReceivedJob received,
+        final Aggregate aggregate,
+        final Duration openFor,
+        final Delivery delivery
+    ) {
+        final var message = """
+                Task '%s' of workflow aggregate '%s' (process '%s' of workflow module '%s') has waited for its \
+                asynchronous completion for %s, longer than vanillabp.delivery.max-task-age allows. The application \
+                owes it a ProcessService#completeTask or #cancelTask. Complete or cancel it and resolve this \
+                incident, raise the maximum age where such a wait is legitimate, or set %s back to 'report'."""
+                .formatted(delivery.taskDefinition(), aggregate.id(), delivery.plainProcessId(), workflowModuleId,
+                        openFor, ZenBpmAdapterConfiguration.propertyKey(adapterId, "async-task-max-age-action"));
+        log.warn("ZenBPM[{}]: job {} is failed without retries, so an incident shows it: {}", adapterId, received
+                .job()
+                .getKey(), message);
+        failWithoutRetries(received, message, delivery);
+    }
+
+    private Map<String, Object> sharedValuesOf(
+        final String idVariableName,
+        final Aggregate aggregate,
+        final Delivery delivery
+    ) {
+        return ZenBpmSharedValues.forCommand(idVariableName, aggregate.id(), invoker.syncedWorkflowAggregateValues(
+                workflowModuleId, delivery.plainProcessId(), aggregate.id(), AggregateSyncMode.FULL));
+    }
+
+    // see decision 35 in the repository's DECISIONS.md
+    private boolean wroteTheValues(
+        final long jobKey,
+        final List<Long> path,
+        final Map<String, Object> variables,
+        final Aggregate aggregate,
+        final Delivery delivery,
+        final String answer
+    ) {
+        for (final var instanceKey : path) {
+            try {
+                // a 404 comes from a node which lags behind: the job of the instance was just delivered
+                delivery.retry().send("update of the variables of instance %d".formatted(instanceKey),
+                        ZenBpmErrors::variablesFoundNoInstance, () -> rest.patchVariables(instanceKey, variables));
+            } catch (final RuntimeException e) {
+                if (!ZenBpmErrors.variablesFoundTheInstanceEnded(e)) {
+                    throw e;
+                }
+                log.warn("""
+                        ZenBPM[{}]: the workflow of job {} (task '{}', workflow aggregate '{}') ended or was cancelled \
+                        while the handler ran, so the job is not {}. The handler's work is committed: this is what \
+                        at-least-once delivery leaves over.""", adapterId, jobKey, delivery.taskDefinition(), aggregate
+                        .id(), answer);
+                return false;
+            }
+        }
+        return true;
     }
 
     // see decision 33 in the repository's DECISIONS.md
@@ -415,17 +591,6 @@ public final class ZenBpmJobHandler {
                         fail a job at the engine yet; the job is left to its lock, after which the engine hands it out \
                         again""",
                 adapterId, delivery.jobKey(), delivery.taskDefinition(), aggregate.id(), thrown);
-    }
-
-    private void leaveAnOutcomeToItsLock(
-        final Delivery delivery,
-        final Aggregate aggregate,
-        final WorkflowTaskOutcome outcome
-    ) {
-        log.warn("""
-                ZenBPM[{}]: the handler of job {} (task '{}', workflow aggregate '{}') answered {}, which this \
-                adapter does not carry out yet; the job is left to its lock, after which the engine hands it out \
-                again""", adapterId, delivery.jobKey(), delivery.taskDefinition(), aggregate.id(), outcome.kind());
     }
 
     /**

@@ -6,6 +6,7 @@ package org.pbinitiative.zenbpmadapter.springboot.it;
 
 import static org.junit.jupiter.api.Assertions.assertAll;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.IOException;
@@ -41,6 +42,8 @@ import org.pbinitiative.zenbpmadapter.client.api.JobFilter;
 import org.pbinitiative.zenbpmadapter.client.api.JobRef;
 import org.pbinitiative.zenbpmadapter.client.api.ProcessInstanceRef;
 import org.pbinitiative.zenbpmadapter.deployment.ZenBpmDeploymentService;
+import org.pbinitiative.zenbpmadapter.springboot.it.task.Claim;
+import org.pbinitiative.zenbpmadapter.springboot.it.task.ClaimRepository;
 import org.pbinitiative.zenbpmadapter.springboot.it.task.Parcel;
 import org.pbinitiative.zenbpmadapter.springboot.it.task.ParcelRepository;
 import org.pbinitiative.zenbpmadapter.springboot.it.task.TaskItApplication;
@@ -70,10 +73,14 @@ import io.vanillabp.spi.process.ProcessService;
  * parameter the model maps into a task is bound, a workflow somebody started past VanillaBP with
  * nothing but a business key is served by that key, the job of a workflow whose aggregate this
  * application does not hold ends in an incident whose message is the platform's, and the
- * job-timeout of a task is resolved from the most specific level of the configuration.
+ * job-timeout of a task is resolved from the most specific level of the configuration. A BPMN error
+ * is routed by the error boundary event which catches its code, or ends in an incident where none
+ * does, and a task left open for its asynchronous completion is parked, and parked again whenever
+ * the engine hands its job out once more.
  * <p>
  * The application runs the workflow module <code>deploy-it</code> under <code>use-prefix</code> with
- * the process <code>TaskMatrix</code> of <code>task-it/task-matrix.bpmn</code>, configured by
+ * the process <code>TaskMatrix</code> of <code>task-it/task-matrix.bpmn</code> and the process
+ * <code>TaskOutcomes</code> of <code>task-it/task-outcomes.bpmn</code>, configured by
  * <code>task-it.yaml</code>. It is started once for the class, against an engine of its own.
  */
 @ExtendWith(SuppressOutputExtension.class)
@@ -98,6 +105,12 @@ class ZenBpmTaskProcessingIT {
 
     @Autowired
     private ParcelRepository parcels;
+
+    @Autowired
+    private ProcessService<Claim> claimProcessService;
+
+    @Autowired
+    private ClaimRepository claims;
 
     @Autowired
     private ZenBpmClientRegistry clients;
@@ -263,6 +276,92 @@ class ZenBpmTaskProcessingIT {
                         "weigh")));
     }
 
+    @Test
+    @DisplayName("A BPMN error reaches the engine with the code the deployed model carries: the error boundary event takes over, the gateway behind it decides on what the handler computed, and the handler's work stays committed")
+    void aBpmnErrorRoutesTheBoundaryEvent() {
+        final var claimId = uniqueClaimId();
+
+        final var ended = awaitTheEndOf(start(new Claim(claimId, Claim.ERROR, "damaged")).key());
+
+        final var claim = claims
+                .findById(claimId)
+                .orElseThrow();
+        final var inspect = jobOf(ended.key(), "Inspect");
+        assertAll(
+                () -> assertEquals(ProcessInstanceRef.State.COMPLETED, ended.state()),
+                () -> assertTrue(visited(ended).containsAll(List.of("Damaged", "Refunded")), () -> visited(ended)
+                        .toString()),
+                () -> assertFalse(visited(ended).contains("Inspected"), () -> visited(ended).toString()),
+                () -> assertEquals(JobRef.State.TERMINATED, inspect.state()),
+                () -> assertTrue(claim.isInspected()),
+                () -> assertTrue(claim.isRefundable()),
+                () -> assertEquals(List.of("BPMN_ERROR"), deliveriesOf(claimId)
+                        .stream()
+                        .map(TaskDeliveryLogReader.Delivery::outcome)
+                        .toList()));
+    }
+
+    @Test
+    @DisplayName("A BPMN error whose code no event of the model catches ends in an incident on the task, which names the code as the engine knows it, and the handler's work stays committed")
+    void anUnknownErrorCodeIsAnIncident() {
+        final var claimId = uniqueClaimId();
+
+        final var started = start(new Claim(claimId, Claim.ERROR, "lost"));
+        final var incident = eventually(() -> incidentsOf(started.key()).findFirst());
+
+        final var message = incident
+                .get("message")
+                .asText();
+        assertAll(
+                () -> assertEquals("Inspect", incident
+                        .get("elementId")
+                        .asText()),
+                () -> assertEquals(
+                        "BPMN error 'lost' of task 'inspect' (workflow aggregate '%s') is caught by no error boundary event and no error event sub-process, its code: deploy-it__lost"
+                                .formatted(claimId),
+                        message),
+                () -> assertEquals(JobRef.State.FAILED, jobOf(started.key(), "Inspect").state()),
+                () -> assertTrue(claims
+                        .findById(claimId)
+                        .orElseThrow()
+                        .isInspected()));
+    }
+
+    @Test
+    @DisplayName("A task left open for its asynchronous completion stays open: its handler runs once, and the engine hands its job out again every async-task-lock-renewal, which parks it again")
+    void anAsynchronousTaskStaysOpen() {
+        final var claimId = uniqueClaimId();
+
+        final var started = start(new Claim(claimId, Claim.PENDING, null));
+        final var taskId = eventually(() -> claims
+                .findById(claimId)
+                .map(Claim::getApprovalTaskId));
+        final var firstDelivery = deliveryTokenOf(Long.parseLong(taskId));
+        final var waitedFrom = Instant.now();
+        // the window of task-it.yaml is two seconds, the job-timeout three minutes
+        final var thirdDelivery = eventually(() -> Optional
+                .of(deliveryTokenOf(Long.parseLong(taskId)))
+                .filter(token -> token >= firstDelivery + 2));
+        final var waited = Duration.between(waitedFrom, Instant.now());
+
+        final var claim = claims
+                .findById(claimId)
+                .orElseThrow();
+        assertAll(
+                () -> assertTrue(waited.compareTo(Duration.ofSeconds(15)) < 0, waited::toString),
+                () -> assertTrue(thirdDelivery >= firstDelivery + 2),
+                () -> assertEquals(1, claim.getApprovalRequests()),
+                () -> assertEquals(JobRef.State.ACTIVE, jobOf(started.key(), "AwaitApproval").state()),
+                () -> assertEquals(ProcessInstanceRef.State.ACTIVE, rest()
+                        .instance(started.key())
+                        .orElseThrow()
+                        .state()),
+                () -> assertEquals(List.of("COMPLETION_PENDING"), deliveriesOf(claimId)
+                        .stream()
+                        .map(TaskDeliveryLogReader.Delivery::outcome)
+                        .toList()));
+    }
+
     // only the test knows the ports the container was given
     @DynamicPropertySource
     static void theEngineUnderTest(final DynamicPropertyRegistry registry) {
@@ -273,6 +372,43 @@ class ZenBpmTaskProcessingIT {
     // the parcel ids of every test are new, because all tests of the class share one engine
     private static String uniqueParcelId() {
         return "parcel-%s".formatted(UUID.randomUUID());
+    }
+
+    private static String uniqueClaimId() {
+        return "claim-%s".formatted(UUID.randomUUID());
+    }
+
+    private ProcessInstanceRef start(final Claim claim) {
+        transactionTemplate.executeWithoutResult(status -> claimProcessService.startWorkflow(claim));
+        return eventually(() -> rest()
+                .instances(InstanceFilter
+                        .anyInstance()
+                        .withBusinessKey(claim.getId()))
+                .items()
+                .stream()
+                .findFirst());
+    }
+
+    private JobRef jobOf(
+        final long instanceKey,
+        final String elementId
+    ) {
+        return rest()
+                .jobs(JobFilter
+                        .anyJob()
+                        .withProcessInstanceKey(instanceKey))
+                .items()
+                .stream()
+                .filter(job -> elementId.equals(job.elementId()))
+                .findFirst()
+                .orElseThrow();
+    }
+
+    // raised by the engine with every delivery of the job
+    private static long deliveryTokenOf(final long jobKey) {
+        return engineJson("/v1/jobs/%d".formatted(jobKey))
+                .path("deliveryToken")
+                .asLong();
     }
 
     private ProcessInstanceRef runThrough(final String parcelId) {
@@ -320,18 +456,21 @@ class ZenBpmTaskProcessingIT {
     }
 
     private Stream<JsonNode> incidentsOf(final long instanceKey) {
+        final var items = engineJson("/v1/process-instances/%d/incidents".formatted(instanceKey)).path("items");
+        return StreamSupport.stream(items.spliterator(), false);
+    }
+
+    // what the engine answers, read past the adapter's client, which keeps only what it needs
+    private static JsonNode engineJson(final String path) {
         try (var client = HttpClient.newHttpClient()) {
             final var answer = client.send(HttpRequest
-                    .newBuilder(URI.create("%s/v1/process-instances/%d/incidents".formatted(ENGINE.restAddress(),
-                            instanceKey)))
+                    .newBuilder(URI.create("%s%s".formatted(ENGINE.restAddress(), path)))
                     .build(), HttpResponse.BodyHandlers.ofString());
             assertEquals(200, answer.statusCode(), answer::body);
-            final var items = JsonMapper
+            return JsonMapper
                     .builder()
                     .build()
-                    .readTree(answer.body())
-                    .path("items");
-            return StreamSupport.stream(items.spliterator(), false);
+                    .readTree(answer.body());
         } catch (final IOException e) {
             throw new UncheckedIOException(e);
         } catch (final InterruptedException e) {

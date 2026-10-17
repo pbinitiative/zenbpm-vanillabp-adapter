@@ -42,7 +42,22 @@ public record JobFailure(
      * @return The failure
      */
     public static JobFailure withErrorCode(final String errorCode) {
-        return new JobFailure(errorCode, null, null, null, null, null);
+        return withErrorCode(errorCode, null);
+    }
+
+    /**
+     * A BPMN error with a message, which the engine puts into the incident it raises where no
+     * error event of the model catches the code.
+     *
+     * @param errorCode The error code
+     * @param message What the incident says before the code
+     * @return The failure
+     */
+    public static JobFailure withErrorCode(
+        final String errorCode,
+        final String message
+    ) {
+        return new JobFailure(errorCode, message, null, null, null, null);
     }
 
     /**

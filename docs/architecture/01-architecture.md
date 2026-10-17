@@ -270,10 +270,13 @@ ZenBpmJobHandler:
   COMPLETED           → PATCH /process-instances/{key}/variables {shared values + id var} for the
                         job's instance and every instance above it up to the root (decision 35)
                         POST /jobs/{key}/complete {same values}
-  BPMN_ERROR          → PATCH variables; POST /jobs/{key}/fail {errorCode: scoped code,
-                        deliveryToken, clientId}
-  COMPLETION_PENDING  → extend the lock by async-task-lock-renewal (default PT1H); when it lapses the
-                        redelivery is answered from the record (COMPLETION_PENDING again) and renews
+  BPMN_ERROR          → PATCH variables as for COMPLETED; POST /jobs/{key}/fail {errorCode: scoped
+                        code, variables, message for the incident, deliveryToken, clientId}; the
+                        job read once after it: `failed` = nothing caught the code → WARN
+  COMPLETION_PENDING  → end the handler's lock renewal, then extend the lock by async-task-lock-renewal
+                        (default PT1H); when it lapses the redelivery is answered from the record
+                        (COMPLETION_PENDING again) and renews; overdue with async-task-max-age-action
+                        incident → POST /jobs/{key}/fail {retries: 0, message} instead
   unknown workflow    → DeliveryOfAnUnknownWorkflowException: POST /jobs/{key}/fail {retries: 0,
                         message, deliveryToken, clientId} → incident; WARN without stack trace
   exception           → POST /jobs/{key}/fail {message, retryBackoff (if set), deliveryToken,
@@ -391,7 +394,7 @@ and are re-parked by whichever node receives them next.
 | `startup-wait` | adapter | `PT10M` | how long the first deployment waits for `/system/health/ready` |
 | `worker-threads` / `worker-threads-bound` | adapter | `4` / same | handler slots, `virtual` allowed |
 | `job-timeout` | adapter, module, workflow, task | `PT5M` | `lock_duration_ms` of the subscription; renewed at half while a handler runs; one value per job type, so conflicting task-level values of one type end the boot naming both |
-| `async-task-lock-renewal` | adapter | `PT1H` | how far an open asynchronous task's lock is extended; must stay below `vanillabp.delivery.retention` and at or below the engine's `jobManager.maxLockDurationMs` |
+| `async-task-lock-renewal` | adapter | `PT1H` | how far an open asynchronous task's lock is extended; one not shorter than `vanillabp.delivery.retention`, `PT0S` or a negative one ends the start; above the engine's `jobManager.maxLockDurationMs` the engine lowers it, which a WARN names once per adapter id |
 | `retry-backoff` | adapter, module, workflow, task | none | the `retryBackoff` sent with a failure of a handler (decision 27); unset, the request leaves it out and the task definition's `retryBackoff` or the engine's `jobs.defaultRetryBackoff` applies; the number of attempts is the job's `retries` (model or engine default) |
 | `shutdown-grace` | adapter | `PT20S` | |
 | `workflow-visibility-timeout` | adapter | `PT2S` | `workflowVisibilityDelay()` and the retry-later window of a message |
@@ -402,7 +405,7 @@ and are re-parked by whichever node receives them next.
 | `accept-unscoped-identifiers` | adapter, module | `false` | silences the `none` warning |
 | `message-start-lookup` | adapter | `start-row` (S7.1.2) | `scan` adds the bounded client-side lookup of message-started workflows for what the start row cannot cover (GAPS 1); an opt-in until E13.4 lands, then removed |
 | `message-start-lookup-max-instances` | adapter | `1000` | the bound of that scan |
-| `async-task-max-age-action` | adapter | `report` | `incident` fails an overdue asynchronous task's job with `retries: 0`, so the engine raises an incident |
+| `async-task-max-age-action` | adapter | `report` | `incident` fails an overdue asynchronous task's job with `retries: 0`, so the engine raises an incident; any other value ends the start |
 | `deployment-failure` | adapter | `fail` | core key |
 
 Scoped keys resolve through the four levels of the configuration model, most specific first, with

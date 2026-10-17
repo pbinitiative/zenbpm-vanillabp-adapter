@@ -7,13 +7,18 @@ package org.pbinitiative.zenbpmadapter.wiring;
 import static org.junit.jupiter.api.Assertions.assertAll;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ScheduledFuture;
+import java.util.concurrent.ScheduledThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.locks.LockSupport;
 import java.util.function.BooleanSupplier;
@@ -26,6 +31,8 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.pbinitiative.zenbpmadapter.client.FakeEngine;
 import org.pbinitiative.zenbpmadapter.client.ReceivedJob;
 import org.pbinitiative.zenbpmadapter.client.ZenBpmAdapterConfiguration;
+import org.pbinitiative.zenbpmadapter.client.ZenBpmCommandRetry;
+import org.pbinitiative.zenbpmadapter.client.ZenBpmErrors;
 import org.pbinitiative.zenbpmadapter.client.ZenBpmRestClient;
 import org.pbinitiative.zenbpmadapter.client.grpc.Zenbpm.WaitingJob;
 
@@ -38,7 +45,8 @@ import io.vanillabp.integration.test.utils.SuppressOutputExtension;
  * job the engine no longer holds quietly, by any other refusal with a WARN, and by the end of the
  * handler; repeated within the lock where the engine could not be asked. Every extension names its
  * delivery, and the lock is counted on the application's clock: an engine clock behind it is named
- * once and changes nothing.
+ * once and changes nothing. A parked job is extended once by its window, after an extension under
+ * way came back, and a window the engine lowered is named once.
  */
 @ExtendWith(SuppressOutputExtension.class)
 class ZenBpmLockRenewalTest {
@@ -322,6 +330,138 @@ class ZenBpmLockRenewalTest {
         assertEquals(List.of(), extensions());
     }
 
+    @Test
+    @DisplayName("A parked job is extended once by the window, for the stream's client and its own delivery, and the renewal of its handler extends it no more")
+    void aParkedJobIsExtendedOnceByTheWindow() {
+        engine.answers("POST", EXTEND, granting(Duration.ofHours(1)));
+
+        try (var renewal = lockRenewal.start(job(JOB_TIMEOUT), JOB_TIMEOUT, "ship")) {
+            renewal.park(Duration.ofHours(1), retryOf(renewal));
+            pause(JOB_TIMEOUT.multipliedBy(2));
+        }
+
+        assertEquals(List.of("{\"clientId\":\"shop-1\",\"lockDuration\":\"PT3600S\",\"deliveryToken\":7}"),
+                extensions()
+                        .stream()
+                        .map(FakeEngine.Request::body)
+                        .toList());
+    }
+
+    @Test
+    @DisplayName("A job is parked only once the extension of its running handler under way came back, which would shorten the window if it arrived later")
+    void aParkingWaitsForTheExtensionUnderWay() {
+        final var events = new CopyOnWriteArrayList<String>();
+        final var calls = new AtomicInteger();
+        engine.answers("POST", EXTEND, exchange -> {
+            final var call = calls.incrementAndGet();
+            events.add("extension %d arrived".formatted(call));
+            if (call == 1) {
+                pause(Duration.ofMillis(300));
+                events.add("extension 1 answered");
+            }
+            granting(JOB_TIMEOUT).handle(exchange);
+        });
+
+        try (var renewal = lockRenewal.start(job(Duration.ZERO), JOB_TIMEOUT, "ship")) {
+            awaitRequests(1);
+            renewal.park(Duration.ofHours(1), retryOf(renewal));
+        }
+
+        assertEquals(List.of("extension 1 arrived", "extension 1 answered", "extension 2 arrived"), events);
+    }
+
+    @Test
+    @DisplayName("An extension whose time came just before the parking, but which runs only after it, sends nothing")
+    void anExtensionDueBeforeTheParkingSendsNothingAfterIt() {
+        final var due = new CopyOnWriteArrayList<Runnable>();
+        final var heldBack = new ScheduledThreadPoolExecutor(1) {
+
+            @Override
+            public ScheduledFuture<?> schedule(
+                final Runnable command,
+                final long delay,
+                final TimeUnit unit
+            ) {
+                due.add(command);
+                return super.schedule(() -> {
+                }, delay, unit);
+            }
+
+        };
+        engine.answers("POST", EXTEND, granting(Duration.ofHours(1)));
+        try {
+            final var renewal = new ZenBpmLockRenewal("orders", rest, "shop-1", heldBack).start(job(Duration.ZERO),
+                    JOB_TIMEOUT, "ship");
+            renewal.park(Duration.ofHours(1), retryOf(renewal));
+            due
+                    .getFirst()
+                    .run();
+            pause(Duration.ofMillis(300));
+        } finally {
+            heldBack.shutdownNow();
+        }
+
+        assertEquals(List.of("PT3600S"), extensions()
+                .stream()
+                .map(request -> request
+                        .body()
+                        .replaceAll(".*\"lockDuration\":\"([^\"]+)\".*", "$1"))
+                .toList());
+    }
+
+    @Test
+    @DisplayName("A parking the engine lowered, as to its maximum lock duration, is named once per adapter id with the key and the engine's setting; one as counted raises no WARN")
+    void aParkingTheEngineLoweredIsNamedOnce(final CapturedOutput output) {
+        final var calls = new AtomicInteger();
+        engine.answers("POST", EXTEND, exchange -> granting(calls.incrementAndGet() == 1 ? Duration.ofHours(1)
+                : Duration.ofMinutes(10)).handle(exchange));
+
+        for (var parking = 0; parking < 3; ++parking) {
+            try (var renewal = lockRenewal.start(job(JOB_TIMEOUT), JOB_TIMEOUT, "ship")) {
+                renewal.park(Duration.ofHours(1), retryOf(renewal));
+            }
+        }
+
+        final var log = output.getAllOfThisTest();
+        assertAll(
+                () -> assertEquals(1, log
+                        .lines()
+                        .filter(line -> line.contains("whose task stays open for its asynchronous"))
+                        .count(), log),
+                () -> assertTrue(log.contains("before the async-task-lock-renewal of PT1H"), log),
+                () -> assertTrue(log.contains("JOB_MANAGER_MAX_LOCK_DURATION_MS"), log),
+                () -> assertTrue(log.contains("set vanillabp.adapters.orders.async-task-lock-renewal below"), log));
+    }
+
+    @Test
+    @DisplayName("A parking the engine says lapses within the time an answer travels raises no WARN")
+    void aParkingAsCountedRaisesNoWarn(final CapturedOutput output) {
+        engine.answers("POST", EXTEND, granting(Duration
+                .ofHours(1)
+                .minusMillis(500)));
+
+        try (var renewal = lockRenewal.start(job(JOB_TIMEOUT), JOB_TIMEOUT, "ship")) {
+            renewal.park(Duration.ofHours(1), retryOf(renewal));
+        }
+
+        assertFalse(output
+                .getAllOfThisTest()
+                .contains("whose task stays open for its asynchronous"), output::getAllOfThisTest);
+    }
+
+    @Test
+    @DisplayName("A parking the engine refuses passes the refusal on, so the handler decides")
+    void aRefusedParkingIsPassedOn() {
+        engine.answers("POST", EXTEND, 409, "{\"code\":\"CONFLICT\",\"message\":\"lock not held\"}");
+
+        try (var renewal = lockRenewal.start(job(JOB_TIMEOUT), JOB_TIMEOUT, "ship")) {
+            final var refusal = assertThrows(RuntimeException.class, () -> renewal.park(Duration.ofHours(1),
+                    retryOf(renewal)));
+
+            assertTrue(ZenBpmErrors.lockLost(refusal), refusal::toString);
+        }
+    }
+
     // a job received as long ago as its lock of the job-timeout has run, with clocks which agree
     private static ReceivedJob job(final Duration lockLeft) {
         final var now = Instant.now();
@@ -334,6 +474,10 @@ class ZenBpmLockRenewalTest {
                         .plus(lockLeft)
                         .toEpochMilli())
                 .build(), now.minus(JOB_TIMEOUT.minus(lockLeft)));
+    }
+
+    private static ZenBpmCommandRetry retryOf(final ZenBpmLockRenewal.Renewal renewal) {
+        return new ZenBpmCommandRetry("orders", 42, "ship", renewal::lockEnd, () -> false);
     }
 
     private static FakeEngine.Handler granting(final Duration lock) {

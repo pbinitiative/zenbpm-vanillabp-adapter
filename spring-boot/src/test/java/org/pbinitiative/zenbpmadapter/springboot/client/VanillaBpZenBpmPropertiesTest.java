@@ -73,6 +73,10 @@ class VanillaBpZenBpmPropertiesTest {
             Map.entry(ADAPTER
                     + "job-timeout", "PT8M"),
             Map.entry(ADAPTER
+                    + "async-task-lock-renewal", "PT20M"),
+            Map.entry(ADAPTER
+                    + "async-task-max-age-action", "incident"),
+            Map.entry(ADAPTER
                     + "retry-backoff", "PT4S"),
             Map.entry(ADAPTER
                     + "max-redeliveries", "3"),
@@ -113,6 +117,8 @@ class VanillaBpZenBpmPropertiesTest {
                 () -> assertEquals("virtual", configuration.getWorkerThreads()),
                 () -> assertEquals(7, configuration.getWorkerThreadsBound()),
                 () -> assertEquals(Duration.ofMinutes(8), configuration.getJobTimeout()),
+                () -> assertEquals(Duration.ofMinutes(20), configuration.getAsyncTaskLockRenewal()),
+                () -> assertEquals("incident", configuration.getAsyncTaskMaxAgeAction()),
                 () -> assertEquals(Duration.ofSeconds(4), configuration.getRetryBackoff()),
                 () -> assertEquals(3, configuration.getMaxRedeliveries()),
                 () -> assertEquals(Duration.ofSeconds(5), configuration.getShutdownGrace()),

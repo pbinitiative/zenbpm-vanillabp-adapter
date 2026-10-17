@@ -90,9 +90,16 @@ slot, under a lock which is renewed while the method runs; then the values the a
 its id are written into the job's instance and every instance above it up to the workflow's root,
 and the job is completed (decision 35). A job whose instance names no aggregate, and one of a
 workflow whose aggregate this application does not hold, are failed without retries, so an incident
-shows them (decision 33). A BPMN error, a task left open for its asynchronous completion and a
-method which throws are not carried out yet: the job is left to its lock, after which the engine
-hands it out again. What is built next, and in which order, is the implementation plan in
+shows them (decision 33). A BPMN error writes the same values and then fails the job with the
+error code as the deployed model carries it, so an error boundary event or an error event
+sub-process of the model takes over, and where none catches the code the engine raises an incident
+on the task, which a WARN names. A task left open for its asynchronous completion keeps its job
+locked for `async-task-lock-renewal` (`PT1H` by default; one not shorter than
+`vanillabp.delivery.retention` ends the start), after which the engine hands the job out again and
+it is locked once more without running the method again; with `async-task-max-age-action:
+incident` a task open longer than `vanillabp.delivery.max-task-age` is failed without retries
+instead, so an incident names it. A method which throws is not carried out yet: the job is left to
+its lock, after which the engine hands it out again. What is built next, and in which order, is the implementation plan in
 [`docs/`](docs/README.md).
 
 ## Modules
