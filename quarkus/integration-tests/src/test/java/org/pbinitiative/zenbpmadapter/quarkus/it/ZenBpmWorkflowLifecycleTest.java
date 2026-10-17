@@ -25,15 +25,21 @@ import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.locks.LockSupport;
 import java.util.function.Supplier;
+import java.util.logging.Level;
+import java.util.logging.Logger;
 
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.junit.jupiter.api.extension.RegisterExtension;
+import org.pbinitiative.zenbpmadapter.test.EngineLog;
 import org.pbinitiative.zenbpmadapter.test.EngineUnderTest;
+import org.testcontainers.DockerClientFactory;
+import org.testcontainers.junit.jupiter.Testcontainers;
 
 import io.quarkus.test.QuarkusProdModeTest;
 import io.restassured.RestAssured;
+import io.restassured.path.json.JsonPath;
 import io.restassured.specification.RequestSpecification;
 import io.vanillabp.integration.test.utils.OneFreePortPerJvm;
 import io.vanillabp.integration.test.utils.SuppressOutputExtension;
@@ -57,6 +63,7 @@ import io.vanillabp.integration.test.utils.SuppressOutputExtension;
  */
 @ExtendWith(SuppressOutputExtension.class)
 @SuppressOutputExtension.SuppressBackgroundOutput
+@Testcontainers(disabledWithoutDocker = true)
 class ZenBpmWorkflowLifecycleTest {
 
     private static final String SCOPED_PROCESS_ID = "zenbpm-e2e__StartProcess";
@@ -73,13 +80,30 @@ class ZenBpmWorkflowLifecycleTest {
             .of("target", "zenbpm-e2e-application.log")
             .toAbsolutePath();
 
+    // the lines of the engine, which a failing test replays, are logged at DEBUG. This module logs
+    // through JBoss LogManager, as the application does, so the logback-test.xml which switches
+    // them on in the other modules does not reach it, and the level is set here instead
+    private static final Logger ENGINE_LINES = Logger.getLogger(EngineLog.LOGGER_NAME);
+
+    static {
+        ENGINE_LINES.setLevel(Level.FINE);
+    }
+
     private static final EngineUnderTest ENGINE = new EngineUnderTest();
+
+    // JUnit initializes the field below to register the extension before it decides that the class
+    // is skipped without Docker, so nothing on the way may need the container then
+    private static final boolean DOCKER_IS_THERE = DockerClientFactory
+            .instance()
+            .isDockerAvailable();
 
     // started here and not by the Testcontainers extension: the application's configuration needs
     // the mapped ports, and a prod-mode test reads its runtime properties while the field below is
     // initialized, before any extension runs. Ryuk removes the container when this JVM exits
     static {
-        ENGINE.start();
+        if (DOCKER_IS_THERE) {
+            ENGINE.start();
+        }
     }
 
     private static final int HTTP_PORT = OneFreePortPerJvm.getPort();
@@ -101,8 +125,8 @@ class ZenBpmWorkflowLifecycleTest {
             .setRuntimeProperties(Map.of(
                     "quarkus.http.port", Integer.toString(HTTP_PORT),
                     // only the test knows the ports the container was given
-                    "vanillabp.adapters.zenbpm.rest-address", ENGINE.restAddress(),
-                    "vanillabp.adapters.zenbpm.grpc-address", ENGINE.grpcAddress(),
+                    "vanillabp.adapters.zenbpm.rest-address", whereDockerIsThere(ENGINE::restAddress),
+                    "vanillabp.adapters.zenbpm.grpc-address", whereDockerIsThere(ENGINE::grpcAddress),
                     // what the application logs is read from its file: the job stream reports
                     // there what reached it, and a failure inside the application is read there too
                     "quarkus.log.file.enabled", "true",
@@ -113,13 +137,15 @@ class ZenBpmWorkflowLifecycleTest {
     void theBootDeploysTheModelAndTheDecision() throws IOException, InterruptedException {
         final var definitions = engine("/v1/process-definitions?bpmnProcessId=%s".formatted(SCOPED_PROCESS_ID));
         final var decisions = engine("/v1/dmn-resource-definitions?dmnResourceDefinitionId=zenbpm-e2e-rating");
-        final var decision = engine("/v1/dmn-resource-definitions/%s".formatted(keyIn(decisions)));
+        final var decision = engine("/v1/dmn-resource-definitions/%s".formatted(decisions.getString("items[0].key")));
 
         assertAll(
-                () -> assertTrue(definitions.contains("\"totalCount\":1"), definitions),
-                () -> assertTrue(definitions.contains("\"version\":1"), definitions),
-                () -> assertTrue(decisions.contains("\"totalCount\":1"), decisions),
-                () -> assertTrue(decision.contains("zenbpm-e2e__rating"), decision),
+                () -> assertEquals(1, definitions.getInt("totalCount"), definitions::prettify),
+                () -> assertEquals(1, definitions.getInt("items[0].version"), definitions::prettify),
+                () -> assertEquals(1, decisions.getInt("totalCount"), decisions::prettify),
+                () -> assertTrue(decision
+                        .prettify()
+                        .contains("zenbpm-e2e__rating"), decision::prettify),
                 () -> assertEquals("1", text("introspect/versions/StartProcess")),
                 () -> assertTrue(applicationLog().contains(
                         "ZenBPM[zenbpm]: workflow module 'zenbpm-e2e' subscribed the job type(s) %s".formatted(
@@ -133,10 +159,14 @@ class ZenBpmWorkflowLifecycleTest {
         final var id = uniqueAggregateId();
 
         final var started = post("introspect/start/%s".formatted(id));
+        // the engine shows an instance as soon as it created it, before it ran the decisions in
+        // front of the task: its variables are read once the job of that task exists
+        final var job = awaitTheJobOf(awaitTheInstanceOf(id).get("key"));
         final var instance = awaitTheInstanceOf(id);
         final var variables = variablesOf(instance);
-        final var jobArrived = "ZenBPM[zenbpm]: a job of type '%s'".formatted(SCOPED_JOB_TYPE);
-        await(() -> applicationLog().contains(jobArrived), "the job of the started instance to arrive");
+        final var jobArrived = "ZenBPM[zenbpm]: a job of type '%s' (key %s) arrived".formatted(SCOPED_JOB_TYPE, job);
+        await(() -> applicationLog().contains(jobArrived),
+                "the job %s of the started instance to arrive".formatted(job));
 
         assertAll(
                 () -> assertEquals(0, started.get("instancesInsideTheTransaction")),
@@ -186,6 +216,13 @@ class ZenBpmWorkflowLifecycleTest {
         return instances.getFirst();
     }
 
+    private static String awaitTheJobOf(final Object instanceKey) {
+        await(() -> !jobsOf(instanceKey).isEmpty(), "a job of instance %s".formatted(instanceKey));
+        final var jobs = jobsOf(instanceKey);
+        assertEquals(1, jobs.size(), jobs::toString);
+        return jobs.getFirst();
+    }
+
     @SuppressWarnings("unchecked")
     private static Map<String, Object> variablesOf(final Map<String, Object> instance) {
         return (Map<String, Object>) instance.get("variables");
@@ -194,6 +231,16 @@ class ZenBpmWorkflowLifecycleTest {
     private static List<Map<String, Object>> instancesOf(final String id) {
         return api()
                 .get("introspect/instances/%s".formatted(id))
+                .then()
+                .statusCode(200)
+                .extract()
+                .jsonPath()
+                .getList("$");
+    }
+
+    private static List<String> jobsOf(final Object instanceKey) {
+        return api()
+                .get("introspect/jobs/%s".formatted(instanceKey))
                 .then()
                 .statusCode(200)
                 .extract()
@@ -263,23 +310,19 @@ class ZenBpmWorkflowLifecycleTest {
                 .asString();
     }
 
-    private static String engine(final String path) throws IOException, InterruptedException {
+    private static JsonPath engine(final String path) throws IOException, InterruptedException {
         try (var client = HttpClient.newHttpClient()) {
-            return client
-                    .send(HttpRequest
-                            .newBuilder(URI.create("%s%s".formatted(ENGINE.restAddress(), path)))
-                            .build(), HttpResponse.BodyHandlers.ofString())
-                    .body();
+            final var response = client.send(HttpRequest
+                    .newBuilder(URI.create("%s%s".formatted(ENGINE.restAddress(), path)))
+                    .build(), HttpResponse.BodyHandlers.ofString());
+            assertEquals(200, response.statusCode(), () -> "GET %s: %s".formatted(path, response.body()));
+            return JsonPath.from(response.body());
         }
     }
 
-    private static String keyIn(final String page) {
-        final var start = page.indexOf("\"key\":") + "\"key\":".length();
-        var end = start;
-        while (Character.isDigit(page.charAt(end))) {
-            ++end;
-        }
-        return page.substring(start, end);
+    private static String whereDockerIsThere(final Supplier<String> address) {
+        // the application is never started without Docker; the address only has to be one
+        return DOCKER_IS_THERE ? address.get() : "http://localhost:1";
     }
 
 }

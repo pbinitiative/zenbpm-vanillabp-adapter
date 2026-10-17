@@ -11,6 +11,7 @@ import java.util.Map;
 import org.pbinitiative.zenbpmadapter.client.ZenBpmClientRegistry;
 import org.pbinitiative.zenbpmadapter.client.ZenBpmRestClient;
 import org.pbinitiative.zenbpmadapter.client.api.InstanceFilter;
+import org.pbinitiative.zenbpmadapter.client.api.JobFilter;
 import org.pbinitiative.zenbpmadapter.client.api.ProcessInstanceRef;
 
 import jakarta.enterprise.context.ApplicationScoped;
@@ -117,6 +118,25 @@ public class E2eIntrospection {
         return instancesOf(id)
                 .stream()
                 .map(E2eIntrospection::describe)
+                .toList();
+    }
+
+    /**
+     * The keys of the jobs the engine holds for one instance.
+     *
+     * @param instanceKey The key of the instance
+     * @return The keys of its jobs, as text, as {@link #instances} gives the key of an instance
+     */
+    @GET
+    @Path("/jobs/{instanceKey}")
+    public List<String> jobs(@PathParam("instanceKey") final long instanceKey) {
+        return rest()
+                .jobs(JobFilter
+                        .anyJob()
+                        .withProcessInstanceKey(instanceKey))
+                .items()
+                .stream()
+                .map(job -> String.valueOf(job.key()))
                 .toList();
     }
 

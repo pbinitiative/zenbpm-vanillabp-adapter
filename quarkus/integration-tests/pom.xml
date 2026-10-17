@@ -86,6 +86,12 @@
       <version>${project.version}</version>
       <scope>test</scope>
     </dependency>
+    <!-- skips the test where no Docker environment is there, as every other engine test is -->
+    <dependency>
+      <groupId>org.testcontainers</groupId>
+      <artifactId>testcontainers-junit-jupiter</artifactId>
+      <scope>test</scope>
+    </dependency>
   </dependencies>
 
   <build>

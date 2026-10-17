@@ -836,8 +836,11 @@ which the code confirmed. What did not fit, and what was decided:
     lists no subscriptions (nothing in `openapi/api.yaml` or the protos at the pin), so the Quarkus
     test waits for the job of the started instance, which arrives over the stream only because
     the job type was subscribed: the adapter logs it at WARN ("arrived, which nothing handles
-    yet"), and the test reads the application's log file (`quarkus.log.file`). E6 replaces that
-    line with the handler's call.
+    yet"), and the test reads the application's log file (`quarkus.log.file`). The line it waits
+    for names the key of the job the engine holds for that instance (`introspect/jobs/{key}`), so
+    the job of another instance never satisfies it; the instance's variables are read once that job
+    exists, because the engine shows an instance before it ran the decisions in front of the task.
+    E6 replaces that line with the handler's call.
 11. **There is no method `ZenBpmProcessService.phaseTwo`**: the phase-two handler of a start is the
     private `startWorkflow(PhaseTwoRequest)`. The Quarkus report adds the core's own coverage data,
     where the unit tests already cover it, so the report alone cannot show that the booted
@@ -920,3 +923,53 @@ server and by ITs": `ZenBpmWorkflowProbesTest` (29), `ZenBpmTaskProbesTest` (26)
 `ZenBpmInstanceCacheTest` (11) with the fake engine, `ZenBpmProbesIT` (10) against the pinned
 image, and the probes of the booted Spring Boot application in `ZenBpmDeploymentAndStartIT` (2 of
 its 4).
+
+**Answers to two reviews of F5.3, 2026-10-17** (one by Claude, 5 findings; one by Copilot, 2
+findings, its second the same as Claude 1). Every claim was checked in the code of the branch, the
+platform's code and the engine's source at `bdd795a3`.
+
+Valid and fixed:
+
+- **Without Docker the Quarkus test failed the build** (Claude 1, Major; Copilot 2, Major). The
+  README says the tests which start the engine are skipped without a Docker environment; the class
+  started the engine in a static initializer, which JUnit runs while it registers the prod-mode
+  extension, before any condition, so it ended in `ExceptionInInitializerError`. The class now
+  carries `@Testcontainers(disabledWithoutDocker = true)` and starts the engine, and reads its
+  addresses, only where `DockerClientFactory` finds Docker. With the Docker socket hidden in a mount
+  namespace its 3 tests are skipped and the build is green. The promise is held by a new check,
+  `EngineTestsWithoutDockerTest` in the coverage gate: every test class which creates an
+  `EngineUnderTest` carries the annotation.
+- **The decision's result was read from a snapshot taken before the decision ran** (Copilot 1,
+  Major). The engine shows an instance as soon as it created it, before it ran the two business
+  rule tasks in front of `Prepare`, and the case read the variables from the first answer it got.
+  It now waits for the job the engine holds for that instance (a new endpoint
+  `introspect/jobs/{instanceKey}`), which exists only after both decisions ran, and reads the
+  instance again for its assertions.
+- **The job wait matched any job of the type** (Claude 2, Minor): it now waits for the WARN line
+  naming the key of that instance's job; fit-check item 10 and the note under S6.5.1 say so.
+- **The engine's lines were dropped in the Quarkus test JVM** (Claude 3, Minor): the module logs
+  through JBoss LogManager, which the `logback-test.xml` of the other modules does not reach, so the
+  test sets the `zenbpm-engine` logger to DEBUG itself. A forced failure replayed 0 lines of the
+  engine before and 112 after.
+- **GAPS 27 did not name GAPS 7** (Claude 4, Minor): the business rule task drops an unmapped result
+  through the same `PropagateOnlyMappedOutputs` as job completion. Row 27 and its draft name GAPS 7
+  and the maintainers' leaning (open question 4); E13.2 says that a change taken up there covers
+  the business rule task or says that it does not.
+- **Engine answers checked by substring** (Claude 5, Nit): the Quarkus test reads the engine with
+  a status-checked GET, parses the answer and asserts `totalCount`, the version and the decision's
+  key as values. Moving that read into `engine-test-support` for `ZenBpmDeploymentIT` as well is
+  left to E6 (note under S6.5.1), where the engine is read more often.
+
+Seen to fail, each restored afterwards, against a green unmutated run: the annotation removed from
+`ZenBpmWorkflowLifecycleTest` (killed by
+`EngineTestsWithoutDockerTest#everyTestClassStartingTheEngineIsSkippedWithoutDocker`, naming the
+file); the level of `zenbpm-engine` left alone (a forced failure replays no engine line). The
+unguarded static start is the code the reviews ran without Docker: it errors the class.
+
+`TZ=Etc/UTC mvn clean install` on OpenJDK 25.0.2 on the review fixes builds green with every
+integration test run and none skipped (engine test support 12 unit and 3 integration tests, core
+779 unit and 70 integration tests, Spring Boot 9 unit and 6 integration tests, smoke test 35,
+Quarkus runtime 9, Quarkus deployment 46, Quarkus integration tests 3, coverage gate 37;
+`ZenBpmDeploymentAndStartIT` 4, `ZenBpmWorkflowLifecycleTest` 3, `EngineTestsWithoutDockerTest`
+2). The gate measures 100 % of 18,092 instructions for Spring Boot and 100 % of 17,970 for Quarkus,
+and `bin/check-deploy-safety.sh` passes both runs.
