@@ -267,6 +267,61 @@ plain identifiers which nothing isolates.
 The plan drafted this decision the other way round, as decision 2 with `use-prefix` as the default.
 That draft was superseded by this entry before any code relied on it, so it never entered this log.
 
+### 25. The aggregate id is the business key and a variable, and a workflow the engine started is found through its key
+
+The engine finds an instance by its `businessKey` and never by a variable. So every start the
+application makes carries the aggregate's id twice: as the business key, and as a variable named
+after the aggregate's id attribute, after the values the aggregate shares, which the correlation
+keys the adapter injects read (`ZenBpmSharedValues`). The plan's draft of decision 6, which derived
+the aggregate of a workflow the engine started from its instance key, never entered this log: the
+platform derives no id from a key any more.
+
+A workflow the engine starts itself, by a message or a timer, has no business key, so no search
+finds it. It is found through the key of its instance, which the core hands to
+`awarenessOfWorkflow` as its fourth argument: from the row written when the workflow started, from
+the record of a task's delivery, or from the election cache. The id of a workflow is never its
+instance key, so the key is a hint, and it may only make a YES shorter. The probe answers `ACTIVE`
+where the instance runs, belongs to a process of the scope and names the aggregate by its business
+key or its id variable, and leaves everything else to the business-key search: another state,
+because an aggregate may carry a second workflow once its first ended and the key may name the
+first; another process or another aggregate, because the core hands the same key to every adapter
+of its list; a `404`, which cannot tell a workflow the engine removed after it ended from one it
+never held; a `502`, which the engine answers for a key of a partition it does not have; and every
+failure. So the key never turns an answer into `UNKNOWN_TO_BPMS`, as the platform's contract for
+adapters asks, and the Camunda 8 adapter does the same.
+
+*Planned:* the marker job of the start event (decision 26 of the plan's drafts) builds the context
+of such a workflow and hands it to `startWorkflowByBpms`. The application's method names the
+aggregate, and the adapter writes `result.variables()` into the instance with `PATCH
+/v1/process-instances/{key}/variables` before it completes the marker job, so a second delivery
+finds the id and answers `created() == false`. A crash between the commit of the aggregate and that
+`PATCH` lets the second delivery build a second aggregate, unless the application's id is
+deterministic; Camunda 8 has the same window. Until then, a workflow the engine starts gets no
+aggregate.
+
+### 28. The workflow id is the key of the root instance of the task's own process
+
+The adapter names one workflow by one id wherever it names it: `reportStartedWorkflow` after a
+start, and, once they are built, the delivery of a task (`TaskInvocationContext.getWorkflowId`), the
+end of a workflow (`WorkflowEndedContext.getWorkflowId`) and the start marker's `nativeInstanceId`.
+VanillaBP finds the open tasks of a workflow by that id and cancels them when the workflow ends, so
+all of them must name the same value.
+
+The engine runs an embedded sub-process, an event sub-process and every iteration of a
+multi-instance element as a child instance of the same process (`processType` `subprocess` and
+`multiInstance`), and a job names the child instance it waits in, not the root (`ZenBpmProbesIT`
+against the pinned engine). So `ZenBpmInstanceCache.workflowIdOf` walks up
+`parentProcessInstanceKey` while the instance is such a child, and stops at a root instance
+(`default`) or at an instance a call activity started (`callActivity`). A task of a called process
+names the called instance, because VanillaBP cancels the open tasks of exactly that instance when
+it ends (platform decision 124). A start creates a root instance, so its key is the workflow id as
+it is.
+
+A job carries no key of its root instance (GAPS 22), so the walk reads the facts the cache keeps,
+and only an instance on the way which the cache does not hold costs a request. An instance the
+engine does not know ends the walk without an answer and is not kept, because a node which lags
+behind may know it a moment later.
+
 ### 29. A BPMN file carries its diagram
 
 The owners of this repository chose this for every BPMN file in it, test fixtures included. A BPMN
@@ -352,3 +407,30 @@ the ended workflow until its next clean-up, which runs every thirty seconds, whi
 its default applies, which may keep the workflow forever. An application which wants nothing kept
 says so with `PT0S`. `ZenBpmTimeToLiveIT` holds both against the pinned engine.
 
+### 32. A task id of a partition the engine does not have is unknown to it
+
+Decided by the implementation pipeline in place of the maintainers, as their policy for the
+autonomous run asks.
+
+The core asks every adapter of a workflow's list about a task with the same task id, where no
+record of a delivery routes the question: `WorkflowLocator` walks the prioritized adapters and hands
+each of them the id the call names (`MigrationProcessService#probe` of the platform). So the task
+probes of this adapter are asked about ids which another adapter handed out: a job key of Camunda 8,
+or a key of another ZenBPM engine, which may name a partition this engine does not have. A key
+carries the partition which holds it in bits 12 to 21 (`zenflake.GetPartitionId` in
+`pkg/zenflake/snowflake.go` at the pinned commit `bdd795a3`), and the engine answers a read of a
+job or an instance of such a partition with `502 CLUSTER_ERROR`, the answer it also gives where a
+partition it has cannot be reached (`ZenBpmRestClientContractIT`). Read as unavailable, as decision
+30 reads every `502`, such a key would stop the walk for good: `BPMS_UNAVAILABLE` must not fall back
+to the next adapter, so the adapter which holds the task would never be asked.
+
+So after a `502` for a job, the task probes read the engine's partitions from `GET /system/status`.
+A key whose partition the engine does not report is `UNKNOWN_TO_BPMS`: this engine handed it out to
+nobody. A `502` for a partition the engine reports stays `BPMS_UNAVAILABLE`, and so does a status
+which does not come or names no partition at all: an engine always has a partition, so a status
+without one says nothing about the key. The extra request is made only after a `502`, so a task id of this engine costs
+what it cost before. A partition the engine adds later is reported by the next status, which is read
+fresh every time and never kept. Decision 30 is not changed: what a failed call means is still read
+from its status, and this entry only answers what the task probes make of a `502` once they asked
+the engine one more question. The workflow probe needs none of this, because a key there may only
+make an `ACTIVE` answer shorter, and every `502` falls through to the search (decision 25).

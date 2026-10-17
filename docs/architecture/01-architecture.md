@@ -89,7 +89,7 @@ from the pinned proto), because a hand-written gRPC client is not a reasonable t
 | `ZenBpmErrors` | the one classification: `permanentFailure(Throwable)` (400, 413, 415, 404 of `POST /v1/process-instances`, key not a number) and `isRepeatable` (everything else), `isGoneJob(Throwable)` (404 on a job, 409 on its completion or failure), `nobodyWaits(Throwable)` (404 on a message), `lockLost(Throwable)` (409 on a lock extension), `isUnavailable(Throwable)` (no answer, timeout, 502, 503, 504); read from status, method and path, never from text (decision 30, which superseded decision 10; Camunda 8 decision 16 applies verbatim) |
 | `ZenBpmEngineWait` | before the first deployment round per adapter id: poll `GET /system/health/ready` until 200, `startup-wait` runs out, or a permanent answer; log the address and the last answer every few seconds |
 | `ZenBpmHealth` | `checkHealth()`: READY -> UP, 503 -> DOWN with `reasons`, unreachable -> DOWN, unconfigured -> UNKNOWN |
-| `ZenBpmInstanceCache` | bounded LRU `instanceKey -> InstanceFacts(bpmnProcessId scoped, version, processDefinitionKey, businessKey, parentKey, processType)`; filled by `GET /v1/process-instances/{key}`; per adapter id; `instance-cache-max-entries` (10 000) |
+| `ZenBpmInstanceCache` | bounded LRU `instanceKey -> InstanceFacts(key, scopedProcessId, version, definitionKey, businessKey, parentKey, processType, variables)`, the variables holding the id variable only and only once present; a 404 is not kept; `workflowIdOf(key)` walks up `parentKey` through `subprocess` and `multiInstance` children to the root or a `callActivity` instance, keeping the facts on the way, so a second walk asks nothing (decision 28); filled by `GET /v1/process-instances/{key}`; per adapter id, held by the client factory; `instance-cache-max-entries` (10 000, 0 keeps nothing) |
 | `ZenBpmExecutor`, `ZenBpmExecutionModel` | the handler slots: `worker-threads` platform threads (4) or `virtual` bounded by `worker-threads-bound`; two platform threads for timing (reconnect, pollers, backoff) which no handler can occupy |
 | `ZenBpmEnvironmentInfo` | logs engine version and node from `GET /system/status` once per adapter id at startup |
 
@@ -216,13 +216,18 @@ at-least-once.
 `awarenessOfWorkflow(scope, persistence, id, workflowId)` (decision 25):
 
 1. where the core hands a `workflowId` (from the start row, a task record or the election cache):
-   `GET /v1/process-instances/<workflowId>`; an `active` instance of one of the scope's scoped
-   process ids whose id variable or business key is `<id>` -> ACTIVE. Every other answer, a 404 and
-   a 502 (a key of another partition) included, falls through to step 2: the key may shorten a YES,
-   never turn a negative into UNKNOWN_TO_BPMS (`ADAPTER-AUTHORS.md` 4.1);
-2. for each plain process id of the scope: `GET /v1/process-instances?businessKey=<id>&bpmnProcessId=<scoped>&size=1`;
-   an item -> `active|failed` = ACTIVE, `completed|terminated` = COMPLETED;
-3. nothing -> UNKNOWN_TO_BPMS; any I/O failure, timeout or 5xx -> BPMS_UNAVAILABLE.
+   `GET /v1/process-instances/<workflowId>`; an `active` or `failed` instance of one of the scope's
+   scoped process ids whose id variable or business key is `<id>` -> ACTIVE. Every other answer
+   (another state, process or aggregate, a 404, a 502 for a key of another partition, any failure,
+   an id which is no positive number) falls through to step 2: the key may shorten a YES, never turn
+   a negative into UNKNOWN_TO_BPMS (`ADAPTER-AUTHORS.md` 4.1);
+2. for each plain process id of the scope, stopping at the first which runs:
+   `GET /v1/process-instances?businessKey=<id>&bpmnProcessId=<scoped>&size=100` (the size applies
+   per partition); an item `active|failed` = ACTIVE, else a `totalCount` above 0 = COMPLETED. Only
+   where the page does not hold every match and none of those read runs, two more searches with
+   `state=active` and `state=failed` and `size=1` read the engine's count;
+3. nothing -> UNKNOWN_TO_BPMS; any failure of a search -> BPMS_UNAVAILABLE, the first after an
+   answer logged at WARN, the next ones at DEBUG until a probe is answered again.
 
 A workflow the engine started itself (a timer start, or a message start without a business key) has
 no business key, so step 1 is the only way to it. It works while the core still knows the instance
@@ -230,9 +235,15 @@ key: the start row (`vanillabp.delivery.workflow-start-retention`, `P30D` by def
 or `keep-workflow-start-while-aggregate-exists`), the open-task records, the election cache. E13.4
 removes the limit (GAPS 1).
 
-`awarenessOfTask` / `awarenessOfUserTask`: `GET /v1/jobs/{key}`; 404 -> UNKNOWN; then the job's
-instance through the cache; instance not in scope -> UNKNOWN; job `active` -> ACTIVE, `completed` or
-`terminated` -> COMPLETED; failure -> BPMS_UNAVAILABLE. `workflowVisibilityDelay()` = the configured
+`awarenessOfTask` / `awarenessOfUserTask`: a task id which is no positive number -> UNKNOWN without
+a request; `GET /v1/jobs/{key}`; 404 -> UNKNOWN; a 502 -> `GET /system/status`, a key of a partition
+it does not report -> UNKNOWN, a status naming no partition tells nothing (decision 32); then the job's instance through the cache; instance not
+in scope -> UNKNOWN; job `active` or `failed` -> ACTIVE, `completed` or `terminated` -> COMPLETED;
+every other failure -> BPMS_UNAVAILABLE. `openTaskCount(module, process)`: the versions under the
+scoped id (`GET /v1/process-definitions`), per version its model (`GET
+/v1/process-definitions/{key}`) and its statistics, the active counts of the elements which give a
+worker a job summed; `null` where the engine does not answer. The platform asks it before the
+application deployed anything. `workflowVisibilityDelay()` = the configured
 `workflow-visibility-timeout` (default `PT2S`, poll `PT0.25S`);
 `workflowVisibilityDelay(workflowId)` keeps that window too, because a follower may not see an
 instance the leader just created (GAPS 20).
@@ -451,6 +462,7 @@ org.pbinitiative.zenbpmadapter
   deployment/ZenBpmDeployedProcesses   what this boot deployed per adapter id
   deployment/ZenBpmProcessVersions     CachingProcessVersionCatalog over GET /process-definitions
   deployment/ZenBpmDeclaredProcessWorkers  job types composed for renamed processes
+  ZenBpmInstanceCache                  instance facts and the walk to the workflow id, per adapter id
   processservice/ZenBpmProcessService  MigratableProcessService<A>: handler map, probes, viewer
   processservice/ZenBpmWorkflowViewer  definitions, XML, history
   processservice/ZenBpmSharedValues    shared values + id variable for every command

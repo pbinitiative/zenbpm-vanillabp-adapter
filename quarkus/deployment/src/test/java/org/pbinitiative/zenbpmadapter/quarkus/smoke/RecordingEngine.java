@@ -7,17 +7,18 @@ package org.pbinitiative.zenbpmadapter.quarkus.smoke;
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.net.InetSocketAddress;
-import java.util.concurrent.atomic.AtomicInteger;
+import java.util.List;
+import java.util.concurrent.CopyOnWriteArrayList;
 
 import com.sun.net.httpserver.HttpServer;
 
 /**
- * An engine which answers nothing useful and counts every request it gets, so a test can show that
- * the adapter asked it nothing. It listens on a port the system picks.
+ * An engine which answers every request with <code>503</code> and writes down its method and path,
+ * so a test can show what the adapter asked it. It listens on a port the system picks.
  */
 final class RecordingEngine implements AutoCloseable {
 
-    private final AtomicInteger requests = new AtomicInteger();
+    private final List<String> requests = new CopyOnWriteArrayList<>();
 
     private final HttpServer server;
 
@@ -28,13 +29,15 @@ final class RecordingEngine implements AutoCloseable {
     /**
      * Starts an engine on a free port.
      *
-     * @return The engine, which counts from now on
+     * @return The engine, which writes down from now on
      */
     static RecordingEngine start() {
         try {
             final var engine = new RecordingEngine(HttpServer.create(new InetSocketAddress("localhost", 0), 0));
             engine.server.createContext("/", exchange -> {
-                engine.requests.incrementAndGet();
+                engine.requests.add("%s %s".formatted(exchange.getRequestMethod(), exchange
+                        .getRequestURI()
+                        .getPath()));
                 exchange.sendResponseHeaders(503, -1);
                 exchange.close();
             });
@@ -57,12 +60,12 @@ final class RecordingEngine implements AutoCloseable {
     }
 
     /**
-     * How many requests the engine got.
+     * The requests the engine got, in the order they came.
      *
-     * @return The count
+     * @return Method and path of each
      */
-    int requests() {
-        return requests.get();
+    List<String> requests() {
+        return List.copyOf(requests);
     }
 
     @Override

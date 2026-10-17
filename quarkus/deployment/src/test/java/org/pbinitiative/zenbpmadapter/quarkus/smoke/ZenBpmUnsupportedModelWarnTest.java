@@ -22,9 +22,9 @@ import jakarta.inject.Inject;
  * A workflow module whose BPMN file uses what ZenBPM cannot run, on an adapter id which is nowhere
  * first and whose <code>deployment-failure</code> policy is <code>warn</code>: the application boots
  * on Quarkus on the adapter which is first, the platform's BPMS double, and the refusal stands in
- * the block. That the engine is asked nothing is shown by ZenBpmUnsupportedModelTest: this boot runs
- * the test class in the application's own class loader, so the address names a port nothing
- * listens on.
+ * the block. That nothing is deployed is shown by ZenBpmUnsupportedModelTest: this boot runs the
+ * test class in the application's own class loader, so the address names a port nothing listens
+ * on.
  */
 @ExtendWith(SuppressOutputExtension.class)
 class ZenBpmUnsupportedModelWarnTest {

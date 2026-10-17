@@ -88,7 +88,7 @@ class ZenBpmEnvironmentInfoTest {
                             output.getAllOfThisTest()),
                     () -> assertEquals(List.of(), report.findings()),
                     () -> assertEquals(Optional.of(new EngineStatus("1.2.0", TESTED_SHORT_COMMIT, List.of("node-1",
-                            "node-2"))), factory.engineStatusAtStart()));
+                            "node-2"), List.of())), factory.engineStatusAtStart()));
         }
     }
 

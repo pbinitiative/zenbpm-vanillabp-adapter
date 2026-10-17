@@ -1,0 +1,128 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" xmlns:zenbpm="http://zenbpm.pbinitiative.org/1.0" id="Definitions_ProbeCount" targetNamespace="http://bpmn.io/schema/bpmn"
+    xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI"
+    xmlns:dc="http://www.omg.org/spec/DD/20100524/DC"
+    xmlns:di="http://www.omg.org/spec/DD/20100524/DI">
+  <bpmn:process id="probe-count" isExecutable="true">
+    <bpmn:startEvent id="StartEvent">
+      <bpmn:outgoing>Flow_ToFork</bpmn:outgoing>
+    </bpmn:startEvent>
+    <bpmn:sequenceFlow id="Flow_ToFork" sourceRef="StartEvent" targetRef="Gateway_Fork" />
+    <bpmn:parallelGateway id="Gateway_Fork">
+      <bpmn:incoming>Flow_ToFork</bpmn:incoming>
+      <bpmn:outgoing>Flow_ToWork</bpmn:outgoing>
+      <bpmn:outgoing>Flow_ToCheck</bpmn:outgoing>
+      <bpmn:outgoing>Flow_ToWait</bpmn:outgoing>
+    </bpmn:parallelGateway>
+    <bpmn:sequenceFlow id="Flow_ToWork" sourceRef="Gateway_Fork" targetRef="Task_Work" />
+    <bpmn:sequenceFlow id="Flow_ToCheck" sourceRef="Gateway_Fork" targetRef="UserTask_Check" />
+    <bpmn:sequenceFlow id="Flow_ToWait" sourceRef="Gateway_Fork" targetRef="Timer_Wait" />
+    <bpmn:serviceTask id="Task_Work" name="Work">
+      <bpmn:extensionElements>
+        <zenbpm:taskDefinition type="probe-count-work" />
+      </bpmn:extensionElements>
+      <bpmn:incoming>Flow_ToWork</bpmn:incoming>
+      <bpmn:outgoing>Flow_FromWork</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:userTask id="UserTask_Check" name="Check">
+      <bpmn:extensionElements>
+        <zenbpm:taskDefinition type="probe-count-check" />
+      </bpmn:extensionElements>
+      <bpmn:incoming>Flow_ToCheck</bpmn:incoming>
+      <bpmn:outgoing>Flow_FromCheck</bpmn:outgoing>
+    </bpmn:userTask>
+    <bpmn:intermediateCatchEvent id="Timer_Wait" name="An hour">
+      <bpmn:incoming>Flow_ToWait</bpmn:incoming>
+      <bpmn:outgoing>Flow_FromWait</bpmn:outgoing>
+      <bpmn:timerEventDefinition id="Timer_Wait_Definition">
+        <bpmn:timeDuration>PT1H</bpmn:timeDuration>
+      </bpmn:timerEventDefinition>
+    </bpmn:intermediateCatchEvent>
+    <bpmn:sequenceFlow id="Flow_FromWork" sourceRef="Task_Work" targetRef="Gateway_Join" />
+    <bpmn:sequenceFlow id="Flow_FromCheck" sourceRef="UserTask_Check" targetRef="Gateway_Join" />
+    <bpmn:sequenceFlow id="Flow_FromWait" sourceRef="Timer_Wait" targetRef="Gateway_Join" />
+    <bpmn:parallelGateway id="Gateway_Join">
+      <bpmn:incoming>Flow_FromWork</bpmn:incoming>
+      <bpmn:incoming>Flow_FromCheck</bpmn:incoming>
+      <bpmn:incoming>Flow_FromWait</bpmn:incoming>
+      <bpmn:outgoing>Flow_ToEnd</bpmn:outgoing>
+    </bpmn:parallelGateway>
+    <bpmn:sequenceFlow id="Flow_ToEnd" sourceRef="Gateway_Join" targetRef="EndEvent" />
+    <bpmn:endEvent id="EndEvent">
+      <bpmn:incoming>Flow_ToEnd</bpmn:incoming>
+    </bpmn:endEvent>
+  </bpmn:process>
+  <bpmndi:BPMNDiagram id="BPMNDiagram_1">
+    <bpmndi:BPMNPlane id="BPMNPlane_1" bpmnElement="probe-count">
+      <bpmndi:BPMNShape id="StartEvent_di" bpmnElement="StartEvent">
+        <dc:Bounds x="160" y="80" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Gateway_Fork_di" bpmnElement="Gateway_Fork">
+        <dc:Bounds x="256" y="80" width="50" height="50" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Task_Work_di" bpmnElement="Task_Work">
+        <dc:Bounds x="366" y="80" width="100" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="UserTask_Check_di" bpmnElement="UserTask_Check">
+        <dc:Bounds x="366" y="210" width="100" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Timer_Wait_di" bpmnElement="Timer_Wait">
+        <dc:Bounds x="398" y="340" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Gateway_Join_di" bpmnElement="Gateway_Join">
+        <dc:Bounds x="526" y="80" width="50" height="50" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="EndEvent_di" bpmnElement="EndEvent">
+        <dc:Bounds x="636" y="80" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNEdge id="Flow_ToFork_di" bpmnElement="Flow_ToFork">
+        <di:waypoint x="196" y="98" />
+        <di:waypoint x="226" y="98" />
+        <di:waypoint x="226" y="105" />
+        <di:waypoint x="256" y="105" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_ToWork_di" bpmnElement="Flow_ToWork">
+        <di:waypoint x="306" y="105" />
+        <di:waypoint x="336" y="105" />
+        <di:waypoint x="336" y="120" />
+        <di:waypoint x="366" y="120" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_ToCheck_di" bpmnElement="Flow_ToCheck">
+        <di:waypoint x="306" y="105" />
+        <di:waypoint x="336" y="105" />
+        <di:waypoint x="336" y="250" />
+        <di:waypoint x="366" y="250" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_ToWait_di" bpmnElement="Flow_ToWait">
+        <di:waypoint x="306" y="105" />
+        <di:waypoint x="352" y="105" />
+        <di:waypoint x="352" y="358" />
+        <di:waypoint x="398" y="358" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_FromWork_di" bpmnElement="Flow_FromWork">
+        <di:waypoint x="466" y="120" />
+        <di:waypoint x="496" y="120" />
+        <di:waypoint x="496" y="105" />
+        <di:waypoint x="526" y="105" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_FromCheck_di" bpmnElement="Flow_FromCheck">
+        <di:waypoint x="466" y="250" />
+        <di:waypoint x="496" y="250" />
+        <di:waypoint x="496" y="105" />
+        <di:waypoint x="526" y="105" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_FromWait_di" bpmnElement="Flow_FromWait">
+        <di:waypoint x="434" y="358" />
+        <di:waypoint x="480" y="358" />
+        <di:waypoint x="480" y="105" />
+        <di:waypoint x="526" y="105" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_ToEnd_di" bpmnElement="Flow_ToEnd">
+        <di:waypoint x="576" y="105" />
+        <di:waypoint x="606" y="105" />
+        <di:waypoint x="606" y="98" />
+        <di:waypoint x="636" y="98" />
+      </bpmndi:BPMNEdge>
+    </bpmndi:BPMNPlane>
+  </bpmndi:BPMNDiagram>
+</bpmn:definitions>

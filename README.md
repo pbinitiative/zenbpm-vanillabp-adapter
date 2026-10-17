@@ -69,7 +69,18 @@ whole seconds where a level sets it, and reports the key and the version of the 
 start of a process the engine does not hold is not repeated (decisions 30 and 31 in
 [`DECISIONS.md`](./DECISIONS.md)). The adapter tells the platform what the engine does with the type
 of a value which travels: a whole number above 2^53, a `BigDecimal`, a character and a text of
-another type than `String` come back changed. It runs no task yet: a job which arrives is logged at
+another type than `String` come back changed. The probe which asks for the workflow of an aggregate
+first asks the engine for the instance whose key the platform holds, which may only make an `ACTIVE`
+answer shorter (decision 25), and otherwise searches the aggregate's business key in each process
+of the scope; a search which fails answers that the engine is unavailable, never that it holds
+nothing. The probe asked before a start is sent again counts only the workflows created from the
+millisecond the start was planned in, and a workflow may stay invisible to the search for
+`workflow-visibility-timeout`. The workflow id of an instance is the key of its root instance, or
+of the instance a call activity started (decision 28). The probes which ask for a task, a service
+task and a user task alike, read the job by its key and the process of its instance, and answer
+for the scope they are asked about only; a task id of a partition the engine does not have is
+unknown to it (decision 32). The open tasks of a process are counted from the engine's statistics
+of every version it holds. It runs no task yet: a job which arrives is logged at
 WARN and left to its lock, after which the engine hands it out again. What is built next, and in
 which order, is the implementation plan in [`docs/`](docs/README.md).
 
@@ -166,8 +177,9 @@ Where the status says less than it seems:
 
 - The engine answers `502` also for a key of a partition it does not have, such as a key another
   engine handed out. The status alone cannot tell this apart from a node which could not be
-  reached, so such a key reads as unavailable. Telling the two apart needs the key's partition (bits
-  12 to 21) compared with the partitions `GET /system/status` reports.
+  reached, so such a key reads as unavailable. Where it matters, the probe for a task, the key's
+  partition (bits 12 to 21) is compared with the partitions `GET /system/status` reports
+  (decision 32 in [`DECISIONS.md`](./DECISIONS.md)).
 - A `ZenBpmUnavailableException` may name a `2xx` status: the engine did what was asked, and only
   the body of its answer was lost or could not be read. It is repeatable all the same, because a
   permanent failure would block an operation the engine carried out. Not every repetition is

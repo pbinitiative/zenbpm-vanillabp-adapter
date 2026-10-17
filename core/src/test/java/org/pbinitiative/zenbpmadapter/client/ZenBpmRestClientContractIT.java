@@ -102,7 +102,7 @@ class ZenBpmRestClientContractIT {
     }
 
     @Test
-    @DisplayName("The engine answers ready and names its commit")
+    @DisplayName("The engine answers ready and names its commit, its node and its partition")
     void theEngineAnswersReadyAndNamesItsCommit() {
         final var readiness = client.ready();
         final var status = client.status();
@@ -118,6 +118,7 @@ class ZenBpmRestClientContractIT {
         assertEquals(1, status
                 .nodes()
                 .size(), status::toString);
+        assertEquals(List.of(1), status.partitions(), status::toString);
     }
 
     @Test
