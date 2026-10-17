@@ -501,7 +501,7 @@ and what was decided:
 
 ### S5.2.2 Task probes, `openTaskCount`
 
-- [ ] **Depends on:** S5.2.1.
+- [x] **Depends on:** S5.2.1.
 
 **Instructions**
 
@@ -520,9 +520,125 @@ and what was decided:
 **Tests**: fake-server cases per outcome; `ZenBpmProbesIT` (Docker): a started instance's waiting job
 is ACTIVE for its scope and UNKNOWN for a scope naming another process; after completion COMPLETED.
 
+*Fit check, 2026-10-17, decided by the Implementor.* Checked against `main` with S5.2.1
+(`9a009bb`), `ADAPTER-AUTHORS.md` (section 4 and its paragraph on the records of deliveries), the
+platform's `MigratableProcessService#openTaskCount`, `MigrationProcessService`, `WorkflowLocator`
+and `DeliveryRecords`, Camunda 8's `openTaskCount`, `awarenessOfTask` and `awarenessOfUserTask`,
+and the engine at the pin `bdd795a3` (source, and the pinned image in `ZenBpmProbesIT`). What did
+not fit, and what was decided:
+
+1. **Open question 1: other adapters' task ids do reach the probe, so decision 32.** The platform
+   asks every adapter of a workflow's list with the same task id: `MigrationProcessService#probe`
+   (line 2474 of `migration-adapter/runtime/.../MigrationProcessService.java`) hands the call's
+   task id to `awarenessOfTask` or `awarenessOfUserTask`, and `WorkflowLocator#walk` (line 612 of
+   `WorkflowLocator.java`) runs that probe for each prioritized adapter until one is not
+   UNKNOWN. A record of a delivery routes the question only where it exists, and "where no record
+   exists, the walk runs exactly as it always did" (`ADAPTER-AUTHORS.md`, line 1022). So a key of
+   another engine reaches this one, and a `502` read as unavailable would stop the walk for good.
+   Decided as the brief recommends, with one change: the partitions are read only AFTER a `502`
+   for the job, not before the job is asked, so a task id of this engine costs one request as
+   before, and a foreign one two. A key of a partition `GET /system/status` does not report is
+   UNKNOWN; a `502` for a partition it reports, and a status which does not come, stay
+   BPMS_UNAVAILABLE. Decision 32, decided by the pipeline in place of the maintainers.
+   `EngineStatus` gained the partition ids, which `ZenBpmRestClientContractIT` reads as `[1]` from
+   the pinned image; `ZenBpmProbesIT#aTaskIdTheEngineCannotPlaceIsUnknown` sees the `502` and the
+   UNKNOWN for a key of partition 2 and for `1` (partition 0).
+2. **`openTaskCount` counts every version the engine holds, not only the version keys
+   `ZenBpmDeployedProcesses` knows.** That record holds the one version this start deployed per
+   process. The count exists for the tasks which were open before this application ever ran
+   (`MigratableProcessService#openTaskCount`, `DeliveryRecords#reportOpenTasksNobodyRemembers`),
+   and those wait mostly on an older version, so the brief's recommendation would hide the very
+   number the platform asks for. The probe lists the versions under the scoped id (`GET
+   /v1/process-definitions`), and per version reads its model and its statistics. The platform asks
+   in its startup checks (`validatePersistedAdapterIdsAtStartup`, on both platforms), before the
+   application deployed anything, so `ZenBpmDeployedProcesses` is still empty and every model is
+   read from the engine. The requests grow with the versions, which decision 14 allows ("those
+   questions are what the check is for"), and never with instances; no job page is fetched. E10's
+   version catalog may share the models.
+3. **Open question 4: what counts, and what a failure answers.** An element counts where the model
+   reader of E4 classifies it as giving a worker a job (`ZenBpmBpmnModel#tasks` and `#userTasks`:
+   service, send and business rule tasks with a job, message throw and end events, user tasks),
+   read from the model of the same version, and its active element instances are summed. A task
+   with an incident is not counted: the engine's statistics report incidents apart, for a token
+   which is no longer active. A failed call answers `null` with a DEBUG line, as Camunda 8 does
+   (line 515 of `Camunda8ProcessService`): the platform calls `openTaskCount` while the
+   application starts and does not catch (`DeliveryRecords#reportOpenTasksNobodyRemembers`), so a
+   failure thrown would end the start over a diagnostic. The brief's "a failure the caller sees"
+   contradicts that code, which decides. A process the engine holds no version of answers `0`
+   rather than `null`: the engine holds nothing open, and the platform is silent on both.
+4. **Open question 2: the cost of a task probe.** A cold cache costs the job and its instance, two
+   requests; a warm one the job alone; a `502` the job and the status. That is at most
+   `scope.processIds().size() + 1` for every scope with a process. The task probe walks nothing: a
+   child instance of an embedded sub-process or an iteration names the process of its definition,
+   which is the workflow's own, so the instance the job waits in answers the scope question; a task
+   of a called process is compared with the called process, as Camunda 8 compares a job's
+   `processDefinitionId`. `ZenBpmProbesIT#aWaitingJobIsActiveForItsScopeOnly` asks about a job
+   which waits in an embedded sub-process.
+5. **A job whose instance the engine does not answer** is BPMS_UNAVAILABLE, not UNKNOWN: the engine
+   holds the job, and only whose it is cannot be said now (a node which lags behind, GAPS 20).
+6. **The aggregate id is not compared**, as on Camunda 8: the scope decides.
+7. **The tests of the task probes** are `ZenBpmTaskProbesTest`, beside `ZenBpmWorkflowProbesTest`.
+8. **The startup question reaches the engine before a refused model ends the start.** Because the
+   platform asks before anything is deployed (item 2), an application whose BPMN file the adapter refuses now sends the engine one read, the
+   list of versions of `openTaskCount`, before the refusal ends its start, which an engine that
+   answers nothing turns into `null`. The three boot tests which held that the engine is asked
+   nothing (`ZenBpmUnsupportedModelBootTest` on Spring Boot, `ZenBpmUnsupportedModelTest` on
+   Quarkus, and the javadoc of `ZenBpmUnsupportedModelWarnTest`) now hold what the refusal is for:
+   nothing is deployed, and the one request is that read. The engine is not waited for before it
+   (that is the deployment's `startup-wait`), so an engine which is not ready yet loses the number
+   at that boot, a DEBUG line.
+
 **Acceptance criteria**
 
-- [ ] The task probes never send a command (fake server asserts GET only).
+- [x] The task probes never send a command (fake server asserts GET only).
+  `ZenBpmTaskProbesTest#aJobOfTheScopeAnswersByItsState` compares the whole list of requests the
+  fake engine received for each job state (`GET /v1/jobs/{key}`, `GET /v1/process-instances/{key}`,
+  and the job again for the second probe), `#everyOtherFailureIsUnavailable` holds that every request
+  of six failures is a `GET`, `#aKeyOfAPartitionTheEngineDoesNotHaveIsUnknown` lists the job and
+  `GET /system/status`, and `#theOpenTasksOfEveryVersionAreCounted` lists the four reads of the
+  count and no job page. Against the pinned engine, `ZenBpmProbesIT#aWaitingJobIsActiveForItsScopeOnly`
+  asks both probes about a waiting job for two scopes, with the same answers before the test
+  completes the job itself.
+
+**Implemented 2026-10-17.** Core: `ZenBpmProcessService` answers `awarenessOfTask` and
+`awarenessOfUserTask` with one probe: no positive number is UNKNOWN without a request, the job by key
+(`404` UNKNOWN, `active` and `failed` ACTIVE, `completed` and `terminated` COMPLETED), the process of
+its instance through the instance cache compared with the scope, and a `502` compared with the
+engine's partitions (decision 32); `openTaskCount` sums the active instances of the job elements of
+every version under the scoped id, each read with its own model, `null` where the engine does not
+answer. `EngineStatus` carries the partition ids of `GET /system/status`. Decision 32, the README's
+status paragraph and its note on the `502`, the architecture's section 4.2, notes under S6.1.1 and
+E10. Tests: new `ZenBpmTaskProbesTest` (23), `ZenBpmProbesIT` 10 (a waiting job ACTIVE for its scope
+and UNKNOWN for another, COMPLETED once it ended; a task id the engine cannot place; the open tasks
+of two versions of the new fixture `probes/probe-count.bpmn`, a service task and a user task beside
+a timer, with its diagram), `ZenBpmRestClientContractIT` (the image reports partition 1),
+`ZenBpmRestClientTest`, `ZenBpmEnvironmentInfoTest`, `ZenBpmProcessServiceTest` 12 (no probe among
+the calls which are not built yet), and the three boot tests of fit-check item 8. `TZ=Etc/UTC mvn
+clean install` on OpenJDK 25.0.2 builds green with every integration test run and none skipped
+(engine test support 12 unit and 3 integration tests, core 774 unit and 70 integration tests, Spring
+Boot 9 and 2 integration tests, smoke test 35, Quarkus runtime 9, Quarkus deployment 46, coverage
+gate 35). The gate measures 100 % of 18,071 instructions for Spring Boot and 100 % of 17,949 for
+Quarkus, and `bin/check-deploy-safety.sh` passes both runs (13 files deployed, nothing after a red
+gate).
+
+Seen to fail, each restored afterwards (15 of 15 mutants of the code as committed, against a green
+unmutated run of `ZenBpmTaskProbesTest` and `ZenBpmRestClientTest`):
+- The task probes: a task id which is no positive number asked anyway; a `404` answered ACTIVE; the
+  scope not compared; an incident answered COMPLETED; a job whose instance the engine does not know
+  answered UNKNOWN.
+- Decision 32: no `502` read as a key of another engine; every `502` read so; any failure read so
+  (killed after `#onlyA502IsComparedWithThePartitions` was added: it survived the first run); a
+  status which does not come read so; the partition taken from the wrong bits.
+- `openTaskCount`: every element counted, a timer included; the user tasks left out; one version
+  only; a failure thrown.
+- `ZenBpmRestClient#status`: the partitions not read.
+
+Two mutants led to code being removed rather than to a test: a guard which answered `null` for an
+adapter id without clients before the engine was asked survived, because `factory.rest()` throws
+inside the `try` and the count answers `null` all the same, so the guard went; and the reuse of the
+model of the version this start deployed went with fit-check item 2, because the platform asks before
+anything is deployed.
+
 
 ## F5.3 Exemplary end-to-end start
 

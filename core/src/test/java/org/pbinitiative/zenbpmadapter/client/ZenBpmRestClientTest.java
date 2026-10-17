@@ -185,7 +185,8 @@ class ZenBpmRestClientTest {
                   "nodes": {"zen-2": {"id": "zen-2"}, "zen-1": {"id": "zen-1"}}
                 }""");
 
-        assertEquals(new EngineStatus("v1.8.0", "bdd795a399b6", List.of("zen-1", "zen-2")), client.status());
+        assertEquals(new EngineStatus("v1.8.0", "bdd795a399b6", List.of("zen-1", "zen-2"), List.of(1)),
+                client.status());
     }
 
     @ParameterizedTest(name = "status {0} means created = {1}")

@@ -173,7 +173,7 @@ public class ZenBpmRestClient implements AutoCloseable {
     /**
      * The engine's build and cluster (<code>GET /system/status</code>).
      *
-     * @return Version, commit and node ids
+     * @return Version, commit, node ids and partition ids
      */
     public EngineStatus status() {
         final var call = new Call(GET, "/system/status");
@@ -190,7 +190,14 @@ public class ZenBpmRestClient implements AutoCloseable {
             final var commit = status
                     .git()
                     .commitId();
-            return new EngineStatus(version, commit, nodes);
+            final var partitions = Objects
+                    .requireNonNullElse(status.partitions(), Map.<String, Object>of())
+                    .keySet()
+                    .stream()
+                    .map(Integer::valueOf)
+                    .sorted()
+                    .toList();
+            return new EngineStatus(version, commit, nodes, partitions);
         });
     }
 

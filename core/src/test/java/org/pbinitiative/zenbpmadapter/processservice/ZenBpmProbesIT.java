@@ -7,9 +7,11 @@ package org.pbinitiative.zenbpmadapter.processservice;
 import static org.junit.jupiter.api.Assertions.assertAll;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import java.io.IOException;
 import java.io.UncheckedIOException;
+import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
@@ -29,6 +31,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.pbinitiative.zenbpmadapter.TestCollaborators;
 import org.pbinitiative.zenbpmadapter.TestScoping;
 import org.pbinitiative.zenbpmadapter.client.ZenBpmAdapterConfiguration;
+import org.pbinitiative.zenbpmadapter.client.ZenBpmApiException;
 import org.pbinitiative.zenbpmadapter.client.ZenBpmClientFactory;
 import org.pbinitiative.zenbpmadapter.client.ZenBpmRestClient;
 import org.pbinitiative.zenbpmadapter.client.api.CreateInstanceRequest;
@@ -48,8 +51,9 @@ import io.vanillabp.integration.test.utils.SuppressOutputExtension;
 /**
  * The probes against the pinned engine: what they answer for a workflow which runs, which ended,
  * which has no business key and which belongs to another process, how a key the engine cannot
- * place is handled, from which moment the probe before a repeated start counts, and which instance
- * the workflow id of a task names. The module is not scoped, so the engine knows the processes by
+ * place is handled, from which moment the probe before a repeated start counts, which instance the
+ * workflow id of a task names, what the task probes answer for a job, and how many tasks of a
+ * process are open. The module is not scoped, so the engine knows the processes by
  * the ids the files declare.
  */
 @ExtendWith(SuppressOutputExtension.class)
@@ -211,6 +215,81 @@ class ZenBpmProbesIT {
                         .workflowIdOf(taskOfTheCalledOrder.instanceKey())));
     }
 
+    @Test
+    @DisplayName("A waiting job is active for its scope and unknown for a scope naming another process, and completed once it ended, for both task probes")
+    void aWaitingJobIsActiveForItsScopeOnly() {
+        final var started = start("probe-order", uniqueAggregateId(), true);
+        final var job = waitingJobOf(started.key());
+        final var taskId = String.valueOf(job.key());
+
+        final var whileItWaits = List.of(processService.awarenessOfTask(ORDERS, "order", taskId), processService
+                .awarenessOfUserTask(ORDERS, "order", taskId));
+        final var forAnotherProcess = List.of(processService.awarenessOfTask(INVOICES, "order", taskId),
+                processService.awarenessOfUserTask(INVOICES, "order", taskId));
+        rest.completeJob(job.key(), Map.of());
+        eventually(() -> rest
+                .job(job.key())
+                .filter(completed -> completed.state() == JobRef.State.COMPLETED));
+        final var onceItEnded = List.of(processService.awarenessOfTask(ORDERS, "order", taskId), processService
+                .awarenessOfUserTask(ORDERS, "order", taskId));
+
+        assertAll(
+                () -> assertEquals(List.of(WorkflowAwareness.ACTIVE, WorkflowAwareness.ACTIVE), whileItWaits),
+                () -> assertEquals(List.of(WorkflowAwareness.UNKNOWN_TO_BPMS, WorkflowAwareness.UNKNOWN_TO_BPMS),
+                        forAnotherProcess),
+                () -> assertEquals(List.of(WorkflowAwareness.COMPLETED, WorkflowAwareness.COMPLETED), onceItEnded));
+    }
+
+    @Test
+    @DisplayName("A task id the engine cannot place is unknown: a key of a partition it does not have, which it answers 502 for, and a key nobody holds")
+    void aTaskIdTheEngineCannotPlaceIsUnknown() {
+        final var keyOfPartitionTwo = String.valueOf((1L << 52) | (2L << 12));
+        final var keyNobodyHolds = String.valueOf(1L << 12);
+
+        assertAll(
+                () -> assertEquals(List.of(1), rest
+                        .status()
+                        .partitions()),
+                () -> assertEquals(502, assertThrows(ZenBpmApiException.class, () -> rest.job(Long.parseLong(
+                        keyOfPartitionTwo))).getStatus()),
+                () -> assertEquals(WorkflowAwareness.UNKNOWN_TO_BPMS, processService.awarenessOfTask(ORDERS, "order",
+                        KEY_OF_NO_PARTITION)),
+                () -> assertEquals(WorkflowAwareness.UNKNOWN_TO_BPMS, processService.awarenessOfUserTask(ORDERS,
+                        "order", keyOfPartitionTwo)),
+                () -> assertEquals(WorkflowAwareness.UNKNOWN_TO_BPMS, processService.awarenessOfTask(ORDERS, "order",
+                        keyNobodyHolds)));
+    }
+
+    @Test
+    @DisplayName("The open tasks of a process are its waiting jobs of every version, a timer is none, and a process nothing deployed has none")
+    void theOpenTasksOfEveryVersionAreCounted() {
+        final var firstVersion = fixture("probe-count.bpmn");
+        rest.deployBpmn(firstVersion);
+        final var first = start("probe-count", uniqueAggregateId(), true);
+        start("probe-count", uniqueAggregateId(), true);
+        // a service task and a user task wait in each, beside a timer
+        final var whileTwoWait = eventually(() -> Optional
+                .ofNullable(processService.openTaskCount("shop", "probe-count"))
+                .filter(open -> open == 4));
+        rest.completeJob(waitingJobOf(first.key(), "Task_Work").key(), Map.of());
+        final var oneTaskLater = eventually(() -> Optional
+                .ofNullable(processService.openTaskCount("shop", "probe-count"))
+                .filter(open -> open == 3));
+        rest.deployBpmn(new String(firstVersion, StandardCharsets.UTF_8)
+                .replace("Task_Work", "Task_Work_Again")
+                .getBytes(StandardCharsets.UTF_8));
+        final var onTheSecondVersion = start("probe-count", uniqueAggregateId(), true);
+
+        assertAll(
+                () -> assertEquals(4, whileTwoWait),
+                () -> assertEquals(3, oneTaskLater),
+                () -> assertEquals(2, onTheSecondVersion.version()),
+                () -> assertEquals(5, eventually(() -> Optional
+                        .ofNullable(processService.openTaskCount("shop", "probe-count"))
+                        .filter(open -> open == 5))),
+                () -> assertEquals(0, processService.openTaskCount("shop", "never-deployed")));
+    }
+
     private static ProcessInstanceRef start(
         final String bpmnProcessId,
         final String aggregateId,
@@ -222,8 +301,15 @@ class ZenBpmProbesIT {
         return rest.createInstance(withBusinessKey ? start.withBusinessKey(aggregateId) : start);
     }
 
-    // the job waits in a child instance, so the instances below the root are asked one by one
     private static JobRef waitingJobOf(final long rootKey) {
+        return waitingJobOf(rootKey, null);
+    }
+
+    // the job may wait in a child instance, so the instances below the root are asked one by one
+    private static JobRef waitingJobOf(
+        final long rootKey,
+        final String elementId
+    ) {
         return eventually(() -> {
             final var instances = new ArrayList<Long>(List.of(rootKey));
             for (var index = 0; index < instances.size(); index++) {
@@ -233,7 +319,10 @@ class ZenBpmProbesIT {
                                 .anyJob()
                                 .withProcessInstanceKey(key)
                                 .withState(JobRef.State.ACTIVE))
-                        .items();
+                        .items()
+                        .stream()
+                        .filter(job -> (elementId == null) || elementId.equals(job.elementId()))
+                        .toList();
                 if (!waiting.isEmpty()) {
                     return Optional.of(waiting.getFirst());
                 }

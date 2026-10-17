@@ -7,6 +7,8 @@ package org.pbinitiative.zenbpmadapter.quarkus.smoke;
 import static org.junit.jupiter.api.Assertions.assertAll;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
+import java.util.List;
+
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -18,8 +20,8 @@ import io.vanillabp.integration.test.utils.SuppressOutputExtension;
 
 /**
  * A workflow module whose BPMN file uses what ZenBPM cannot run, booted on Quarkus: the start ends
- * with the message naming file, module, process and every element, before the engine is asked
- * anything.
+ * with the message naming file, module, process and every element, and nothing reaches the engine
+ * but the platform's startup question how many tasks of the process are open, a read.
  */
 @ExtendWith(SuppressOutputExtension.class)
 class ZenBpmUnsupportedModelTest {
@@ -42,7 +44,7 @@ class ZenBpmUnsupportedModelTest {
                                         - SampleWorkflowService/OrderReceived (receiveTask with instantiate="true")
                                     Model them with what ZenBPM runs, or take them out of the file.""",
                             SmokeApplication.rootMessageOf(failure)),
-                    () -> assertEquals(0, ENGINE.requests())));
+                    () -> assertEquals(List.of("GET /v1/process-definitions"), ENGINE.requests())));
 
     @AfterAll
     static void stopTheEngine() {
@@ -50,8 +52,8 @@ class ZenBpmUnsupportedModelTest {
     }
 
     @Test
-    @DisplayName("A file with what ZenBPM cannot run ends the start, naming file, module, process and every element, and the engine is asked nothing")
-    void anUnsupportedModelEndsTheStartBeforeTheEngineIsAsked() {
+    @DisplayName("A file with what ZenBPM cannot run ends the start, naming file, module, process and every element, and nothing is deployed")
+    void anUnsupportedModelEndsTheStartBeforeAnythingIsDeployed() {
         // never runs: the start fails, and the extension checks how
     }
 

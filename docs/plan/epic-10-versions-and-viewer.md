@@ -74,6 +74,14 @@ fail before this catalog exists. Assert the core's message by the phrases
 - `openTaskCount` is S5.2.2; `ZenBpmStartupQuestionCostTest` counts the requests a boot makes (a fake
   server counting) and pins that they do not grow with instances.
 
+  *Note from S5.2.2, 2026-10-17.* `openTaskCount` lists the versions under the scoped id itself
+  (`GET /v1/process-definitions`) and reads per version its model (`GET
+  /v1/process-definitions/{key}`) and its statistics: one request for the list and two per version.
+  The platform asks it in its startup checks, before the application deployed anything (the
+  `validatePersistedAdapterIdsAtStartup` pass on both platforms), so `ZenBpmDeployedProcesses` is
+  still empty then. Where the catalog reads the same models, let both share them, so a boot does
+  not read a model twice, and count these requests in `ZenBpmStartupQuestionCostTest`.
+
 **Tests**: Spring `ZenBpmOldProcessVersionsIT` (deploy v1, start, redeploy v2 without the old task's
 method -> the boot reports the old version, its running workflow and the missing method;
 `outfaded-versions` silences it), `ZenBpmRenamedProcessTest` for the catalog of a declared id,

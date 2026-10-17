@@ -407,3 +407,29 @@ the ended workflow until its next clean-up, which runs every thirty seconds, whi
 its default applies, which may keep the workflow forever. An application which wants nothing kept
 says so with `PT0S`. `ZenBpmTimeToLiveIT` holds both against the pinned engine.
 
+### 32. A task id of a partition the engine does not have is unknown to it
+
+Decided by the implementation pipeline in place of the maintainers, as their policy for the
+autonomous run asks.
+
+The core asks every adapter of a workflow's list about a task with the same task id, where no
+record of a delivery routes the question: `WorkflowLocator` walks the prioritized adapters and hands
+each of them the id the call names (`MigrationProcessService#probe` of the platform). So the task
+probes of this adapter are asked about ids which another adapter handed out: a job key of Camunda 8,
+or a key of another ZenBPM engine, which may name a partition this engine does not have. A key
+carries the partition which holds it in bits 12 to 21 (`zenflake.GetPartitionId` in
+`pkg/zenflake/snowflake.go` at the pinned commit `bdd795a3`), and the engine answers a read of a
+job or an instance of such a partition with `502 CLUSTER_ERROR`, the answer it also gives where a
+partition it has cannot be reached (`ZenBpmRestClientContractIT`). Read as unavailable, as decision
+30 reads every `502`, such a key would stop the walk for good: `BPMS_UNAVAILABLE` must not fall back
+to the next adapter, so the adapter which holds the task would never be asked.
+
+So after a `502` for a job, the task probes read the engine's partitions from `GET /system/status`.
+A key whose partition the engine does not report is `UNKNOWN_TO_BPMS`: this engine handed it out to
+nobody. A `502` for a partition the engine reports stays `BPMS_UNAVAILABLE`, and so does a status
+which does not come. The extra request is made only after a `502`, so a task id of this engine costs
+what it cost before. A partition the engine adds later is reported by the next status, which is read
+fresh every time and never kept. Decision 30 is not changed: what a failed call means is still read
+from its status, and this entry only answers what the task probes make of a `502` once they asked
+the engine one more question. The workflow probe needs none of this, because a key there may only
+make an `ACTIVE` answer shorter, and every `502` falls through to the search (decision 25).

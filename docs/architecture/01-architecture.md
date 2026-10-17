@@ -235,9 +235,15 @@ key: the start row (`vanillabp.delivery.workflow-start-retention`, `P30D` by def
 or `keep-workflow-start-while-aggregate-exists`), the open-task records, the election cache. E13.4
 removes the limit (GAPS 1).
 
-`awarenessOfTask` / `awarenessOfUserTask`: `GET /v1/jobs/{key}`; 404 -> UNKNOWN; then the job's
-instance through the cache; instance not in scope -> UNKNOWN; job `active` -> ACTIVE, `completed` or
-`terminated` -> COMPLETED; failure -> BPMS_UNAVAILABLE. `workflowVisibilityDelay()` = the configured
+`awarenessOfTask` / `awarenessOfUserTask`: a task id which is no positive number -> UNKNOWN without
+a request; `GET /v1/jobs/{key}`; 404 -> UNKNOWN; a 502 -> `GET /system/status`, a key of a partition
+it does not report -> UNKNOWN (decision 32); then the job's instance through the cache; instance not
+in scope -> UNKNOWN; job `active` or `failed` -> ACTIVE, `completed` or `terminated` -> COMPLETED;
+every other failure -> BPMS_UNAVAILABLE. `openTaskCount(module, process)`: the versions under the
+scoped id (`GET /v1/process-definitions`), per version its model (`GET
+/v1/process-definitions/{key}`) and its statistics, the active counts of the elements which give a
+worker a job summed; `null` where the engine does not answer. The platform asks it before the
+application deployed anything. `workflowVisibilityDelay()` = the configured
 `workflow-visibility-timeout` (default `PT2S`, poll `PT0.25S`);
 `workflowVisibilityDelay(workflowId)` keeps that window too, because a follower may not see an
 instance the leader just created (GAPS 20).

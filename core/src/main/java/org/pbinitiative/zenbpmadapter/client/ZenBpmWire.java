@@ -37,7 +37,8 @@ final class ZenBpmWire {
     record SystemStatus(
         @JsonProperty(required = true) Git git,
         @JsonProperty(required = true) Build build,
-        @JsonProperty(required = true) Map<String, Object> nodes
+        @JsonProperty(required = true) Map<String, Object> nodes,
+        Map<String, Object> partitions
     ) {
     }
 

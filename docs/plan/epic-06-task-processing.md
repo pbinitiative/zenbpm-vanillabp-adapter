@@ -78,6 +78,18 @@ Template: `Camunda8JobHandler`, `Camunda8CommandRetry`, `Camunda8Drain`,
    (5 attempts, 50 ms doubling, bounded by the remaining lock read from `lock_until`), stop at once
    while the module shuts down.
 
+*Note from S5.2.1, 2026-10-17.* The instance cache is `ZenBpmInstanceCache` in the root package,
+built and held per adapter id by the client factory (`factory.instances()`), so the handler needs
+no cache of its own. `facts(key, idVariableName)` keeps the id variable once the instance has it
+(an entry without it is read again); the facts hold no state. `workflowIdOf(key)` answers the
+workflow id of decision 28 as an `OptionalLong`, empty where an instance on the way is unknown; it
+walks through the kept facts, so a job of a known workflow costs no request. Its walk was pinned
+against the engine: a job in an embedded sub-process names the child instance, and the walk ends at
+the instance a call activity started (`ZenBpmProbesIT#theWorkflowIdOfATaskIsItsRootUpToACallActivity`).
+A start writes the id variable into the root instance; whether the engine answers it for a child
+instance as well was not checked, so check it against the engine before reading the aggregate id
+from the facts of the job's own instance.
+
 *Note from S2.4.2, 2026-10-15.* The executor counts the slots itself, so instruction 3's
 `executor.releaseSlot()` in `finally` does not exist: a slot is taken by `executor.tryExecute(handler)`
 and given back by the executor once the handler returned. `tryExecute` never waits; it answers

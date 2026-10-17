@@ -4,7 +4,9 @@
  */
 package org.pbinitiative.zenbpmadapter.processservice;
 
+import java.io.ByteArrayInputStream;
 import java.io.InputStream;
+import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
@@ -17,6 +19,7 @@ import java.util.Optional;
 import java.util.OptionalLong;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.stream.Stream;
 
 import org.pbinitiative.zenbpmadapter.client.ZenBpmAdapterConfiguration;
 import org.pbinitiative.zenbpmadapter.client.ZenBpmApiException;
@@ -26,7 +29,10 @@ import org.pbinitiative.zenbpmadapter.client.ZenBpmRestClient;
 import org.pbinitiative.zenbpmadapter.client.ZenBpmTimeToLive;
 import org.pbinitiative.zenbpmadapter.client.api.CreateInstanceRequest;
 import org.pbinitiative.zenbpmadapter.client.api.InstanceFilter;
+import org.pbinitiative.zenbpmadapter.client.api.JobRef;
+import org.pbinitiative.zenbpmadapter.client.api.ProcessDefinitionRef;
 import org.pbinitiative.zenbpmadapter.client.api.ProcessInstanceRef;
+import org.pbinitiative.zenbpmadapter.model.ZenBpmModelReader;
 
 import io.vanillabp.integration.adapter.spi.AdapterCollaborators;
 import io.vanillabp.integration.adapter.spi.AggregateSyncMode;
@@ -49,13 +55,12 @@ import lombok.extern.slf4j.Slf4j;
  * What the core asks of one ZenBPM adapter id at runtime: one instance per configured adapter
  * id, built by the platform modules.
  * <p>
- * This version of the adapter starts workflows, answers the probes for the workflow of an
- * aggregate and says what the engine does with the values a workflow carries. It serves every
+ * This version of the adapter starts workflows, answers every probe, counts the open tasks of a
+ * process and says what the engine does with the values a workflow carries. It serves every
  * operation the core requires of each adapter, so the core accepts it while the application
- * starts. Every other handler, the probes for a task and every method of the viewer/history API
- * throw: where the adapter id has no clients, the message of its validation, which names the keys
- * to set; otherwise an {@link UnsupportedOperationException} which says that the call is not built
- * yet. Nothing pretends to have done the work. The operations a BPMS may lack, sending a signal and
+ * starts. Every other handler and every method of the viewer/history API throw: where the adapter
+ * id has no clients, the message of its validation, which names the keys to set; otherwise an
+ * {@link UnsupportedOperationException} which says that the call is not built yet. Nothing pretends to have done the work. The operations a BPMS may lack, sending a signal and
  * telling the BPMS about a changed aggregate, are left out, so the core answers them as not
  * supported. A probe of an adapter id without clients throws the message of its validation as
  * well.
@@ -81,6 +86,13 @@ public class ZenBpmProcessService<A> implements MigratableProcessService<A> {
      * configurable: an operator may have to raise the window, not the rate.
      */
     private static final Duration VISIBILITY_PROBE_INTERVAL = Duration.ofMillis(250);
+
+    /**
+     * Where a key of the engine carries the partition which holds it: bits 12 to 21.
+     */
+    private static final int PARTITION_SHIFT = 12;
+
+    private static final long PARTITION_MASK = 0x3FF;
 
     private final String adapterId;
 
@@ -217,13 +229,105 @@ public class ZenBpmProcessService<A> implements MigratableProcessService<A> {
         return ZenBpmErrors.isRepeatable(failure);
     }
 
+    /**
+     * Whether the engine holds a task of the given scope: its job, read by key, and the process of
+     * the instance the job waits in, compared with the scope. Asking moves nothing: both are reads.
+     * <p>
+     * A task id which is no positive number is no key of this engine, such as a key of another
+     * BPMS of the same list, and is {@link WorkflowAwareness#UNKNOWN_TO_BPMS} without a request. So
+     * is a job the engine answers <code>404</code> for, and a job of a process outside the scope. A
+     * job which waits for a worker, or carries an incident and so stays open, is
+     * {@link WorkflowAwareness#ACTIVE}; a completed or terminated one
+     * {@link WorkflowAwareness#COMPLETED}. The engine answers <code>502</code> for a key of a
+     * partition it does not have, which the core may hand over because it asks every adapter of a
+     * workflow's list with the same task id. So after a <code>502</code> the engine's partitions are
+     * read: a key of none of them is {@link WorkflowAwareness#UNKNOWN_TO_BPMS}, see decision 32 in
+     * the repository's DECISIONS.md. Every other failure is {@link WorkflowAwareness#BPMS_UNAVAILABLE},
+     * logged as the workflow probes log it.
+     *
+     * @param scope The workflow module and the processes asked about
+     * @param workflowAggregateId The id of the aggregate, which the engine's answer does not need
+     * @param taskId The key of the job
+     * @return The engine's awareness of the task within the scope
+     */
     @Override
     public WorkflowAwareness awarenessOfTask(
         final WorkflowScope scope,
         final Object workflowAggregateId,
         final String taskId
     ) {
-        throw notBuiltYet("asking for task '%s'".formatted(taskId));
+        return awarenessOfJob(scope, taskId, "task");
+    }
+
+    /**
+     * Whether the engine holds a user task of the given scope. A user task is a job of the engine,
+     * so the probe is the one of {@link #awarenessOfTask(WorkflowScope, Object, String)}; the core
+     * knows from the record of a delivery which kind a task id is.
+     *
+     * @param scope The workflow module and the processes asked about
+     * @param workflowAggregateId The id of the aggregate, which the engine's answer does not need
+     * @param taskId The key of the user task's job
+     * @return The engine's awareness of the user task within the scope
+     */
+    @Override
+    public WorkflowAwareness awarenessOfUserTask(
+        final WorkflowScope scope,
+        final Object workflowAggregateId,
+        final String taskId
+    ) {
+        return awarenessOfJob(scope, taskId, "user task");
+    }
+
+    /**
+     * How many tasks of a process the engine holds open, asked once while the application starts:
+     * the element instances which are active now at the elements which give a worker a job (service,
+     * send and business rule tasks, message throw and end events, user tasks), summed over every
+     * version the engine holds under the process's id. Tasks opened before this application ran wait
+     * mostly on an older version, so every version counts, and each is read with its own model.
+     * <p>
+     * The engine counts, the adapter adds up: one request for the list of versions, and per version
+     * one for its model and one for its statistics. The platform asks before the application
+     * deployed anything, so every model is read from the engine. A task with an incident is not
+     * counted. Where the engine does not answer, the number is lost and nothing else, so the
+     * answer is <code>null</code> and the failure a DEBUG line. An adapter id without clients has no engine to ask and answers
+     * <code>null</code> the same way.
+     *
+     * @param workflowModuleId The workflow module
+     * @param bpmnProcessId The process, as the workflow module names it
+     * @return The number of open tasks, <code>0</code> where the engine holds no version of the
+     *         process, <code>null</code> where it could not be asked
+     */
+    @Override
+    public Long openTaskCount(
+        final String workflowModuleId,
+        final String bpmnProcessId
+    ) {
+        final var scopedProcessId = collaborators
+                .scoping()
+                .scopedProcessId(workflowModuleId, bpmnProcessId, adapterId);
+        try {
+            final var rest = factory.rest();
+            var open = 0L;
+            for (final var version : rest.processDefinitions(scopedProcessId, false)) {
+                final var jobElements = jobElementsOf(workflowModuleId, version, rest);
+                open += rest
+                        .processDefinitionStatistics(version.key())
+                        .elements()
+                        .entrySet()
+                        .stream()
+                        .filter(element -> jobElements.contains(element.getKey()))
+                        .mapToLong(element -> element
+                                .getValue()
+                                .active())
+                        .sum();
+            }
+            return open;
+        } catch (final RuntimeException failure) {
+            log.debug(
+                    "ZenBPM[{}]: the engine did not say how many tasks of process '{}' of workflow module '{}' are open",
+                    adapterId, bpmnProcessId, workflowModuleId, failure);
+            return null;
+        }
     }
 
     /**
@@ -400,15 +504,6 @@ public class ZenBpmProcessService<A> implements MigratableProcessService<A> {
                 .getWorkflowVisibilityTimeout(), VISIBILITY_PROBE_INTERVAL);
     }
 
-    @Override
-    public WorkflowAwareness awarenessOfUserTask(
-        final WorkflowScope scope,
-        final Object workflowAggregateId,
-        final String taskId
-    ) {
-        throw notBuiltYet("asking for user task '%s'".formatted(taskId));
-    }
-
     // the aggregate id is the application's business key, so no message of the three viewer
     // methods repeats it, like the probes
     @Override
@@ -523,6 +618,114 @@ public class ZenBpmProcessService<A> implements MigratableProcessService<A> {
                             .workflowAggregateId(), start.bpmnProcessId(), request.workflowModuleId(),
                             ZenBpmAdapterConfiguration.propertyKey(adapterId, "deployment-failure")), refusal);
         }
+    }
+
+    private WorkflowAwareness awarenessOfJob(
+        final WorkflowScope scope,
+        final String taskId,
+        final String kind
+    ) {
+        final var rest = clients();
+        final var key = keyOf(taskId);
+        if (key.isEmpty()) {
+            log.debug("ZenBPM[{}]: {} '{}' is no key of this engine, so the engine does not know it", adapterId, kind,
+                    taskId);
+            return WorkflowAwareness.UNKNOWN_TO_BPMS;
+        }
+        final var subject = "%s '%s'".formatted(kind, taskId);
+        final Optional<JobRef> job;
+        try {
+            job = rest.job(key.getAsLong());
+        } catch (final RuntimeException failure) {
+            if (isAKeyOfAPartitionTheEngineDoesNotHave(rest, key.getAsLong(), failure)) {
+                probeAnswered();
+                log.debug("ZenBPM[{}]: {} names partition {}, which the engine does not have, so it does not know it",
+                        adapterId, subject, partitionOf(key.getAsLong()));
+                return WorkflowAwareness.UNKNOWN_TO_BPMS;
+            }
+            return unavailable(subject, failure);
+        }
+        try {
+            if (job.isEmpty()) {
+                probeAnswered();
+                return WorkflowAwareness.UNKNOWN_TO_BPMS;
+            }
+            final var instanceKey = job
+                    .get()
+                    .instanceKey();
+            final var facts = factory
+                    .instances()
+                    .facts(instanceKey);
+            if (facts.isEmpty()) {
+                // the job names an instance the node asked does not hold yet, so whose task it is
+                // cannot be said now
+                throw new IllegalStateException("the engine holds the job, but not its process instance %d"
+                        .formatted(instanceKey));
+            }
+            probeAnswered();
+            if (!scopedIdsOf(scope).contains(facts
+                    .get()
+                    .scopedProcessId())) {
+                return WorkflowAwareness.UNKNOWN_TO_BPMS;
+            }
+            return switch (job
+                    .get()
+                    .state()) {
+                case ACTIVE, FAILED -> WorkflowAwareness.ACTIVE;
+                case COMPLETED, TERMINATED -> WorkflowAwareness.COMPLETED;
+            };
+        } catch (final RuntimeException failure) {
+            return unavailable(subject, failure);
+        }
+    }
+
+    // a 502 is all the engine answers for a key of a partition it does not have, and also for a
+    // partition which has no leader right now, so the partitions it reports tell the two apart; a
+    // status which does not come leaves the failure as it was
+    private boolean isAKeyOfAPartitionTheEngineDoesNotHave(
+        final ZenBpmRestClient rest,
+        final long key,
+        final RuntimeException failure
+    ) {
+        if (!(failure instanceof ZenBpmApiException refusal) || (refusal.getStatus() != 502)) {
+            return false;
+        }
+        try {
+            return !rest
+                    .status()
+                    .partitions()
+                    .contains(partitionOf(key));
+        } catch (final RuntimeException statusFailure) {
+            failure.addSuppressed(statusFailure);
+            return false;
+        }
+    }
+
+    private static int partitionOf(final long key) {
+        return (int) ((key >>> PARTITION_SHIFT) & PARTITION_MASK);
+    }
+
+    private static Set<String> jobElementsOf(
+        final String workflowModuleId,
+        final ProcessDefinitionRef version,
+        final ZenBpmRestClient rest
+    ) {
+        final var bpmn = rest
+                .processDefinition(version.key())
+                .bpmnData();
+        final var jobElements = new LinkedHashSet<String>();
+        ZenBpmModelReader
+                .read(workflowModuleId, "version %d of process '%s'".formatted(version.version(), version
+                        .bpmnProcessId()), new ByteArrayInputStream(bpmn.getBytes(StandardCharsets.UTF_8)))
+                .forEach(model -> Stream
+                        .concat(model
+                                .tasks()
+                                .stream(),
+                                model
+                                        .userTasks()
+                                        .stream())
+                        .forEach(task -> jobElements.add(task.activityId())));
+        return jobElements;
     }
 
     // the key only shortens a YES, so whatever else it leads to, a failure included, is left to

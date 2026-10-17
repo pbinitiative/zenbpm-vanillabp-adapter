@@ -13,18 +13,22 @@ import java.util.List;
  *            reports the last release's version, so the commit is what tells two builds apart.
  * @param commit The commit the engine was built from, shortened by the engine
  * @param nodes The ids of the cluster's nodes, sorted
+ * @param partitions The ids of the cluster's partitions, sorted. A key carries the partition which
+ *            holds it, so a key of another partition is none the engine handed out.
  */
 public record EngineStatus(
     String version,
     String commit,
-    List<String> nodes
+    List<String> nodes,
+    List<Integer> partitions
 ) {
 
     /**
-     * Copies the node ids, so the record stays as it was read.
+     * Copies the node and partition ids, so the record stays as it was read.
      */
     public EngineStatus {
         nodes = List.copyOf(nodes);
+        partitions = List.copyOf(partitions);
     }
 
 }

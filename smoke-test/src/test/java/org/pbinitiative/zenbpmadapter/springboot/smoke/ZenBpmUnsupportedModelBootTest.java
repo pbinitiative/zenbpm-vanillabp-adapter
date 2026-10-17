@@ -11,7 +11,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.IOException;
 import java.net.InetSocketAddress;
-import java.util.concurrent.atomic.AtomicInteger;
+import java.util.List;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.stream.Stream;
 
 import org.junit.jupiter.api.AfterEach;
@@ -30,10 +31,11 @@ import io.vanillabp.integration.test.utils.SuppressOutputExtension;
 
 /**
  * A workflow module whose BPMN file uses what ZenBPM cannot run, booted on Spring Boot: the start
- * ends with the message naming file, module, process and every element, before the engine is
- * asked anything; with <code>deployment-failure: warn</code> on an adapter id which is nowhere
- * first, the application boots and the block says the same. The engine is a server which counts
- * every request it gets.
+ * ends with the message naming file, module, process and every element, and nothing reaches the
+ * engine but the platform's startup question how many tasks of the process are open, a read; with
+ * <code>deployment-failure: warn</code> on an adapter id which is nowhere first, the application
+ * boots and the block says the same. The engine is a server which answers <code>503</code> and
+ * writes down method and path of every request it gets.
  */
 @ExtendWith(SuppressOutputExtension.class)
 class ZenBpmUnsupportedModelBootTest {
@@ -51,7 +53,7 @@ class ZenBpmUnsupportedModelBootTest {
                 - SampleWorkflowService/OrderReceived (receiveTask with instantiate="true")
             Model them with what ZenBPM runs, or take them out of the file.""";
 
-    private final AtomicInteger requests = new AtomicInteger();
+    private final List<String> requests = new CopyOnWriteArrayList<>();
 
     private HttpServer engine;
 
@@ -59,7 +61,9 @@ class ZenBpmUnsupportedModelBootTest {
     void startTheEngine() throws IOException {
         engine = HttpServer.create(new InetSocketAddress("localhost", 0), 0);
         engine.createContext("/", exchange -> {
-            requests.incrementAndGet();
+            requests.add("%s %s".formatted(exchange.getRequestMethod(), exchange
+                    .getRequestURI()
+                    .getPath()));
             exchange.sendResponseHeaders(503, -1);
             exchange.close();
         });
@@ -72,15 +76,15 @@ class ZenBpmUnsupportedModelBootTest {
     }
 
     @Test
-    @DisplayName("A file with what ZenBPM cannot run ends the start, naming file, module, process and every element, and the engine is asked nothing")
-    void anUnsupportedModelEndsTheStartBeforeTheEngineIsAsked() {
+    @DisplayName("A file with what ZenBPM cannot run ends the start, naming file, module, process and every element, and nothing is deployed")
+    void anUnsupportedModelEndsTheStartBeforeAnythingIsDeployed() {
         final var failure = rootOf(assertThrows(Exception.class, () -> run("vanillabp.prioritized-adapters=zenbpm",
                 "vanillabp.adapters.zenbpm.rest-address=%s".formatted(address()),
                 "vanillabp.adapters.zenbpm.resources-location=%s".formatted(WITH_REFUSED_BPMN)).close()));
 
         assertAll(
                 () -> assertEquals(REFUSAL, failure.getMessage()),
-                () -> assertEquals(0, requests.get()));
+                () -> assertEquals(List.of("GET /v1/process-definitions"), requests));
     }
 
     @Test
@@ -99,7 +103,7 @@ class ZenBpmUnsupportedModelBootTest {
                     () -> assertTrue(context.isActive()),
                     () -> assertTrue(failure >= 0, log),
                     () -> assertTrue(log.indexOf("- SampleWorkflowService/Calculate (scriptTask)", failure) > 0, log),
-                    () -> assertEquals(0, requests.get()));
+                    () -> assertEquals(List.of("GET /v1/process-definitions"), requests));
         }
     }
 
