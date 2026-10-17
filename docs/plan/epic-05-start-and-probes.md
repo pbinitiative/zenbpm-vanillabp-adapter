@@ -301,7 +301,7 @@ what they showed is written here as well):
 
 ### S5.2.1 `ZenBpmInstanceCache` and the workflow probes
 
-- [ ] **Depends on:** S5.1.1.
+- [x] **Depends on:** S5.1.1.
 
 **Instructions**
 
@@ -360,14 +360,144 @@ activity).
 
 **Acceptance criteria**
 
-- [ ] A workflow of another module of the same engine with the same aggregate id is UNKNOWN.
-- [ ] No probe makes more than `scope.processIds().size() + 1` requests.
-- [ ] No answer other than ACTIVE comes from the workflow id; a `404` or `502` for it is never
-  UNKNOWN by itself.
+- [x] A workflow of another module of the same engine with the same aggregate id is UNKNOWN.
+  `ZenBpmWorkflowProbesTest#aWorkflowOfAnotherModuleIsUnknown`: the fake engine holds a running
+  `crm__Order` of `order-1`, and the probe of the scope `shop` searches only `shop__Order` and
+  `shop__Invoice` and refuses the key of the `crm__Order` instance; against the pinned engine,
+  `ZenBpmProbesIT#aWorkflowOfAnotherProcessIsUnknown` answers UNKNOWN for a running `probe-order`
+  of the same aggregate id asked with the scope `probe-invoice`, by business key and by key.
+- [x] No probe makes more than `scope.processIds().size() + 1` requests. The unit cases count what
+  the fake engine received: one request where the first process runs
+  (`#aRunningWorkflowIsFoundByItsBusinessKey`), one where the key answers
+  (`#theKeyOfARunningWorkflowIsActiveAtOnce`), two for a scope of two processes and nothing found
+  (`#noWorkflowIsUnknown`), three with a key which falls through (`#whateverElseTheKeyLeadsToFallsThroughToTheSearch`,
+  `#aWorkflowOfAnotherModuleIsUnknown`). The one exception, more instances of one aggregate and
+  process than a page holds with none of those read running, costs two more and is pinned by
+  `#moreInstancesThanAPageAreCountedByTheEngine` (fit-check item 1). The walk of the cache costs one
+  request per instance it does not hold and none for a second walk
+  (`ZenBpmInstanceCacheTest#theWorkflowIdIsTheRootKey`).
+- [x] No answer other than ACTIVE comes from the workflow id; a `404` or `502` for it is never
+  UNKNOWN by itself. `ZenBpmWorkflowProbesTest#whateverElseTheKeyLeadsToFallsThroughToTheSearch`
+  holds twelve keys which are no answer (a completed and a terminated instance, another process,
+  another aggregate, no business key and no id variable, `404`, `502`, `500`, an answer which cannot
+  be read, no key, an id of another BPMS, `0`): each answers COMPLETED where the search finds an
+  ended instance and UNKNOWN only where the search finds nothing;
+  `#aKeyOfAnEndedWorkflowFindsTheSecondOne` finds the running second workflow behind a key of the
+  ended first. Against the pinned engine, `ZenBpmProbesIT#anEndedWorkflowIsCompleted` answers
+  COMPLETED with the key of the ended instance, and `#aKeyOfNoPartitionFallsThroughToTheSearch`
+  answers ACTIVE and UNKNOWN as the search does for a key the engine answers `502` for.
+
+**Implemented 2026-10-17.** Core: `ZenBpmInstanceCache` (root package, built and held by the
+client factory as `ZenBpmClientFactory#instances`, bounded by `instance-cache-max-entries`) keeps
+the facts of an instance without its state, the id variable only once present, no `404`, and walks
+to the workflow id of decision 28. `ZenBpmProcessService` answers `awarenessOfWorkflow` in both
+forms (the key may only shorten an ACTIVE, then one business-key search per process of the scope),
+`awarenessOfWorkflowForRedispatch` in both forms (the search alone, from the millisecond the start
+was planned in), `canLocateWorkflows` with `true` and `workflowVisibilityDelay()` with
+`workflow-visibility-timeout` asked every quarter of a second; a failed search is BPMS_UNAVAILABLE,
+logged at WARN once until a probe is answered again. Decisions 25 and 28 and GAPS 20 and 22 entered
+the logs; the README's status paragraph and the architecture's section 4.2, class table and layout
+say what is built. Tests: new `ZenBpmInstanceCacheTest` (10), `ZenBpmWorkflowProbesTest` (28, of
+them 12 keys which are no answer and 4 failed searches), `ZenBpmProbesIT` (7, against the pinned
+image; fixtures `probes/probe-order.bpmn` with the task in an embedded sub-process and
+`probes/probe-caller.bpmn` calling it, both with their diagrams), `ZenBpmClientFactoryTest` 17 (the
+cache's bound, and the cache refused without clients), `ZenBpmProcessServiceTest` 12 (the workflow
+probe no longer among the calls which are not built yet). `TZ=Etc/UTC mvn clean install` on OpenJDK
+25.0.2 builds green with every integration test run and none skipped (engine test support 12 unit
+and 3 integration tests, core 751 unit and 67 integration tests, Spring Boot 9 and 2 integration
+tests, smoke test 35, Quarkus runtime 9, Quarkus deployment 46, coverage gate 35). The gate measures
+100 % of 17,728 instructions for Spring Boot and 100 % of 17,606 for Quarkus, and
+`bin/check-deploy-safety.sh` passes both runs (13 files deployed, nothing after a red gate).
+
+Seen to fail, each restored afterwards (25 of 25 mutants, against a green unmutated run of the same
+tests):
+- Step 1 of `awarenessOfWorkflow`: an instance of any state, of any process, of any aggregate
+  answering ACTIVE; the id variable not read; a failure of the key answering ACTIVE; an id which is
+  no positive number asked anyway (`ZenBpmWorkflowProbesTest`).
+- The search: going on after a process which runs; a COMPLETED forgotten for a later process; a
+  page taken as complete although it is not; a `failed` instance beyond the page not counted; an
+  incident not read as running; a failure answered UNKNOWN instead of BPMS_UNAVAILABLE.
+- The redispatch probe: a moment inside a millisecond sent as it is; the moment ignored.
+- The log and the window: every failure a WARN; an answer not resetting the WARN; another interval.
+- `ZenBpmInstanceCache`: a kept entry answering an id variable it does not hold; every variable
+  kept; the eldest inserted instead of the eldest used forgotten; no bound; a multi-instance child
+  read as a root; the walk going on through a call activity; no parent followed
+  (`ZenBpmInstanceCacheTest`).
+- `ZenBpmClientFactory`: the cache built with a fixed bound instead of `instance-cache-max-entries`
+  (`ZenBpmClientFactoryTest`).
+
 
 *Note from S2.2.1, 2026-10-13:* an instance key of a partition the engine does not have is answered
 502, not 404 (see the note under S2.2.2). Settled by step 2.1 above: the workflow-id lookup falls
 through to the search on a 502.
+
+*Fit check, 2026-10-17, decided by the Implementor.* Checked against `main` (`179401e`),
+`ADAPTER-AUTHORS.md` (section 4, 4.1 and 4.2), the type javadoc and the probes of the platform's
+`MigratableProcessService`, its `WorkflowLocator` (the walk over the prioritized adapters), the
+probes of Camunda 8's `Camunda8ProcessService`, and the engine at the pin `bdd795a3`: its source
+exported with `git archive`, and the pinned image run by the new `ZenBpmProbesIT`. The open
+questions 2 and 3 of the pipeline's brief were answered by its recommendations. What did not fit,
+and what was decided:
+
+1. **Step 2 reads a page, not `size=1` and the first item.** The engine applies `size` to every
+   partition and sorts by key (`ZenBpmRestClient#instances`), and an aggregate may carry a second
+   workflow of the same process once its first ended (`MigratableProcessService`). The first item
+   of a page of one is then the OLDER workflow, so "the first item's state" answers `COMPLETED`
+   while the second one runs, and the next operation is consumed as too late. The search asks for
+   100 per partition (`InstanceFilter.MAXIMUM_SIZE`), and any instance which runs makes the answer
+   `ACTIVE`, as Camunda 8's `anyMatch` does; where every match ended it is `COMPLETED`. Only where
+   the page does not hold every match (more than 100 instances of one aggregate and one process on
+   a partition) and none of those read runs, two more searches with `state=active` and
+   `state=failed` and `size=1` read the engine's count. The search asks no further process once one
+   runs. So a probe sends at most `scope.processIds().size() + 1` requests, except in that case,
+   which costs two more per such process (`ZenBpmWorkflowProbesTest#moreInstancesThanAPageAreCountedByTheEngine`).
+2. **`failed` counts as running in both steps.** The engine marks an instance `failed` where a run
+   ended with an error, and still cancels it (`CancelInstanceByKey` in `pkg/bpmn/engine_api.go`
+   takes `active` and `failed`) and resumes it when the incident is resolved, so an operation sent
+   to it is taken.
+3. **Where the cache lives, and its two `facts` forms.** `ZenBpmInstanceCache` is in the root
+   package beside `ZenBpmDeployedProcesses`, and the client factory of the adapter id builds and
+   holds it (`ZenBpmClientFactory#instances`, bounded by `instance-cache-max-entries`, `0` keeping
+   nothing), so the job handler of S6.1.1 reads the same cache without new wiring. `facts(key)` keeps
+   no variable; `facts(key, idVariableName)` keeps the id variable, and a kept entry answers it only
+   where the variable is present, because a workflow the engine starts gets its id written by a
+   `PATCH` after its start (decision 25) and an id once there never changes. `workflowIdOf(key)`
+   answers an `OptionalLong`, empty where an instance on the way is unknown, so S6.1.1 can use it as
+   it is. The walk keeps no result of its own: it reads the kept facts, so a second walk asks
+   nothing.
+4. **Open question 2 (state not among the facts), taken.** The facts hold no state, so step 1 reads
+   the instance with `rest.instance(key)` itself and does not go through the cache.
+5. **Open question 3 (logged once per adapter id), taken.** The first failure of a probe after an
+   answer is a WARN, the next ones DEBUG until a probe is answered again; the process service is
+   built once per adapter id, and the state is shared by every probe which asks the engine
+   (`#theFirstFailureAfterAnAnswerIsAWarn`).
+6. **The key nobody holds.** The brief and the note under S2.2.1 name `1 << 12` for the key the
+   engine answers `502` for. `1 << 12` is the oldest key of partition 1, which exists and answers
+   `404` (`ContractFixtures.KEY_NOBODY_HOLDS`); the `502` comes for `1`, a key of partition 0, which
+   holds what every partition shares (`ContractFixtures.KEY_OF_NO_PARTITION`, `zenflake.GetPartitionId`).
+   `ZenBpmProbesIT` uses `1`.
+7. **An id which is no positive number** (a key of another BPMS, `0`) skips step 1 without a request:
+   every key the engine hands out is positive.
+8. **The moment of the redispatch probe.** The engine compares whole milliseconds
+   (`createdFrom.UnixMilli()` in `GetProcessInstances` of `internal/rest/server.go`), so a
+   `plannedAt` inside a millisecond is moved to the next one: an instance created earlier in that
+   millisecond does not count, which costs a duplicate at worst and never a lost workflow. The answer
+   is `ACTIVE` or `COMPLETED` by state, as step 3 says (Camunda 8 answers `ACTIVE` for both; the core
+   skips the start on either). The probe never asks the key.
+9. **`workflowVisibilityDelay()`.** The SPI has no `WorkflowVisibilityDelay.of`: the probe answers
+   `new WorkflowVisibilityDelay(workflow-visibility-timeout, PT0.25S)`, and a timeout of zero gives
+   a window which does not wait. The engine reads instances, jobs and searches on a follower of the
+   partition (`GetPartitionFollower` in `ZenNode.GetProcessInstance` of `internal/cluster/node.go`,
+   `ConsistencyLevel_NONE` in `partition_persistence.go`), which is GAPS 20.
+10. **An adapter id without clients** answers every probe with the message of its validation, as
+    the handlers which are not built yet do, and not with `BPMS_UNAVAILABLE`: no engine is
+    configured which could be away, and the message names the keys to set.
+11. **The tests of the probes** are a class of their own, `ZenBpmWorkflowProbesTest`, beside
+    `ZenBpmProcessServiceTest`, which would otherwise mix the start with every probe.
+12. **Decisions and gaps.** Decisions 25 and 28 and GAPS 20 and 22 enter `DECISIONS.md` and
+    `GAPS.md` under the plan's numbers; decision 25 says what is true at the pin and marks the
+    start marker of E9 as planned. No open pull request claimed a number (`gh pr list --state
+    open` is empty).
 
 ### S5.2.2 Task probes, `openTaskCount`
 

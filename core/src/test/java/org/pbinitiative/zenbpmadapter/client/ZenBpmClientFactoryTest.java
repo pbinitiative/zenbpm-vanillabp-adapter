@@ -66,7 +66,8 @@ class ZenBpmClientFactoryTest {
                 Thread.sleep(A_MOMENT);
                 assertAll(
                         () -> assertEquals(List.of(), engine.requests(), "REST requests while building"),
-                        () -> assertEquals(0, grpc.accepted(), "gRPC connections while building"));
+                        () -> assertEquals(0, grpc.accepted(), "gRPC connections while building"),
+                        () -> assertSame(factory.instances(), factory.instances()));
 
                 // the two counters do count: the first call and the first subscription arrive
                 factory
@@ -103,6 +104,35 @@ class ZenBpmClientFactoryTest {
 
         try (var factory = new ZenBpmClientFactory(ADAPTER_ID, configuration, () -> "shop")) {
             assertEquals("node-7", factory.clientId());
+        }
+    }
+
+    @Test
+    @DisplayName("The instance cache holds as many instances as 'instance-cache-max-entries' says")
+    void theInstanceCacheIsBoundedByTheConfiguration() {
+        try (var engine = FakeEngine.started()) {
+            List.of(4503599627370501L, 4503599627370502L)
+                    .forEach(key -> engine.answers("GET", "/v1/process-instances/%d".formatted(key), 200, """
+                            {"key": %d, "processDefinitionKey": 4503599627370498, "bpmnProcessId": "Order",
+                             "version": 1, "createdAt": "2026-10-17T10:00:00Z", "state": "active",
+                             "processType": "default", "variables": {}}""".formatted(key)));
+            final var oneEntry = configuration(engine.address());
+            oneEntry.setInstanceCacheMaxEntries(1);
+
+            try (var factory = new ZenBpmClientFactory(ADAPTER_ID, oneEntry, () -> "shop")) {
+                final var instances = factory.instances();
+                instances.facts(4503599627370501L);
+                instances.facts(4503599627370501L);
+                instances.facts(4503599627370502L);
+                instances.facts(4503599627370501L);
+            }
+
+            assertEquals(3, engine
+                    .requests()
+                    .size(),
+                    () -> engine
+                            .requests()
+                            .toString());
         }
     }
 
@@ -346,6 +376,8 @@ class ZenBpmClientFactoryTest {
                 () -> assertEquals(message, assertThrows(IllegalStateException.class, factory::rest).getMessage()),
                 () -> assertEquals(message, assertThrows(IllegalStateException.class, factory::stream).getMessage()),
                 () -> assertEquals(message, assertThrows(IllegalStateException.class, factory::executor).getMessage()),
+                () -> assertEquals(message, assertThrows(IllegalStateException.class, factory::instances)
+                        .getMessage()),
                 () -> assertEquals(message, assertThrows(IllegalStateException.class, factory::clientId).getMessage()));
         factory.close();
         assertEquals(Set.of(), factory.getOpenWorkflowModules());

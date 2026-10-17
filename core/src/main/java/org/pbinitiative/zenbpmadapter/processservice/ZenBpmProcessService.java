@@ -6,18 +6,26 @@ package org.pbinitiative.zenbpmadapter.processservice;
 
 import java.io.InputStream;
 import java.time.Duration;
+import java.time.Instant;
+import java.time.temporal.ChronoUnit;
 import java.util.Collections;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.OptionalLong;
+import java.util.Set;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 import org.pbinitiative.zenbpmadapter.client.ZenBpmAdapterConfiguration;
 import org.pbinitiative.zenbpmadapter.client.ZenBpmApiException;
 import org.pbinitiative.zenbpmadapter.client.ZenBpmClientFactory;
 import org.pbinitiative.zenbpmadapter.client.ZenBpmErrors;
+import org.pbinitiative.zenbpmadapter.client.ZenBpmRestClient;
 import org.pbinitiative.zenbpmadapter.client.ZenBpmTimeToLive;
 import org.pbinitiative.zenbpmadapter.client.api.CreateInstanceRequest;
+import org.pbinitiative.zenbpmadapter.client.api.InstanceFilter;
 import org.pbinitiative.zenbpmadapter.client.api.ProcessInstanceRef;
 
 import io.vanillabp.integration.adapter.spi.AdapterCollaborators;
@@ -28,6 +36,7 @@ import io.vanillabp.integration.adapter.spi.PhaseOperationHandler;
 import io.vanillabp.integration.adapter.spi.PhaseTwoRequest;
 import io.vanillabp.integration.adapter.spi.WorkflowAwareness;
 import io.vanillabp.integration.adapter.spi.WorkflowScope;
+import io.vanillabp.integration.adapter.spi.WorkflowVisibilityDelay;
 import io.vanillabp.integration.adapter.spi.values.ValueDirection;
 import io.vanillabp.integration.adapter.spi.values.ValueTypeVerdict;
 import io.vanillabp.integration.spi.AggregatePersistenceAware;
@@ -40,14 +49,16 @@ import lombok.extern.slf4j.Slf4j;
  * What the core asks of one ZenBPM adapter id at runtime: one instance per configured adapter
  * id, built by the platform modules.
  * <p>
- * This version of the adapter starts workflows and says what the engine does with the values a
- * workflow carries. It serves every operation the core requires of each adapter, so the core
- * accepts it while the application starts. Every other handler, every probe and every method of
- * the viewer/history API throws: where the adapter id has no clients, the message of its
- * validation, which names the keys to set; otherwise an {@link UnsupportedOperationException}
- * which says that the call is not built yet. Nothing pretends to have done the work. The
- * operations a BPMS may lack, sending a signal and telling the BPMS about a changed aggregate, are
- * left out, so the core answers them as not supported.
+ * This version of the adapter starts workflows, answers the probes for the workflow of an
+ * aggregate and says what the engine does with the values a workflow carries. It serves every
+ * operation the core requires of each adapter, so the core accepts it while the application
+ * starts. Every other handler, the probes for a task and every method of the viewer/history API
+ * throw: where the adapter id has no clients, the message of its validation, which names the keys
+ * to set; otherwise an {@link UnsupportedOperationException} which says that the call is not built
+ * yet. Nothing pretends to have done the work. The operations a BPMS may lack, sending a signal and
+ * telling the BPMS about a changed aggregate, are left out, so the core answers them as not
+ * supported. A probe of an adapter id without clients throws the message of its validation as
+ * well.
  * <p>
  * A start asks the engine nothing in phase one, because there is nothing to ask before an
  * instance exists. Phase two starts the latest version of the process under the id the engine
@@ -65,6 +76,12 @@ import lombok.extern.slf4j.Slf4j;
 @SuppressWarnings("LombokGetterMayBeUsed")
 public class ZenBpmProcessService<A> implements MigratableProcessService<A> {
 
+    /**
+     * How often the core asks again while it waits for a workflow to become visible. Not
+     * configurable: an operator may have to raise the window, not the rate.
+     */
+    private static final Duration VISIBILITY_PROBE_INTERVAL = Duration.ofMillis(250);
+
     private final String adapterId;
 
     private final ZenBpmClientFactory factory;
@@ -74,6 +91,11 @@ public class ZenBpmProcessService<A> implements MigratableProcessService<A> {
     private final HistoryTimeToLive historyTimeToLive;
 
     private final Map<PhaseOperation, PhaseOperationHandler<A>> phaseOperations;
+
+    /**
+     * Whether the last probe which asked the engine failed.
+     */
+    private final AtomicBoolean probesFail = new AtomicBoolean();
 
     /**
      * Builds the process service of one adapter id.
@@ -204,13 +226,178 @@ public class ZenBpmProcessService<A> implements MigratableProcessService<A> {
         throw notBuiltYet("asking for task '%s'".formatted(taskId));
     }
 
+    /**
+     * Whether the engine holds the workflow of an aggregate in the given scope, where VanillaBP
+     * holds no id of the workflow: the search of
+     * {@link #awarenessOfWorkflow(WorkflowScope, AggregatePersistenceAware, Object, String)}.
+     *
+     * @param scope The workflow module and the processes asked about
+     * @param aggregatePersistence The persistence of the aggregate
+     * @param workflowAggregateId The id of the aggregate
+     * @return {@link WorkflowAwareness#ACTIVE} where a workflow of the scope runs,
+     *         {@link WorkflowAwareness#COMPLETED} where every one of them ended,
+     *         {@link WorkflowAwareness#UNKNOWN_TO_BPMS} where the engine holds none, and
+     *         {@link WorkflowAwareness#BPMS_UNAVAILABLE} where it could not be asked
+     */
     @Override
     public WorkflowAwareness awarenessOfWorkflow(
         final WorkflowScope scope,
         final AggregatePersistenceAware<A> aggregatePersistence,
         final Object workflowAggregateId
     ) {
-        throw notBuiltYet("asking for the workflow of an aggregate");
+        return awarenessOfWorkflow(scope, aggregatePersistence, workflowAggregateId, null);
+    }
+
+    /**
+     * Whether the engine holds the workflow of an aggregate in the given scope.
+     * <p>
+     * Where VanillaBP holds the workflow's id, the engine is asked for that instance first, because
+     * it answers by key at once while a node which lags behind may not find a young workflow by
+     * search yet. The key may only make a YES shorter: an instance which runs, of a process of the
+     * scope, whose business key or id variable is the aggregate's id, is
+     * {@link WorkflowAwareness#ACTIVE}. Everything else the key leads to falls through to the
+     * search and is never the answer: another state, because an aggregate may carry a second
+     * workflow once its first ended and the key may name the first; another process or another
+     * aggregate, because the core hands the same key to every adapter it asks; a <code>404</code>,
+     * which cannot tell an ended workflow from one the engine never held; a <code>502</code>, which
+     * the engine answers for a key of a partition it does not have; and any failure. A workflow the
+     * engine started has no business key, so the key is the only way to find it, see decision 25
+     * in the repository's DECISIONS.md.
+     * <p>
+     * The search asks for the instances of the aggregate's business key once per process of the
+     * scope, and asks no more once one of them runs. One which runs or carries an incident is
+     * {@link WorkflowAwareness#ACTIVE}; where all of them ended, completed or terminated, the
+     * answer is {@link WorkflowAwareness#COMPLETED}. So no probe sends more requests than the scope
+     * has processes and one, except where an aggregate has more instances of one process than a
+     * page holds and none of those read runs: then the engine counts the running ones in two more.
+     * A search which fails is {@link WorkflowAwareness#BPMS_UNAVAILABLE}, never
+     * {@link WorkflowAwareness#UNKNOWN_TO_BPMS}; the first failure after an answer is logged at
+     * WARN, the next ones at DEBUG until the engine answers a probe again.
+     *
+     * @param scope The workflow module and the processes asked about
+     * @param aggregatePersistence The persistence of the aggregate, which names its id variable
+     * @param workflowAggregateId The id of the aggregate
+     * @param workflowId The key of the workflow's root instance VanillaBP holds, <code>null</code>
+     *            where it holds none
+     * @return {@link WorkflowAwareness#ACTIVE} where a workflow of the scope runs,
+     *         {@link WorkflowAwareness#COMPLETED} where every one of them ended,
+     *         {@link WorkflowAwareness#UNKNOWN_TO_BPMS} where the engine holds none, and
+     *         {@link WorkflowAwareness#BPMS_UNAVAILABLE} where it could not be asked
+     */
+    @Override
+    public WorkflowAwareness awarenessOfWorkflow(
+        final WorkflowScope scope,
+        final AggregatePersistenceAware<A> aggregatePersistence,
+        final Object workflowAggregateId,
+        final String workflowId
+    ) {
+        final var rest = clients();
+        final var scopedIds = scopedIdsOf(scope);
+        final var aggregateId = String.valueOf(workflowAggregateId);
+        if (theEngineRunsTheWorkflowOfTheKey(rest, scopedIds, aggregatePersistence, aggregateId, workflowId)) {
+            return WorkflowAwareness.ACTIVE;
+        }
+        try {
+            final var found = awarenessByBusinessKey(rest, scopedIds, aggregateId, null);
+            probeAnswered();
+            return found;
+        } catch (final RuntimeException failure) {
+            return unavailable("the workflow of aggregate '%s'".formatted(aggregateId), failure);
+        }
+    }
+
+    /**
+     * Whether the engine holds a workflow of an aggregate in the given scope, before a start is
+     * sent again, counting every workflow of the aggregate: the probe of
+     * {@link #awarenessOfWorkflowForRedispatch(WorkflowScope, AggregatePersistenceAware, Object, Instant)}
+     * for an entry which does not say when it was planned.
+     *
+     * @param scope The workflow module and the processes asked about
+     * @param aggregatePersistence The persistence of the aggregate
+     * @param workflowAggregateId The id of the aggregate
+     * @return {@link WorkflowAwareness#ACTIVE} or {@link WorkflowAwareness#COMPLETED} where the
+     *         engine holds a workflow of the scope, {@link WorkflowAwareness#UNKNOWN_TO_BPMS} where
+     *         it holds none, and {@link WorkflowAwareness#BPMS_UNAVAILABLE} where it could not be
+     *         asked
+     */
+    @Override
+    public WorkflowAwareness awarenessOfWorkflowForRedispatch(
+        final WorkflowScope scope,
+        final AggregatePersistenceAware<A> aggregatePersistence,
+        final Object workflowAggregateId
+    ) {
+        return awarenessOfWorkflowForRedispatch(scope, aggregatePersistence, workflowAggregateId, null);
+    }
+
+    /**
+     * Whether the engine holds a workflow of an aggregate in the given scope which started at or
+     * after the moment its start was planned, asked before that start is sent again. An answer
+     * other than {@link WorkflowAwareness#UNKNOWN_TO_BPMS} skips the start, so this probe is never
+     * optimistic: it asks only the search, whose failure is
+     * {@link WorkflowAwareness#BPMS_UNAVAILABLE}, and never the key of a workflow.
+     * <p>
+     * An aggregate may carry a second workflow once its first ended, so only an instance created at
+     * or after <code>plannedAt</code> counts, ended ones included. The engine compares whole
+     * milliseconds of its own clock; a moment inside a millisecond is moved to the next one, so an
+     * instance created earlier in that millisecond does not count. That costs a second workflow at
+     * worst, which at-least-once delivery allows, and never a lost one. For the same reason the
+     * moment is not moved back for a clock which is behind. A workflow started by a message has no
+     * business key and is not found here.
+     *
+     * @param scope The workflow module and the processes asked about
+     * @param aggregatePersistence The persistence of the aggregate
+     * @param workflowAggregateId The id of the aggregate
+     * @param plannedAt When the start was planned, <code>null</code> where nobody knows: then
+     *            every workflow of the aggregate counts
+     * @return {@link WorkflowAwareness#ACTIVE} or {@link WorkflowAwareness#COMPLETED} where the
+     *         engine holds such a workflow, {@link WorkflowAwareness#UNKNOWN_TO_BPMS} where it holds
+     *         none, and {@link WorkflowAwareness#BPMS_UNAVAILABLE} where it could not be asked
+     */
+    @Override
+    public WorkflowAwareness awarenessOfWorkflowForRedispatch(
+        final WorkflowScope scope,
+        final AggregatePersistenceAware<A> aggregatePersistence,
+        final Object workflowAggregateId,
+        final Instant plannedAt
+    ) {
+        final var rest = clients();
+        final var scopedIds = scopedIdsOf(scope);
+        final var aggregateId = String.valueOf(workflowAggregateId);
+        try {
+            final var found = awarenessByBusinessKey(rest, scopedIds, aggregateId, createdFromOf(plannedAt));
+            probeAnswered();
+            return found;
+        } catch (final RuntimeException failure) {
+            return unavailable("the workflow of aggregate '%s' before its start is sent again".formatted(aggregateId),
+                    failure);
+        }
+    }
+
+    /**
+     * The probe asks the engine, so its answer is evidence and not a guess.
+     *
+     * @return <code>true</code>
+     */
+    @Override
+    public boolean canLocateWorkflows() {
+        return true;
+    }
+
+    /**
+     * How long a workflow may stay invisible to the search: <code>workflow-visibility-timeout</code>,
+     * asked again every quarter of a second. The engine answers a read from the database of the
+     * node it reaches without waiting for the partition's leader, so a node which lags behind may
+     * not find a workflow which was just started. The window asked for one workflow is the same,
+     * because a <code>404</code> for a key the engine just answered may come from such a node as
+     * well.
+     *
+     * @return The window, none where the timeout is zero
+     */
+    @Override
+    public WorkflowVisibilityDelay workflowVisibilityDelay() {
+        return new WorkflowVisibilityDelay(factory
+                .configuration()
+                .getWorkflowVisibilityTimeout(), VISIBILITY_PROBE_INTERVAL);
     }
 
     @Override
@@ -336,6 +523,174 @@ public class ZenBpmProcessService<A> implements MigratableProcessService<A> {
                             .workflowAggregateId(), start.bpmnProcessId(), request.workflowModuleId(),
                             ZenBpmAdapterConfiguration.propertyKey(adapterId, "deployment-failure")), refusal);
         }
+    }
+
+    // the key only shortens a YES, so whatever else it leads to, a failure included, is left to
+    // the search
+    private boolean theEngineRunsTheWorkflowOfTheKey(
+        final ZenBpmRestClient rest,
+        final Set<String> scopedIds,
+        final AggregatePersistenceAware<A> aggregatePersistence,
+        final String aggregateId,
+        final String workflowId
+    ) {
+        final var key = keyOf(workflowId);
+        if (key.isEmpty()) {
+            return false;
+        }
+        try {
+            final var idVariableName = aggregatePersistence.getAggregateIdName();
+            return rest
+                    .instance(key.getAsLong())
+                    .filter(instance -> isRunning(instance.state()))
+                    .filter(instance -> scopedIds.contains(instance.bpmnProcessId()))
+                    .filter(instance -> isTheWorkflowOf(aggregateId, idVariableName, instance))
+                    .isPresent();
+        } catch (final RuntimeException failure) {
+            log.debug(
+                    "ZenBPM[{}]: the engine could not be asked for workflow '{}' of aggregate '{}', so the search answers",
+                    adapterId, workflowId, aggregateId, failure);
+            return false;
+        }
+    }
+
+    private WorkflowAwareness awarenessByBusinessKey(
+        final ZenBpmRestClient rest,
+        final Set<String> scopedIds,
+        final String aggregateId,
+        final Instant createdFrom
+    ) {
+        var answer = WorkflowAwareness.UNKNOWN_TO_BPMS;
+        for (final var scopedId : scopedIds) {
+            final var found = awarenessAmong(rest, InstanceFilter
+                    .anyInstance()
+                    .withBusinessKey(aggregateId)
+                    .withBpmnProcessId(scopedId)
+                    .withCreatedFrom(createdFrom));
+            if (found == WorkflowAwareness.ACTIVE) {
+                return found;
+            }
+            if (found == WorkflowAwareness.COMPLETED) {
+                answer = found;
+            }
+        }
+        return answer;
+    }
+
+    // one page holds every instance of an aggregate but in a case nobody plans for; where it does
+    // not and none of those read runs, the engine counts the running ones
+    private static WorkflowAwareness awarenessAmong(
+        final ZenBpmRestClient rest,
+        final InstanceFilter filter
+    ) {
+        final var page = rest.instances(filter);
+        if (page.totalCount() == 0) {
+            return WorkflowAwareness.UNKNOWN_TO_BPMS;
+        }
+        if (page
+                .items()
+                .stream()
+                .anyMatch(instance -> isRunning(instance.state()))) {
+            return WorkflowAwareness.ACTIVE;
+        }
+        if (page.last()) {
+            return WorkflowAwareness.COMPLETED;
+        }
+        final var active = rest
+                .instances(filter
+                        .withState(ProcessInstanceRef.State.ACTIVE)
+                        .withSize(1))
+                .totalCount();
+        final var failed = rest
+                .instances(filter
+                        .withState(ProcessInstanceRef.State.FAILED)
+                        .withSize(1))
+                .totalCount();
+        return (active + failed) > 0 ? WorkflowAwareness.ACTIVE : WorkflowAwareness.COMPLETED;
+    }
+
+    // an instance with an incident can still be acted on: an operator resolves it, or it is
+    // cancelled
+    private static boolean isRunning(final ProcessInstanceRef.State state) {
+        return (state == ProcessInstanceRef.State.ACTIVE) || (state == ProcessInstanceRef.State.FAILED);
+    }
+
+    private static boolean isTheWorkflowOf(
+        final String aggregateId,
+        final String idVariableName,
+        final ProcessInstanceRef instance
+    ) {
+        if (aggregateId.equals(instance.businessKey())) {
+            return true;
+        }
+        final var idVariable = instance
+                .variables()
+                .get(idVariableName);
+        return (idVariable != null) && aggregateId.equals(String.valueOf(idVariable));
+    }
+
+    // every key the engine hands out is a positive number, so anything else is the id of another
+    // BPMS
+    private static OptionalLong keyOf(final String id) {
+        if (id == null) {
+            return OptionalLong.empty();
+        }
+        try {
+            final var key = Long.parseLong(id);
+            return key > 0 ? OptionalLong.of(key) : OptionalLong.empty();
+        } catch (final NumberFormatException notANumber) {
+            return OptionalLong.empty();
+        }
+    }
+
+    // the engine reads whole milliseconds, so a moment inside one is moved to the next
+    private static Instant createdFromOf(final Instant plannedAt) {
+        if (plannedAt == null) {
+            return null;
+        }
+        final var millisecond = plannedAt.truncatedTo(ChronoUnit.MILLIS);
+        return millisecond.equals(plannedAt) ? plannedAt : millisecond.plusMillis(1);
+    }
+
+    private Set<String> scopedIdsOf(final WorkflowScope scope) {
+        final var scopedIds = new LinkedHashSet<String>();
+        scope
+                .bpmnProcessIds()
+                .forEach(bpmnProcessId -> scopedIds.add(collaborators
+                        .scoping()
+                        .scopedProcessId(scope.workflowModuleId(), bpmnProcessId, adapterId)));
+        return scopedIds;
+    }
+
+    private void probeAnswered() {
+        probesFail.set(false);
+    }
+
+    // an engine which is away fails every probe, so its first failure is worth a WARN and the
+    // others are not, until the engine answered again
+    private WorkflowAwareness unavailable(
+        final String subject,
+        final RuntimeException failure
+    ) {
+        if (probesFail.compareAndSet(false, true)) {
+            log.warn(
+                    "ZenBPM[{}]: the engine could not be asked for {}, so the probe reports BPMS_UNAVAILABLE; further failures are logged at DEBUG until the engine answers a probe again",
+                    adapterId, subject, failure);
+        } else {
+            log.debug("ZenBPM[{}]: the engine could not be asked for {}, so the probe reports BPMS_UNAVAILABLE",
+                    adapterId, subject, failure);
+        }
+        return WorkflowAwareness.BPMS_UNAVAILABLE;
+    }
+
+    // an adapter id without clients answers with the message of its validation, which names the
+    // keys to set
+    private ZenBpmRestClient clients() {
+        final var unconfigured = factory.unconfiguredMessage();
+        if (unconfigured.isPresent()) {
+            throw new IllegalStateException(unconfigured.get());
+        }
+        return factory.rest();
     }
 
     // an adapter id without clients answers with the message of its validation, which names the

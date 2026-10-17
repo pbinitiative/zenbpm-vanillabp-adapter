@@ -18,6 +18,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Supplier;
 
 import org.pbinitiative.zenbpmadapter.ZenBpmDeployedProcesses;
+import org.pbinitiative.zenbpmadapter.ZenBpmInstanceCache;
 import org.pbinitiative.zenbpmadapter.client.api.EngineStatus;
 
 import lombok.extern.slf4j.Slf4j;
@@ -65,6 +66,8 @@ public class ZenBpmClientFactory implements AutoCloseable {
     private final ZenBpmJobStream stream;
 
     private final ZenBpmExecutor executor;
+
+    private final ZenBpmInstanceCache instances;
 
     /**
      * The engine's address as the clients were built with it; <code>null</code> where the
@@ -187,6 +190,8 @@ public class ZenBpmClientFactory implements AutoCloseable {
         this.rest = rest;
         this.stream = stream;
         this.executor = executor;
+        this.instances = rest == null ? null : new ZenBpmInstanceCache(rest, configuration
+                .getInstanceCacheMaxEntries());
         this.engineAddress = rest == null ? null : configuration.engineAddress();
     }
 
@@ -294,6 +299,19 @@ public class ZenBpmClientFactory implements AutoCloseable {
     public ZenBpmExecutor executor() {
         requireConfigured();
         return executor;
+    }
+
+    /**
+     * What the engine said about the process instances of this adapter id, which every service of
+     * the adapter id reads through this factory, bounded by <code>instance-cache-max-entries</code>.
+     *
+     * @return The cache
+     * @throws IllegalStateException With the message of the validation where the factory has no
+     *             clients
+     */
+    public ZenBpmInstanceCache instances() {
+        requireConfigured();
+        return instances;
     }
 
     /**

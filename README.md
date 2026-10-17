@@ -69,7 +69,14 @@ whole seconds where a level sets it, and reports the key and the version of the 
 start of a process the engine does not hold is not repeated (decisions 30 and 31 in
 [`DECISIONS.md`](./DECISIONS.md)). The adapter tells the platform what the engine does with the type
 of a value which travels: a whole number above 2^53, a `BigDecimal`, a character and a text of
-another type than `String` come back changed. It runs no task yet: a job which arrives is logged at
+another type than `String` come back changed. The probe which asks for the workflow of an aggregate
+first asks the engine for the instance whose key the platform holds, which may only make an `ACTIVE`
+answer shorter (decision 25), and otherwise searches the aggregate's business key in each process
+of the scope; a search which fails answers that the engine is unavailable, never that it holds
+nothing. The probe asked before a start is sent again counts only the workflows created from the
+millisecond the start was planned in, and a workflow may stay invisible to the search for
+`workflow-visibility-timeout`. The workflow id of an instance is the key of its root instance, or
+of the instance a call activity started (decision 28). It runs no task yet: a job which arrives is logged at
 WARN and left to its lock, after which the engine hands it out again. What is built next, and in
 which order, is the implementation plan in [`docs/`](docs/README.md).
 
