@@ -214,6 +214,12 @@ failed call into `zenerr.TechnicalError`. REST takes bodies up to 10 MiB
 the API, and no job above that size reaches the job stream today. The stream takes jobs of any size
 all the same (S2.3.1).
 
+*Note from S5.1.1, 2026-10-17.* Recorded as GAPS 26. The adapter does not measure the variables
+(fit check of S5.1.1, open question 3), the `500` stays repeatable, and
+`ZenBpmErrorsIT#aStartLargerThanTheEnginePassesOnIsRepeatable` pins it against the image, so the
+adapter twin starts by turning that test round. Decision 10 was superseded by decision 30, which
+reads `413` as permanent as well.
+
 ## E13.14 The root instance key on a job
 
 The adapter reports the root instance key of a task's own process as the workflow id (decision 28).

@@ -9,6 +9,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
 
 import java.time.Duration;
+import java.util.List;
 import java.util.Optional;
 
 import org.eclipse.microprofile.config.ConfigProvider;
@@ -17,11 +18,16 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.junit.jupiter.api.extension.RegisterExtension;
 import org.pbinitiative.zenbpmadapter.client.ZenBpmAdapterConfiguration;
+import org.pbinitiative.zenbpmadapter.processservice.ZenBpmProcessService;
 import org.pbinitiative.zenbpmadapter.quarkus.runtime.VanillaBpZenBpmProperties;
 
 import io.quarkus.test.QuarkusExtensionTest;
 import io.smallrye.config.SmallRyeConfig;
+import io.vanillabp.integration.adapter.spi.MigratableProcessService;
 import io.vanillabp.integration.test.utils.SuppressOutputExtension;
+import jakarta.enterprise.inject.Any;
+import jakarta.enterprise.inject.Instance;
+import jakarta.inject.Inject;
 
 /**
  * The keys an application may set below the adapter level are read from the four levels on Quarkus,
@@ -65,6 +71,10 @@ class ZenBpmOverlayResolutionTest {
                     + ".tasks.ship.adapters.zenbpm.retry-backoff", "PT1S")
             .overrideConfigKey(WORKFLOW
                     + ".tasks.ship.adapters.zenbpm.max-redeliveries", "1");
+
+    @Inject
+    @Any
+    Instance<List<MigratableProcessService<Object>>> processServices;
 
     @Test
     @DisplayName("retry-backoff is read from the most specific of the four levels which sets it")
@@ -114,6 +124,21 @@ class ZenBpmOverlayResolutionTest {
                 () -> assertEquals(Duration.ofHours(4), overlay.historyTimeToLiveFor("other-module",
                         "SampleWorkflowService", "zenbpm")),
                 () -> assertNull(overlay.historyTimeToLiveFor("smoke-app", "SampleWorkflowService", "other")));
+    }
+
+    @Test
+    @DisplayName("The process service sends the history-time-to-live of the workflow, else of its module, else of the adapter id")
+    void theProcessServiceSendsTheResolvedHistoryTimeToLive() {
+        final ZenBpmProcessService<?> processService = SmokeApplication.only(processServices,
+                ZenBpmProcessService.class);
+
+        assertAll(
+                () -> assertEquals(Optional.of(Duration.ofHours(2)), processService.historyTimeToLiveOf("smoke-app",
+                        "SampleWorkflowService")),
+                () -> assertEquals(Optional.of(Duration.ofHours(3)), processService.historyTimeToLiveOf("smoke-app",
+                        "OtherWorkflow")),
+                () -> assertEquals(Optional.of(Duration.ofHours(4)), processService.historyTimeToLiveOf(
+                        "other-module", "SampleWorkflowService")));
     }
 
     @Test

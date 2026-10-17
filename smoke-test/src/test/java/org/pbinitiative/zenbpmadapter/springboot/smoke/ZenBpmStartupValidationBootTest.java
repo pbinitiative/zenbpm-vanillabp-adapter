@@ -5,6 +5,7 @@
 package org.pbinitiative.zenbpmadapter.springboot.smoke;
 
 import static org.junit.jupiter.api.Assertions.assertAll;
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -290,11 +291,11 @@ class ZenBpmStartupValidationBootTest {
      * platform reports a missing zone in the same section wherever the JVM runs on UTC, as on CI.
      */
     @Test
-    @DisplayName("A complete adapter id boots with nothing in the block, its client id starts with the application's name, and a use of it says that it is not built yet")
+    @DisplayName("A complete adapter id boots with nothing in the block, its client id starts with the application's name, and phase one of a start passes, because it has nothing to ask the engine")
     void aCompleteAdapterIdBootsSilently(final CapturedOutput output) {
         try (var context = run("vanillabp.prioritized-adapters=zenbpm",
                 "vanillabp.adapters.zenbpm.rest-address=http://localhost:8080")) {
-            final var use = assertThrows(RuntimeException.class, () -> startAWorkflow(context));
+            assertDoesNotThrow(() -> startAWorkflow(context));
             final var log = output.getAllOfThisTest();
 
             final var factory = context
@@ -308,10 +309,7 @@ class ZenBpmStartupValidationBootTest {
                             .startsWith("smoke-test-zenbpm-"), factory.clientId()),
                     () -> assertTrue(StartupBlock.isWritten(log), log),
                     () -> assertEquals("", StartupBlock.configuration(log), log),
-                    () -> assertFalse(log.contains(SCOPE), log),
-                    () -> assertEquals(
-                            "ZenBPM adapter 'zenbpm': phase one of START_WORKFLOW is implemented in a later story",
-                            use.getMessage()));
+                    () -> assertFalse(log.contains(SCOPE), log));
         }
     }
 

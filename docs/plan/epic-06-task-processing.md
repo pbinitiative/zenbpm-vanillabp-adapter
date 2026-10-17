@@ -103,6 +103,11 @@ again. Decision 9 accepts that second delivery. Still, the dispatcher should not
 for a job whose `lock_until` has passed, but drop it and leave it to the engine to hand it out
 again; the retry budget of instruction 4 reads the same `lock_until`.
 
+*Note from S5.1.1, 2026-10-17.* A start reports the version of its instance as
+`String.valueOf(version)` of the create answer (an `int`, written in decimal digits), so
+`processVersion` is written the same way from `facts.version`; otherwise the start row and the
+deliveries of one workflow name two versions (`ADAPTER-AUTHORS.md` 2.2).
+
 *Found by S2.2.2, 2026-10-14.* `isGoneJob` reads calls under `/v1/jobs/{key}` only, so it does not
 catch the `PATCH` of instruction 3. Read in the engine's code at `bdd795a3` (not measured):
 `UpdateProcessInstanceVariables` answers `409` for an instance which is neither active nor failed,

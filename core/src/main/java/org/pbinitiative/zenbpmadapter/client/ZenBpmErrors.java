@@ -19,7 +19,7 @@ import java.util.regex.Pattern;
  * or whether the engine could not be asked at all.
  * <p>
  * Every answer is read from the status, the method and the path of the call, never from the
- * engine's message, which any version of the engine may reword, see decision 10 in the
+ * engine's message, which any version of the engine may reword, see decision 30 in the
  * repository's DECISIONS.md. Each question walks the chain of causes, so a failure wrapped by a
  * {@link java.util.concurrent.CompletionException} or by a caller still answers. The first
  * {@link ZenBpmApiException} or {@link ZenBpmUnavailableException} in the chain answers alone:
@@ -64,13 +64,22 @@ public final class ZenBpmErrors {
 
     private static final Pattern MESSAGES_PATH = Pattern.compile("/v1/messages");
 
+    private static final Pattern START_PATH = Pattern.compile("/v1/process-instances");
+
     private ZenBpmErrors() {
     }
 
     /**
      * Whether another attempt is refused the same way: the engine answered <code>400</code>,
-     * <code>413</code> or <code>415</code>, or a key was not a number before anything was sent.
-     * The list is short on purpose, because repeating is the safe answer for everything else.
+     * <code>413</code> or <code>415</code>, it answered <code>404</code> to a start
+     * (<code>POST /v1/process-instances</code>), or a key was not a number before anything was
+     * sent. The list is short on purpose, because repeating is the safe answer for everything
+     * else.
+     * <p>
+     * The engine answers <code>404</code> to a start where it holds no process of the id, which
+     * nothing but a deployment changes. It reads the process on the leader of a partition, which a
+     * deployment wrote to before it answered, so the <code>404</code> is no node lagging behind a
+     * deployment, see decision 30 in the repository's DECISIONS.md.
      *
      * @param throwable What the call failed with
      * @return Whether no repetition can change the answer
@@ -78,7 +87,8 @@ public final class ZenBpmErrors {
     public static boolean permanentFailure(final Throwable throwable) {
         final var answer = answerIn(throwable);
         if (answer instanceof ZenBpmApiException refusal) {
-            return PERMANENT_STATUSES.contains(refusal.getStatus());
+            return PERMANENT_STATUSES.contains(refusal.getStatus()) || ((refusal.getStatus() == 404) && isPostTo(
+                    START_PATH, refusal));
         }
         return answer instanceof NumberFormatException;
     }

@@ -17,7 +17,7 @@ variable search). Contract: `MigratableProcessService` type javadoc, `ADAPTER-AU
 
 ### S5.1.1 `START_WORKFLOW` handler and the shared values
 
-- [ ] **Depends on:** E4.
+- [x] **Depends on:** E4.
 
 **Instructions**
 
@@ -91,12 +91,185 @@ started workflow with key and version; `ZenBpmSharedValuesTest` for the id winni
 `@NoSyncWithBPMS` still carrying the id; `ZenBpmValueTypesTest` per type and direction, and a
 contract-IT case per class of answer against the pinned engine.
 
+*Fit check, 2026-10-17, decided by the Implementor.* Checked against `main` (`ee9d1cc`),
+`ADAPTER-AUTHORS.md` (section 2.2 and its table of switches), the platform's code
+(`MigrationProcessService`, `PortableValuesCheck`, `ValueConversion` of platform decisions 55 and 57),
+Camunda 8's `Camunda8ProcessService`, `Camunda8ValueTypes` and `Camunda8RefusedStart`, and the
+engine at the pin `bdd795a3`: its source exported with `git archive`, and the pinned image run by
+three new integration tests. The three open questions were answered by the recommendations of the
+pipeline's brief, which the engine's code and image confirmed; every new decision says that the
+pipeline took it in place of the maintainers. What did not fit, and what was decided:
+
+1. **The `404` of a start (open question 1) is permanent, read by method and path.** The engine
+   starts an instance on the leader of a partition (`ZenNode.CreateInstance` picks a partition
+   leader, `Server.GetRandomEngine` takes only engines of partitions the node leads) and reads the
+   process from that leader's own store; a deployment writes every partition through its leader and
+   answers only after each took it. So the `404` is no follower lagging behind a deployment (GAPS
+   20 does not apply); what remains is a leader change in the seconds after a deployment, which the
+   decision accepts. Decision 30 supersedes decision 10, restating it with the new row; decision 10
+   keeps its text and got the "superseded" line, and the code's citations of decision 10 now name 30.
+   Unlike Camunda 8, no wrapping exception is needed: `ZenBpmApiException` carries method and path,
+   so `ZenBpmErrors.permanentFailure` reads a `404` of `POST /v1/process-instances` itself, and the
+   handler rethrows it as an `IllegalStateException` naming module, process, scoped id and
+   `vanillabp.adapters.<id>.deployment-failure`, with the engine's answer as its cause. New README
+   row, `ZenBpmErrorsTest` row (and two `404`s on other instance paths which stay repeatable),
+   `ZenBpmErrorsIT#aStartOfAProcessTheEngineDoesNotHoldIsPermanent` (was "...IsRepeatable").
+2. **`history-time-to-live` (open question 2): whole seconds, `PT0S` sent, fractions refused.** The
+   probe (`ZenBpmTimeToLiveIT`) started an instance which ends at once with `0s`, `500ms`, `86400s`
+   and nothing: the engine takes all four, removes the `0s` and the `500ms` instance at its next
+   clean-up (every 30 s), and keeps the other two. So an explicit zero is a meaningful value of its
+   own (without the key the engine's default applies, which may keep the instance forever) and is
+   sent as `0s`; a fraction of a second is cut without a word (`500ms` behaves as `0s`) and is
+   refused while the application starts, at every level, naming the key and what the engine would
+   keep; so is a value above `PT2562047H47M16S`, the most whole seconds a duration of nanoseconds
+   holds, which the engine refuses with `400`. Decision 31, because the validation and the start
+   rely on it. The per-workflow resolution existed only in the platform overlays
+   (`VanillaBpZenBpmProperties#historyTimeToLiveFor` on both platforms); the process service now gets
+   it as a resolver (`ZenBpmProcessService.HistoryTimeToLive`), and `historyTimeToLiveOf(module,
+   process)` says what a start sends.
+3. **Variables above 4 MiB (open question 3) are not measured.** Recorded as GAPS 26 (`GAPS.md`, the
+   architecture draft with item 15 of the `Deviations` page) with the evidence of the notes above;
+   `ZenBpmErrorsIT#aStartLargerThanTheEnginePassesOnIsRepeatable` pins the `500` of a 5 MiB start
+   against the image, and a note under E13.13 says the twin starts by turning that test round.
+4. **Instruction 1's signature.** The module and the plain process id are not needed to build the
+   variables, so it is `forCommand(aggregateIdName, aggregateId, sharedValues)`.
+5. **Instruction 2, phase one, resolves no id.** The core resolves the aggregate id and refuses a
+   null or blank one before it calls phase one (`MigrationProcessService`), as Camunda 8's preflight
+   says; phase one only refuses an adapter id without clients, with its validation message, and asks
+   the engine nothing.
+6. **An aggregate gone by phase two** starts its workflow with the id alone and a WARN, as Camunda 8
+   does (the request carries the id; the aggregate is loaded in phase two).
+7. **Instruction 6 did not fit for `Double` and `Float` from the engine.** A whole double comes back
+   as a `Long` (`1000.0` as `1000`), but the platform turns it back into the declared type wherever
+   it is the same number (platform decision 55, `ValueConversion`), so nothing is changed. Answering
+   `changed(...)` there would have ended the start of every application with a `@TaskParam Double`,
+   because `PortableValuesCheck` reads `CHANGED` from the BPMS as a defect. Both survive in both
+   directions, as on Camunda 8. Added to the plan's list: `Character`/`char`, changed both ways (a
+   text of one character, which the platform does not turn back). Every wrapper and its primitive
+   has an answer; everything else is "cannot say". `ZenBpmValueTypesIT` sends a value of every
+   answer through the pinned engine and reads it back (a `BigDecimal` of 19 digits comes back
+   rounded, `2^60 + 1` as a `BigInteger` and `2^53 + 1` as a `Long` rounded, a `Character` as a
+   text).
+8. **The version** is the `int` of the create answer, reported as `String.valueOf`; a note under
+   S6.1.1 asks a delivery to write `processVersion` the same way.
+9. **The boot tests** which used phase one of a start as "a use which is not built yet"
+   (`ZenBpmStartupValidationBootTest`, `ZenBpmCompleteAdapterIdTest`) now hold that it passes.
+
 **Acceptance criteria**
 
-- [ ] The create request carries `businessKey`, `variables[<idName>]` and the shared values, and
+- [x] The create request carries `businessKey`, `variables[<idName>]` and the shared values, and
   `historyTimeToLive` only where configured.
-- [ ] Phase one makes no HTTP request (asserted).
-- [ ] `reportStartedWorkflow` is called once per start, with the instance key and its version.
+  `ZenBpmProcessServiceTest#phaseTwoStartsTheWorkflowAndReportsIt` compares the whole body the fake
+  engine received: the scoped id `shop__Order`, the business key, the shared `amount` and then the
+  id as text (winning over an attribute of its name), and no `historyTimeToLive` key;
+  `#phaseTwoSendsTheTimeToLiveOfTheWorkflow` sends `2592000s` for `P30D` and `0s` for `PT0S`;
+  `#anAggregateGoneByPhaseTwoStartsWithItsIdAlone` sends the id alone and warns.
+  `ZenBpmProcessServiceIT#aStartReportsTheInstanceTheEngineHolds` finds the instance by its business
+  key in the pinned engine, with the id and the shared value as variables. The resolution of the
+  key per workflow, module and adapter id reaches the process service on both platforms
+  (`ZenBpmHistoryTimeToLiveBootTest` on Spring Boot, `ZenBpmOverlayResolutionTest` on Quarkus), and a
+  value with a fraction of a second ends the start on both (`ZenBpmHistoryTimeToLiveBootTest`,
+  `ZenBpmFractionOfASecondTest`).
+- [x] Phase one makes no HTTP request (asserted).
+  `ZenBpmProcessServiceTest#phaseOneOfAStartAsksNothing`: the fake engine receives no request;
+  `#anAdapterIdWithoutClientsRefusesWithItsValidationMessage` refuses both phases with the message of
+  the validation. The boot tests on both platforms run phase one on a complete adapter id.
+- [x] `reportStartedWorkflow` is called once per start, with the instance key and its version.
+  `ZenBpmProcessServiceTest#phaseTwoStartsTheWorkflowAndReportsIt` records exactly one call of the
+  form with two arguments (`4503599627370501`, `3`); a refused start reports nothing
+  (`#aStartOfAProcessTheEngineDoesNotHoldIsPermanent`); against the engine,
+  `ZenBpmProcessServiceIT` compares the reported pair with the key and the version of the instance
+  the engine holds.
+
+**Implemented 2026-10-17.** Core: `ZenBpmProcessService` serves `START_WORKFLOW` (phase one refuses
+only an adapter id without clients, phase two loads the aggregate, builds the variables with
+`ZenBpmSharedValues`, starts the latest version under the scoped id, rethrows a `404` with the
+message of fit-check item 1, reports key and version), answers `deliversTasksAtLeastOnce` with
+`true`, `isPhaseTwoFailureRepeatable` through `ZenBpmErrors` and `whatThisBpmsDoesWith` through
+`ZenBpmValueTypes`, and takes a `HistoryTimeToLive` resolver from the platform modules
+(`ZenBpmAdapterBeanRegistrar`, `ZenBpmProcessServiceProducer`); `ZenBpmTimeToLive` writes the
+engine's form and names what the validation refuses; `ZenBpmErrors` reads a `404` of a start as
+permanent. Decisions 30 (supersedes 10) and 31, GAPS 26, the README's status and table, the
+architecture's class table and gap draft, notes under S6.1.1 and E13.13. Tests: new
+`ZenBpmSharedValuesTest` (3), `ZenBpmValueTypesTest` (63), `ZenBpmTimeToLiveTest` (5),
+`ZenBpmValueTypesIT` (15), `ZenBpmProcessServiceIT` (2), `ZenBpmTimeToLiveIT` (1, about 35 s for
+the engine's clean-up), Spring Boot `ZenBpmHistoryTimeToLiveBootTest` (3), Quarkus
+`ZenBpmFractionOfASecondTest` (1); `ZenBpmProcessServiceTest` now 12, `ZenBpmAdapterConfigurationTest`
+105, `ZenBpmErrorsTest` 41 (one row and two cases more), `ZenBpmErrorsIT` 9 (the `404` of a start
+turned permanent, the `500` above 4 MiB), `ZenBpmOverlayResolutionTest` 6. `TZ=Etc/UTC mvn clean
+install` on OpenJDK 25.0.2 builds green with every integration test run and none skipped (engine
+test support 12 unit and 3 integration tests, core 707 unit and 59 integration tests, Spring Boot 9
+and 2 integration tests, smoke test 35, Quarkus runtime 9, Quarkus deployment 46, coverage gate
+35). The gate measures 100 % of 17,039 instructions for Spring Boot and 100 % of 16,917 for
+Quarkus, and `bin/check-deploy-safety.sh` passes both runs (13 files deployed, nothing after a red
+gate).
+
+Seen to fail, each restored afterwards (25 of 25 mutants, against a green unmutated run of the same
+tests):
+- `ZenBpmErrors`: the `404` of a start not read as permanent (fails `ZenBpmErrorsTest` and
+  `ZenBpmProcessServiceTest`); every `404` read as a start, whatever its method and path
+  (`ZenBpmErrorsTest`, four cases).
+- `ZenBpmTimeToLive`: no upper bound; fractions let through; `engineForm` without its guard, and
+  without its negative half (`ZenBpmTimeToLiveTest`, `ZenBpmAdapterConfigurationTest`).
+- `ZenBpmAdapterConfiguration`: a negative fraction named twice; the whole-seconds check applied to
+  every scoped duration, a `retry-backoff` included.
+- `ZenBpmProcessService`: phase one letting an adapter id without clients through; every refusal
+  wrapped, and none; an aggregate gone by phase two loaded anyway; `deliversTasksAtLeastOnce` false;
+  every failure repeatable; no time to live resolved, and a resolved one not sent.
+- `ZenBpmSharedValues`: the id not moved behind an attribute of its name.
+- `ZenBpmValueTypes`: enums, large whole numbers, decimals and characters each left unanswered; one
+  explanation for both ways; a missing type not answered.
+- Platform wiring: the resolver of `ZenBpmAdapterBeanRegistrar` and of
+  `ZenBpmProcessServiceProducer` asked for another process (fails
+  `ZenBpmHistoryTimeToLiveBootTest` on Spring Boot and `ZenBpmOverlayResolutionTest` on Quarkus).
+
+**Answers to two reviews of F5.1, 2026-10-17** (one by Claude, 5 findings; one by Copilot, 1
+finding, the same as Claude 4). Neither found a Blocker or a Major. Every claim was checked in the
+code of the branch, the platform's `ValueConversion` and the engine's source at `bdd795a3`.
+
+Valid and fixed:
+
+- **A text of another type than `String` was promised to come back** (Claude 4 and Copilot 1,
+  Minor). `ZenBpmValueTypes` answered `survives()` in both directions for every `CharSequence`, as
+  `Camunda8ValueTypes` does. The engine hands a text back as a `String`, and the platform's
+  `ValueConversion` turns it into no `StringBuilder` (both reviewers probed it, Copilot through the
+  pinned image), so a `@TaskParam StringBuilder` passed the start and failed at its first delivery.
+  Now `String` and `CharSequence` itself survive both ways, and any other text type survives TO the
+  engine and is `changed(...)` FROM it, naming its type. Tests, red before the fix:
+  `ZenBpmValueTypesTest` holds `StringBuilder` and `StringBuffer` per direction and `CharSequence`
+  among the surviving types (now 68 cases), `#aTextOfAnotherTypeIsNamedWithItsType` the
+  explanation; `ZenBpmValueTypesIT#aTextOfAnotherTypeComesBackAsAString` sends a `StringBuilder`
+  through the image and reads a `String` back. The javadoc of the class and the README say it.
+- **A javadoc link to a test which sends no time to live** (Claude 1, Minor).
+  `ZenBpmTimeToLiveTest` named `ZenBpmRestClientContractIT`; it names `ZenBpmTimeToLiveIT`, which
+  has the engine read `86400s` and `0s`.
+- **GAPS 26 named only the start** (Claude 2, Minor). `ZenNode.ModifyProcessInstance` sends a
+  variable update over the same gRPC between the nodes, as the architecture draft and the note
+  above say; the row of `GAPS.md` now names both and cites both methods.
+- **The README's status paragraph** (Claude 3, Nit): re-wrapped at 100 columns; a time to live with
+  a fraction of a second "is refused while the application starts" instead of "ends the start",
+  which right after "A workflow is started" read as the workflow's start; and it names the
+  `BigDecimal`, the character and a text of another type than `String` as what comes back changed,
+  not "a decimal", which a `Double` is too.
+- **A key built with `+`** (Claude 5, Nit): `ZenBpmHistoryTimeToLiveBootTest` builds it with
+  `String#formatted`.
+
+Answered without a change: "ends the start" stays in the display names of
+`ZenBpmHistoryTimeToLiveBootTest` and `ZenBpmFractionOfASecondTest`. It is the repository's phrase
+for a refused start of the application, in more than 40 tests and documents on both platforms, and
+there no workflow start stands next to it.
+
+Seen to fail, each restored afterwards (4 of 4 mutants of the new guard, against a green
+unmutated run of `ZenBpmValueTypesTest`): `CharSequence` itself no longer surviving (2 failures),
+the directions swapped (6), every text type surviving both ways (3), the type not named in the
+explanation (2).
+
+After the answers `TZ=Etc/UTC mvn clean install` on OpenJDK 25.0.2 builds green with every
+integration test run and none skipped (engine test support 12 unit and 3 integration tests, core
+712 unit and 60 integration tests, Spring Boot 9 and 2 integration tests, smoke test 35, Quarkus
+runtime 9, Quarkus deployment 46, coverage gate 35; `ZenBpmValueTypesTest` 68,
+`ZenBpmValueTypesIT` 16). The gate measures 100 % of 17,063 instructions for Spring Boot and
+100 % of 16,941 for Quarkus, and `bin/check-deploy-safety.sh` passes both runs.
 
 ## F5.2 The probes
 

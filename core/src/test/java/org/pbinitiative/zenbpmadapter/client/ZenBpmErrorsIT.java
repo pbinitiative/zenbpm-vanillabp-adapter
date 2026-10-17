@@ -18,6 +18,7 @@ import static org.pbinitiative.zenbpmadapter.client.ContractFixtures.uniqueBusin
 import static org.pbinitiative.zenbpmadapter.client.ContractFixtures.waitingJobOf;
 
 import java.time.Duration;
+import java.util.Map;
 
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
@@ -48,6 +49,12 @@ class ZenBpmErrorsIT {
      * 10 MiB).
      */
     private static final int MORE_THAN_THE_ENGINE_TAKES = (10 * 1024 * 1024) + 1;
+
+    /**
+     * More than the gRPC between the engine's nodes passes on by default (4 MiB), and less than the
+     * engine takes in a request.
+     */
+    private static final int MORE_THAN_THE_NODES_PASS = 5 * 1024 * 1024;
 
     @Container
     private static final EngineUnderTest ENGINE = new EngineUnderTest();
@@ -148,14 +155,35 @@ class ZenBpmErrorsIT {
     }
 
     @Test
-    @DisplayName("A start of a process the engine does not hold is a 404, and repeatable")
-    void aStartOfAProcessTheEngineDoesNotHoldIsRepeatable() {
+    @DisplayName("A start of a process the engine does not hold is a 404, and permanent")
+    void aStartOfAProcessTheEngineDoesNotHoldIsPermanent() {
         final var start = assertThrows(ZenBpmApiException.class, () -> client.createInstance(CreateInstanceRequest
                 .latestVersionOf("errors-never-deployed")));
 
         assertAll(
                 () -> assertEquals(404, start.getStatus()),
-                () -> assertFalse(ZenBpmErrors.permanentFailure(start)),
+                () -> assertTrue(ZenBpmErrors.permanentFailure(start)),
+                () -> assertFalse(ZenBpmErrors.isRepeatable(start)));
+    }
+
+    /**
+     * The engine takes a request of up to 10 MiB, but hands a start on to a partition over a gRPC
+     * call which keeps gRPC's default limit of 4 MiB, and answers what that call refused with
+     * <code>500</code>. So such a start reads as repeatable and is refused the same way every time.
+     * When the engine answers it with <code>413</code> or takes it, this test fails, and the
+     * adapter's reading of it can change.
+     */
+    @Test
+    @DisplayName("A start whose variables are larger than the engine passes between its nodes is a 500, and repeatable")
+    void aStartLargerThanTheEnginePassesOnIsRepeatable() {
+        final var start = assertThrows(ZenBpmApiException.class, () -> client.createInstance(CreateInstanceRequest
+                .latestVersionOf("contract-task")
+                .withBusinessKey(uniqueBusinessKey())
+                .withVariables(
+                        Map.of("orderId", uniqueBusinessKey(), "payload", "x".repeat(MORE_THAN_THE_NODES_PASS)))));
+
+        assertAll(
+                () -> assertEquals(500, start.getStatus()),
                 () -> assertTrue(ZenBpmErrors.isRepeatable(start)));
     }
 

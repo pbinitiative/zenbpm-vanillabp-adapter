@@ -649,6 +649,64 @@ class ZenBpmAdapterConfigurationTest {
     }
 
     @Test
+    @DisplayName("A history-time-to-live below the adapter level which the engine would change ends the boot naming its full key; a fraction of another key does not")
+    void aScopedTimeToLiveTheEngineWouldChangeIsAValueDefect() {
+        final var configuration = configured("http://localhost:8080");
+        configuration.addScopedValue("vanillabp.workflow-modules.shop.adapters.orders.history-time-to-live",
+                ZenBpmTimeToLive.LONGEST.plusSeconds(1));
+        configuration.addScopedValue(
+                "vanillabp.workflow-modules.shop.workflows.Order.adapters.orders.history-time-to-live", Duration
+                        .ofMillis(500));
+        configuration.addScopedValue(
+                "vanillabp.workflow-modules.shop.workflows.Order.tasks.ship.adapters.orders.retry-backoff", Duration
+                        .ofMillis(500));
+
+        final var validation = configuration.validate(ADAPTER_ID, true, true);
+
+        assertEquals(Kind.INCONSISTENT, validation.kind());
+        assertTrue(validation.endsTheBoot());
+        assertEquals(List.of(
+                "  - vanillabp.workflow-modules.shop.adapters.orders.history-time-to-live is PT2562047H47M17S, but the engine takes at most PT2562047H47M16S, about 292 years; write a shorter time, or remove the key, so the level above applies",
+                "  - vanillabp.workflow-modules.shop.workflows.Order.adapters.orders.history-time-to-live is PT0.5S, but the engine keeps whole seconds and would keep PT0S; write whole seconds, or remove the key, so the level above applies"),
+                validation
+                        .message()
+                        .lines()
+                        .filter(line -> line.startsWith("  - "))
+                        .toList());
+    }
+
+    @Test
+    @DisplayName("A negative history-time-to-live with a fraction of a second is named once, as negative")
+    void aNegativeFractionIsNamedOnceAsNegative() {
+        final var configuration = configured("http://localhost:8080");
+        configuration.setHistoryTimeToLive(Duration.ofMillis(-500));
+
+        assertEquals(List.of(
+                "  - vanillabp.adapters.orders.history-time-to-live is PT-0.5S and must not be negative; without the key the engine's own default applies"),
+                configuration
+                        .validate(ADAPTER_ID, false, false)
+                        .message()
+                        .lines()
+                        .filter(line -> line.startsWith("  - "))
+                        .toList());
+    }
+
+    @Test
+    @DisplayName("The longest time to live the engine takes, and none at all, pass at every level")
+    void theLongestAndTheShortestTimeToLivePass() {
+        final var configuration = configured("http://localhost:8080");
+        configuration.setHistoryTimeToLive(ZenBpmTimeToLive.LONGEST);
+        configuration.addScopedValue("vanillabp.workflow-modules.shop.adapters.orders.history-time-to-live",
+                ZenBpmTimeToLive.LONGEST);
+        configuration.addScopedValue(
+                "vanillabp.workflow-modules.shop.workflows.Order.adapters.orders.history-time-to-live", Duration.ZERO);
+
+        assertEquals(Kind.COMPLETE, configuration
+                .validate(ADAPTER_ID, false, false)
+                .kind());
+    }
+
+    @Test
     @DisplayName("A retry-backoff or max-redeliveries below the adapter level, without a REST address, leaves the adapter id not configured yet: both fall back to a default")
     void aScopedKeyWithADefaultDoesNotStartTheConfiguration() {
         final var configuration = new ZenBpmAdapterConfiguration();
@@ -792,6 +850,15 @@ class ZenBpmAdapterConfigurationTest {
                 defect("history-time-to-live", "a negative duration",
                         "must not be negative; without the key the engine's own default applies",
                         c -> c.setHistoryTimeToLive(Duration.ofDays(-1))),
+                defect("history-time-to-live", "half a second",
+                        "is PT0.5S, but the engine keeps whole seconds and would keep PT0S; write whole seconds, or remove the key, so the engine's own default applies",
+                        c -> c.setHistoryTimeToLive(Duration.ofMillis(500))),
+                defect("history-time-to-live", "a second and a half",
+                        "is PT1.5S, but the engine keeps whole seconds and would keep PT1S; write whole seconds",
+                        c -> c.setHistoryTimeToLive(Duration.ofMillis(1500))),
+                defect("history-time-to-live", "a second more than the engine takes",
+                        "is PT2562047H47M17S, but the engine takes at most PT2562047H47M16S, about 292 years; write a shorter time, or remove the key",
+                        c -> c.setHistoryTimeToLive(ZenBpmTimeToLive.LONGEST.plusSeconds(1))),
                 defect("max-redeliveries", "a negative number",
                         "0 turns the first failure into an incident, the default is 10",
                         c -> c.setMaxRedeliveries(-1)),

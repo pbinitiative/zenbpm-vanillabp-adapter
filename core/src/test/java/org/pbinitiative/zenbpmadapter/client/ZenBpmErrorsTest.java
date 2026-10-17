@@ -257,6 +257,7 @@ class ZenBpmErrorsTest {
      */
     static Stream<Arguments> everyRowOfTheReadmeTable() {
         final var permanentStatuses = "status `400`, `413` or `415`";
+        final var startOfAnUnknownProcess = "status `404` from `POST /v1/process-instances`";
         final var goneByStatus404 = "status `404` from a call of a job";
         final var goneByStatus409 = "status `409` from a completion or failure of a job";
         final var unavailableStatuses = "status `502`, `503` or `504`";
@@ -269,6 +270,7 @@ class ZenBpmErrorsTest {
                 Arguments.of(permanentStatuses, ReadAs.PERMANENT, refusal(415, "POST", "/v1/process-definitions")),
                 // a request refused is refused, whatever it named
                 Arguments.of(permanentStatuses, ReadAs.PERMANENT, refusal(400, "POST", "/v1/jobs/42/extend-lock")),
+                Arguments.of(startOfAnUnknownProcess, ReadAs.PERMANENT, refusal(404, "POST", "/v1/process-instances")),
                 Arguments.of("`NumberFormatException`", ReadAs.PERMANENT, new NumberFormatException(
                         "For input string: \"order-1\"")),
                 Arguments.of(goneByStatus404, ReadAs.GONE_JOB, refusal(404, "POST", "/v1/jobs/42/complete")),
@@ -302,7 +304,11 @@ class ZenBpmErrorsTest {
                         "/v1/process-instances/7/variables")),
                 Arguments.of(otherStatuses, ReadAs.REPEATABLE, refusal(409, "PATCH",
                         "/v1/process-instances/7/variables")),
-                Arguments.of(otherStatuses, ReadAs.REPEATABLE, refusal(404, "GET", "/v1/messages")));
+                Arguments.of(otherStatuses, ReadAs.REPEATABLE, refusal(404, "GET", "/v1/messages")),
+                // a 404 of a search of instances or of a call of one instance is no start
+                Arguments.of(otherStatuses, ReadAs.REPEATABLE, refusal(404, "GET", "/v1/process-instances")),
+                Arguments.of(otherStatuses, ReadAs.REPEATABLE, refusal(404, "POST",
+                        "/v1/process-instances/7/cancel")));
     }
 
     private static ZenBpmApiException refusal(

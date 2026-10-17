@@ -73,6 +73,9 @@ The first exception of the REST client in a chain of causes answers alone, whate
 around it or lies beneath it. Where the engine answered with a status the call does not expect,
 that status decides, even when the HTTP client then timed out on the body.
 
+*Superseded by decision 30, which keeps this rule and adds the `404` of a start to the permanent
+answers.*
+
 ### 13. A class opens its fields one by one, not as a whole
 
 The deployment service, the process service and the engine client of this adapter hold many
@@ -279,3 +282,73 @@ XML because its refusal is what a test checks, is named with its reason in the c
 written inline in a Java test is a fragment of the one construct the test is about, which nobody
 opens in a modeler. `BpmnDiagramTest` of the coverage gate checks every `.bpmn` file of the
 repository on every build.
+
+### 30. What the engine did is read from status codes, and a start of a process it does not hold is permanent
+
+Decided by the implementation pipeline in place of the maintainers, as their policy for the
+autonomous run asks. It supersedes decision 10 and repeats all of it, so a reader needs this entry
+only.
+
+The engine writes its reasons as prose, and any version of it may reword them. So what a failed call
+means is decided by the status of the answer, the method and the path of the call, in one place,
+`ZenBpmErrors`, and nothing reads the engine's `message`. A `404` on a job means that the job is
+gone, and so does a `409` on its completion or failure, because the engine answers it there for a
+command the job no longer takes, and repeating the command cannot change that. A `404` on a message
+means that nothing waits for it yet, and a `409` on a lock extension means that the lock is lost.
+`400`, `413`, `415`, a key which is not a number, and a `404` of a start (`POST
+/v1/process-instances`) are permanent: every attempt is refused the same way, so an outbox entry is
+blocked after the first. Everything else may be repeated, `500` and `502` included, because
+repeating is the safe answer to a failure which may not come again. The table, with the reason of
+each row, is the README's section "Which phase-two failures are repeated".
+
+The first exception of the REST client in a chain of causes answers alone, whatever is wrapped
+around it or lies beneath it. Where the engine answered with a status the call does not expect,
+that status decides, even when the HTTP client then timed out on the body.
+
+What is new against decision 10 is the start. The engine answers a start with `404` where it holds
+no process of the id: nothing deployed the workflow module to this engine, the deployment failed
+and the application booted anyway because its `deployment-failure` policy is `warn`, or the engine
+lost its data. Only a deployment changes that, and the next start of the application is what
+deploys. So repeating the start until the outbox gives up would only delay the message an operator
+needs. The start's handler rethrows the answer with a message naming the workflow module, the
+process, the identifier the engine was asked for and the key `deployment-failure`, and the
+engine's own answer stays its cause, so the classification still reads the status. The Camunda 8
+adapter makes the same answer permanent (`Camunda8RefusedStart`), and the platform's contract for
+adapters names "an identifier which does not exist" as a failure to report as not repeatable.
+
+The engine starts an instance on the leader of a partition, and reads the process there with no
+wait for replication (pinned commit `bdd795a3`: `ZenNode.CreateInstance` picks a partition leader,
+`Server.GetRandomEngine` takes only engines of partitions the node leads, and
+`FindLatestProcessDefinitionById` reads the local store). A deployment writes the process to every
+partition through its leader and answers only after each one took it. So a `404` is not a node which
+lags behind a deployment, which a repetition would cure. What remains is a change of the partition
+leader in a cluster of several nodes between a deployment and a start moments later: the new leader
+may not have applied the deployment yet. Such a start is blocked although the process is there, and
+an operator starts the workflow again. The risk is accepted, because it needs a leader change in the
+seconds after a deployment, while the permanent answer saves every application which starts against
+the wrong engine from an outbox repeating a start for as long as it keeps the entry.
+
+### 31. `history-time-to-live` is sent in whole seconds, and `PT0S` is sent too
+
+Decided by the implementation pipeline in place of the maintainers, as their policy for the
+autonomous run asks.
+
+The engine takes the time to live of a started workflow as its own text (`30d`, `1M5d8h`), reads it
+into a duration of nanoseconds, and keeps it in whole seconds, cut off by
+`int64(historyTTL.Seconds())` (pinned commit `bdd795a3`: `ParseTTL` in
+`internal/cluster/types/ttl.go`, `resolveHistoryTTL` in `pkg/bpmn/engine.go`, the column
+`history_ttl_sec`). So the adapter sends the resolved `history-time-to-live` as whole seconds,
+`2592000s` for `P30D`, which the engine reads back exactly, and nothing where no level sets the key,
+so the engine's own default applies.
+
+A value the engine would change is refused while the application starts, naming the key: one with a
+fraction of a second, because the engine would cut it without a word, `PT0.5S` to no time at all;
+and one above `PT2562047H47M16S`, about 292 years, the most a duration of nanoseconds holds, because
+the engine would refuse every start with `400`. Both are typos rather than intentions, and the
+validation already refuses a negative value the same way.
+
+`PT0S` is sent, as `0s`. The engine treats an explicit zero as a time to live of its own: it keeps
+the ended workflow until its next clean-up, which runs every thirty seconds, while without the key
+its default applies, which may keep the workflow forever. An application which wants nothing kept
+says so with `PT0S`. `ZenBpmTimeToLiveIT` holds both against the pinned engine.
+
