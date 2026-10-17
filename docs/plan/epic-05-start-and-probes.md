@@ -973,3 +973,26 @@ Quarkus runtime 9, Quarkus deployment 46, Quarkus integration tests 3, coverage 
 `ZenBpmDeploymentAndStartIT` 4, `ZenBpmWorkflowLifecycleTest` 3, `EngineTestsWithoutDockerTest`
 2). The gate measures 100 % of 18,092 instructions for Spring Boot and 100 % of 17,970 for Quarkus,
 and `bin/check-deploy-safety.sh` passes both runs.
+
+**F5.3 done 2026-10-17**, merged to `main` as `e4b28df` (pull request #40, after two reviews and
+CodeRabbit's review, which left no comment); with it E5 is complete. On that commit (GitHub keeps
+run logs for 90 days, so what they showed is written here as well):
+
+- `Checks`, run
+  [39052583378](https://github.com/pbinitiative/zenbpm-vanillabp-adapter/actions/runs/39052583378):
+  green on both JDKs. `bin/check-engine-copies.sh` reported both copies as the engine's files of
+  `bdd795a3...`. `ZenBpmDeploymentAndStartIT` ran 4 tests, `ZenBpmWorkflowLifecycleTest` 3 (the
+  prod-mode application against the pinned engine), `EngineTestsWithoutDockerTest` 2 and
+  `ZenBpmDeploymentIT` 2, none skipped (engine test support 12 unit and 3 integration tests, core
+  779 unit and 70 integration tests, Spring Boot 9 unit and 6 integration tests, smoke test 35,
+  Quarkus runtime 9, Quarkus deployment 46, Quarkus integration tests 3, coverage gate 37). The gate
+  measured 100 % on both platforms: of 18,092 instructions for Spring Boot and 17,970 for Quarkus
+  on JDK 25, of 18,084 and 17,962 on JDK 21.
+- `Publish snapshots`, run
+  [39052583396](https://github.com/pbinitiative/zenbpm-vanillabp-adapter/actions/runs/39052583396):
+  green. The batch adds no main class; the core snapshot it published to GitHub Packages,
+  `2.0.0-20261017.171031-36`, holds no test class, fake, fixture, BPMN or DMN file, and
+  `quarkus/integration-tests` with its test application skipped deployment, as did the smoke test,
+  the engine test support and the coverage modules. Both report pages
+  (`spring-boot-report/index.html`, `quarkus-report/index.html`) answer HTTP 200 and show 0 of
+  18,092 (Spring Boot) and 0 of 17,970 (Quarkus) instructions missed.
