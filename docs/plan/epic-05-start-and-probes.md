@@ -724,7 +724,7 @@ what they showed is written here as well):
 
 ### S5.3.1 The two-phase start on both platforms
 
-- [ ] **Depends on:** S5.2.2.
+- [x] **Depends on:** S5.2.2.
 
 **Instructions**
 
@@ -752,7 +752,171 @@ what they showed is written here as well):
   type subscribed over the engine's gRPC API, so the packaged extension is proved against the real
   engine for deploying as well as for starting.
 
+*Fit check, 2026-10-17, decided by the Implementor.* Checked against `main` (`bcdca37`),
+`ADAPTER-AUTHORS.md` (sections 2 and 4), the platform's code (`JdbcPhaseTwoOutboxStore`,
+`JdbcPhaseTwoOutboxDispatcher`, `FullSyncCheck`, `WorkflowModuleAutoConfiguration`,
+`MigrationAdapterProperties`, `PhaseTwoOutboxReader` of `test-utils`), Camunda 8's
+`Camunda8DeploymentAndStartIT`, `Camunda8DecisionTableIT` and its Quarkus `integration-tests`, and
+the engine at the pin `bdd795a3` (its source exported with `git archive`, its image run by both new
+test classes). The open questions were answered by the recommendations of the pipeline's brief,
+which the code confirmed. What did not fit, and what was decided:
+
+1. **No module `start-it`.** The Spring Boot IT is `ZenBpmDeploymentAndStartIT` in the package
+   `springboot.it` of the `spring-boot` module, beside `ZenBpmDeploymentIT`, where the JPA and H2
+   test dependencies already are, as Camunda 8 keeps its IT next to its other ones; a new module
+   would have needed its place in the Spring Boot report and in `bin/check-deploy-safety.sh`'s
+   view for nothing. It boots an application of its own, `it/start/StartItApplication`
+   (`Order`, `OrderRepository`, `OrderWorkflow`), configured by `start-it.yaml`. A
+   `@SpringBootApplication` scans its package and every package below, so `DeployItApplication`,
+   `Shipment` and `ShipmentWorkflow` moved from `springboot.it` to `springboot.it.deploy`;
+   otherwise either application would have picked up the other's workflow service. The test
+   classes are one classpath directory with one `META-INF/workflow-module`, so the platform puts
+   `OrderWorkflow` into the workflow module `deploy-it`, too
+   (`WorkflowModuleAutoConfiguration#registerProcessServices`); its process is `deploy-it__Ordering`
+   at the engine.
+2. **One engine per test class** (open question 2). The Spring IT declares `EngineUnderTest` as a
+   `@Container` and hands its addresses over with `@DynamicPropertySource`; `@DirtiesContext`
+   keeps the context from being reused against another class's engine. The Quarkus test starts
+   its engine in a static initializer, because a prod-mode test reads its runtime properties while
+   its field is initialized, and passes both addresses and a free `quarkus.http.port`
+   (`OneFreePortPerJvm`) as runtime properties.
+3. **The Quarkus persistence is Camunda 8's** (open question 3): `quarkus-hibernate-orm`,
+   `quarkus-agroal` and `quarkus-jdbc-h2`, the aggregate a JPA entity, a hand-written
+   `AggregatePersistenceAware` saving in the caller's JTA transaction, the introspection endpoints
+   opening their transaction with `UserTransaction`, and the platform's JDBC outbox, its default.
+   `test-utils` is a test dependency without Logback, as there.
+4. **The aggregate shares all but one attribute**: `@NoSyncWithBPMS` on `note` puts it into the
+   mode "share everything else" (`FullSyncCheck` ends the start of an aggregate which shares
+   everything), so `allow-full-sync-with-bpms` is not needed. Its id is a text the test chooses,
+   so the plan's endpoints `introspect/start/{id}` and `introspect/rollback/{id}` take it, and a
+   test knows the business key of a workflow which was never started. Both tests assert that
+   `item` reaches the instance and `note` does not.
+5. **"Inside the transaction the business-key search is empty"** (open question 4): both
+   platforms search the engine through the adapter's own client between `startWorkflow` and the
+   commit; after it, the instance found by its business key is `ACTIVE`
+   (`ProcessInstanceRef.State`), carries the id and the shared value, and runs the scoped process.
+6. **Two outbox cycles without a fixed wait.** The platform's JDBC outbox wakes its poller after
+   every commit (`JdbcPhaseTwoOutboxStore` is given `dispatcher::triggerPoll`), and a poll claims
+   every due entry. So after the rolled-back start, both tests commit two more starts, one after
+   the other, and wait (a poll with a deadline) for the instance of each: two dispatch runs after
+   the rollback, in either of which an entry the rollback had left would have been dispatched.
+   Then the rolled-back aggregate id has no instance. The Spring IT also reads the outbox through
+   `PhaseTwoOutboxReader.ofTheVanillaBpOutbox`: no entry of that id, and the entries of the two
+   later starts, so the reader is known to read the table the application writes. The Quarkus
+   application keeps its database inside its own JVM, so the Quarkus case asserts what Camunda 8's
+   asserts there instead: the aggregate is gone and no instance appeared.
+7. **The resources location is the platform's default**, `classpath*:<module>/processes/<adapter
+   id>` (`MigrationAdapterProperties`): the files are under `deploy-it/processes/zenbpm` and
+   `zenbpm-e2e/processes/zenbpm`. An explicit `resources-location` without the adapter id makes the
+   platform report in its startup block that the location is not specific to the adapter.
+8. **The DMN file is called, before the task** (the F4.3 note). `StartProcess` evaluates the
+   decision `rating` in business rule tasks and then waits in the task `Prepare`, so a started
+   instance shows at the engine that the process found the decision under the id the adapter
+   rewrote it to (`zenbpm-e2e__rating`); the binding is the default one, and the id has no `.`
+   (GAPS 14). The test asserts the definitions as `ZenBpmDeploymentIT` reads them
+   (`/v1/process-definitions`, `/v1/dmn-resource-definitions` by the DMN definitions id), the
+   version 1 the adapter registered (`introspect/versions/StartProcess`), and the log line of the
+   subscription.
+9. **At the pin a decision's result reaches the process only through an output mapping:** GAPS 27
+   (new, recorded by the pipeline in place of the maintainers). The first run found no `rating`
+   among the instance's variables. The business rule task hands its result to
+   `PropagateOnlyMappedOutputs` of `pkg/bpmn/runtime/varholder.go`, which propagates nothing where
+   the task has no output mapping, and the engine's own `test/e2e/business_rule_variables_test.go`
+   pins that; Camunda 8 sets the result variable in the process, which its
+   `Camunda8DecisionTableIT` relies on (`resultVariable="rating"` and no output mapping, read as
+   `=rating` by the next task). So `StartProcess` evaluates the decision twice: `Rate` maps its
+   result (`source="=rating" target="rating"`), `RateUnmapped` names the result variable
+   `unmappedRating` and maps nothing, and the test asserts `rating` and the absence of
+   `unmappedRating`. `=rating.grade` was not used: the platform reports an expression which reads
+   more than the name of one variable. Left to the
+   maintainers: whether the adapter should warn about, refuse or rewrite a business rule task
+   with a result variable and no output mapping while it reads the model (E4's
+   `ZenBpmUnsupportedConstructs` is where such a check would live).
+10. **"A job type subscribed over the engine's gRPC API" is proven by a job arriving.** The engine
+    lists no subscriptions (nothing in `openapi/api.yaml` or the protos at the pin), so the Quarkus
+    test waits for the job of the started instance, which arrives over the stream only because
+    the job type was subscribed: the adapter logs it at WARN ("arrived, which nothing handles
+    yet"), and the test reads the application's log file (`quarkus.log.file`). E6 replaces that
+    line with the handler's call.
+11. **There is no method `ZenBpmProcessService.phaseTwo`**: the phase-two handler of a start is the
+    private `startWorkflow(PhaseTwoRequest)`. The Quarkus report adds the core's own coverage data,
+    where the unit tests already cover it, so the report alone cannot show that the booted
+    application ran it. The evidence is a report of the coverage data of `quarkus/integration-tests`
+    alone, and the line of the aggregate report which loads that file.
+12. **Three Quarkus cases, not two**: `theBootDeploysTheModelAndTheDecision` holds the deployment
+    assertions of the F4.3 note, beside `aStartCreatesTheInstanceAfterTheCommit` and
+    `aRolledBackStartCreatesNothing`. The application (`E2eAggregate`, `E2ePersistence`,
+    `E2eWorkflow`, `E2eIntrospection` in `quarkus/test`, outside the coverage report) is shaped so
+    that a later story adds a workflow service, a model and an endpoint without touching the boot.
+    The README now says that the instance is created only after the commit and never after a
+    rollback, which both classes pin.
+
 **Acceptance criteria**
 
-- [ ] Both platforms prove the two-phase start against the real engine.
-- [ ] The Quarkus coverage report shows `ZenBpmProcessService.phaseTwo` covered.
+- [x] Both platforms prove the two-phase start against the real engine.
+  Spring Boot: `ZenBpmDeploymentAndStartIT` (4 tests) against its own container of the pinned image.
+  `#instanceAppearsOnlyAfterCommit` searches the engine by the business key inside the transaction
+  (empty) and after the commit (one instance, `ACTIVE`, process `deploy-it__Ordering`, business key,
+  `id` and the shared `item`, no `note`); `#noInstanceAfterRollback` finds neither an instance nor
+  an outbox entry of the rolled-back id after the outbox dispatched two later starts, whose entries
+  the reader does see; `#aWorkflowNobodyStartedIsUnknownToBothProbes` and
+  `#theProbeFindsTheStartedWorkflow` ask the booted application's `ZenBpmProcessService` as a
+  `MigratableProcessService` (UNKNOWN_TO_BPMS twice; ACTIVE by business key, by key and before a
+  repeated start). Quarkus: `ZenBpmWorkflowLifecycleTest` (3 tests, `QuarkusProdModeTest`, the
+  application in a JVM of its own): `#theBootDeploysTheModelAndTheDecision` finds
+  `zenbpm-e2e__StartProcess` in version 1, the DMN definitions `zenbpm-e2e-rating` holding
+  `zenbpm-e2e__rating`, version 1 registered by the adapter and the subscription of
+  `zenbpm-e2e__StartProcess__prepare`; `#aStartCreatesTheInstanceAfterTheCommit` sees no instance
+  inside the transaction, then one `ACTIVE` instance of version 1 with business key, `id`, `item`,
+  no `note`, the mapped `rating` and no `unmappedRating`, and the job of that instance arriving over
+  the subscribed type; `#aRolledBackStartCreatesNothing` finds no aggregate and no instance of the
+  rolled-back id after two later starts were dispatched.
+- [x] The Quarkus coverage report shows `ZenBpmProcessService.phaseTwo` covered.
+  The handler is `startWorkflow(PhaseTwoRequest)` (fit-check item 11). The `report-aggregate` of
+  `test-coverage-report/quarkus` loads
+  `quarkus/integration-tests/target/jacoco.exec` beside the files of the runtime and deployment
+  modules, and a report of that file alone (JaCoCo CLI 0.8.15 over the classes of `core` and
+  `quarkus/runtime`, from the clean build below) shows `startWorkflow(PhaseTwoRequest)` 100 %
+  covered, 0 of its 21 lines missed: the JVM of the booted application ran it, because the test
+  JVM only builds that application.
+
+**Implemented 2026-10-17.** No production code changed: the story proves on both platforms what
+F5.1 and F5.2 built. Spring Boot module, test tree: `ZenBpmDeploymentAndStartIT`, the application
+`it/start` (`StartItApplication`, `Order`, `OrderRepository`, `OrderWorkflow`), `start-it.yaml`,
+`deploy-it/processes/zenbpm/Ordering.bpmn`; `DeployItApplication`, `Shipment` and
+`ShipmentWorkflow` moved to `it/deploy` (fit-check item 1). `quarkus/integration-tests`: its POM
+(REST, Jackson, YAML configuration, Hibernate ORM, Agroal, H2; tests with `quarkus-junit-internal`,
+REST Assured, `test-utils` and the engine test support; the JaCoCo agent handed to the prod-mode
+JVM), the application in `quarkus/test` (`E2eAggregate`, `E2ePersistence`, `E2eWorkflow`,
+`E2eIntrospection`), `application.yaml`, the module descriptor, `StartProcess.bpmn` and
+`rating.dmn`, and `ZenBpmWorkflowLifecycleTest`. GAPS 27 (new, in `GAPS.md` and in the
+architecture's gap and deviation drafts), one sentence of the README's status.
+
+Seen to fail, each restored afterwards (3 of 3 mutants, against a green unmutated run of the two
+classes, the mutated core installed for the run):
+- the instance created in phase one, inside the caller's transaction (`ZenBpmProcessService`):
+  fails `ZenBpmDeploymentAndStartIT#instanceAppearsOnlyAfterCommit` and `#noInstanceAfterRollback`,
+  and `ZenBpmWorkflowLifecycleTest#aStartCreatesTheInstanceAfterTheCommit` and
+  `#aRolledBackStartCreatesNothing`;
+- the called decision's id left unscoped (`ZenBpmScoping`): the instance fails at the decision and
+  no job arrives (`#aStartCreatesTheInstanceAfterTheCommit`);
+- the module's job types logged as subscribed but never subscribed (`ZenBpmDeploymentService`): no
+  job arrives (`#aStartCreatesTheInstanceAfterTheCommit`), while the log line alone would have
+  passed.
+
+`TZ=Etc/UTC mvn clean install` on OpenJDK 25.0.2 builds green with every integration test run and
+none skipped (engine test support 12 unit and 3 integration tests, core 779 unit and 70
+integration tests, Spring Boot 9 unit and 6 integration tests, smoke test 35, Quarkus runtime 9,
+Quarkus deployment 46, Quarkus integration tests 3, coverage gate 35; `ZenBpmDeploymentAndStartIT`
+4, `ZenBpmWorkflowLifecycleTest` 3, `ZenBpmDeploymentIT` 2). The gate measures 100 % of 18,092
+instructions for Spring Boot and 100 % of 17,970 for Quarkus (the classes of the test applications
+are outside both reports), and `bin/check-deploy-safety.sh` passes both runs (13 files deployed,
+nothing after a red gate).
+
+**E5's "Done when" is met.** "The exemplary end-to-end start runs on both platforms against the
+container": `ZenBpmDeploymentAndStartIT` (4) on Spring Boot and `ZenBpmWorkflowLifecycleTest` (3)
+on Quarkus, both against the pinned image. "The probes are pinned by unit tests with the fake
+server and by ITs": `ZenBpmWorkflowProbesTest` (29), `ZenBpmTaskProbesTest` (26) and
+`ZenBpmInstanceCacheTest` (11) with the fake engine, `ZenBpmProbesIT` (10) against the pinned
+image, and the probes of the booted Spring Boot application in `ZenBpmDeploymentAndStartIT` (2 of
+its 4).

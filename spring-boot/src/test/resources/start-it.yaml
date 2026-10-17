@@ -1,0 +1,13 @@
+spring:
+  jpa:
+    hibernate:
+      ddl-auto: create
+vanillabp:
+  prioritized-adapters:
+    - zenbpm
+  adapters:
+    zenbpm:
+      name-clash-avoidance: use-prefix
+  outbox:
+    housekeeping:
+      zone: UTC

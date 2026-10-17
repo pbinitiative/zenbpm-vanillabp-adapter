@@ -2,7 +2,7 @@
  * Copyright (c) 2026 Process Builders Initiative
  * SPDX-License-Identifier: MIT
  */
-package org.pbinitiative.zenbpmadapter.springboot.it;
+package org.pbinitiative.zenbpmadapter.springboot.it.deploy;
 
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.context.annotation.Bean;
@@ -10,9 +10,10 @@ import org.springframework.context.annotation.Bean;
 import io.vanillabp.integration.spi.AggregatePersistenceAware;
 
 /**
- * The application the integration tests of the Spring Boot module boot against the pinned engine:
- * the workflow module <code>deploy-it</code> with {@link ShipmentWorkflow}, the platform's JDBC outbox
- * and delivery log on an in-memory database.
+ * The application <code>ZenBpmDeploymentIT</code> boots against the pinned engine: the workflow
+ * module <code>deploy-it</code> with {@link ShipmentWorkflow}, the platform's JDBC outbox and delivery
+ * log on an in-memory database. It scans this package only, so the application of another
+ * integration test, in a package of its own, stays out of it.
  */
 @SpringBootApplication
 public class DeployItApplication {

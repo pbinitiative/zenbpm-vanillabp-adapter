@@ -26,6 +26,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.pbinitiative.zenbpmadapter.client.ZenBpmClientRegistry;
 import org.pbinitiative.zenbpmadapter.client.api.CreateInstanceRequest;
+import org.pbinitiative.zenbpmadapter.springboot.it.deploy.DeployItApplication;
 import org.pbinitiative.zenbpmadapter.test.EngineUnderTest;
 import org.springframework.boot.WebApplicationType;
 import org.springframework.boot.builder.SpringApplicationBuilder;
