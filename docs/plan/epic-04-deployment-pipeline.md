@@ -1576,6 +1576,35 @@ deployment 44, coverage gate 35). The gate measures 100 % of 16,485 instructions
 100 % of 16,359 for Quarkus, and `bin/check-deploy-safety.sh` passes both runs (13 files deployed,
 nothing after a red gate).
 
+**F4.3 done 2026-10-17**, merged to `main` as `538e639` (pull request #34, after two reviews and
+CodeRabbit's review, whose one comment was answered in the pull request). On that commit (GitHub
+keeps run logs for 90 days, so what they showed is written here as well):
+
+- `Checks`, run
+  [39008445335](https://github.com/pbinitiative/zenbpm-vanillabp-adapter/actions/runs/39008445335):
+  green on both JDKs. `bin/check-engine-copies.sh` reported both copies as the engine's files of
+  `bdd795a3...`. `ZenBpmDeploymentWiringTest` ran 14 tests, `ZenBpmDeployingTest` 5,
+  `ZenBpmWorkflowProcessingTest` 7, `ZenBpmDeploymentServiceTest` 30,
+  `ZenBpmDeployedProcessesTest` 1, `ZenBpmJobStreamTest` 39, `ZenBpmJobStreamIT` 2, `ZenBpmDeploymentServiceIT` 6,
+  `ZenBpmDeploymentIT` 2, `ZenBpmRefusedFileBootTest` 2, `ZenBpmWiringBootTest` 1,
+  `ZenBpmDeploymentPipelineTest` 1, `ZenBpmRefusedFileTest` 1, `ZenBpmDeploymentFailureWarnTest` 1,
+  `ZenBpmStopOrderTest` 1 and `BpmnDiagramTest` 2, none skipped (engine test support 12 unit and 3
+  integration tests, core 620 unit and 40 integration tests, Spring Boot 9 unit and 2 integration
+  tests, smoke test 32, Quarkus runtime 9, Quarkus deployment 44, coverage gate 35). The gate
+  measured 100 % on both platforms: of 16,485 instructions for Spring Boot and 16,359 for Quarkus on
+  JDK 25, of 16,477 and 16,351 on JDK 21.
+- `Publish snapshots`, run
+  [39008445344](https://github.com/pbinitiative/zenbpm-vanillabp-adapter/actions/runs/39008445344):
+  green. The core snapshot it published to GitHub Packages, `2.0.0-20261017.060252-30`, contains
+  `ZenBpmDeployedProcesses` with its nested `DeployedProcess` and `ProcessOfModule`,
+  `ZenBpmProcessingContext` with its nested `WiredProcess` and `StartedProcessing`,
+  `model/ZenBpmCallActivities`, `model/ZenBpmModelWriter`, `model/ZenBpmMultiInstanceItems`, and
+  `deployment/ZenBpmDeploymentService` with `wireBpmn`, `startWorkflowProcessing`,
+  `stopWorkflowProcessing` and the refusal of a job of no type, and holds no test class, fake,
+  fixture or BPMN file. Both report pages (`spring-boot-report/index.html`,
+  `quarkus-report/index.html`) answer HTTP 200 and show 0 of 16,485 (Spring Boot) and 0 of 16,359
+  (Quarkus) instructions missed.
+
 **E4 "Done when" is met, 2026-10-17.** A workflow module with BPMN and DMN deploys to the container
 from a booted Spring application: `ZenBpmDeploymentIT` (module `deploy-it`, one BPMN and one DMN file,
 the engine holding both under their prefixed ids, versions 1, 1 and 2). The Quarkus pipeline test
