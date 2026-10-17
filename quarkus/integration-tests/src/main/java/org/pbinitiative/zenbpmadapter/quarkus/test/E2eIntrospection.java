@@ -122,10 +122,11 @@ public class E2eIntrospection {
     }
 
     /**
-     * The keys of the jobs the engine holds for one instance.
+     * The jobs the engine holds for one instance.
      *
      * @param instanceKey The key of the instance
-     * @return The keys of its jobs, as text, as {@link #instances} gives the key of an instance
+     * @return The <code>key</code> of each job, as text, as {@link #instances} gives the key of an
+     *         instance, and its <code>state</code>, as the engine names it
      */
     @GET
     @Path("/jobs/{instanceKey}")
@@ -142,12 +143,24 @@ public class E2eIntrospection {
                 .toList();
     }
 
+    /**
+     * Whether the workflow task <code>Prepare</code> ran for an aggregate.
+     *
+     * @param id The id of the aggregate
+     * @return <code>prepared</code>, <code>true</code> or <code>false</code>
+     */
     @GET
     @Path("/prepared/{id}")
     public Map<String, Object> prepared(@PathParam("id") final String id) {
         return Map.of("prepared", workflow.hasPrepared(id));
     }
 
+    /**
+     * Whether the database holds an aggregate.
+     *
+     * @param id The id of the aggregate
+     * @return <code>exists</code>, <code>true</code> or <code>false</code>
+     */
     @GET
     @Path("/aggregates/{id}")
     @Transactional

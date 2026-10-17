@@ -551,8 +551,37 @@ public class ZenBpmRestClient implements AutoCloseable {
         final String clientId,
         final Duration duration
     ) {
+        return extendJobLock(key, clientId, duration, 0);
+    }
+
+    /**
+     * Extends the lock of one delivery of a job delivered over the job stream to now plus a
+     * duration (<code>POST /v1/jobs/{key}/extend-lock</code>). Where the job's lock lapsed and the
+     * engine handed it to the same client again, the lock of that later delivery is not extended:
+     * the engine answers 409, as for a lock another client holds.
+     *
+     * @param key The job key
+     * @param clientId The client id of the job stream the job was delivered to
+     * @param duration How long from now the job stays locked, rounded up to whole seconds;
+     *            <code>null</code> for the lock duration of the subscription the job was delivered
+     *            under
+     * @param deliveryToken The <code>delivery_token</code> of the delivery; <code>0</code>, which
+     *            no delivery carries, for whatever delivery of the job the client holds
+     * @return When the extended lock lapses, on the engine's clock
+     * @throws IllegalArgumentException Where the duration is zero or negative, before anything is
+     *             sent
+     * @throws ZenBpmApiException With status 409 where the lock of the delivery is not held, or is
+     *             held by another client
+     */
+    public Instant extendJobLock(
+        final long key,
+        final String clientId,
+        final Duration duration,
+        final long deliveryToken
+    ) {
         final var call = new Call(POST, "/v1/jobs/%d/extend-lock".formatted(key));
-        final var body = call.jsonBody(new ZenBpmWire.ExtendJobLock(clientId, lockDuration(duration)));
+        final var body = call.jsonBody(new ZenBpmWire.ExtendJobLock(clientId, lockDuration(duration), deliveryToken == 0
+                ? null : deliveryToken));
         return call.decoded(call.send(JSON, body, SUCCESS), ZenBpmWire.LockExtended.class,
                 lock -> Instant.parse(lock.lockUntil()));
     }

@@ -11,6 +11,7 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Supplier;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
@@ -100,6 +101,13 @@ public class ZenBpmDeploymentService implements AdapterDeploymentService<ZenBpmB
      * its processing. Guarded by <code>this</code>.
      */
     private ZenBpmJobDispatcher dispatcher;
+
+    /**
+     * The <code>job-timeout</code> of every job type the workflow modules of this adapter id wired,
+     * and which module, process and task set it first: modules which share a job type share its
+     * subscription.
+     */
+    private final Map<String, ModuleJobTimeout> jobTimeoutsOfTheModules = new ConcurrentHashMap<>();
 
     /**
      * Builds the deployment service of one adapter id. Fails first where this adapter and the
@@ -503,8 +511,11 @@ public class ZenBpmDeploymentService implements AdapterDeploymentService<ZenBpmB
                     final var jobType = scoping.scopedTaskDefinition(workflowModuleId, bpmnProcessId, task
                             .taskDefinition(), adapterId);
                     jobTypes.add(jobType);
-                    context.recordJobTimeout(jobType, jobTimeouts.jobTimeoutFor(workflowModuleId, bpmnProcessId, task
-                            .taskDefinition()), bpmnProcessId, task.taskDefinition(), adapterId);
+                    final var jobTimeout = jobTimeouts.jobTimeoutFor(workflowModuleId, bpmnProcessId, task
+                            .taskDefinition());
+                    context.recordJobTimeout(jobType, jobTimeout, bpmnProcessId, task.taskDefinition(), adapterId);
+                    refuseAnotherJobTimeoutOfASharedType(jobType,
+                            new ModuleJobTimeout(workflowModuleId, bpmnProcessId, task.taskDefinition(), jobTimeout));
                 });
         context.recordWiring(new WiredProcess(bpmnProcessId, scoping.scopedProcessId(workflowModuleId, bpmnProcessId,
                 adapterId), jobTypes, reportsItsStart, reportsItsEnd));
@@ -694,6 +705,41 @@ public class ZenBpmDeploymentService implements AdapterDeploymentService<ZenBpmB
                 String.join(", ", started
                         .get()
                         .jobTypes()));
+    }
+
+    // two workflow modules share a job type where its name is not scoped, and the job stream keeps
+    // one lock duration per job type, so the second module's subscription would be refused when
+    // its processing starts; refused here instead, before anything reaches the engine
+    private void refuseAnotherJobTimeoutOfASharedType(
+        final String jobType,
+        final ModuleJobTimeout wired
+    ) {
+        final var recorded = jobTimeoutsOfTheModules.putIfAbsent(jobType, wired);
+        if ((recorded == null) || recorded.workflowModuleId.equals(wired.workflowModuleId) || recorded.duration
+                .equals(wired.duration)) {
+            return;
+        }
+        throw new IllegalStateException("""
+                Job type '%s' is served by two workflow modules with different job-timeouts: %s for task '%s' of \
+                process '%s' in workflow module '%s' and %s for task '%s' of process '%s' in workflow module '%s'. \
+                The engine locks the jobs of a type for one duration per subscription, and both modules share the \
+                subscription of adapter id '%s', so give both tasks the same job-timeout, for example:
+                  vanillabp.workflow-modules.%s.workflows.%s.tasks.%s.adapters.%s.job-timeout
+                  vanillabp.workflow-modules.%s.workflows.%s.tasks.%s.adapters.%s.job-timeout
+                or keep the job types apart with name-clash-avoidance 'use-prefix'."""
+                .formatted(jobType, recorded.duration, recorded.taskDefinition, recorded.bpmnProcessId,
+                        recorded.workflowModuleId, wired.duration, wired.taskDefinition, wired.bpmnProcessId,
+                        wired.workflowModuleId, adapterId, recorded.workflowModuleId, recorded.bpmnProcessId,
+                        recorded.taskDefinition, adapterId, wired.workflowModuleId, wired.bpmnProcessId,
+                        wired.taskDefinition, adapterId));
+    }
+
+    private record ModuleJobTimeout(
+        String workflowModuleId,
+        String bpmnProcessId,
+        String taskDefinition,
+        Duration duration
+    ) {
     }
 
     // built once per adapter id, by the first module which starts, and the job stream's consumer

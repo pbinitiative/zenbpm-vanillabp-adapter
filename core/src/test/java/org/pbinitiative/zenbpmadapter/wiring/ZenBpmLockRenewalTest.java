@@ -36,7 +36,9 @@ import io.vanillabp.integration.test.utils.SuppressOutputExtension;
  * How the lock of a running handler's job is kept: extended at once only where less than half of
  * the job-timeout is left, then whenever half of it is left; ended by a lost lock with a WARN, by a
  * job the engine no longer holds quietly, by any other refusal with a WARN, and by the end of the
- * handler; repeated within the lock where the engine could not be asked.
+ * handler; repeated within the lock where the engine could not be asked. Every extension names its
+ * delivery, and the lock is counted on the application's clock: an engine clock behind it is named
+ * once and changes nothing.
  */
 @ExtendWith(SuppressOutputExtension.class)
 class ZenBpmLockRenewalTest {
@@ -79,7 +81,7 @@ class ZenBpmLockRenewalTest {
     }
 
     @Test
-    @DisplayName("A handler which starts with more than half of the job-timeout left extends nothing at once, and extends once half of it is left, by the job-timeout and for the stream's client")
+    @DisplayName("A handler which starts with more than half of the job-timeout left extends nothing at once, and extends once half of it is left, by the job-timeout, for the stream's client and for its own delivery")
     void aFullLockIsExtendedOnceHalfOfItIsLeft() {
         engine.answers("POST", EXTEND, granting(JOB_TIMEOUT));
 
@@ -90,9 +92,10 @@ class ZenBpmLockRenewalTest {
 
             assertAll(
                     () -> assertEquals(List.of(), atFirst),
-                    () -> assertEquals("{\"clientId\":\"shop-1\",\"lockDuration\":\"PT1S\"}", extensions()
-                            .getFirst()
-                            .body()),
+                    () -> assertEquals("{\"clientId\":\"shop-1\",\"lockDuration\":\"PT1S\",\"deliveryToken\":7}",
+                            extensions()
+                                    .getFirst()
+                                    .body()),
                     () -> assertTrue(renewal
                             .lockEnd()
                             .isAfter(Instant.now())));
@@ -234,22 +237,77 @@ class ZenBpmLockRenewalTest {
     }
 
     @Test
-    @DisplayName("A lock the engine grants beyond the job-timeout counts as the job-timeout, one it grants shorter is extended at half of what it granted")
-    void theGrantedLockIsCountedTheCarefulWay() {
-        final var grants = new AtomicInteger();
-        engine.answers("POST", EXTEND, exchange -> granting(grants.incrementAndGet() == 1 ? Duration.ofHours(1)
-                : Duration.ofMillis(100)).handle(exchange));
+    @DisplayName("A lock the engine grants beyond the job-timeout counts as the job-timeout, counted from the sending of the extension")
+    void theGrantedLockIsCountedFromTheSending() {
+        engine.answers("POST", EXTEND, granting(Duration.ofHours(1)));
 
         try (var renewal = lockRenewal.start(job(Duration.ZERO), JOB_TIMEOUT, "ship")) {
+            final var before = Instant.now();
             awaitRequests(1);
             pause(Duration.ofMillis(50));
             final var counted = renewal.lockEnd();
-            awaitRequests(4);
 
-            assertTrue(counted.isBefore(Instant
-                    .now()
-                    .plus(JOB_TIMEOUT)), counted::toString);
+            assertAll(
+                    () -> assertTrue(counted.isBefore(Instant
+                            .now()
+                            .plus(JOB_TIMEOUT)), counted::toString),
+                    () -> assertTrue(counted.isAfter(before), counted::toString));
         }
+    }
+
+    @Test
+    @DisplayName("An engine clock which runs behind neither shortens the lock nor makes the renewal extend more often, and a WARN names both causes and the key once")
+    void anEngineClockBehindIsNamedOnceAndChangesNothing(final CapturedOutput output) {
+        final var behind = Duration.ofHours(1);
+        engine.answers("POST", EXTEND, exchange -> FakeEngine.respond(exchange, 200, "{\"lockUntil\":\"%s\"}"
+                .formatted(Instant
+                        .now()
+                        .minus(behind)
+                        .plus(JOB_TIMEOUT))));
+        final var now = Instant.now();
+        final var behindTheClock = new ReceivedJob(WaitingJob
+                .newBuilder()
+                .setKey(42)
+                .setDeliveryToken(7)
+                .setLockUntil(now
+                        .minus(behind)
+                        .plus(JOB_TIMEOUT)
+                        .toEpochMilli())
+                .build(), now);
+
+        try (var renewal = lockRenewal.start(behindTheClock, JOB_TIMEOUT, "ship")) {
+            final var counted = renewal.lockEnd();
+            awaitRequests(1);
+            pause(JOB_TIMEOUT);
+
+            assertAll(
+                    () -> assertEquals(now.plus(JOB_TIMEOUT), counted),
+                    // one at half of the first lock, then one at every half of the job-timeout
+                    () -> assertTrue(extensions().size() <= 4, () -> "%d extensions".formatted(extensions().size())),
+                    () -> assertEquals(1, output
+                            .getAllOfThisTest()
+                            .split("the engine says the lock of job 42 lapses at", -1).length - 1),
+                    () -> assertTrue(output
+                            .getAllOfThisTest()
+                            .contains("jobManager.maxLockDurationMs"), output::getAllOfThisTest),
+                    () -> assertTrue(output
+                            .getAllOfThisTest()
+                            .contains("vanillabp.adapters.orders.job-timeout"), output::getAllOfThisTest));
+        }
+    }
+
+    @Test
+    @DisplayName("A lock the engine says lapses within the time a job travels raises no WARN")
+    void aLockAsCountedRaisesNoWarn(final CapturedOutput output) {
+        engine.answers("POST", EXTEND, granting(JOB_TIMEOUT.minusMillis(500)));
+
+        try (var renewal = lockRenewal.start(job(Duration.ZERO), JOB_TIMEOUT, "ship")) {
+            awaitRequests(2);
+        }
+
+        assertFalse(output
+                .getAllOfThisTest()
+                .contains("the engine says the lock"), output::getAllOfThisTest);
     }
 
     @Test
@@ -264,16 +322,18 @@ class ZenBpmLockRenewalTest {
         assertEquals(List.of(), extensions());
     }
 
+    // a job received as long ago as its lock of the job-timeout has run, with clocks which agree
     private static ReceivedJob job(final Duration lockLeft) {
         final var now = Instant.now();
         return new ReceivedJob(WaitingJob
                 .newBuilder()
                 .setKey(42)
                 .setType("ship")
+                .setDeliveryToken(7)
                 .setLockUntil(now
                         .plus(lockLeft)
                         .toEpochMilli())
-                .build(), now);
+                .build(), now.minus(JOB_TIMEOUT.minus(lockLeft)));
     }
 
     private static FakeEngine.Handler granting(final Duration lock) {

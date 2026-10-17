@@ -731,6 +731,27 @@ class ZenBpmRestClientTest {
                 .body()));
     }
 
+    @Test
+    @DisplayName("A lock extended for one delivery names its delivery token, and a token of 0 names none")
+    void aLockExtendedForOneDeliveryNamesIt() throws Exception {
+        engine.answers("POST", "/v1/jobs/1/extend-lock", 200, """
+                {"lockUntil": "2026-10-13T15:20:30Z"}""");
+
+        client.extendJobLock(1, "app-orders-1a2b3c4d", Duration.ofSeconds(30), 7);
+        client.extendJobLock(1, "app-orders-1a2b3c4d", Duration.ofSeconds(30), 0);
+
+        assertEquals(List.of(JSON.readTree("""
+                {"clientId": "app-orders-1a2b3c4d", "lockDuration": "PT30S", "deliveryToken": 7}"""), JSON.readTree("""
+                {"clientId": "app-orders-1a2b3c4d", "lockDuration": "PT30S"}""")), List.of(JSON.readTree(engine
+                .requests()
+                .get(0)
+                .body()), JSON.readTree(
+                        engine
+                                .requests()
+                                .get(1)
+                                .body())));
+    }
+
     @ParameterizedTest(name = "{0}")
     @ValueSource(strings = {
             "PT0S", "PT-1S"

@@ -8,6 +8,7 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 
 import org.pbinitiative.zenbpmadapter.client.grpc.Zenbpm.WaitingJob;
 
@@ -36,22 +37,29 @@ public record ReceivedJob(
     }
 
     /**
-     * When the lock of this delivery lapses, counted the careful way: the earlier of the job's
-     * <code>lock_until</code> and the moment of receipt plus the lock duration the job was
-     * subscribed with. So neither an engine clock ahead of the application's nor a lock the engine
-     * lowered to its maximum makes the lock look longer than it is. A job without a
-     * <code>lock_until</code> counts from the moment of receipt alone.
+     * When the lock of this delivery lapses, counted on the application's clock from the moment
+     * of receipt with the lock duration the job was subscribed with, as the engine recommends where
+     * the clocks cannot be trusted to agree, see decision 36 in the repository's DECISIONS.md. The
+     * job's <code>lock_until</code> is not part of it: an engine clock which runs behind the
+     * application's would make every lock look shorter, by as much as it runs behind.
      *
      * @param lockDuration The lock duration of the subscription the job came under
      * @return The moment, on the application's clock
      */
     public Instant lockEnd(final Duration lockDuration) {
-        final var counted = receivedAt.plus(lockDuration);
+        return receivedAt.plus(lockDuration);
+    }
+
+    /**
+     * When the engine says the lock of this delivery lapses, the job's <code>lock_until</code>.
+     *
+     * @return The moment, on the engine's clock; empty where the job carries none
+     */
+    public Optional<Instant> lockUntil() {
         if (job.getLockUntil() <= 0) {
-            return counted;
+            return Optional.empty();
         }
-        final var lockUntil = Instant.ofEpochMilli(job.getLockUntil());
-        return lockUntil.isBefore(counted) ? lockUntil : counted;
+        return Optional.of(Instant.ofEpochMilli(job.getLockUntil()));
     }
 
     /**

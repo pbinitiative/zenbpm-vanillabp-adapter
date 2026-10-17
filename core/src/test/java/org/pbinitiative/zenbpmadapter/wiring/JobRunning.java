@@ -175,7 +175,8 @@ final class JobRunning implements AutoCloseable {
     }
 
     /**
-     * A job delivered just now.
+     * A job delivered by an engine whose clock agrees with the application's: received
+     * {@link #JOB_TIMEOUT} before its lock lapses.
      *
      * @param key The job key
      * @param instanceKey The instance of the job
@@ -200,7 +201,7 @@ final class JobRunning implements AutoCloseable {
                 .setLockUntil(lockUntil.toEpochMilli())
                 .setDeliveryToken(deliveryToken)
                 .setInputVariables(ByteString.copyFromUtf8("{\"amount\": 12, \"note\": \"gift\"}"))
-                .build(), Instant.now());
+                .build(), lockUntil.minus(JOB_TIMEOUT));
     }
 
     /**

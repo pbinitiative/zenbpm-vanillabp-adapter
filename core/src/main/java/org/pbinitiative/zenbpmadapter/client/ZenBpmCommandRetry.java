@@ -171,14 +171,13 @@ public final class ZenBpmCommandRetry {
         }
     }
 
-    // whether a further attempt is made, after the pause before it
+    // whether a further attempt is made, after the pause before it; a module which began to shut
+    // down during the pause gets no further attempt either
     private boolean anotherAttempt(
         final String what,
         final int attempt
     ) {
-        if (shuttingDown.getAsBoolean()) {
-            log.debug("ZenBPM[{}]: the {} of job {} ('{}') is not repeated, because the workflow module shuts down",
-                    adapterId, what, jobKey, taskDefinition);
+        if (shutsDown(what)) {
             return false;
         }
         if (attempt >= MAX_ATTEMPTS) {
@@ -197,13 +196,22 @@ public final class ZenBpmCommandRetry {
                 what, jobKey, taskDefinition, attempt, pause);
         try {
             Thread.sleep(pause);
-            return true;
         } catch (final InterruptedException e) {
             Thread
                     .currentThread()
                     .interrupt();
             return false;
         }
+        return !shutsDown(what);
+    }
+
+    private boolean shutsDown(final String what) {
+        if (!shuttingDown.getAsBoolean()) {
+            return false;
+        }
+        log.debug("ZenBPM[{}]: the {} of job {} ('{}') is not repeated, because the workflow module shuts down",
+                adapterId, what, jobKey, taskDefinition);
+        return true;
     }
 
 }

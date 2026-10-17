@@ -187,7 +187,8 @@ final class ZenBpmWire {
 
     record ExtendJobLock(
         String clientId,
-        String lockDuration
+        String lockDuration,
+        Long deliveryToken
     ) {
     }
 

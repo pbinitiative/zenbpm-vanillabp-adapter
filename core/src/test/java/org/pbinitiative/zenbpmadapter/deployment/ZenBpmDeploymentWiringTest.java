@@ -523,6 +523,44 @@ class ZenBpmDeploymentWiringTest {
     }
 
     @Test
+    @DisplayName("Two workflow modules sharing a job type with different job-timeouts end the wiring of the second, naming both modules, both values and the keys; with the same one both wire")
+    void twoModulesSharingAJobTypeNeedTheSameJobTimeout() {
+        final var wiring = TestWiring.claiming("Packing", "Returns");
+        final var collaborators = TestCollaborators.of(ADAPTER_ID, TestScoping.of(NameClashAvoidance.NONE), wiring
+                .wiring(), TestStarts.everyProcessStartingAWorkflow());
+        final var registry = new ZenBpmClientRegistry(List.of(ZenBpmClientFactory.unconfigured(ADAPTER_ID,
+                new ZenBpmAdapterConfiguration(), NOT_CONFIGURED)));
+        final var conflicting = new ZenBpmDeploymentService(ADAPTER_ID, registry, collaborators, (
+            workflowModuleId,
+            bpmnProcessId,
+            taskDefinition) -> "billing".equals(workflowModuleId) ? Duration.ofMinutes(2) : Duration.ofMinutes(1));
+        final var agreeing = new ZenBpmDeploymentService(ADAPTER_ID, registry, collaborators, (
+            workflowModuleId,
+            bpmnProcessId,
+            taskDefinition) -> Duration.ofMinutes(1));
+
+        wireInModule(conflicting, "shop", "Packing");
+        final var refusal = assertThrows(IllegalStateException.class, () -> wireInModule(conflicting, "billing",
+                "Returns"));
+        wireInModule(agreeing, "shop", "Packing");
+        final var billing = wireInModule(agreeing, "billing", "Returns");
+
+        assertAll(
+                () -> assertEquals(
+                        """
+                                Job type 'pack' is served by two workflow modules with different job-timeouts: PT1M for task \
+                                'pack' of process 'Packing' in workflow module 'shop' and PT2M for task 'pack' of process \
+                                'Returns' in workflow module 'billing'. The engine locks the jobs of a type for one duration per \
+                                subscription, and both modules share the subscription of adapter id 'orders', so give both \
+                                tasks the same job-timeout, for example:
+                                  vanillabp.workflow-modules.shop.workflows.Packing.tasks.pack.adapters.orders.job-timeout
+                                  vanillabp.workflow-modules.billing.workflows.Returns.tasks.pack.adapters.orders.job-timeout
+                                or keep the job types apart with name-clash-avoidance 'use-prefix'.""",
+                        refusal.getMessage()),
+                () -> assertEquals(Map.of("pack", Duration.ofMinutes(1)), billing.jobTimeouts()));
+    }
+
+    @Test
     @DisplayName("Wiring needs no engine: an adapter id without clients wires like a configured one")
     void wiringNeedsNoEngine() {
         final var wiring = TestWiring.claiming("Orders");
@@ -544,6 +582,23 @@ class ZenBpmDeploymentWiringTest {
         final var returns = read(deploymentService, "returns.bpmn", PACKING.formatted("Returns"));
         deploymentService.prepareBpmn("shop", context, "returns.bpmn", "Returns", returns);
         deploymentService.wireBpmn("shop", "returns.bpmn", "Returns", returns, context);
+        return context;
+    }
+
+    private static ZenBpmProcessingContext wireInModule(
+        final ZenBpmDeploymentService deploymentService,
+        final String workflowModuleId,
+        final String bpmnProcessId
+    ) {
+        final var filename = "%s.bpmn".formatted(bpmnProcessId);
+        final var model = deploymentService
+                .readBpmn(workflowModuleId, filename, new ByteArrayInputStream(PACKING
+                        .formatted(bpmnProcessId)
+                        .getBytes(StandardCharsets.UTF_8)), true)
+                .getFirst()
+                .getValue();
+        final var context = deploymentService.prepareBpmn(workflowModuleId, null, filename, bpmnProcessId, model);
+        deploymentService.wireBpmn(workflowModuleId, filename, bpmnProcessId, model, context);
         return context;
     }
 

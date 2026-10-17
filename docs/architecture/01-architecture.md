@@ -254,8 +254,9 @@ instance the leader just created (GAPS 20).
 JobStream ──WaitingJob──▶ ZenBpmJobDispatcher ──(queue, bounded by the subscriptions' caps)──▶ ZenBpmExecutor ──▶ ZenBpmJobHandler
                           subscription per job type: lock_duration_ms = job-timeout, max_active_jobs = slots
 ZenBpmJobHandler, before invoking:
-  lock renewal: if lock_until - now < job-timeout / 2, extend by job-timeout (a job which waited in the
-  queue starts with a full lock); while the handler runs, a timing thread extends every job-timeout / 2
+  lock renewal: if receipt + job-timeout - now < job-timeout / 2, extend by job-timeout, counted on the
+  application's clock (decision 36); while the handler runs, a timing thread extends every
+  job-timeout / 2, each extension naming its delivery token
 ZenBpmJobHandler:
   facts   = instanceCache.get(job.instance_key)              (GET /process-instances/{key} once)
   context = TaskInvocationContext{ taskDefinition = plain(job.type), bpmnElementId = job.element_id,

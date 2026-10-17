@@ -507,3 +507,33 @@ the workflow: what the called workflow computed reaches its caller through the o
 the call, as the model says. A job of a task outside any sub-process costs one update, as before;
 each level of nesting costs one more, and the walk itself reads only instances the cache does not
 hold yet.
+
+### 36. A job's lock is counted on the application's clock, and each extension names its delivery
+
+Decided by the implementation pipeline in place of the maintainers, as their policy for the
+autonomous run asks.
+
+A job the job stream delivers carries `lock_until`, the moment its lock lapses on the clock of the
+partition's leader. The engine's own description of the field (`WaitingJob` in
+`pkg/zenclient/proto/zenbpm.proto` at the pinned commit `bdd795a3`) says to count the lock duration
+of the subscription from the moment of receipt where the clocks of engine and application cannot be
+trusted to agree. The adapter does that in every case: the lock of a delivery lapses at its receipt
+plus the `job-timeout` it was subscribed with, and an extension lasts from the moment it was sent
+plus the `job-timeout`. The dispatcher, the lock renewal and the bounded repetition of a handler's
+commands all go by that moment.
+
+Taking the earlier of the engine's moment and the counted one would guard against one case only, a
+`job-timeout` above the engine's `jobManager.maxLockDurationMs` (24 hours by default), which the
+engine lowers every lock to. It would harm a far more ordinary one: an engine clock which runs behind
+the application's makes every lock look shorter by as much, so the renewal extended more often the
+more the clocks drifted apart, and without any pause once the drift reached the `job-timeout`, from
+which on the dispatcher also dropped every job before its handler started. So the engine's moment is only compared:
+where it is earlier than the counted one by more than a second, a WARN says so once per adapter id,
+naming both causes and the key to lower.
+
+Every extension of a lock names the delivery it belongs to (`deliveryToken` of
+`POST /v1/jobs/{key}/extend-lock`). Where a delivery's lock lapsed and the engine handed the job to
+the same client again, an extension for the earlier delivery is answered `409` instead of extending
+the later delivery's lock (measured against the pinned image, `ZenBpmJobLockIT`), so the handler of
+the earlier delivery learns that a second delivery may run beside it, and does not keep the later
+one's lock for it.

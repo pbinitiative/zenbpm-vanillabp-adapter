@@ -14,6 +14,7 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -26,7 +27,7 @@ import io.vanillabp.integration.test.utils.SuppressOutputExtension;
 
 /**
  * What a job the job stream received says beyond the engine's message: when its lock lapses,
- * counted the careful way, and its input variables, decoded as the REST answers decode variables.
+ * counted from its receipt, and its input variables, decoded as the REST answers decode variables.
  */
 @ExtendWith(SuppressOutputExtension.class)
 class ReceivedJobTest {
@@ -34,16 +35,18 @@ class ReceivedJobTest {
     private static final Instant RECEIVED = Instant.parse("2026-10-17T12:00:00Z");
 
     @Test
-    @DisplayName("The lock lapses at the earlier of the job's lock_until and the moment of receipt plus the subscription's lock, and without a lock_until at the latter")
-    void theLockLapsesAtTheEarlierMoment() {
+    @DisplayName("The lock lapses at the moment of receipt plus the subscription's lock, whatever the engine's clock says, and the job's lock_until is read on its own")
+    void theLockIsCountedFromTheReceipt() {
         final var lock = Duration.ofMinutes(5);
 
         assertAll(
-                () -> assertEquals(RECEIVED.plusSeconds(60), received(RECEIVED.plusSeconds(60), "").lockEnd(lock)),
-                () -> assertEquals(RECEIVED.plus(lock), received(RECEIVED.plusSeconds(600), "").lockEnd(lock)),
-                () -> assertEquals(RECEIVED.plus(lock), new ReceivedJob(WaitingJob
+                () -> assertEquals(RECEIVED.plus(lock), received(RECEIVED.minusSeconds(3600), "").lockEnd(lock)),
+                () -> assertEquals(RECEIVED.plus(lock), received(RECEIVED.plusSeconds(3600), "").lockEnd(lock)),
+                () -> assertEquals(Optional.of(RECEIVED.plusSeconds(60)), received(RECEIVED.plusSeconds(60), "")
+                        .lockUntil()),
+                () -> assertEquals(Optional.empty(), new ReceivedJob(WaitingJob
                         .newBuilder()
-                        .build(), RECEIVED).lockEnd(lock)));
+                        .build(), RECEIVED).lockUntil()));
     }
 
     @Test

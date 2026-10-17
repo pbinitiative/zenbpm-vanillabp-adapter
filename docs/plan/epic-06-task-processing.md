@@ -161,14 +161,15 @@ costs one request and makes the instance visible as an incident.
 3. **The executor's real API** (note from S2.4.2) is used as the note says: a job waits in the
    dispatcher, `tryExecute` takes a slot or refuses, a refused job is put back before the next look
    for a free slot, and `onSlotFreed` hands over the next one. A job whose lock lapsed while it
-   waited is not started (INFO); the lock's end is the earlier of `lock_until` and the moment of
-   receipt plus the job-timeout (`ReceivedJob#lockEnd`), so neither a clock ahead of the
-   application's nor a lock the engine lowered makes a lock look longer than it is.
+   waited is not started (INFO); the lock's end is the moment of receipt plus the job-timeout
+   (`ReceivedJob#lockEnd`), on the application's clock alone (decision 36, changed after the
+   reviews, see below).
 4. **The lock renewal** is scheduled on the timing threads, but each extension is sent from a
    virtual thread of its own: a REST call may take `request-timeout`, and the executor allows nothing
    longer than a hand-over on its timing threads. A lock is extended whenever half of the
-   job-timeout is left, so at once for a job which waited that long, and at half of what is left
-   where the engine granted less than the job-timeout. `502` and I/O are repeated after 50 ms,
+   job-timeout is left, so at once for a job which waited that long; each extension names its
+   delivery and is counted from its sending (decision 36, changed after the reviews, see below).
+   `502` and I/O are repeated after 50 ms,
    doubling up to an eighth of the job-timeout, while the lock lasts; `409` ends it with a WARN
    naming job, task, aggregate and the possible second delivery; a job the engine no longer holds
    (`404`) ends it quietly; anything else ends it with a WARN.
@@ -212,10 +213,12 @@ costs one request and makes the instance visible as an incident.
    deployment service as a `ZenBpmJobTimeoutResolver`. Two tasks of one job type with different
    job-timeouts end the start while the processes are wired, before anything reaches the engine,
    naming both values and both task-level keys; Camunda 8 checks this only when its workers start.
-   Under `use-prefix` a job type belongs to one process, so the conflict needs
-   `name-clash-avoidance: none`. Proven on Spring Boot (`ZenBpmJobTimeoutBootTest`, and the
-   resolution in `ZenBpmTaskProcessingIT`) and on Quarkus (`ZenBpmJobTimeoutTest`,
-   `ZenBpmOverlayResolutionTest#jobTimeoutThroughTheFourLevels`), brief question 5.
+   Two workflow modules of one adapter id sharing a job type are held to the same rule, because
+   they share its subscription (added after the reviews, see below). Under `use-prefix` a job type
+   belongs to one process, so the conflict needs `name-clash-avoidance: none`. Proven on Spring
+   Boot (`ZenBpmJobTimeoutBootTest`, and the resolution in `ZenBpmTaskProcessingIT`) and on Quarkus
+   (`ZenBpmJobTimeoutTest`, `ZenBpmOverlayResolutionTest#jobTimeoutThroughTheFourLevels`), brief
+   question 5.
 12. **Where the Spring IT lives** (brief question 4): not a module `task-it`, but the `spring-boot`
    module's `it` package with its application in `it/task`, as F5.3 placed its own; one module per
    IT would repeat the POM and the coverage wiring for nothing. The fixture `task-it/task-matrix.bpmn`
@@ -330,6 +333,64 @@ tests, Spring Boot 11 unit and 13 integration tests, smoke test 35, Quarkus runt
 deployment 48, Quarkus integration tests 3, coverage gate 37). The gate measures 100 % of 20,769
 instructions for Spring Boot and 100 % of 20,643 for Quarkus, and `bin/check-deploy-safety.sh`
 passes. No flake was hit.
+
+**Answers to two reviews of S6.1.1, 2026-10-17** (one by Claude, approve, 5 findings; one by
+Copilot, request changes, 2 findings, its first the same as Claude 5). Every claim was checked in
+the code of the branch and in the engine's source at `bdd795a3`; the delivery fence was measured
+against the pinned image.
+
+Valid and fixed:
+
+- **The lock renewal did not name its delivery** (Copilot 1, Major; Claude 5, Nit). Where a lock
+  lapsed and the engine handed the job to the same client again, the earlier handler's renewal
+  extended the later delivery's lock and never learned that a second delivery may run. The engine
+  takes the delivery on an extension (`JobExtendLockRequest.delivery_token`, `deliveryToken` of
+  `POST /v1/jobs/{key}/extend-lock`). `ZenBpmRestClient#extendJobLock` gained an overload with the
+  token (`0` sends none), and every extension of the renewal names the delivery it belongs to
+  (decision 36). `ZenBpmJobLockIT#anExtensionOfALapsedDeliveryLeavesTheNextOneAlone` measures the
+  engine: the earlier delivery's token is answered `409`, read as a lost lock, and the later one's
+  extends; `ZenBpmRestClientTest#aLockExtendedForOneDeliveryNamesIt` and the body asserted in
+  `ZenBpmLockRenewalTest#aFullLockIsExtendedOnceHalfOfItIsLeft` pin the request.
+- **An engine clock behind the application's shortened every lock** (Claude 2, Minor). The lock's
+  end was the earlier of `lock_until`, on the engine's clock, and the moment of receipt plus the
+  job-timeout; the renewal took the earlier of the answered deadline and its own count as well. So a
+  drift made the renewal extend more often, without any pause once the drift reached the
+  job-timeout, from which on the dispatcher also dropped every job before its handler started. The
+  lock is now counted on the application's clock alone, as the engine's description of `lock_until`
+  recommends where the clocks cannot be trusted: from the receipt, and for an extension from its
+  sending (decision 36). The engine's moment is only compared, and where it is earlier by more than
+  a second a WARN says once per adapter id that the engine's clock runs behind or that the
+  job-timeout is above `jobManager.maxLockDurationMs`, naming the key to lower. Tests:
+  `ReceivedJobTest#theLockIsCountedFromTheReceipt`,
+  `ZenBpmJobDispatcherTest#aJobFromAnEngineClockBehindIsStarted`,
+  `ZenBpmLockRenewalTest#anEngineClockBehindIsNamedOnceAndChangesNothing`,
+  `#aLockAsCountedRaisesNoWarn` and `#theGrantedLockIsCountedFromTheSending`.
+- **Two modules sharing a job type with different job-timeouts were refused late and without a key**
+  (Claude 1, Minor). The check of fit-check item 11 covered the tasks of one module; two modules of
+  one adapter id share a job type under `name-clash-avoidance: none`, and its subscription, so the
+  second module's processing start failed with the job stream's message. The deployment service now
+  keeps the job-timeout of every job type its modules wired and refuses a different one of another
+  module while wiring, naming both modules, processes, tasks and values, both task-level keys and
+  `use-prefix` as the other way out
+  (`ZenBpmDeploymentWiringTest#twoModulesSharingAJobTypeNeedTheSameJobTimeout`).
+- **A stop during the pause before a repeated command did not stop it** (Copilot 2, Minor):
+  `ZenBpmCommandRetry` read the module's state before the pause only. It reads it after the pause
+  as well (`ZenBpmCommandRetryTest#aShutdownDuringThePauseEndsTheRepetition`).
+- **Javadoc of `E2eIntrospection`** (Claude 3, Nit) restored for `aggregate`, written for
+  `prepared`, corrected for `jobs`; **the README's status paragraph** (Claude 4, Nit) rewrapped.
+
+Seen to fail, each restored afterwards (9 of 9 mutants, against green unmutated runs): an extension
+without the delivery's token; the lock's end back to the earlier of both moments; an extension
+counted from the engine's answer; no look at the module's state after the pause; the cross-module
+check never refusing; the WARN about a shorter lock said every time, never, and without its
+tolerance; a token of `0` sent.
+
+`TZ=Etc/UTC mvn clean install` on OpenJDK 25.0.2 builds green after the fixes with every
+integration test run and none skipped (engine test support 12 unit and 3 integration tests, core
+843 unit and 74 integration tests, Spring Boot 11 unit and 13 integration tests, smoke test 35,
+Quarkus runtime 10, Quarkus deployment 48, Quarkus integration tests 3, coverage gate 37). The gate
+measures 100 % of 21,030 instructions on Spring Boot and 100 % of 20,904 on Quarkus, and
+`bin/check-deploy-safety.sh` passes (13 files on a green build, nothing after a red gate).
 
 ### S6.1.2 BPMN error and pending outcomes
 

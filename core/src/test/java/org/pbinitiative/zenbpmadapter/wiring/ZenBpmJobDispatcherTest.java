@@ -25,6 +25,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.pbinitiative.zenbpmadapter.ZenBpmProcessingContext.WiredProcess;
 import org.pbinitiative.zenbpmadapter.client.ReceivedJob;
 import org.pbinitiative.zenbpmadapter.client.ZenBpmExecutor;
+import org.pbinitiative.zenbpmadapter.client.grpc.Zenbpm.WaitingJob;
 
 import io.vanillabp.integration.adapter.spi.NameClashAvoidance;
 import io.vanillabp.integration.adapter.spi.workflowtask.WorkflowTaskOutcome;
@@ -141,6 +142,29 @@ class ZenBpmJobDispatcherTest {
                         .getAllOfThisTest()
                         .contains("job 42 of type 'shop__Order__ship' waited for a handler slot until its lock lapsed"),
                         output::getAllOfThisTest));
+    }
+
+    @Test
+    @DisplayName("A job from an engine whose clock runs a job-timeout behind is started all the same: its lock is counted from its receipt")
+    void aJobFromAnEngineClockBehindIsStarted() {
+        final var now = Instant.now();
+        final var behindTheClock = new ReceivedJob(WaitingJob
+                .newBuilder()
+                .setKey(42)
+                .setInstanceKey(INSTANCE)
+                .setType(JobRunning.JOB_TYPE)
+                .setElementId("Ship")
+                .setDeliveryToken(7)
+                .setLockUntil(now
+                        .minus(Duration.ofHours(1))
+                        .toEpochMilli())
+                .build(), now);
+
+        jobs.runs(behindTheClock);
+
+        assertEquals(1, jobs.invoker
+                .invocations()
+                .size());
     }
 
     @Test

@@ -63,12 +63,13 @@ module subscribes the job types of its claimed processes on the job stream, each
 `job-timeout` of its tasks as the lock (set per adapter id, workflow module, workflow or task,
 `PT5M` by default) and the number of handler slots as the cap of active jobs, and stopping it
 unsubscribes them before the clients close; a type two modules share stays subscribed until both
-stopped, and two tasks of one type with different `job-timeout`s end the start. A workflow is started: phase one asks the engine nothing, and phase two starts the latest
-version of the process under the id the engine knows it by, with the aggregate's id as the business
-key and as a text variable after the values the aggregate shares, sends `history-time-to-live` in
-whole seconds where a level sets it, and reports the key and the version of the new instance. The
-instance is created only once the caller's transaction committed, through the platform's phase-two
-outbox, and a start whose transaction rolls back creates none. A
+stopped, and two tasks of one type with different `job-timeout`s end the start, also where two
+modules share the type. A workflow is started: phase one asks the engine nothing, and phase two
+starts the latest version of the process under the id the engine knows it by, with the aggregate's
+id as the business key and as a text variable after the values the aggregate shares, sends
+`history-time-to-live` in whole seconds where a level sets it, and reports the key and the version
+of the new instance. The instance is created only once the caller's transaction committed,
+through the platform's phase-two outbox, and a start whose transaction rolls back creates none. A
 `history-time-to-live` with a fraction of a second is refused while the application starts, and a
 start of a process the engine does not hold is not repeated (decisions 30 and 31 in
 [`DECISIONS.md`](./DECISIONS.md)). The adapter tells the platform what the engine does with the type

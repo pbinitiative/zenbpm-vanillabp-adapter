@@ -11,6 +11,7 @@ import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 import org.pbinitiative.zenbpmadapter.client.ReceivedJob;
 import org.pbinitiative.zenbpmadapter.client.ZenBpmErrors;
@@ -27,10 +28,15 @@ import lombok.extern.slf4j.Slf4j;
  * A handler which starts with less than half of <code>job-timeout</code> left on its lock, such as
  * one whose job waited for a slot, has the lock extended by <code>job-timeout</code> at once. From
  * then on the lock is extended whenever half of <code>job-timeout</code> is left, so every half of
- * it, or every half of what the engine granted where it lowered the lock to its maximum. Each
- * extension (<code>POST /v1/jobs/{key}/extend-lock</code>) is scheduled on the timing threads of the
- * adapter id and sent from a virtual thread of its own, so an engine which is slow to answer never
- * holds up the hand-over of jobs.
+ * it. Each extension (<code>POST /v1/jobs/{key}/extend-lock</code>) names the delivery, so the lock
+ * of a later delivery of the same job to the same client is never extended by the handler of an
+ * earlier one; it is scheduled on the timing threads of the adapter id and sent from a virtual
+ * thread of its own, so an engine which is slow to answer never holds up the hand-over of jobs.
+ * <p>
+ * The lock is counted on the application's clock, from the receipt of the job and from the sending
+ * of each extension, see decision 36 in the repository's DECISIONS.md. Where the engine's own
+ * deadline is shorter by more than {@link #CLOCK_TOLERANCE}, a WARN says so once per adapter id: the
+ * engine's clock runs behind, or the engine lowered the lock to its maximum.
  * <p>
  * An extension the engine could not be asked for (no answer, a broken connection, <code>502</code>)
  * is sent again after a pause which starts at 50 ms and doubles up to an eighth of the job-timeout, as long as the
@@ -47,6 +53,12 @@ public final class ZenBpmLockRenewal {
      */
     static final Duration FIRST_PAUSE = Duration.ofMillis(50);
 
+    /**
+     * How much shorter the engine's deadline may be than the lock counted on the application's
+     * clock before a WARN says so: the time a job or an answer takes to travel.
+     */
+    static final Duration CLOCK_TOLERANCE = Duration.ofSeconds(1);
+
     private final String adapterId;
 
     private final ZenBpmRestClient rest;
@@ -56,6 +68,8 @@ public final class ZenBpmLockRenewal {
     private final ScheduledExecutorService timing;
 
     private final ThreadFactory calls;
+
+    private final AtomicBoolean shorterLockReported = new AtomicBoolean();
 
     /**
      * The renewal of one adapter id. Contacts nothing.
@@ -94,14 +108,39 @@ public final class ZenBpmLockRenewal {
         final Duration jobTimeout,
         final String taskDefinition
     ) {
-        final var renewal = new Renewal(received
-                .job()
-                .getKey(), jobTimeout, taskDefinition, received.lockEnd(jobTimeout));
+        final var job = received.job();
+        final var renewal = new Renewal(job.getKey(), job.getDeliveryToken(), jobTimeout, taskDefinition, received
+                .lockEnd(jobTimeout));
+        received
+                .lockUntil()
+                .ifPresent(lockUntil -> reportAShorterLock(job.getKey(), lockUntil, renewal.lockEnd, jobTimeout));
         // where less than half is left, the moment lies in the past, and the extension goes at once
         renewal.schedule(Duration
                 .between(Instant.now(), renewal.lockEnd)
                 .minus(jobTimeout.dividedBy(2)));
         return renewal;
+    }
+
+    // once per adapter id: either cause holds for every job, and the lock counted on the
+    // application's clock stays the one the renewal goes by
+    private void reportAShorterLock(
+        final long jobKey,
+        final Instant engineDeadline,
+        final Instant counted,
+        final Duration jobTimeout
+    ) {
+        final var shorterBy = Duration.between(engineDeadline, counted);
+        if ((shorterBy.compareTo(CLOCK_TOLERANCE) <= 0) || shorterLockReported.getAndSet(true)) {
+            return;
+        }
+        log.warn("""
+                ZenBPM[{}]: the engine says the lock of job {} lapses at {}, {} before the job-timeout of {} \
+                counted on this application's clock. Either the engine's clock runs behind this application's, \
+                which the adapter does not rely on, or the job-timeout is above the engine's \
+                jobManager.maxLockDurationMs (24 hours by default), which lowers every lock to it; then set \
+                vanillabp.adapters.{}.job-timeout, or the more specific key of the task, below that maximum, or \
+                the lock lapses while the handler runs. This is said once.""", adapterId, jobKey,
+                engineDeadline, shorterBy, jobTimeout, adapterId);
     }
 
     /**
@@ -110,6 +149,8 @@ public final class ZenBpmLockRenewal {
     public final class Renewal implements AutoCloseable {
 
         private final long jobKey;
+
+        private final long deliveryToken;
 
         private final Duration jobTimeout;
 
@@ -134,11 +175,13 @@ public final class ZenBpmLockRenewal {
 
         private Renewal(
             final long jobKey,
+            final long deliveryToken,
             final Duration jobTimeout,
             final String taskDefinition,
             final Instant lockEnd
         ) {
             this.jobKey = jobKey;
+            this.deliveryToken = deliveryToken;
             this.jobTimeout = jobTimeout;
             this.taskDefinition = taskDefinition;
             this.lockEnd = lockEnd;
@@ -194,21 +237,20 @@ public final class ZenBpmLockRenewal {
         }
 
         private void extend() {
+            // the engine extends from the moment the request reaches it, which comes after this one
+            final var sent = Instant.now();
             final Instant granted;
             try {
-                granted = rest.extendJobLock(jobKey, clientId, jobTimeout);
+                granted = rest.extendJobLock(jobKey, clientId, jobTimeout, deliveryToken);
             } catch (final RuntimeException e) {
                 notExtended(e);
                 return;
             }
             unanswered = 0;
-            final var now = Instant.now();
-            final var counted = now.plus(jobTimeout);
-            lockEnd = granted.isBefore(counted) ? granted : counted;
-            // the lock as counted never lasts longer than the job-timeout, so half of what is left
-            // is half of the job-timeout, or less where the engine granted less
+            lockEnd = sent.plus(jobTimeout);
+            reportAShorterLock(jobKey, granted, lockEnd, jobTimeout);
             schedule(Duration
-                    .between(now, lockEnd)
+                    .between(Instant.now(), lockEnd)
                     .dividedBy(2));
         }
 

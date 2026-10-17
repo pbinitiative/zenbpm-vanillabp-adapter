@@ -26,8 +26,9 @@ import io.vanillabp.integration.test.utils.SuppressOutputExtension;
 /**
  * What the repetition around a handler's commands repeats, and what bounds it: a call the engine
  * could not be asked for and what the caller names are repeated, five attempts at most, never past
- * the job's lock and not at all while the module shuts down; a refusal and an interrupted pause end
- * it at once, and a read is asked again while its answer is not there yet.
+ * the job's lock and not at all while the module shuts down, nor once it began to during a pause; a
+ * refusal and an interrupted pause end it at once, and a read is asked again while its answer is not
+ * there yet.
  */
 @ExtendWith(SuppressOutputExtension.class)
 class ZenBpmCommandRetryTest {
@@ -115,6 +116,28 @@ class ZenBpmCommandRetryTest {
         }));
 
         assertEquals(1, calls.get());
+    }
+
+    @Test
+    @DisplayName("A module which begins to shut down during the pause before an attempt gets no further attempt")
+    void aShutdownDuringThePauseEndsTheRepetition() {
+        final var calls = new AtomicInteger();
+        final var asked = new AtomicInteger();
+        final var lockEnd = Instant
+                .now()
+                .plus(LONG_LOCK);
+        // the module still runs when the failure is read, and shuts down while the retry waits
+        final var retry = new ZenBpmCommandRetry("orders", 42, "ship", () -> lockEnd, () -> asked
+                .incrementAndGet() > 1);
+
+        assertThrows(ZenBpmUnavailableException.class, () -> retry.send("completion", () -> {
+            calls.incrementAndGet();
+            throw unavailable();
+        }));
+
+        assertAll(
+                () -> assertEquals(1, calls.get()),
+                () -> assertEquals(2, asked.get()));
     }
 
     @Test
