@@ -55,7 +55,10 @@ Full story with analysis, design, tests and acceptance criteria:
   making `JobCompleteByKey` use `PropagateMappedOutputsOrAll` for a task without output mappings.
   The maintainers lean towards leaving the engine as it is so a task cannot pollute the variable
   context (open question 4); if that stands, this feature is dropped and the adapter keeps the
-  `PATCH`-then-`complete` of decision 7 as its final shape.
+  `PATCH`-then-`complete` of decision 7 as its final shape. A business rule task drops a result
+  without an output mapping through the same `PropagateOnlyMappedOutputs` (GAPS 27, found in
+  S5.3.1), and the attribute as worded covers `JobCompleteByKey` only: if the feature is taken up,
+  it covers the business rule task as well or says that it does not.
 - [ ] **Adapter twin (simplifies S6.1.1, S6.3.1, S8.2.1):** drop the `PATCH` before `complete` and
   set the attribute while rewriting; decision 7 superseded.
 

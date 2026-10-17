@@ -413,6 +413,18 @@ secondary with model B, the old workflow's task is served).
   `bpmnErrorRoutesBoundary`, `asyncTaskIsCompletedLater`, `declaredTaskParametersAreBound`, and the
   Quarkus twin of S6.1.3, `aTaskTakenAwayIsReportedCanceled`.
 
+  *Note from S5.3.1, 2026-10-17.* `ZenBpmWorkflowLifecycleTest#aStartCreatesTheInstanceAfterTheCommit`
+  proves the subscribed job type by waiting in the application's log file for the WARN line of a
+  job "which nothing handles yet". Once the handler runs, that line is gone: replace the wait with
+  the call of `E2eWorkflow#prepare` (an introspection endpoint) and keep the assertion that the job
+  of the started instance arrives, tied to that instance's job key (`introspect/jobs/{key}`) as it
+  is now, because every case of the class starts `StartProcess` on one engine. `StartProcess`
+  evaluates the decision `rating` twice before `Prepare`, the second time without an output mapping
+  (GAPS 27); a case which completes `Prepare` ends the instance. When the class reads the engine
+  more often, move its status-checked JSON read (`ZenBpmWorkflowLifecycleTest#engine`) into
+  `engine-test-support` and let the Spring `ZenBpmDeploymentIT` use it instead of its substring
+  checks.
+
 **Acceptance criteria**
 
 - [ ] Both platforms prove delivery, outcome and idempotency; the Quarkus report covers

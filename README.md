@@ -64,7 +64,9 @@ unsubscribes them before the clients close; a type two modules share stays subsc
 stopped. A workflow is started: phase one asks the engine nothing, and phase two starts the latest
 version of the process under the id the engine knows it by, with the aggregate's id as the business
 key and as a text variable after the values the aggregate shares, sends `history-time-to-live` in
-whole seconds where a level sets it, and reports the key and the version of the new instance. A
+whole seconds where a level sets it, and reports the key and the version of the new instance. The
+instance is created only once the caller's transaction committed, through the platform's phase-two
+outbox, and a start whose transaction rolls back creates none. A
 `history-time-to-live` with a fraction of a second is refused while the application starts, and a
 start of a process the engine does not hold is not repeated (decisions 30 and 31 in
 [`DECISIONS.md`](./DECISIONS.md)). The adapter tells the platform what the engine does with the type

@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<definitions xmlns="https://www.omg.org/spec/DMN/20191111/MODEL/" id="zenbpm-e2e-rating" name="Rating" namespace="http://zenbpm.pbinitiative.org/e2e">
+  <decision id="rating" name="Rating">
+    <decisionTable id="Table_Rating" hitPolicy="FIRST">
+      <input id="Input_Item" label="Item">
+        <inputExpression id="Expression_Item" typeRef="string">
+          <text>item</text>
+        </inputExpression>
+      </input>
+      <output id="Output_Rating" label="Rating" name="grade" typeRef="string" />
+      <rule id="Rule_Any">
+        <inputEntry id="Entry_Any">
+          <text>-</text>
+        </inputEntry>
+        <outputEntry id="Output_Any">
+          <text>"standard"</text>
+        </outputEntry>
+      </rule>
+    </decisionTable>
+  </decision>
+</definitions>
