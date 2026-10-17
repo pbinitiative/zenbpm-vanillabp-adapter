@@ -271,6 +271,32 @@ runtime 9, Quarkus deployment 46, coverage gate 35; `ZenBpmValueTypesTest` 68,
 `ZenBpmValueTypesIT` 16). The gate measures 100 % of 17,063 instructions for Spring Boot and
 100 % of 16,941 for Quarkus, and `bin/check-deploy-safety.sh` passes both runs.
 
+**F5.1 done 2026-10-17**, merged to `main` as `a494e79` (pull request #36, after two reviews and
+CodeRabbit's review, which left no comment). On that commit (GitHub keeps run logs for 90 days, so
+what they showed is written here as well):
+
+- `Checks`, run
+  [39029737535](https://github.com/pbinitiative/zenbpm-vanillabp-adapter/actions/runs/39029737535):
+  green on both JDKs. `bin/check-engine-copies.sh` reported both copies as the engine's files of
+  `bdd795a3...`. `ZenBpmProcessServiceTest` ran 12 tests, `ZenBpmProcessServiceIT` 2,
+  `ZenBpmSharedValuesTest` 3, `ZenBpmValueTypesTest` 68, `ZenBpmValueTypesIT` 16,
+  `ZenBpmTimeToLiveTest` 5, `ZenBpmTimeToLiveIT` 1, `ZenBpmErrorsTest` 41, `ZenBpmErrorsIT` 9,
+  `ZenBpmAdapterConfigurationTest` 105, `ZenBpmHistoryTimeToLiveBootTest` 3,
+  `ZenBpmStartupValidationBootTest` 14, `ZenBpmFractionOfASecondTest` 1,
+  `ZenBpmOverlayResolutionTest` 6 and `ZenBpmCompleteAdapterIdTest` 2, none skipped (engine test
+  support 12 unit and 3 integration tests, core 712 unit and 60 integration tests, Spring Boot 9
+  unit and 2 integration tests, smoke test 35, Quarkus runtime 9, Quarkus deployment 46, coverage
+  gate 35). The gate measured 100 % on both platforms: of 17,063 instructions for Spring Boot and
+  16,941 for Quarkus on JDK 25, of 17,055 and 16,933 on JDK 21.
+- `Publish snapshots`, run
+  [39029737539](https://github.com/pbinitiative/zenbpm-vanillabp-adapter/actions/runs/39029737539):
+  green. The core snapshot it published to GitHub Packages, `2.0.0-20261017.114255-32`, contains
+  `client/ZenBpmTimeToLive`, `processservice/ZenBpmSharedValues`, `processservice/ZenBpmValueTypes`
+  (with the answer for a text of another type than `String`) and `ZenBpmProcessService` with its
+  nested `HistoryTimeToLive`, and holds no test class, fake, fixture or BPMN file. Both report pages
+  (`spring-boot-report/index.html`, `quarkus-report/index.html`) answer HTTP 200 and show 0 of
+  17,063 (Spring Boot) and 0 of 16,941 (Quarkus) instructions missed.
+
 ## F5.2 The probes
 
 ### S5.2.1 `ZenBpmInstanceCache` and the workflow probes
