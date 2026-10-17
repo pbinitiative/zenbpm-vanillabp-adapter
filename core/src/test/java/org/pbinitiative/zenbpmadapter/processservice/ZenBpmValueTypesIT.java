@@ -62,6 +62,7 @@ class ZenBpmValueTypesIT {
         client.deployBpmn(contractTask());
         final var sent = new LinkedHashMap<String, Object>();
         values().forEach(arguments -> sent.put(((Class<?>) arguments.get()[0]).getName(), arguments.get()[1]));
+        sent.put(StringBuilder.class.getName(), new StringBuilder("a text built"));
         final var started = client.createInstance(CreateInstanceRequest
                 .latestVersionOf("contract-task")
                 .withBusinessKey("order-%s".formatted(UUID.randomUUID()))
@@ -109,6 +110,19 @@ class ZenBpmValueTypesIT {
         assertAll(
                 () -> assertEquals(Long.class, back.getClass()),
                 () -> assertEquals(0, new BigDecimal("1000.0").compareTo(new BigDecimal(back.toString()))));
+    }
+
+    @Test
+    @DisplayName("A text of another type than String reaches the engine as its text and comes back as a String")
+    void aTextOfAnotherTypeComesBackAsAString() {
+        assertAll(
+                () -> assertEquals("a text built", readBack.get(StringBuilder.class.getName())),
+                () -> assertEquals(ValueTypeVerdict.Kind.SURVIVES, ZenBpmValueTypes
+                        .verdictFor(StringBuilder.class, ValueDirection.TO_BPMS)
+                        .kind()),
+                () -> assertEquals(ValueTypeVerdict.Kind.CHANGED, ZenBpmValueTypes
+                        .verdictFor(StringBuilder.class, ValueDirection.FROM_BPMS)
+                        .kind()));
     }
 
     /**

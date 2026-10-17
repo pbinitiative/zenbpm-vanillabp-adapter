@@ -22,9 +22,12 @@ import io.vanillabp.integration.adapter.spi.values.ValueTypeVerdict;
  * <code>double</code> exactly come back as they went: a whole number comes back without a fraction,
  * <code>1000.0</code> as <code>1000</code>, which the platform turns into the declared number type
  * again, because it is the same number. A whole number above 2^53 and a decimal of more than 17
- * digits or with a scale do not: the engine never holds them. The platform shares an enum as the
- * name of its constant, and a date or an instant as the text of the instant, which the engine keeps
- * as text. What this class cannot place it answers with "cannot say", which never ends a start.
+ * digits or with a scale do not: the engine never holds them. A text comes back as a
+ * <code>String</code> whatever type it was sent as, and the platform turns it into no other type of
+ * text, so only a <code>String</code> or a <code>CharSequence</code> gets it back. The platform
+ * shares an enum as the name of its constant, and a date or an instant as the text of the instant,
+ * which the engine keeps as text. What this class cannot place it answers with "cannot say", which
+ * never ends a start.
  * <p>
  * {@code ZenBpmValueTypesIT} sends a value of every answer through the pinned engine and reads it
  * back.
@@ -65,8 +68,13 @@ public final class ZenBpmValueTypes {
         if (valueType == null) {
             return ValueTypeVerdict.cannotSay("no type was named");
         }
-        if (valueType.isEnum() || SURVIVE.contains(valueType) || CharSequence.class.isAssignableFrom(valueType)) {
+        if (valueType.isEnum() || SURVIVE.contains(valueType) || valueType == CharSequence.class) {
             return ValueTypeVerdict.survives();
+        }
+        if (CharSequence.class.isAssignableFrom(valueType)) {
+            return direction == ValueDirection.TO_BPMS ? ValueTypeVerdict.survives() : ValueTypeVerdict.changed("""
+                    that a %s comes back from the engine as a String, which VanillaBP does not turn into a %s \
+                    again""".formatted(valueType.getSimpleName(), valueType.getSimpleName()));
         }
         if (LARGE_WHOLE_NUMBERS.contains(valueType)) {
             return direction == ValueDirection.TO_BPMS ? ValueTypeVerdict.changed("""

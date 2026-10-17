@@ -65,12 +65,13 @@ stopped. A workflow is started: phase one asks the engine nothing, and phase two
 version of the process under the id the engine knows it by, with the aggregate's id as the business
 key and as a text variable after the values the aggregate shares, sends `history-time-to-live` in
 whole seconds where a level sets it, and reports the key and the version of the new instance. A
-`history-time-to-live` with a fraction of a second ends the start, and a start of a process the
-engine does not hold is not repeated (decisions 30 and 31 in [`DECISIONS.md`](./DECISIONS.md)). The
-adapter tells the platform what the engine does with the type of a value which travels: a whole
-number above 2^53 and a decimal come back changed. It runs no task yet: a job which arrives is logged at WARN and left to its lock, after
-which the engine hands it out again. What is built next, and in which order, is the implementation
-plan in [`docs/`](docs/README.md).
+`history-time-to-live` with a fraction of a second is refused while the application starts, and a
+start of a process the engine does not hold is not repeated (decisions 30 and 31 in
+[`DECISIONS.md`](./DECISIONS.md)). The adapter tells the platform what the engine does with the type
+of a value which travels: a whole number above 2^53, a `BigDecimal`, a character and a text of
+another type than `String` come back changed. It runs no task yet: a job which arrives is logged at
+WARN and left to its lock, after which the engine hands it out again. What is built next, and in
+which order, is the implementation plan in [`docs/`](docs/README.md).
 
 ## Modules
 

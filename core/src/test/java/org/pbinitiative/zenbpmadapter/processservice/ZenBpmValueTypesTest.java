@@ -100,10 +100,21 @@ class ZenBpmValueTypesTest {
                                 .explanation()));
     }
 
+    @Test
+    @DisplayName("A text of another type than String is named as the type the engine does not hand back")
+    void aTextOfAnotherTypeIsNamedWithItsType() {
+        assertEquals("""
+                that a StringBuilder comes back from the engine as a String, which VanillaBP does not turn into \
+                a StringBuilder again""", ZenBpmValueTypes
+                .verdictFor(StringBuilder.class, ValueDirection.FROM_BPMS)
+                .explanation());
+    }
+
     static Stream<Arguments> everyTypeAndDirection() {
-        final var survive = List.<Class<?>>of(String.class, StringBuilder.class, Boolean.class, boolean.class,
+        final var survive = List.<Class<?>>of(String.class, CharSequence.class, Boolean.class, boolean.class,
                 Integer.class, int.class, Short.class, short.class, Byte.class, byte.class, Double.class,
                 double.class, Float.class, float.class, Date.class, Instant.class, ValueDirection.class);
+        final var textOfAnotherType = List.<Class<?>>of(StringBuilder.class, StringBuffer.class);
         final var changed = List.<Class<?>>of(Long.class, long.class, BigInteger.class, BigDecimal.class,
                 Character.class, char.class);
         final var cannotSay = List.<Class<?>>of(Object.class, UUID.class, LocalDate.class, Map.class, List.class,
@@ -119,7 +130,12 @@ class ZenBpmValueTypesTest {
                                 .map(type -> Arguments.of(type, direction, ValueTypeVerdict.Kind.CHANGED)),
                         cannotSay
                                 .stream()
-                                .map(type -> Arguments.of(type, direction, ValueTypeVerdict.Kind.CANNOT_SAY)))
+                                .map(type -> Arguments.of(type, direction, ValueTypeVerdict.Kind.CANNOT_SAY)),
+                        textOfAnotherType
+                                .stream()
+                                .map(type -> Arguments.of(type, direction, direction == ValueDirection.TO_BPMS
+                                        ? ValueTypeVerdict.Kind.SURVIVES
+                                        : ValueTypeVerdict.Kind.CHANGED)))
                         .flatMap(arguments -> arguments));
     }
 

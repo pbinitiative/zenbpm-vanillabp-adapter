@@ -33,8 +33,7 @@ class ZenBpmHistoryTimeToLiveBootTest {
 
     private static final String MODULE = "vanillabp.workflow-modules.smoke-app";
 
-    private static final String WORKFLOW = MODULE
-            + ".workflows.SampleWorkflowService";
+    private static final String WORKFLOW = "%s.workflows.SampleWorkflowService".formatted(MODULE);
 
     @Test
     @DisplayName("The process service sends the history-time-to-live of the workflow, else of its module, else of the adapter id")

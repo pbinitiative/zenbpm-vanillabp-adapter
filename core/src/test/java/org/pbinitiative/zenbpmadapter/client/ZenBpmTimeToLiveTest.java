@@ -20,7 +20,7 @@ import io.vanillabp.integration.test.utils.SuppressOutputExtension;
 
 /**
  * A time to live is sent in whole seconds, the form the engine reads back exactly, and only where
- * the engine keeps it as it is. {@link ZenBpmRestClientContractIT} has the pinned engine read the
+ * the engine keeps it as it is. {@link ZenBpmTimeToLiveIT} has the pinned engine read the
  * form.
  */
 @ExtendWith(SuppressOutputExtension.class)

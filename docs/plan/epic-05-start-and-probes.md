@@ -223,6 +223,54 @@ tests):
   `ZenBpmProcessServiceProducer` asked for another process (fails
   `ZenBpmHistoryTimeToLiveBootTest` on Spring Boot and `ZenBpmOverlayResolutionTest` on Quarkus).
 
+**Answers to two reviews of F5.1, 2026-10-17** (one by Claude, 5 findings; one by Copilot, 1
+finding, the same as Claude 4). Neither found a Blocker or a Major. Every claim was checked in the
+code of the branch, the platform's `ValueConversion` and the engine's source at `bdd795a3`.
+
+Valid and fixed:
+
+- **A text of another type than `String` was promised to come back** (Claude 4 and Copilot 1,
+  Minor). `ZenBpmValueTypes` answered `survives()` in both directions for every `CharSequence`, as
+  `Camunda8ValueTypes` does. The engine hands a text back as a `String`, and the platform's
+  `ValueConversion` turns it into no `StringBuilder` (both reviewers probed it, Copilot through the
+  pinned image), so a `@TaskParam StringBuilder` passed the start and failed at its first delivery.
+  Now `String` and `CharSequence` itself survive both ways, and any other text type survives TO the
+  engine and is `changed(...)` FROM it, naming its type. Tests, red before the fix:
+  `ZenBpmValueTypesTest` holds `StringBuilder` and `StringBuffer` per direction and `CharSequence`
+  among the surviving types (now 68 cases), `#aTextOfAnotherTypeIsNamedWithItsType` the
+  explanation; `ZenBpmValueTypesIT#aTextOfAnotherTypeComesBackAsAString` sends a `StringBuilder`
+  through the image and reads a `String` back. The javadoc of the class and the README say it.
+- **A javadoc link to a test which sends no time to live** (Claude 1, Minor).
+  `ZenBpmTimeToLiveTest` named `ZenBpmRestClientContractIT`; it names `ZenBpmTimeToLiveIT`, which
+  has the engine read `86400s` and `0s`.
+- **GAPS 26 named only the start** (Claude 2, Minor). `ZenNode.ModifyProcessInstance` sends a
+  variable update over the same gRPC between the nodes, as the architecture draft and the note
+  above say; the row of `GAPS.md` now names both and cites both methods.
+- **The README's status paragraph** (Claude 3, Nit): re-wrapped at 100 columns; a time to live with
+  a fraction of a second "is refused while the application starts" instead of "ends the start",
+  which right after "A workflow is started" read as the workflow's start; and it names the
+  `BigDecimal`, the character and a text of another type than `String` as what comes back changed,
+  not "a decimal", which a `Double` is too.
+- **A key built with `+`** (Claude 5, Nit): `ZenBpmHistoryTimeToLiveBootTest` builds it with
+  `String#formatted`.
+
+Answered without a change: "ends the start" stays in the display names of
+`ZenBpmHistoryTimeToLiveBootTest` and `ZenBpmFractionOfASecondTest`. It is the repository's phrase
+for a refused start of the application, in more than 40 tests and documents on both platforms, and
+there no workflow start stands next to it.
+
+Seen to fail, each restored afterwards (4 of 4 mutants of the new guard, against a green
+unmutated run of `ZenBpmValueTypesTest`): `CharSequence` itself no longer surviving (2 failures),
+the directions swapped (6), every text type surviving both ways (3), the type not named in the
+explanation (2).
+
+After the answers `TZ=Etc/UTC mvn clean install` on OpenJDK 25.0.2 builds green with every
+integration test run and none skipped (engine test support 12 unit and 3 integration tests, core
+712 unit and 60 integration tests, Spring Boot 9 and 2 integration tests, smoke test 35, Quarkus
+runtime 9, Quarkus deployment 46, coverage gate 35; `ZenBpmValueTypesTest` 68,
+`ZenBpmValueTypesIT` 16). The gate measures 100 % of 17,063 instructions for Spring Boot and
+100 % of 16,941 for Quarkus, and `bin/check-deploy-safety.sh` passes both runs.
+
 ## F5.2 The probes
 
 ### S5.2.1 `ZenBpmInstanceCache` and the workflow probes
