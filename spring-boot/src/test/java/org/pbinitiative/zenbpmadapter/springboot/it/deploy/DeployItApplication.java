@@ -13,7 +13,8 @@ import io.vanillabp.integration.spi.AggregatePersistenceAware;
  * The application <code>ZenBpmDeploymentIT</code> boots against the pinned engine: the workflow
  * module <code>deploy-it</code> with {@link ShipmentWorkflow}, the platform's JDBC outbox and delivery
  * log on an in-memory database. It scans this package only, so the application of another
- * integration test, in a package of its own, stays out of it.
+ * integration test, in a package of its own, stays out of it. It stores no shipment, so every
+ * workflow of its process belongs to an aggregate it does not hold.
  */
 @SpringBootApplication
 public class DeployItApplication {
@@ -51,12 +52,18 @@ public class DeployItApplication {
 
             @Override
             public Object loadById(final Object aggregateId) {
-                throw new UnsupportedOperationException("no persistence in the integration tests");
+                // no shipment is stored
+                return null;
             }
 
             @Override
             public Class<?> getAggregateIdType() {
-                return null;
+                return String.class;
+            }
+
+            @Override
+            public String getAggregateIdName() {
+                return "id";
             }
 
         };

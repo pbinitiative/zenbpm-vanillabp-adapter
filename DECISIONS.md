@@ -434,3 +434,106 @@ fresh every time and never kept. Decision 30 is not changed: what a failed call 
 from its status, and this entry only answers what the task probes make of a `502` once they asked
 the engine one more question. The workflow probe needs none of this, because a key there may only
 make an `ACTIVE` answer shorter, and every `502` falls through to the search (decision 25).
+
+### 33. A job whose instance names no workflow aggregate is failed without retries
+
+Decided by the implementation pipeline in place of the maintainers, as their policy for the
+autonomous run asks.
+
+The handler of a job names the workflow aggregate by the variable which carries the aggregate's id,
+else by the business key, read in the job's own instance and, for an instance which is part of its
+workflow, in the workflow's root instance. An instance which has neither was started past VanillaBP,
+over the engine's REST API or by a tool, and nothing about the job will change that: every delivery
+of it finds the same instance.
+
+Leaving such a job to its lock would hand it out again after every `job-timeout`, for as long as the
+instance lives, and nothing but a WARN in the log of one node would ever say so. So the handler fails
+it at once, with `retries: 0`, so the engine raises an incident, and with a message which names the
+instance, the missing business key and the name of the id variable, so the operator who reads the
+incident can set the variable and resolve it, or cancel the instance. The failure names the
+delivery's `deliveryToken`, so a failure repeated after a lost answer counts once, and the job
+stream's `clientId`, so the stream's lock is released. The log line is a WARN without a stack
+trace, because the message says all there is. The Camunda 8 adapter fails such a job as well.
+
+A job the platform's core refuses because this application holds no aggregate of the id it names
+(`DeliveryOfAnUnknownWorkflowException`) is failed the same way, with the core's message: the cause
+is as permanent for the delivery, and the incident carries the core's explanation where an operator
+reads it.
+
+### 34. Before a completion, an update which finds no instance is repeated, one which finds it ended ends the delivery
+
+Decided by the implementation pipeline in place of the maintainers, as their policy for the
+autonomous run asks.
+
+Before a job is completed, the handler writes the values the aggregate shares into the engine
+(`PATCH /v1/process-instances/{key}/variables`, decision 35). At the pinned commit `bdd795a3` the
+engine reads the instance first, on a follower of its partition (`GetProcessInstance` with
+`GetPartitionFollower` in `internal/cluster/node.go`), and answers `404` where that node does not
+hold it and `409` where its state is neither active nor failed; only then does it update it on the
+leader (`UpdateProcessInstanceVariables` in `internal/rest/server.go`). Measured against the pinned
+image (`ZenBpmJobHandlingIT`): a completed and a cancelled workflow are answered `409`, and a key
+nobody holds `404`.
+
+The engine keeps an instance after it ended until its history is removed, so for an instance whose
+job was just delivered a `404` means a node which has not caught up yet (GAPS 20), not an instance
+which is gone. So the handler repeats the update within the job's lock, through the same bounded
+repetition as every command of a delivery, and leaves the job to its lock where the node still has
+not caught up. The same holds for the read of the job's instance before the invocation: a `404`
+there is repeated and then left to the lock, not taken as a cancelled instance, which the engine
+answers with its state.
+
+A `409` is final: a node which lags behind knows an instance in an earlier state, never in a later
+one. The workflow ended or was cancelled while the handler ran, which is what at-least-once delivery
+leaves over, like a completion which finds the job gone. The handler logs it at WARN and does not
+complete the job, which the engine would refuse anyway.
+
+### 35. The shared values are written into every instance from the task's own up to its workflow's root
+
+Decided by the implementation pipeline in place of the maintainers, as their policy for the
+autonomous run asks.
+
+Measured against the pinned engine (`ZenBpmJobHandlingIT`): an instance of an embedded sub-process
+holds a copy of the variables of the instance it is part of, taken when it started. A variable
+written into the root afterwards does not reach the copy, and what is written into the sub-process,
+by an update or with the completion of its job, is gone when it ended. A job of a task inside a
+sub-process names the sub-process's instance (GAPS 22).
+
+So writing the values a handler computed into the job's own instance alone would leave a gateway
+behind the sub-process deciding on the values of the last start, and writing them into the root
+alone would leave a gateway inside the sub-process on its copy. The handler therefore writes them
+into every instance the walk to the workflow id passes (decision 28): the job's own instance first,
+the workflow's root last, and only then completes the job. A call activity ends the walk as it ends
+the workflow: what the called workflow computed reaches its caller through the output mappings of
+the call, as the model says. A job of a task outside any sub-process costs one update, as before;
+each level of nesting costs one more, and the walk itself reads only instances the cache does not
+hold yet.
+
+### 36. A job's lock is counted on the application's clock, and each extension names its delivery
+
+Decided by the implementation pipeline in place of the maintainers, as their policy for the
+autonomous run asks.
+
+A job the job stream delivers carries `lock_until`, the moment its lock lapses on the clock of the
+partition's leader. The engine's own description of the field (`WaitingJob` in
+`pkg/zenclient/proto/zenbpm.proto` at the pinned commit `bdd795a3`) says to count the lock duration
+of the subscription from the moment of receipt where the clocks of engine and application cannot be
+trusted to agree. The adapter does that in every case: the lock of a delivery lapses at its receipt
+plus the `job-timeout` it was subscribed with, and an extension lasts from the moment it was sent
+plus the `job-timeout`. The dispatcher, the lock renewal and the bounded repetition of a handler's
+commands all go by that moment.
+
+Taking the earlier of the engine's moment and the counted one would guard against one case only, a
+`job-timeout` above the engine's `jobManager.maxLockDurationMs` (24 hours by default), which the
+engine lowers every lock to. It would harm a far more ordinary one: an engine clock which runs behind
+the application's makes every lock look shorter by as much, so the renewal extended more often the
+more the clocks drifted apart, and without any pause once the drift reached the `job-timeout`, from
+which on the dispatcher also dropped every job before its handler started. So the engine's moment is only compared:
+where it is earlier than the counted one by more than a second, a WARN says so once per adapter id,
+naming both causes and the key to lower.
+
+Every extension of a lock names the delivery it belongs to (`deliveryToken` of
+`POST /v1/jobs/{key}/extend-lock`). Where a delivery's lock lapsed and the engine handed the job to
+the same client again, an extension for the earlier delivery is answered `409` instead of extending
+the later delivery's lock (measured against the pinned image, `ZenBpmJobLockIT`), so the handler of
+the earlier delivery learns that a second delivery may run beside it, and does not keep the later
+one's lock for it.

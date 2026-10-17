@@ -20,10 +20,10 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
  * view of the tree beside the platform's own binding, which reads only the keys of this adapter.
  * <p>
  * The keys of an adapter id live at <code>vanillabp.adapters.&lt;id&gt;.*</code>
- * ({@link ZenBpmAdapterKeys}). Three of them may also be set below the adapter level, and the most
+ * ({@link ZenBpmAdapterKeys}). Four of them may also be set below the adapter level, and the most
  * specific level wins for a task (task &gt; workflow &gt; workflow module &gt; adapter):
  * <ul>
- * <li><code>retry-backoff</code> and <code>max-redeliveries</code> at
+ * <li><code>job-timeout</code>, <code>retry-backoff</code> and <code>max-redeliveries</code> at
  * <code>vanillabp.workflow-modules.&lt;module&gt;.adapters.&lt;id&gt;.*</code>,
  * <code>vanillabp.workflow-modules.&lt;module&gt;.workflows.&lt;process&gt;.adapters.&lt;id&gt;.*</code>
  * and
@@ -144,6 +144,27 @@ public class VanillaBpZenBpmProperties {
     }
 
     /**
+     * How long a job of a task stays locked to the node which received it: the most specific level
+     * which sets <code>job-timeout</code>, else the adapter's, else the default.
+     *
+     * @param workflowModuleId The workflow module the task belongs to
+     * @param bpmnProcessId The BPMN process the task belongs to
+     * @param taskId The task, as the BPMN model names its job type
+     * @param adapterId The adapter id whose keys are read
+     * @return The duration, never <code>null</code>
+     */
+    public Duration jobTimeoutFor(
+        final String workflowModuleId,
+        final String bpmnProcessId,
+        final String taskId,
+        final String adapterId
+    ) {
+        return mostSpecific(workflowModuleId, bpmnProcessId, taskId, adapterId, ZenBpmScopedKeys::getJobTimeout)
+                .or(() -> adapterLevel(adapterId, ZenBpmAdapterKeys::getJobTimeout))
+                .orElse(ZenBpmAdapterConfiguration.DEFAULT_JOB_TIMEOUT);
+    }
+
+    /**
      * The first wait after a failed handler of a task: the most specific level which sets
      * <code>retry-backoff</code>, else the adapter's, else the default.
      *
@@ -216,6 +237,7 @@ public class VanillaBpZenBpmProperties {
         if (keys == null) {
             return;
         }
+        configuration.addScopedValue("%s.job-timeout".formatted(prefix), keys.getJobTimeout());
         configuration.addScopedValue("%s.retry-backoff".formatted(prefix), keys.getRetryBackoff());
         configuration.addScopedValue("%s.max-redeliveries".formatted(prefix), keys.getMaxRedeliveries());
         if (keys instanceof ZenBpmWorkflowScopedKeys workflowKeys) {
@@ -296,6 +318,8 @@ public class VanillaBpZenBpmProperties {
      */
     public static class ZenBpmScopedKeys {
 
+        private Duration jobTimeout;
+
         private Duration retryBackoff;
 
         private Integer maxRedeliveries;
@@ -304,6 +328,24 @@ public class VanillaBpZenBpmProperties {
          * Bound by Spring Boot.
          */
         public ZenBpmScopedKeys() {
+        }
+
+        /**
+         * <code>job-timeout</code> at this level.
+         *
+         * @return The duration, or <code>null</code> where this level does not set it
+         */
+        public Duration getJobTimeout() {
+            return jobTimeout;
+        }
+
+        /**
+         * <code>job-timeout</code> at this level.
+         *
+         * @param jobTimeout The duration as bound
+         */
+        public void setJobTimeout(final Duration jobTimeout) {
+            this.jobTimeout = jobTimeout;
         }
 
         /**

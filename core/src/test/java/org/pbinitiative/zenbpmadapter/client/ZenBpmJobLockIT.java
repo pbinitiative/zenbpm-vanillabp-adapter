@@ -152,6 +152,41 @@ class ZenBpmJobLockIT {
     }
 
     @Test
+    @DisplayName("An extension naming a delivery whose lock lapsed is refused with 409 where the job came back to the same client, and the later delivery's own extension goes through")
+    void anExtensionOfALapsedDeliveryLeavesTheNextOneAlone() {
+        final var jobType = deployed("fence");
+        final var inbox = new JobInbox();
+        final var clientId = clientId();
+        try (var stream = stream(inbox, clientId)) {
+            stream.subscribe("module-a", jobType, LOCK, 0);
+            final var instance = start(jobType);
+            final var first = inbox.next(instance, DELIVERY);
+            final var second = inbox.next(instance, LOCK.plus(DELIVERY));
+            final var firstToken = first
+                    .received()
+                    .job()
+                    .getDeliveryToken();
+            final var secondToken = second
+                    .received()
+                    .job()
+                    .getDeliveryToken();
+
+            final var superseded = assertThrows(ZenBpmApiException.class, () -> rest.extendJobLock(first.key(),
+                    clientId, LOCK, firstToken));
+            final var extended = rest.extendJobLock(second.key(), clientId, LOCK, secondToken);
+
+            assertAll(
+                    () -> assertEquals(first.key(), second.key()),
+                    () -> assertTrue(secondToken > firstToken, "%d after %d".formatted(secondToken, firstToken)),
+                    () -> assertEquals(409, superseded.getStatus()),
+                    () -> assertTrue(ZenBpmErrors.lockLost(superseded)),
+                    () -> assertTrue(extended.isAfter(Instant
+                            .now()
+                            .minus(CLOCK_TOLERANCE))));
+        }
+    }
+
+    @Test
     @DisplayName("Closing a stream hands its locked job to another stream at once, not after the lock")
     void closingAStreamHandsItsJobOnAtOnce() {
         final var jobType = deployed("close");

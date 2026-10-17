@@ -59,7 +59,31 @@ final class SmokeApplication {
      */
     static final String WITH_SHIPPING = "classpath*:with-shipping";
 
+    /**
+     * Where the BPMN files of {@link #withTwoProcessesSharingATaskDefinition()} are: the process of
+     * the shipping workflow service and the process <code>Returns</code> of the returns workflow
+     * service, each with a service task of the task definition <code>ship</code>.
+     */
+    static final String WITH_TWO_SHIPPERS = "classpath*:with-two-shippers";
+
     private SmokeApplication() {
+    }
+
+    /**
+     * A test of an application without the BPMS double whose workflow module has two processes with
+     * a task of the same task definition, see {@link #WITH_TWO_SHIPPERS}.
+     *
+     * @return The test, to be given the keys of the case
+     */
+    static QuarkusExtensionTest withTwoProcessesSharingATaskDefinition() {
+        return withoutTheBpmsDouble(new QuarkusExtensionTest().setArchiveProducer(() -> ShrinkWrap
+                .create(JavaArchive.class)
+                .addClasses(Aggregate.class, ReturnedParcel.class, ShippingWorkflowService.class,
+                        ReturnsWorkflowService.class, SmokeApplication.class, StartupBlock.class)
+                .addAsResource("application.yaml")
+                .addAsResource("workflow-module-descriptor/workflow-module", "META-INF/workflow-module")
+                .addAsResource("with-two-shippers/Shipping.bpmn")
+                .addAsResource("with-two-shippers/Returns.bpmn")));
     }
 
     /**

@@ -164,6 +164,27 @@ class ZenBpmErrorsTest {
     }
 
     @Test
+    @DisplayName("An update of variables answered 404 found no instance, one answered 409 found the instance ended, also wrapped; no other call is read so")
+    void anUpdateOfVariablesIsReadByItsStatus() {
+        final var variables = "/v1/process-instances/7/variables";
+        final var notFound = refusal(404, "PATCH", variables);
+        final var ended = refusal(409, "PATCH", variables);
+
+        assertAll(
+                () -> assertTrue(ZenBpmErrors.variablesFoundNoInstance(notFound)),
+                () -> assertTrue(ZenBpmErrors.variablesFoundNoInstance(new CompletionException(notFound))),
+                () -> assertFalse(ZenBpmErrors.variablesFoundTheInstanceEnded(notFound)),
+                () -> assertTrue(ZenBpmErrors.variablesFoundTheInstanceEnded(ended)),
+                () -> assertTrue(ZenBpmErrors.variablesFoundTheInstanceEnded(new RuntimeException(ended))),
+                () -> assertFalse(ZenBpmErrors.variablesFoundNoInstance(ended)),
+                () -> assertFalse(ZenBpmErrors.variablesFoundNoInstance(refusal(404, "GET", variables))),
+                () -> assertFalse(ZenBpmErrors.variablesFoundNoInstance(refusal(404, "POST", "/v1/process-instances"))),
+                () -> assertFalse(ZenBpmErrors.variablesFoundNoInstance(refusal(502, "PATCH", variables))),
+                () -> assertFalse(ZenBpmErrors.variablesFoundTheInstanceEnded(refusal(502, "PATCH", variables))),
+                () -> assertFalse(ZenBpmErrors.variablesFoundNoInstance(new IllegalStateException("404"))));
+    }
+
+    @Test
     @Timeout(value = 10, threadMode = Timeout.ThreadMode.SEPARATE_THREAD)
     @DisplayName("A chain of causes which closes into a ring is walked once, and an answer inside it still answers")
     void aRingOfCausesEndsTheWalk() {

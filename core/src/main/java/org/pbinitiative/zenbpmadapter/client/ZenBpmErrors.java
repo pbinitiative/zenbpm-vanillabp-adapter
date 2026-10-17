@@ -56,6 +56,8 @@ public final class ZenBpmErrors {
 
     private static final String POST = "POST";
 
+    private static final String PATCH = "PATCH";
+
     private static final Pattern JOB_PATH = Pattern.compile("/v1/jobs/-?\\d+(/[a-z-]+)?");
 
     private static final Pattern COMPLETION_OR_FAILURE_PATH = Pattern.compile("/v1/jobs/-?\\d+/(complete|fail)");
@@ -65,6 +67,8 @@ public final class ZenBpmErrors {
     private static final Pattern MESSAGES_PATH = Pattern.compile("/v1/messages");
 
     private static final Pattern START_PATH = Pattern.compile("/v1/process-instances");
+
+    private static final Pattern VARIABLES_PATH = Pattern.compile("/v1/process-instances/-?\\d+/variables");
 
     private ZenBpmErrors() {
     }
@@ -166,6 +170,36 @@ public final class ZenBpmErrors {
     }
 
     /**
+     * Whether an update of the variables of a process instance found no instance: the engine
+     * answered <code>404</code> to <code>PATCH /v1/process-instances/{key}/variables</code>. The
+     * engine looks the instance up on a follower of its partition before it updates it on the
+     * leader, so a follower which lags behind answers <code>404</code> for an instance the leader
+     * holds. The engine keeps an instance after it ended, until its history is removed, so for an
+     * instance whose job was just delivered the answer means a lagging follower rather than an
+     * instance which is gone, see decision 34 in the repository's DECISIONS.md.
+     *
+     * @param throwable What the update failed with
+     * @return Whether no node the engine asked holds the instance
+     */
+    public static boolean variablesFoundNoInstance(final Throwable throwable) {
+        return isAnsweredWith(throwable, PATCH, 404, VARIABLES_PATH);
+    }
+
+    /**
+     * Whether an update of the variables of a process instance found the instance ended: the
+     * engine answered <code>409</code> to <code>PATCH /v1/process-instances/{key}/variables</code>,
+     * which it does for an instance which is neither active nor failed, so completed or
+     * terminated. A node which lags behind knows an instance in an earlier state, never in a later
+     * one, so the answer is final, see decision 34 in the repository's DECISIONS.md.
+     *
+     * @param throwable What the update failed with
+     * @return Whether the instance ended
+     */
+    public static boolean variablesFoundTheInstanceEnded(final Throwable throwable) {
+        return isAnsweredWith(throwable, PATCH, 409, VARIABLES_PATH);
+    }
+
+    /**
      * Whether the engine could not be asked: no answer arrived in time, the connection failed or
      * broke, an answer could not be read, or the engine (<code>502</code>) or a proxy in front of
      * it (<code>503</code>, <code>504</code>) answered that the request did not get through.
@@ -242,10 +276,19 @@ public final class ZenBpmErrors {
         final int status,
         final Pattern path
     ) {
+        return isAnsweredWith(throwable, POST, status, path);
+    }
+
+    private static boolean isAnsweredWith(
+        final Throwable throwable,
+        final String method,
+        final int status,
+        final Pattern path
+    ) {
         if (!(answerIn(throwable) instanceof ZenBpmApiException refusal)) {
             return false;
         }
-        return (refusal.getStatus() == status) && isPostTo(path, refusal);
+        return (refusal.getStatus() == status) && method.equals(refusal.getMethod()) && matches(path, refusal);
     }
 
     private static boolean isOneOf(

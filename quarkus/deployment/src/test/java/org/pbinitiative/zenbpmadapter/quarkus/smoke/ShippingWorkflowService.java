@@ -27,7 +27,8 @@ public class ShippingWorkflowService implements AggregatePersistenceAware<Aggreg
     }
 
     /**
-     * Serves the task <code>Ship</code>. No job reaches it before the adapter delivers tasks.
+     * Serves the task <code>Ship</code>. No job reaches it: the job stream of the tests addresses a
+     * port nothing listens on.
      *
      * @param aggregate The workflow aggregate
      */

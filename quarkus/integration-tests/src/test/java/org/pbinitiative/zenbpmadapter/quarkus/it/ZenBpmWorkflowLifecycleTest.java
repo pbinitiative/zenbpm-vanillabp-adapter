@@ -49,7 +49,7 @@ import io.vanillabp.integration.test.utils.SuppressOutputExtension;
  * packaged extension deploys the workflow module <code>zenbpm-e2e</code>, one BPMN and one DMN file,
  * under <code>use-prefix</code>, subscribes the job type of its task, and starts a workflow through
  * the platform's two-phase start, whose instance evaluates the deployed decision and reaches the
- * task.
+ * task, whose job the adapter delivers to the application's method and completes.
  * <p>
  * The Spring Boot integration tests prove the same, and that is the point: a correct core says
  * nothing about whether the glue of a platform ever calls it, which is why coverage is measured per
@@ -154,23 +154,27 @@ class ZenBpmWorkflowLifecycleTest {
     }
 
     @Test
-    @DisplayName("A start creates no instance before the commit and an active one after it, which evaluates the deployed decision and whose job arrives over the subscribed job type")
+    @DisplayName("A start creates no instance before the commit and one after it, which evaluates the deployed decision, and whose job of the subscribed type reaches the application's method, which completes it, so the workflow ends")
     void aStartCreatesTheInstanceAfterTheCommit() {
         final var id = uniqueAggregateId();
 
         final var started = post("introspect/start/%s".formatted(id));
-        // the engine shows an instance as soon as it created it, before it ran the decisions in
-        // front of the task: its variables are read once the job of that task exists
-        final var job = awaitTheJobOf(awaitTheInstanceOf(id).get("key"));
+        final var instanceKey = awaitTheInstanceOf(id).get("key");
+        // every case of the class starts the same process on one engine, so the job is the one of
+        // this instance, and the method is asked about this aggregate
+        final var job = awaitTheJobOf(instanceKey);
+        await(() -> Boolean.TRUE.equals(object("introspect/prepared/%s".formatted(id)).get("prepared")),
+                "the method of the task to run for aggregate '%s'".formatted(id));
+        await(() -> "COMPLETED".equals(stateOfJob(instanceKey, job)), "job %s of the started instance to be completed"
+                .formatted(job));
+        await(() -> "COMPLETED".equals(awaitTheInstanceOf(id).get("state")), "the workflow of aggregate '%s' to end"
+                .formatted(id));
         final var instance = awaitTheInstanceOf(id);
         final var variables = variablesOf(instance);
-        final var jobArrived = "ZenBPM[zenbpm]: a job of type '%s' (key %s) arrived".formatted(SCOPED_JOB_TYPE, job);
-        await(() -> applicationLog().contains(jobArrived),
-                "the job %s of the started instance to arrive".formatted(job));
 
         assertAll(
                 () -> assertEquals(0, started.get("instancesInsideTheTransaction")),
-                () -> assertEquals("ACTIVE", instance.get("state")),
+                () -> assertEquals("COMPLETED", instance.get("state")),
                 () -> assertEquals(SCOPED_PROCESS_ID, instance.get("bpmnProcessId")),
                 () -> assertEquals(1, instance.get("version")),
                 () -> assertEquals(id, instance.get("businessKey")),
@@ -220,7 +224,21 @@ class ZenBpmWorkflowLifecycleTest {
         await(() -> !jobsOf(instanceKey).isEmpty(), "a job of instance %s".formatted(instanceKey));
         final var jobs = jobsOf(instanceKey);
         assertEquals(1, jobs.size(), jobs::toString);
-        return jobs.getFirst();
+        return (String) jobs
+                .getFirst()
+                .get("key");
+    }
+
+    private static String stateOfJob(
+        final Object instanceKey,
+        final String jobKey
+    ) {
+        return jobsOf(instanceKey)
+                .stream()
+                .filter(job -> jobKey.equals(job.get("key")))
+                .map(job -> (String) job.get("state"))
+                .findFirst()
+                .orElse(null);
     }
 
     @SuppressWarnings("unchecked")
@@ -238,7 +256,7 @@ class ZenBpmWorkflowLifecycleTest {
                 .getList("$");
     }
 
-    private static List<String> jobsOf(final Object instanceKey) {
+    private static List<Map<String, Object>> jobsOf(final Object instanceKey) {
         return api()
                 .get("introspect/jobs/%s".formatted(instanceKey))
                 .then()

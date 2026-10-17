@@ -45,6 +45,7 @@ import org.pbinitiative.zenbpmadapter.client.api.DeployedResource;
 import org.pbinitiative.zenbpmadapter.client.api.EngineStatus;
 import org.pbinitiative.zenbpmadapter.client.api.HistoryEntry;
 import org.pbinitiative.zenbpmadapter.client.api.InstanceFilter;
+import org.pbinitiative.zenbpmadapter.client.api.JobFailure;
 import org.pbinitiative.zenbpmadapter.client.api.JobFilter;
 import org.pbinitiative.zenbpmadapter.client.api.JobRef;
 import org.pbinitiative.zenbpmadapter.client.api.ProcessDefinitionRef;
@@ -665,6 +666,25 @@ class ZenBpmRestClientTest {
     }
 
     @Test
+    @DisplayName("A failure without an error code sends why, the retries left, its delivery and the stream's client; a delivery token of 0 names none")
+    void aFailureSendsWhyAndForWhichDelivery() throws Exception {
+        engine.answers("POST", "/v1/jobs/1/fail", 204, null);
+
+        client.failJob(1, JobFailure
+                .withMessage("no aggregate")
+                .withRetries(0)
+                .ofTheDelivery(7, "shop-1"));
+        client.failJob(1, JobFailure
+                .withMessage("no aggregate")
+                .ofTheDelivery(0, "shop-1"));
+
+        assertEquals(List.of(JSON.readTree("""
+                {"message": "no aggregate", "retries": 0, "deliveryToken": 7, "clientId": "shop-1"}"""), JSON.readTree(
+                """
+                        {"message": "no aggregate", "clientId": "shop-1"}""")), bodies());
+    }
+
+    @Test
     @DisplayName("A message is published with its name, its correlation key and its variables")
     void aMessageIsPublished() throws Exception {
         engine.answers("POST", "/v1/messages", 201, null);
@@ -709,6 +729,27 @@ class ZenBpmRestClientTest {
                 {"clientId": "app-orders-1a2b3c4d"}"""), JSON.readTree(engine
                 .onlyRequest()
                 .body()));
+    }
+
+    @Test
+    @DisplayName("A lock extended for one delivery names its delivery token, and a token of 0 names none")
+    void aLockExtendedForOneDeliveryNamesIt() throws Exception {
+        engine.answers("POST", "/v1/jobs/1/extend-lock", 200, """
+                {"lockUntil": "2026-10-13T15:20:30Z"}""");
+
+        client.extendJobLock(1, "app-orders-1a2b3c4d", Duration.ofSeconds(30), 7);
+        client.extendJobLock(1, "app-orders-1a2b3c4d", Duration.ofSeconds(30), 0);
+
+        assertEquals(List.of(JSON.readTree("""
+                {"clientId": "app-orders-1a2b3c4d", "lockDuration": "PT30S", "deliveryToken": 7}"""), JSON.readTree("""
+                {"clientId": "app-orders-1a2b3c4d", "lockDuration": "PT30S"}""")), List.of(JSON.readTree(engine
+                .requests()
+                .get(0)
+                .body()), JSON.readTree(
+                        engine
+                                .requests()
+                                .get(1)
+                                .body())));
     }
 
     @ParameterizedTest(name = "{0}")

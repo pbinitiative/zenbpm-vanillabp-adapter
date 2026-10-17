@@ -11,6 +11,7 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Supplier;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
@@ -20,7 +21,6 @@ import org.pbinitiative.zenbpmadapter.ZenBpmDeployedProcesses;
 import org.pbinitiative.zenbpmadapter.ZenBpmProcessingContext;
 import org.pbinitiative.zenbpmadapter.ZenBpmProcessingContext.StartedProcessing;
 import org.pbinitiative.zenbpmadapter.ZenBpmProcessingContext.WiredProcess;
-import org.pbinitiative.zenbpmadapter.client.ReceivedJob;
 import org.pbinitiative.zenbpmadapter.client.ZenBpmClientFactory;
 import org.pbinitiative.zenbpmadapter.client.ZenBpmClientRegistry;
 import org.pbinitiative.zenbpmadapter.client.ZenBpmEngineWait;
@@ -38,6 +38,9 @@ import org.pbinitiative.zenbpmadapter.model.ZenBpmMultiInstanceItems;
 import org.pbinitiative.zenbpmadapter.model.ZenBpmScoping;
 import org.pbinitiative.zenbpmadapter.model.ZenBpmTaskParameters;
 import org.pbinitiative.zenbpmadapter.model.ZenBpmUnsupportedConstructs;
+import org.pbinitiative.zenbpmadapter.wiring.ZenBpmJobDispatcher;
+import org.pbinitiative.zenbpmadapter.wiring.ZenBpmJobHandler;
+import org.pbinitiative.zenbpmadapter.wiring.ZenBpmJobTimeoutResolver;
 
 import io.vanillabp.integration.adapter.spi.AdapterCollaborators;
 import io.vanillabp.integration.adapter.spi.AdapterDeploymentService;
@@ -64,8 +67,9 @@ import lombok.extern.slf4j.Slf4j;
  * scopes the identifiers of the files and of the DMN files under <code>use-prefix</code>, wires the
  * processes with the platform, deploys the files once the engine is ready and reports the version
  * of each process, and starts and stops the workflow processing of a module by subscribing and
- * unsubscribing the job types of its claimed processes. It handles no job yet: a job which arrives
- * is logged and left to its lock. Reading, preparing and wiring need no engine, so an adapter id
+ * unsubscribing the job types of its claimed processes, whose jobs the {@link ZenBpmJobDispatcher}
+ * of the adapter id hands to the module's {@link ZenBpmJobHandler}. Reading, preparing and wiring
+ * need no engine, so an adapter id
  * without clients does them as well, like the Camunda 8 adapter, and the checks done meanwhile speak
  * before the configuration does; its deployment then ends with the message of its validation, which
  * names the keys to set, so a workflow module with BPMN files ends the start of an application which
@@ -88,7 +92,22 @@ public class ZenBpmDeploymentService implements AdapterDeploymentService<ZenBpmB
 
     private final AdapterCollaborators collaborators;
 
+    private final ZenBpmJobTimeoutResolver jobTimeouts;
+
     private StartupReport startupReport;
+
+    /**
+     * The dispatcher of the jobs of this adapter id, built when the first workflow module starts
+     * its processing. Guarded by <code>this</code>.
+     */
+    private ZenBpmJobDispatcher dispatcher;
+
+    /**
+     * The <code>job-timeout</code> of every job type the workflow modules of this adapter id wired,
+     * and which module, process and task set it first: modules which share a job type share its
+     * subscription.
+     */
+    private final Map<String, ModuleJobTimeout> jobTimeoutsOfTheModules = new ConcurrentHashMap<>();
 
     /**
      * Builds the deployment service of one adapter id. Fails first where this adapter and the
@@ -108,6 +127,31 @@ public class ZenBpmDeploymentService implements AdapterDeploymentService<ZenBpmB
         final ZenBpmClientRegistry registry,
         final AdapterCollaborators collaborators
     ) {
+        this(adapterId, registry, collaborators, ZenBpmJobTimeoutResolver.DEFAULT);
+    }
+
+    /**
+     * Builds the deployment service of one adapter id, which subscribes the job type of a task with
+     * the <code>job-timeout</code> the configuration resolves for it. Fails first where this adapter
+     * and the VanillaBP platform integration on the classpath do not belong together.
+     *
+     * @param adapterId The adapter id
+     * @param registry The factories of every adapter id of this type: the one of this id, and the
+     *            others, which the check for distinct instances compares
+     * @param collaborators What the platform hands to the adapter id
+     * @param jobTimeouts The <code>job-timeout</code> of each task, resolved over the four levels of
+     *            the configuration
+     * @throws IllegalStateException Where adapter and platform do not belong together, or where the
+     *             registry has no factory of the adapter id
+     * @throws IllegalArgumentException Where the collaborators belong to another adapter id, a
+     *             defect of the platform module's wiring
+     */
+    public ZenBpmDeploymentService(
+        final String adapterId,
+        final ZenBpmClientRegistry registry,
+        final AdapterCollaborators collaborators,
+        final ZenBpmJobTimeoutResolver jobTimeouts
+    ) {
         VanillaBpParts.requireAdapterFitsPlatform(ZenBpmAdapter.ADAPTER_TYPE, ZenBpmDeploymentService.class);
         if (!adapterId.equals(collaborators.adapterId())) {
             throw new IllegalArgumentException(
@@ -118,6 +162,7 @@ public class ZenBpmDeploymentService implements AdapterDeploymentService<ZenBpmB
         this.registry = registry;
         this.factory = registry.getFactory(adapterId);
         this.collaborators = collaborators;
+        this.jobTimeouts = jobTimeouts;
     }
 
     @Override
@@ -220,6 +265,23 @@ public class ZenBpmDeploymentService implements AdapterDeploymentService<ZenBpmB
                           vanillabp.workflow-modules.{}.adapters.{}.accept-unscoped-identifiers: true""",
                 workflowModuleId,
                 adapterId, adapterId, workflowModuleId, adapterId, adapterId, workflowModuleId, adapterId);
+    }
+
+    /**
+     * The <code>job-timeout</code> of a task as the configuration resolves it over its four levels:
+     * the lock the task's job type is subscribed with.
+     *
+     * @param workflowModuleId The workflow module of the task
+     * @param bpmnProcessId The plain id of the task's process
+     * @param taskDefinition The plain task definition of the task
+     * @return The duration, never <code>null</code>
+     */
+    public Duration jobTimeoutOf(
+        final String workflowModuleId,
+        final String bpmnProcessId,
+        final String taskDefinition
+    ) {
+        return jobTimeouts.jobTimeoutFor(workflowModuleId, bpmnProcessId, taskDefinition);
     }
 
     /**
@@ -389,7 +451,8 @@ public class ZenBpmDeploymentService implements AdapterDeploymentService<ZenBpmB
      * token; refuses a method which wants the item of an iteration whose element names none, see
      * {@link ZenBpmMultiInstanceItems}; carries the aggregate id to a process called on the same
      * aggregate from inside a multi-instance body, see {@link ZenBpmCallActivities}; and remembers
-     * what the start of the workflow processing and the lifecycle of a workflow need. No version
+     * what the start of the workflow processing and the lifecycle of a workflow need, the
+     * <code>job-timeout</code> of each job type included. No version
      * catalog is registered yet, which the platform reads as "not asked yet".
      *
      * @param workflowModuleId The workflow module of the process
@@ -398,7 +461,8 @@ public class ZenBpmDeploymentService implements AdapterDeploymentService<ZenBpmB
      * @param model The model of the process's file, as preparing left it
      * @param context The context of the workflow module
      * @throws IllegalStateException Where an element which creates a job names no task definition,
-     *             the platform refuses the wiring, or a method wants an item no element hands over
+     *             the platform refuses the wiring, a method wants an item no element hands over, or
+     *             two tasks of one job type have different <code>job-timeout</code>s
      */
     @Override
     public void wireBpmn(
@@ -438,13 +502,21 @@ public class ZenBpmDeploymentService implements AdapterDeploymentService<ZenBpmB
         ZenBpmMultiInstanceItems.refuseItemsNoElementHandsOver(model, workflowModuleId, wiring);
         ZenBpmCallActivities.carryTheAggregateId(model, workflowModuleId, wiring);
         final var scoping = collaborators.scoping();
-        final var jobTypes = model
+        final var jobTypes = new LinkedHashSet<String>();
+        model
                 .tasks()
                 .stream()
                 .filter(task -> !wiring.isImplementedExternally(adapterId, workflowModuleId, bpmnProcessId, task))
-                .map(task -> scoping.scopedTaskDefinition(workflowModuleId, bpmnProcessId, task.taskDefinition(),
-                        adapterId))
-                .collect(Collectors.toCollection(LinkedHashSet::new));
+                .forEach(task -> {
+                    final var jobType = scoping.scopedTaskDefinition(workflowModuleId, bpmnProcessId, task
+                            .taskDefinition(), adapterId);
+                    jobTypes.add(jobType);
+                    final var jobTimeout = jobTimeouts.jobTimeoutFor(workflowModuleId, bpmnProcessId, task
+                            .taskDefinition());
+                    context.recordJobTimeout(jobType, jobTimeout, bpmnProcessId, task.taskDefinition(), adapterId);
+                    refuseAnotherJobTimeoutOfASharedType(jobType,
+                            new ModuleJobTimeout(workflowModuleId, bpmnProcessId, task.taskDefinition(), jobTimeout));
+                });
         context.recordWiring(new WiredProcess(bpmnProcessId, scoping.scopedProcessId(workflowModuleId, bpmnProcessId,
                 adapterId), jobTypes, reportsItsStart, reportsItsEnd));
         log.info(
@@ -553,9 +625,10 @@ public class ZenBpmDeploymentService implements AdapterDeploymentService<ZenBpmB
      * anything is subscribed. A job type two workflow modules share stays subscribed until both
      * stopped. A module without a job type subscribes nothing and asks the engine nothing.
      * <p>
-     * No job is handled yet: a job which arrives is logged at WARN and left to its lock, after which
-     * the engine hands it out again. Every type is subscribed with the engine's default lock and
-     * cap of active jobs.
+     * The module's {@link ZenBpmJobHandler} is registered with the {@link ZenBpmJobDispatcher} of
+     * this adapter id before the first subscription, so the first job finds it. Every type is
+     * subscribed with its <code>job-timeout</code> as the lock and the number of handler slots as
+     * the cap of active jobs, see decision 9 in the repository's DECISIONS.md.
      *
      * @param workflowModuleId The workflow module
      * @param context What its deployment collected
@@ -573,24 +646,38 @@ public class ZenBpmDeploymentService implements AdapterDeploymentService<ZenBpmB
             return;
         }
         final var stream = factory.stream();
-        stream.onJob(this::leaveAJobNothingHandles);
+        final var dispatcher = dispatcher();
+        final var handler = new ZenBpmJobHandler(adapterId, factory, collaborators, context);
         context.processingStarted(new StartedProcessing(jobTypes, factory.workflowModuleStarted(workflowModuleId,
                 () -> stopWorkflowProcessing(workflowModuleId, context))));
+        dispatcher.register(handler);
+        final var slots = factory
+                .executor()
+                .getSlots();
+        final var jobTimeoutsOfTheTypes = context.jobTimeouts();
         try {
-            jobTypes.forEach(jobType -> stream.subscribe(workflowModuleId, jobType, Duration.ZERO, 0));
+            jobTimeoutsOfTheTypes.forEach((
+                jobType,
+                jobTimeout) -> stream.subscribe(workflowModuleId, jobType, jobTimeout, slots));
         } catch (final RuntimeException e) {
             stopWorkflowProcessing(workflowModuleId, context);
             throw e;
         }
-        log.info("ZenBPM[{}]: workflow module '{}' subscribed the job type(s) {}", adapterId, workflowModuleId,
-                String.join(", ", jobTypes));
+        log.info("ZenBPM[{}]: workflow module '{}' subscribed the job type(s) {}, each with at most {} active job(s)",
+                adapterId, workflowModuleId, jobTimeoutsOfTheTypes
+                        .entrySet()
+                        .stream()
+                        .map(jobType -> "%s (job-timeout %s)".formatted(jobType.getKey(), jobType.getValue()))
+                        .collect(Collectors.joining(", ")),
+                slots);
     }
 
     /**
      * Stops the workflow processing of a workflow module: unsubscribes its job types, where no other
-     * module of this adapter id subscribes them, and removes the hook of the client factory after
-     * the last of them. It is idempotent, because the platform and the closing client factory may
-     * both stop a module. Jobs delivered before keep their locks.
+     * module of this adapter id subscribes them, hands no further job to the module's handler, which
+     * repeats no failed command any more, and removes the hook of the client factory after the last
+     * of them. It is idempotent, because the platform and the closing client factory may both stop a
+     * module. Jobs delivered before keep their locks, and a handler which runs goes on.
      *
      * @param workflowModuleId The workflow module
      * @param context What its deployment collected
@@ -609,6 +696,7 @@ public class ZenBpmDeploymentService implements AdapterDeploymentService<ZenBpmB
                 .get()
                 .jobTypes()
                 .forEach(jobType -> stream.unsubscribe(workflowModuleId, jobType));
+        dispatcher().unregister(workflowModuleId);
         started
                 .get()
                 .registration()
@@ -617,6 +705,53 @@ public class ZenBpmDeploymentService implements AdapterDeploymentService<ZenBpmB
                 String.join(", ", started
                         .get()
                         .jobTypes()));
+    }
+
+    // two workflow modules share a job type where its name is not scoped, and the job stream keeps
+    // one lock duration per job type, so the second module's subscription would be refused when
+    // its processing starts; refused here instead, before anything reaches the engine
+    private void refuseAnotherJobTimeoutOfASharedType(
+        final String jobType,
+        final ModuleJobTimeout wired
+    ) {
+        final var recorded = jobTimeoutsOfTheModules.putIfAbsent(jobType, wired);
+        if ((recorded == null) || recorded.workflowModuleId.equals(wired.workflowModuleId) || recorded.duration
+                .equals(wired.duration)) {
+            return;
+        }
+        throw new IllegalStateException("""
+                Job type '%s' is served by two workflow modules with different job-timeouts: %s for task '%s' of \
+                process '%s' in workflow module '%s' and %s for task '%s' of process '%s' in workflow module '%s'. \
+                The engine locks the jobs of a type for one duration per subscription, and both modules share the \
+                subscription of adapter id '%s', so give both tasks the same job-timeout, for example:
+                  vanillabp.workflow-modules.%s.workflows.%s.tasks.%s.adapters.%s.job-timeout
+                  vanillabp.workflow-modules.%s.workflows.%s.tasks.%s.adapters.%s.job-timeout
+                or keep the job types apart with name-clash-avoidance 'use-prefix'."""
+                .formatted(jobType, recorded.duration, recorded.taskDefinition, recorded.bpmnProcessId,
+                        recorded.workflowModuleId, wired.duration, wired.taskDefinition, wired.bpmnProcessId,
+                        wired.workflowModuleId, adapterId, recorded.workflowModuleId, recorded.bpmnProcessId,
+                        recorded.taskDefinition, adapterId, wired.workflowModuleId, wired.bpmnProcessId,
+                        wired.taskDefinition, adapterId));
+    }
+
+    private record ModuleJobTimeout(
+        String workflowModuleId,
+        String bpmnProcessId,
+        String taskDefinition,
+        Duration duration
+    ) {
+    }
+
+    // built once per adapter id, by the first module which starts, and the job stream's consumer
+    // from then on
+    private synchronized ZenBpmJobDispatcher dispatcher() {
+        if (dispatcher == null) {
+            dispatcher = new ZenBpmJobDispatcher(adapterId, factory);
+            factory
+                    .stream()
+                    .onJob(dispatcher);
+        }
+        return dispatcher;
     }
 
     // what is done to a file once, the refusals before anything is written: a process nobody
@@ -737,14 +872,6 @@ public class ZenBpmDeploymentService implements AdapterDeploymentService<ZenBpmB
                   %s: none         # your identifiers are unique already
                 or remove the key, so the mode of the workflow module applies.""".formatted(adapterId,
                 bpmnProcessId, workflowModuleId, key, key));
-    }
-
-    // no task is handled yet: a job is left to its lock, after which the engine hands it out again,
-    // because closing the stream would hand it to another client at once
-    private void leaveAJobNothingHandles(final ReceivedJob received) {
-        final var job = received.job();
-        log.warn("ZenBPM[{}]: a job of type '{}' (key {}) arrived, which nothing handles yet; it is left to its lock",
-                adapterId, job.getType(), job.getKey());
     }
 
 }

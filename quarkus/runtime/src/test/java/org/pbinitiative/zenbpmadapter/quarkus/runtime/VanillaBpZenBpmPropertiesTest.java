@@ -73,6 +73,8 @@ class VanillaBpZenBpmPropertiesTest {
             Map.entry(ADAPTER
                     + "worker-threads-bound", "7"),
             Map.entry(ADAPTER
+                    + "job-timeout", "PT8M"),
+            Map.entry(ADAPTER
                     + "retry-backoff", "PT4S"),
             Map.entry(ADAPTER
                     + "max-redeliveries", "3"),
@@ -116,6 +118,7 @@ class VanillaBpZenBpmPropertiesTest {
                 () -> assertEquals(Duration.ofMinutes(1), configuration.getStartupWait()),
                 () -> assertEquals("virtual", configuration.getWorkerThreads()),
                 () -> assertEquals(7, configuration.getWorkerThreadsBound()),
+                () -> assertEquals(Duration.ofMinutes(8), configuration.getJobTimeout()),
                 () -> assertEquals(Duration.ofSeconds(4), configuration.getRetryBackoff()),
                 () -> assertEquals(3, configuration.getMaxRedeliveries()),
                 () -> assertEquals(Duration.ofSeconds(5), configuration.getShutdownGrace()),
@@ -205,6 +208,32 @@ class VanillaBpZenBpmPropertiesTest {
     }
 
     @Test
+    @DisplayName("job-timeout of a task comes from the most specific level which sets it, else the default")
+    void theJobTimeoutOfATaskComesFromTheMostSpecificLevel() {
+        final var overlay = bind(Map.of(
+                ADAPTER
+                        + "job-timeout",
+                "PT1M",
+                MODULE
+                        + "adapters.orders.job-timeout",
+                "PT2M",
+                WORKFLOW
+                        + "adapters.orders.job-timeout",
+                "PT3M",
+                TASK
+                        + "adapters.orders.job-timeout",
+                "PT4M"));
+
+        assertAll(
+                () -> assertEquals(Duration.ofMinutes(4), overlay.jobTimeoutFor("shop", "Order", "ship", "orders")),
+                () -> assertEquals(Duration.ofMinutes(3), overlay.jobTimeoutFor("shop", "Order", "pack", "orders")),
+                () -> assertEquals(Duration.ofMinutes(2), overlay.jobTimeoutFor("shop", "Invoice", "send", "orders")),
+                () -> assertEquals(Duration.ofMinutes(1), overlay.jobTimeoutFor("crm", "Order", "ship", "orders")),
+                () -> assertEquals(ZenBpmAdapterConfiguration.DEFAULT_JOB_TIMEOUT, overlay.jobTimeoutFor("shop",
+                        "Order", "ship", "billing")));
+    }
+
+    @Test
     @DisplayName("A level which does not set a key leaves it to the level above")
     void aLevelWithoutTheKeyLeavesItToTheLevelAbove() {
         final var overlay = bind(Map.of(
@@ -285,6 +314,9 @@ class VanillaBpZenBpmPropertiesTest {
                         + "adapters.orders.max-redeliveries",
                 "-4",
                 TASK
+                        + "adapters.orders.job-timeout",
+                "PT0S",
+                TASK
                         + "adapters.billing.max-redeliveries",
                 "-5"))
                 .configurationOf("orders")
@@ -305,6 +337,11 @@ class VanillaBpZenBpmPropertiesTest {
                         .message()
                         .contains(
                                 "vanillabp.workflow-modules.shop.workflows.Order.tasks.ship.adapters.orders.max-redeliveries is -4"),
+                        validation.message()),
+                () -> assertTrue(validation
+                        .message()
+                        .contains(
+                                "vanillabp.workflow-modules.shop.workflows.Order.tasks.ship.adapters.orders.job-timeout is PT0S"),
                         validation.message()),
                 () -> assertFalse(validation
                         .message()

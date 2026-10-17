@@ -45,6 +45,9 @@ import java.util.stream.Collectors;
  * threads run the handlers, or <code>virtual</code> for a virtual thread per handler</li>
  * <li><code>worker-threads-bound</code> (default {@value #DEFAULT_WORKER_THREADS}, only with
  * <code>virtual</code>) - how many handlers run at the same time on virtual threads</li>
+ * <li><code>job-timeout</code> (default {@value #DEFAULT_JOB_TIMEOUT_ISO}) - how long a job stays
+ * locked to the node which received it; the lock is renewed while its handler runs, and a job type
+ * is subscribed with it</li>
  * <li><code>retry-backoff</code> (default {@value #DEFAULT_RETRY_BACKOFF_ISO}) - the first wait
  * after a failed handler</li>
  * <li><code>max-redeliveries</code> (default {@value #DEFAULT_MAX_REDELIVERIES}) - after which
@@ -69,9 +72,9 @@ import java.util.stream.Collectors;
  * says that the identifiers of the workflow modules are unique, so the warning about
  * <code>name-clash-avoidance: none</code> becomes a DEBUG line</li>
  * </ul>
- * <code>retry-backoff</code> and <code>max-redeliveries</code> may also be set per workflow
- * module, workflow or task, <code>history-time-to-live</code> per workflow module or workflow, and
- * <code>accept-unscoped-identifiers</code> per workflow module, which
+ * <code>job-timeout</code>, <code>retry-backoff</code> and <code>max-redeliveries</code> may also
+ * be set per workflow module, workflow or task, <code>history-time-to-live</code> per workflow
+ * module or workflow, and <code>accept-unscoped-identifiers</code> per workflow module, which
  * {@link #setAcceptUnscopedIdentifiers(String, Boolean)} hands in.
  * This class holds their values at the adapter level. A value set at a lower level is handed in
  * through {@link #addScopedValue(String, Duration)} or {@link #addScopedValue(String, Integer)},
@@ -146,6 +149,16 @@ public class ZenBpmAdapterConfiguration {
      * The literal <code>worker-threads</code> accepts besides a positive number.
      */
     public static final String VIRTUAL_WORKER_THREADS = "virtual";
+
+    /**
+     * The default of <code>job-timeout</code> as written in a configuration.
+     */
+    public static final String DEFAULT_JOB_TIMEOUT_ISO = "PT5M";
+
+    /**
+     * The default of <code>job-timeout</code>.
+     */
+    public static final Duration DEFAULT_JOB_TIMEOUT = Duration.parse(DEFAULT_JOB_TIMEOUT_ISO);
 
     /**
      * The default of <code>retry-backoff</code> as written in a configuration.
@@ -292,6 +305,8 @@ public class ZenBpmAdapterConfiguration {
     private String workerThreads = DEFAULT_WORKER_THREADS;
 
     private Integer workerThreadsBound;
+
+    private Duration jobTimeout = DEFAULT_JOB_TIMEOUT;
 
     private Duration retryBackoff = DEFAULT_RETRY_BACKOFF;
 
@@ -519,6 +534,24 @@ public class ZenBpmAdapterConfiguration {
     }
 
     /**
+     * How long a job stays locked to the node which received it, at the adapter level.
+     *
+     * @return Never <code>null</code>
+     */
+    public Duration getJobTimeout() {
+        return jobTimeout;
+    }
+
+    /**
+     * How long a job stays locked to the node which received it, at the adapter level.
+     *
+     * @param jobTimeout The duration, or <code>null</code> for the default
+     */
+    public void setJobTimeout(final Duration jobTimeout) {
+        this.jobTimeout = jobTimeout == null ? DEFAULT_JOB_TIMEOUT : jobTimeout;
+    }
+
+    /**
      * The first wait after a failed handler, at the adapter level.
      *
      * @return Never <code>null</code>
@@ -730,11 +763,12 @@ public class ZenBpmAdapterConfiguration {
     }
 
     /**
-     * Hands a duration set below the adapter level to the validation: a <code>retry-backoff</code>
-     * or a <code>history-time-to-live</code> of a workflow module, a workflow or a task. Like the
-     * adapter's own, it must not be negative, a <code>history-time-to-live</code> must be whole
-     * seconds the engine takes, and a <code>history-time-to-live</code> handed in here counts as a
-     * started configuration, as the adapter's own does.
+     * Hands a duration set below the adapter level to the validation: a <code>job-timeout</code>,
+     * a <code>retry-backoff</code> or a <code>history-time-to-live</code> of a workflow module, a
+     * workflow or a task. Like the adapter's own, it must not be negative, a
+     * <code>job-timeout</code> must not be zero either, a <code>history-time-to-live</code> must be
+     * whole seconds the engine takes, and a <code>history-time-to-live</code> handed in here counts
+     * as a started configuration, as the adapter's own does.
      *
      * @param propertyKey The full key as the application wrote it, e.g.
      *            <code>vanillabp.workflow-modules.orders.adapters.zenbpm.retry-backoff</code>
@@ -836,6 +870,9 @@ public class ZenBpmAdapterConfiguration {
         addWorkerThreadsDefects(adapterId, valueDefects);
 
         addNegativeDurationDefect(adapterId, "startup-wait", startupWait, DEFAULT_STARTUP_WAIT_ISO, valueDefects);
+        addNegativeDurationDefect(adapterId, "job-timeout", jobTimeout, DEFAULT_JOB_TIMEOUT_ISO, valueDefects);
+        addJobTimeoutDefect(propertyKey(adapterId, "job-timeout"), jobTimeout, "the default is %s".formatted(
+                DEFAULT_JOB_TIMEOUT_ISO), valueDefects);
         addNegativeDurationDefect(adapterId, "retry-backoff", retryBackoff, DEFAULT_RETRY_BACKOFF_ISO, valueDefects);
         addNegativeDurationDefect(adapterId, "shutdown-grace", shutdownGrace, DEFAULT_SHUTDOWN_GRACE_ISO, valueDefects);
         addNegativeDurationDefect(
@@ -879,6 +916,9 @@ public class ZenBpmAdapterConfiguration {
             }
             if (propertyKey.endsWith(".history-time-to-live")) {
                 addTimeToLiveDefect(propertyKey, value, "the level above applies", valueDefects);
+            }
+            if (propertyKey.endsWith(".job-timeout")) {
+                addJobTimeoutDefect(propertyKey, value, "without the key the level above applies", valueDefects);
             }
         });
         scopedNumbers.forEach((
@@ -1181,6 +1221,19 @@ public class ZenBpmAdapterConfiguration {
         if (configured.isNegative()) {
             defects.add("%s is %s and must not be negative; the default is %s"
                     .formatted(propertyKey(adapterId, key), configured, defaultIso));
+        }
+    }
+
+    // a negative duration has a defect of its own, so only zero is left
+    private static void addJobTimeoutDefect(
+        final String propertyKey,
+        final Duration configured,
+        final String withoutTheKey,
+        final List<String> defects
+    ) {
+        if (configured.isZero()) {
+            defects.add("%s is PT0S, but a job has to stay locked for a while to the node which runs it; %s"
+                    .formatted(propertyKey, withoutTheKey));
         }
     }
 

@@ -4,11 +4,14 @@
  */
 package org.pbinitiative.zenbpmadapter;
 
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.OptionalLong;
+import java.util.function.Function;
 
 import org.pbinitiative.zenbpmadapter.client.ZenBpmRestClient;
 import org.pbinitiative.zenbpmadapter.client.api.ProcessInstanceRef;
@@ -75,7 +78,7 @@ public final class ZenBpmInstanceCache {
         if (cached != null) {
             return Optional.of(cached);
         }
-        return read(instanceKey, null);
+        return read(instanceKey, scopedProcessId -> null);
     }
 
     /**
@@ -92,15 +95,37 @@ public final class ZenBpmInstanceCache {
         final long instanceKey,
         final String idVariableName
     ) {
+        return facts(instanceKey, scopedProcessId -> idVariableName);
+    }
+
+    /**
+     * The facts of an instance with the variable which carries the aggregate's id, where the
+     * instance has it, for a caller which learns the name of the variable only from the process of
+     * the instance, like the handler of a job, which knows no more than the job's instance.
+     *
+     * @param instanceKey The key of the instance
+     * @param idVariableNameOfProcess The name of the variable for the id of a process as the engine
+     *            knows it; <code>null</code> where no variable is wanted for the process
+     * @return The facts, empty where the engine answers <code>404</code>
+     * @throws RuntimeException What the REST client throws where the engine was asked and did not
+     *             answer
+     */
+    public Optional<InstanceFacts> facts(
+        final long instanceKey,
+        final Function<String, String> idVariableNameOfProcess
+    ) {
         final var cached = cached(instanceKey);
-        if ((cached != null) && cached
-                .variables()
-                .containsKey(idVariableName)) {
-            return Optional.of(cached);
+        if (cached != null) {
+            final var idVariableName = idVariableNameOfProcess.apply(cached.scopedProcessId());
+            if ((idVariableName == null) || cached
+                    .variables()
+                    .containsKey(idVariableName)) {
+                return Optional.of(cached);
+            }
         }
         // not kept yet, or not there or null when the instance was read: a workflow the engine
         // started gets its id written after the start, and a present id never changes
-        return read(instanceKey, idVariableName);
+        return read(instanceKey, idVariableNameOfProcess);
     }
 
     /**
@@ -115,16 +140,36 @@ public final class ZenBpmInstanceCache {
      *             answer
      */
     public OptionalLong workflowIdOf(final long instanceKey) {
+        return instancesUpToTheWorkflow(instanceKey)
+                .map(path -> OptionalLong.of(path.getLast()))
+                .orElse(OptionalLong.empty());
+    }
+
+    /**
+     * The instances from one instance up to the root instance of its workflow, which
+     * {@link #workflowIdOf(long)} names: the instance itself first, then the instance it is part
+     * of, and so on. An instance a call activity started ends the path. The walk reads the facts
+     * the cache keeps, as {@link #workflowIdOf(long)} does.
+     *
+     * @param instanceKey The key of the instance
+     * @return The keys, the instance's own first and the workflow's root last; empty where the
+     *         engine answers <code>404</code> for an instance on the way
+     * @throws RuntimeException What the REST client throws where the engine was asked and did not
+     *             answer
+     */
+    public Optional<List<Long>> instancesUpToTheWorkflow(final long instanceKey) {
+        final var path = new ArrayList<Long>();
         var key = instanceKey;
         while (true) {
+            path.add(key);
             final var facts = facts(key);
             if (facts.isEmpty()) {
-                return OptionalLong.empty();
+                return Optional.empty();
             }
             if (!facts
                     .get()
                     .isPartOfItsParent()) {
-                return OptionalLong.of(key);
+                return Optional.of(List.copyOf(path));
             }
             key = facts
                     .get()
@@ -138,13 +183,15 @@ public final class ZenBpmInstanceCache {
 
     private Optional<InstanceFacts> read(
         final long instanceKey,
-        final String idVariableName
+        final Function<String, String> idVariableNameOfProcess
     ) {
         final var read = rest.instance(instanceKey);
         if (read.isEmpty()) {
             return Optional.empty();
         }
-        final var facts = InstanceFacts.of(read.get(), idVariableName);
+        final var facts = InstanceFacts.of(read.get(), idVariableNameOfProcess.apply(read
+                .get()
+                .bpmnProcessId()));
         synchronized (this) {
             entries.put(instanceKey, facts);
         }

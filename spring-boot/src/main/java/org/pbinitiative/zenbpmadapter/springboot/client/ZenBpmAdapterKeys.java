@@ -37,6 +37,8 @@ public class ZenBpmAdapterKeys {
 
     private Integer workerThreadsBound;
 
+    private Duration jobTimeout;
+
     private Duration retryBackoff;
 
     private Integer maxRedeliveries;
@@ -204,6 +206,26 @@ public class ZenBpmAdapterKeys {
      */
     public void setWorkerThreadsBound(final Integer workerThreadsBound) {
         this.workerThreadsBound = workerThreadsBound;
+    }
+
+    /**
+     * <code>job-timeout</code>: how long a job stays locked to the node which received it, at the
+     * adapter level.
+     *
+     * @return The value, or <code>null</code> where the application did not set the key
+     */
+    public Duration getJobTimeout() {
+        return jobTimeout;
+    }
+
+    /**
+     * <code>job-timeout</code>: how long a job stays locked to the node which received it, at the
+     * adapter level.
+     *
+     * @param jobTimeout The value as bound
+     */
+    public void setJobTimeout(final Duration jobTimeout) {
+        this.jobTimeout = jobTimeout;
     }
 
     /**
@@ -385,6 +407,7 @@ public class ZenBpmAdapterKeys {
         configuration.setStartupWait(startupWait);
         configuration.setWorkerThreads(workerThreads);
         configuration.setWorkerThreadsBound(workerThreadsBound);
+        configuration.setJobTimeout(jobTimeout);
         configuration.setRetryBackoff(retryBackoff);
         configuration.setMaxRedeliveries(maxRedeliveries);
         configuration.setShutdownGrace(shutdownGrace);

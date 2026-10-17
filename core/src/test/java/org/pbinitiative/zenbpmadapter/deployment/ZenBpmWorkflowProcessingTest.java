@@ -45,10 +45,11 @@ import io.vanillabp.integration.test.utils.SuppressOutputExtension;
 
 /**
  * How a workflow module starts and stops its workflow processing on the job stream of its adapter
- * id: the job types of its claimed processes are subscribed and unsubscribed again, the hook of the
- * client factory comes before the first subscription and goes after the last unsubscription, a job
- * type two modules share stays subscribed until both stopped, and a module without a job type asks
- * the engine nothing.
+ * id: the job types of its claimed processes are subscribed with their job-timeout and the handler
+ * slots and unsubscribed again, the hook of the client factory comes before the first subscription
+ * and goes after the last unsubscription, a job type two modules share stays subscribed until both
+ * stopped, a module without a job type asks the engine nothing, and a job of a type no module
+ * subscribes is left to its lock.
  */
 @ExtendWith(SuppressOutputExtension.class)
 class ZenBpmWorkflowProcessingTest {
@@ -91,11 +92,18 @@ class ZenBpmWorkflowProcessingTest {
     }
 
     @Test
-    @DisplayName("A module subscribes the job types of its claimed processes with the engine's default lock and cap, none of a process nobody claims, registers the factory's hook, and unsubscribes them and removes the hook when it stops, once")
+    @DisplayName("A module subscribes the job types of its claimed processes, each with the job-timeout of its task and the handler slots as the cap, none of a process nobody claims, registers the factory's hook, and unsubscribes them and removes the hook when it stops, once")
     void aModuleSubscribesTheJobTypesOfItsClaimedProcesses() {
-        final var deploymentService = deploymentService(TestWiring
-                .claiming("Orders")
-                .servedElsewhere("Notify"));
+        final var deploymentService = new ZenBpmDeploymentService(ADAPTER_ID, registry, TestCollaborators.of(
+                ADAPTER_ID, TestScoping.of(NameClashAvoidance.USE_PREFIX), TestWiring
+                        .claiming("Orders")
+                        .servedElsewhere("Notify")
+                        .wiring(),
+                TestStarts.everyProcessStartingAWorkflow()), (
+                    workflowModuleId,
+                    bpmnProcessId,
+                    taskDefinition) -> "ship".equals(taskDefinition) ? Duration.ofSeconds(90)
+                            : Duration.ofMinutes(5));
         final var context = wired(deploymentService, "wiring.bpmn", fixture("wiring.bpmn"), null);
         wired(deploymentService, "partner.bpmn", PARTNER, context);
         final var factory = registry.getFactory(ADAPTER_ID);
@@ -117,10 +125,15 @@ class ZenBpmWorkflowProcessingTest {
                         "TYPE_SUBSCRIBE shop__Orders__ship",
                         "TYPE_SUBSCRIBE shop__Orders__pack"),
                         described(subscribed)),
+                () -> assertEquals(List.of(300_000L, 90_000L, 300_000L), subscribed
+                        .stream()
+                        .map(StreamSubscriptionRequest::getLockDurationMs)
+                        .toList()),
                 () -> assertTrue(subscribed
                         .stream()
-                        .allMatch(subscription -> subscription.getLockDurationMs() == 0 && subscription
-                                .getMaxActiveJobs() == 0),
+                        .allMatch(subscription -> subscription.getMaxActiveJobs() == factory
+                                .executor()
+                                .getSlots()),
                         subscribed::toString),
                 () -> assertEquals(Set.of("shop"), openWhileStarted),
                 () -> assertEquals(List.of(
@@ -250,8 +263,8 @@ class ZenBpmWorkflowProcessingTest {
     }
 
     @Test
-    @DisplayName("A job which arrives is logged at WARN, naming its type, and left to its lock")
-    void aJobNothingHandlesIsLeftToItsLock(final CapturedOutput output) {
+    @DisplayName("A job of a type no workflow module subscribes is logged at WARN, naming its type, and left to its lock")
+    void aJobNoModuleSubscribesIsLeftToItsLock(final CapturedOutput output) {
         final var deploymentService = deploymentService(TestWiring.claiming());
         deploymentService.startWorkflowProcessing("shop", withJobTypes("shop", "charge"));
         final var call = engine.call(0);
@@ -262,10 +275,10 @@ class ZenBpmWorkflowProcessingTest {
                 .setJob(WaitingJob
                         .newBuilder()
                         .setKey(42)
-                        .setType("charge"))
+                        .setType("refund"))
                 .build());
 
-        final var warning = "ZenBPM[orders]: a job of type 'charge' (key 42) arrived, which nothing handles yet; it is left to its lock";
+        final var warning = "ZenBPM[orders]: a job of type 'refund' (key 42) arrived, which no workflow module of this application subscribes; it is left to its lock";
         final var deadline = Instant
                 .now()
                 .plus(DELIVERY_TIMEOUT);

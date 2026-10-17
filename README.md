@@ -59,14 +59,17 @@ files sent before it stay deployed, because ZenBPM takes one file per request, b
 reported then; once the engine took every file, the version of every process is reported to the
 platform, also where the engine kept an unchanged file. An adapter id without clients ends the
 start there with the message of its validation, which names the key to set. Starting a workflow
-module subscribes the job types of its claimed processes on the job stream, and stopping it
+module subscribes the job types of its claimed processes on the job stream, each with the
+`job-timeout` of its tasks as the lock (set per adapter id, workflow module, workflow or task,
+`PT5M` by default) and the number of handler slots as the cap of active jobs, and stopping it
 unsubscribes them before the clients close; a type two modules share stays subscribed until both
-stopped. A workflow is started: phase one asks the engine nothing, and phase two starts the latest
-version of the process under the id the engine knows it by, with the aggregate's id as the business
-key and as a text variable after the values the aggregate shares, sends `history-time-to-live` in
-whole seconds where a level sets it, and reports the key and the version of the new instance. The
-instance is created only once the caller's transaction committed, through the platform's phase-two
-outbox, and a start whose transaction rolls back creates none. A
+stopped, and two tasks of one type with different `job-timeout`s end the start, also where two
+modules share the type. A workflow is started: phase one asks the engine nothing, and phase two
+starts the latest version of the process under the id the engine knows it by, with the aggregate's
+id as the business key and as a text variable after the values the aggregate shares, sends
+`history-time-to-live` in whole seconds where a level sets it, and reports the key and the version
+of the new instance. The instance is created only once the caller's transaction committed,
+through the platform's phase-two outbox, and a start whose transaction rolls back creates none. A
 `history-time-to-live` with a fraction of a second is refused while the application starts, and a
 start of a process the engine does not hold is not repeated (decisions 30 and 31 in
 [`DECISIONS.md`](./DECISIONS.md)). The adapter tells the platform what the engine does with the type
@@ -82,9 +85,15 @@ of the instance a call activity started (decision 28). The probes which ask for 
 task and a user task alike, read the job by its key and the process of its instance, and answer
 for the scope they are asked about only; a task id of a partition the engine does not have is
 unknown to it (decision 32). The open tasks of a process are counted from the engine's statistics
-of every version it holds. It runs no task yet: a job which arrives is logged at
-WARN and left to its lock, after which the engine hands it out again. What is built next, and in
-which order, is the implementation plan in [`docs/`](docs/README.md).
+of every version it holds. A job of a subscribed type runs its `@WorkflowTask` method on a handler
+slot, under a lock which is renewed while the method runs; then the values the aggregate shares and
+its id are written into the job's instance and every instance above it up to the workflow's root,
+and the job is completed (decision 35). A job whose instance names no aggregate, and one of a
+workflow whose aggregate this application does not hold, are failed without retries, so an incident
+shows them (decision 33). A BPMN error, a task left open for its asynchronous completion and a
+method which throws are not carried out yet: the job is left to its lock, after which the engine
+hands it out again. What is built next, and in which order, is the implementation plan in
+[`docs/`](docs/README.md).
 
 ## Modules
 

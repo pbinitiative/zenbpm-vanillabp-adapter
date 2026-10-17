@@ -7,10 +7,12 @@ package org.pbinitiative.zenbpmadapter.quarkus.runtime;
 
 import java.util.List;
 
+import org.eclipse.microprofile.config.ConfigProvider;
 import org.pbinitiative.zenbpmadapter.ZenBpmAdapter;
 import org.pbinitiative.zenbpmadapter.client.ZenBpmClientRegistry;
 import org.pbinitiative.zenbpmadapter.deployment.ZenBpmDeploymentService;
 
+import io.smallrye.config.SmallRyeConfig;
 import io.vanillabp.integration.adapter.migration.config.MigrationAdapterProperties;
 import io.vanillabp.integration.adapter.migration.workflowtask.WorkflowTaskRegistry;
 import io.vanillabp.integration.adapter.spi.AdapterDeploymentService;
@@ -37,6 +39,10 @@ import jakarta.inject.Singleton;
  * platform looks the bean up by that exact type and matches models through
  * <code>getModelType()</code> and <code>getProcessContextType()</code>. The producer is
  * <code>@Singleton</code>, because CDI cannot proxy a deployment service.
+ * <p>
+ * A deployment service reads the <code>job-timeout</code> of a task from
+ * {@link VanillaBpZenBpmProperties}, which resolves it from the task, the workflow, the workflow
+ * module and the adapter id.
  */
 @ApplicationScoped
 public class ZenBpmDeploymentServiceProducer {
@@ -77,6 +83,11 @@ public class ZenBpmDeploymentServiceProducer {
         @Any final Instance<BpmsInitiatedStartInvoker> bpmsInitiatedStartInvoker,
         final StartupReport startupReport
     ) {
+        // read as the client producer reads it: a mapping of the configuration, never injected
+        final var overlay = ConfigProvider
+                .getConfig()
+                .unwrap(SmallRyeConfig.class)
+                .getConfigMapping(VanillaBpZenBpmProperties.class);
         return coreProperties
                 .adapterIdsOfType(ZenBpmAdapter.ADAPTER_TYPE)
                 .stream()
@@ -84,7 +95,11 @@ public class ZenBpmDeploymentServiceProducer {
                     final var collaborators = AdapterCollaboratorsSupport.collaborators(adapterId,
                             workflowTaskRegistry, workflowTaskRegistry, scoping, workflowAggregateSync,
                             preCommitRegistrar, workflowEndedInvoker, bpmsInitiatedStartInvoker);
-                    final var deploymentService = new ZenBpmDeploymentService(adapterId, registry, collaborators);
+                    final var deploymentService = new ZenBpmDeploymentService(adapterId, registry, collaborators, (
+                        workflowModuleId,
+                        bpmnProcessId,
+                        taskDefinition) -> overlay.jobTimeoutFor(workflowModuleId, bpmnProcessId, taskDefinition,
+                                adapterId));
                     // the block both platform integrations write at the end of a start
                     deploymentService.setStartupReport(startupReport);
                     return asListElement(deploymentService);
