@@ -392,6 +392,32 @@ Quarkus runtime 10, Quarkus deployment 48, Quarkus integration tests 3, coverage
 measures 100 % of 21,030 instructions on Spring Boot and 100 % of 20,904 on Quarkus, and
 `bin/check-deploy-safety.sh` passes (13 files on a green build, nothing after a red gate).
 
+**S6.1.1 done 2026-10-17**, merged to `main` as `89388e1` (pull request #42, after two reviews and
+CodeRabbit's review, which left no comment). On that commit (GitHub keeps run logs for 90 days, so
+what they showed is written here as well):
+
+- `Checks`, run
+  [39067637049](https://github.com/pbinitiative/zenbpm-vanillabp-adapter/actions/runs/39067637049):
+  green on both JDKs. `bin/check-engine-copies.sh` reported both copies as the engine's files of
+  `bdd795a3...`. `ZenBpmTaskProcessingIT` ran 7 tests, `ZenBpmJobHandlingIT` 3, `ZenBpmJobLockIT` 4,
+  `ZenBpmJobTimeoutBootTest` 1, `ZenBpmJobHandlerTest` 18, `ZenBpmJobDispatcherTest` 11,
+  `ZenBpmLockRenewalTest` 13, `ZenBpmCommandRetryTest` 9, `ReceivedJobTest` 3,
+  `ZenBpmDeploymentWiringTest` 16, Quarkus `ZenBpmJobTimeoutTest` 1 and
+  `ZenBpmWorkflowLifecycleTest` 3, none skipped (engine test support 12 unit and 3 integration
+  tests, core 843 unit and 74 integration tests, Spring Boot 11 unit and 13 integration tests, smoke
+  test 35, Quarkus runtime 10, Quarkus deployment 48, Quarkus integration tests 3, coverage gate 37).
+  The gate measured 100 % on both platforms: of 21,030 instructions for Spring Boot and 20,904 for
+  Quarkus on JDK 25, of 21,022 and 20,896 on JDK 21.
+- `Publish snapshots`, run
+  [39067636930](https://github.com/pbinitiative/zenbpm-vanillabp-adapter/actions/runs/39067636930):
+  green. The core snapshot it published to GitHub Packages, `2.0.0-20261017.203945-38`, holds the
+  story's new main classes (`ZenBpmJobDispatcher`, `ZenBpmJobHandler`, `ZenBpmLockRenewal`,
+  `ZenBpmJobTimeoutResolver`, `ZenBpmCommandRetry`, `JobFailure`) and no test class,
+  fake, fixture, BPMN or DMN file; `quarkus/integration-tests`, the smoke test, the engine test
+  support and the coverage modules skipped deployment. Both report pages
+  (`spring-boot-report/index.html`, `quarkus-report/index.html`) answer HTTP 200 and show 0 of
+  21,030 (Spring Boot) and 0 of 20,904 (Quarkus) instructions missed.
+
 ### S6.1.2 BPMN error and pending outcomes
 
 - [ ] **Depends on:** S6.1.1.
