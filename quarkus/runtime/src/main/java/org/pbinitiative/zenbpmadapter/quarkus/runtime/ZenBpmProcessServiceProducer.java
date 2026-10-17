@@ -7,10 +7,12 @@ package org.pbinitiative.zenbpmadapter.quarkus.runtime;
 
 import java.util.List;
 
+import org.eclipse.microprofile.config.ConfigProvider;
 import org.pbinitiative.zenbpmadapter.ZenBpmAdapter;
 import org.pbinitiative.zenbpmadapter.client.ZenBpmClientRegistry;
 import org.pbinitiative.zenbpmadapter.processservice.ZenBpmProcessService;
 
+import io.smallrye.config.SmallRyeConfig;
 import io.vanillabp.integration.adapter.migration.config.MigrationAdapterProperties;
 import io.vanillabp.integration.adapter.migration.workflowtask.WorkflowTaskRegistry;
 import io.vanillabp.integration.adapter.spi.MigratableProcessService;
@@ -38,7 +40,9 @@ import jakarta.inject.Singleton;
  * <code>@Singleton</code>, because a process service has no constructor without parameters and
  * so CDI cannot proxy it.
  * <p>
- * The adapter ids ALWAYS come from the platform's core properties.
+ * The adapter ids ALWAYS come from the platform's core properties. A process service reads the
+ * <code>history-time-to-live</code> of a workflow from {@link VanillaBpZenBpmProperties}, which
+ * resolves it from the workflow, the workflow module and the adapter id.
  */
 @ApplicationScoped
 public class ZenBpmProcessServiceProducer {
@@ -76,13 +80,21 @@ public class ZenBpmProcessServiceProducer {
         @Any final Instance<WorkflowEndedInvoker> workflowEndedInvoker,
         @Any final Instance<BpmsInitiatedStartInvoker> bpmsInitiatedStartInvoker
     ) {
+        // read as the client producer reads it: a mapping of the configuration, never injected
+        final var overlay = ConfigProvider
+                .getConfig()
+                .unwrap(SmallRyeConfig.class)
+                .getConfigMapping(VanillaBpZenBpmProperties.class);
         return coreProperties
                 .adapterIdsOfType(ZenBpmAdapter.ADAPTER_TYPE)
                 .stream()
                 .<MigratableProcessService<Object>>map(adapterId -> new ZenBpmProcessService<>(adapterId, registry
                         .getFactory(adapterId), AdapterCollaboratorsSupport.collaborators(adapterId,
                                 workflowTaskRegistry, workflowTaskRegistry, scoping, workflowAggregateSync,
-                                preCommitRegistrar, workflowEndedInvoker, bpmsInitiatedStartInvoker)))
+                                preCommitRegistrar, workflowEndedInvoker, bpmsInitiatedStartInvoker), (
+                                    workflowModuleId,
+                                    bpmnProcessId) -> overlay.historyTimeToLiveFor(workflowModuleId, bpmnProcessId,
+                                            adapterId)))
                 .toList();
     }
 

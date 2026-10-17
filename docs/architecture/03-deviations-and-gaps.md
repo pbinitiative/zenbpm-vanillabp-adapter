@@ -31,6 +31,7 @@ gap cites the same number.
 | 20 | Follower reads may lag the leader | `internal/cluster/partition/partition_persistence.go` `ConsistencyLevel_NONE` | `workflow-visibility-timeout` `PT2S` | none needed | [For Alisher for later consideration] |
 | 21 | No API stability promise | 1.8 changed the deploy content type | one pinned engine version per release (decision 15) | contract tests against the pinned image | |
 | 22 | A job carries no root process instance key | `WaitingJob` in `zenbpm.proto`, the job resource of `openapi/api.yaml` | the workflow id is the root instance key, found by walking `parentProcessInstanceKey` up to a call activity and cached (decision 28) | E13.14 `rootProcessInstanceKey` on the job | |
+| 26 | A start or a variable update whose variables are larger than 4 MiB is answered `500`, although REST takes 10 MiB | `ZenNode.CreateInstance` and `ZenNode.ModifyProcessInstance` in `internal/cluster/node.go`; gRPC's default limit kept by `Server.Open` (`internal/cluster/server/server.go`) and `ClientManager.newClient` (`internal/cluster/client/client_manager.go`); `HttpServer.MaxRequestBodyBytes` (`internal/config/config.go`) | not measured by the adapter (S5.1.1); the `500` is repeatable, so the outbox repeats the start until it blocks the entry | E13.13: `413`, or a gRPC limit as large as the REST one | |
 
 ## Deviations (wiki page draft)
 
@@ -73,3 +74,6 @@ what a remote BPMS looks like.
 14. **An expression in the model which reads an attribute the aggregate does not share is not found
     while starting**; it fails at runtime as a FEEL error. Like Camunda 8, the adapter does not tell
     VanillaBP which aggregate paths its expressions read.
+15. **A workflow whose shared values are larger than 4 MiB cannot be started**: the engine refuses
+    the start with a technical failure, which VanillaBP repeats until the outbox blocks the entry
+    (GAPS 26).

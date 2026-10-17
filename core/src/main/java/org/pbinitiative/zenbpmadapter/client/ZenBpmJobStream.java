@@ -65,7 +65,7 @@ import lombok.extern.slf4j.Slf4j;
  * <p>
  * The engine answers a subscription with nothing where it takes it, and with an error naming no
  * job where it refuses it. That error carries no code and names its job type only in prose, which
- * nothing reads, see decision 10 in the repository's DECISIONS.md. So the stream cannot tell
+ * nothing reads, see decision 30 in the repository's DECISIONS.md. So the stream cannot tell
  * which subscription was refused: it logs the error with the job types it subscribed, and opens
  * the call again, which sends every one of them again.
  * <p>

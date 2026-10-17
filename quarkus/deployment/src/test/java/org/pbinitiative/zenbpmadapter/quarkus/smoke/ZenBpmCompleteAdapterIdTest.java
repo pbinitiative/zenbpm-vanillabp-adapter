@@ -5,9 +5,9 @@
 package org.pbinitiative.zenbpmadapter.quarkus.smoke;
 
 import static org.junit.jupiter.api.Assertions.assertAll;
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
-import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.util.List;
@@ -78,12 +78,9 @@ class ZenBpmCompleteAdapterIdTest {
     }
 
     @Test
-    @DisplayName("A use of a complete adapter id says that it is not built yet")
-    void aUseSaysThatItIsNotBuiltYet() {
-        final var use = assertThrows(RuntimeException.class, () -> SmokeApplication.startAWorkflow(processServices));
-
-        assertEquals("ZenBPM adapter 'zenbpm': phase one of START_WORKFLOW is implemented in a later story", use
-                .getMessage());
+    @DisplayName("Phase one of a start of a complete adapter id passes, because it has nothing to ask the engine")
+    void phaseOneOfAStartPasses() {
+        assertDoesNotThrow(() -> SmokeApplication.startAWorkflow(processServices));
     }
 
 }

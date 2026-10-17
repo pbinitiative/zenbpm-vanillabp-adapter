@@ -61,7 +61,14 @@ platform, also where the engine kept an unchanged file. An adapter id without cl
 start there with the message of its validation, which names the key to set. Starting a workflow
 module subscribes the job types of its claimed processes on the job stream, and stopping it
 unsubscribes them before the clients close; a type two modules share stays subscribed until both
-stopped. It runs no task yet: a job which arrives is logged at WARN and left to its lock, after
+stopped. A workflow is started: phase one asks the engine nothing, and phase two starts the latest
+version of the process under the id the engine knows it by, with the aggregate's id as the business
+key and as a text variable after the values the aggregate shares, sends `history-time-to-live` in
+whole seconds where a level sets it, and reports the key and the version of the new instance. A
+`history-time-to-live` with a fraction of a second ends the start, and a start of a process the
+engine does not hold is not repeated (decisions 30 and 31 in [`DECISIONS.md`](./DECISIONS.md)). The
+adapter tells the platform what the engine does with the type of a value which travels: a whole
+number above 2^53 and a decimal come back changed. It runs no task yet: a job which arrives is logged at WARN and left to its lock, after
 which the engine hands it out again. What is built next, and in which order, is the implementation
 plan in [`docs/`](docs/README.md).
 
@@ -126,13 +133,14 @@ Moving the pin is one commit with these steps:
 A failed call of the engine is classified in one place, `ZenBpmErrors` in the core, so that the
 phase-two outbox and the commands a job handler sends back cannot disagree about what a failure
 means. It answers from the status, the method and the path of the call and never from the
-engine's message, which any version of the engine may reword (decision 10 in
+engine's message, which any version of the engine may reword (decision 30 in
 [`DECISIONS.md`](./DECISIONS.md)). The first exception of the REST client in the chain of causes
 answers alone, so a failure wrapped by a caller is read like a plain one.
 
 |                                Failure                                 |   Read as    |                                      Why                                      |
 |------------------------------------------------------------------------|--------------|-------------------------------------------------------------------------------|
 | status `400`, `413` or `415`                                           | permanent    | the request is malformed, too large or of the wrong content type              |
+| status `404` from `POST /v1/process-instances`                         | permanent    | the engine holds no process of that id: nothing deployed it to this engine    |
 | `NumberFormatException`                                                | permanent    | a key which is not a number never becomes one                                 |
 | status `404` from a call of a job                                      | gone job     | the engine holds no such job                                                  |
 | status `409` from a completion or failure of a job                     | gone job     | the job no longer takes the command: it ended, or a newer delivery decides    |
@@ -145,10 +153,10 @@ answers alone, so a failure wrapped by a caller is read like a plain one.
 
 `ZenBpmErrorsTest` holds every row, plain and wrapped, and fails when the table names a row it does
 not test, tests a row the table does not name, names a row twice or orders the rows differently.
-`ZenBpmErrorsIT` makes the pinned engine answer each status of the job, message and lock rows,
-`400`, `413` and `502`, and checks how each is read.
+`ZenBpmErrorsIT` makes the pinned engine answer each status of the job, message, lock and start
+rows, `400`, `413` and `502`, and checks how each is read.
 
-Only a permanent failure is not repeatable: `ZenBpmErrors.isRepeatable` is false for the first two
+Only a permanent failure is not repeatable: `ZenBpmErrors.isRepeatable` is false for the first three
 rows and true for every other. The three narrower answers, a gone job, nobody waits and a lost lock,
 mean something only to the caller which sent that call, so it asks for them before it asks whether
 to repeat.

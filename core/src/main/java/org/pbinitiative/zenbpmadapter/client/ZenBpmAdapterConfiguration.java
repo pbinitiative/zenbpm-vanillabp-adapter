@@ -57,7 +57,9 @@ import java.util.stream.Collectors;
  * <li><code>user-task-poll-interval</code> (default
  * {@value #DEFAULT_USER_TASK_POLL_INTERVAL_ISO}) - how often user tasks are looked for</li>
  * <li><code>history-time-to-live</code> (default: none, the engine's own) - sent with every
- * start</li>
+ * start in whole seconds, so a value with a fraction of a second is refused, and so is one above
+ * {@link ZenBpmTimeToLive#LONGEST}; <code>PT0S</code> has the engine remove an ended workflow at
+ * its next clean-up, see decision 31 in the repository's DECISIONS.md</li>
  * <li><code>instance-cache-max-entries</code> (default
  * {@value #DEFAULT_INSTANCE_CACHE_MAX_ENTRIES}) - the bound of the cache of process instance
  * facts</li>
@@ -730,8 +732,9 @@ public class ZenBpmAdapterConfiguration {
     /**
      * Hands a duration set below the adapter level to the validation: a <code>retry-backoff</code>
      * or a <code>history-time-to-live</code> of a workflow module, a workflow or a task. Like the
-     * adapter's own, it must not be negative, and a <code>history-time-to-live</code> handed in
-     * here counts as a started configuration, as the adapter's own does.
+     * adapter's own, it must not be negative, a <code>history-time-to-live</code> must be whole
+     * seconds the engine takes, and a <code>history-time-to-live</code> handed in here counts as a
+     * started configuration, as the adapter's own does.
      *
      * @param propertyKey The full key as the application wrote it, e.g.
      *            <code>vanillabp.workflow-modules.orders.adapters.zenbpm.retry-backoff</code>
@@ -851,6 +854,8 @@ public class ZenBpmAdapterConfiguration {
             valueDefects.add("%s is %s and must not be negative; without the key the engine's own default applies"
                     .formatted(propertyKey(adapterId, "history-time-to-live"), historyTimeToLive));
         }
+        addTimeToLiveDefect(propertyKey(adapterId, "history-time-to-live"), historyTimeToLive,
+                "the engine's own default applies", valueDefects);
 
         if (maxRedeliveries < 0) {
             valueDefects
@@ -871,6 +876,9 @@ public class ZenBpmAdapterConfiguration {
             if (value.isNegative()) {
                 valueDefects.add("%s is %s and must not be negative; without the key the level above applies"
                         .formatted(propertyKey, value));
+            }
+            if (propertyKey.endsWith(".history-time-to-live")) {
+                addTimeToLiveDefect(propertyKey, value, "the level above applies", valueDefects);
             }
         });
         scopedNumbers.forEach((
@@ -1174,6 +1182,22 @@ public class ZenBpmAdapterConfiguration {
             defects.add("%s is %s and must not be negative; the default is %s"
                     .formatted(propertyKey(adapterId, key), configured, defaultIso));
         }
+    }
+
+    // a negative time to live has a defect of its own, so it is left out here
+    private static void addTimeToLiveDefect(
+        final String propertyKey,
+        final Duration configured,
+        final String withoutTheKey,
+        final List<String> defects
+    ) {
+        if ((configured == null) || configured.isNegative()) {
+            return;
+        }
+        ZenBpmTimeToLive
+                .defectOf(configured)
+                .ifPresent(defect -> defects.add("%s is %s, %s, or remove the key, so %s".formatted(propertyKey,
+                        configured, defect, withoutTheKey)));
     }
 
     private static String unconfiguredMessage(final String adapterId) {

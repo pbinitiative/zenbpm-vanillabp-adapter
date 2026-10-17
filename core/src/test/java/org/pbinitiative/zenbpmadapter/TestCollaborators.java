@@ -89,6 +89,32 @@ public final class TestCollaborators {
     }
 
     /**
+     * A complete set of collaborators, of which only the scoping and the sync of aggregates may be
+     * called.
+     *
+     * @param adapterId The adapter id they are handed to
+     * @param scoping The platform's name-clash scoping, as the test wants it to answer
+     * @param workflowAggregateSync The platform's sync of aggregates, as the test wants it to answer
+     * @return The collaborators
+     */
+    public static AdapterCollaborators of(
+        final String adapterId,
+        final NameClashAvoidanceSupport scoping,
+        final WorkflowAggregateSync workflowAggregateSync
+    ) {
+        return AdapterCollaborators
+                .forAdapter(adapterId)
+                .workflowTaskWiring(unused(WorkflowTaskWiring.class))
+                .workflowTaskInvoker(unused(WorkflowTaskInvoker.class))
+                .scoping(scoping)
+                .workflowAggregateSync(workflowAggregateSync)
+                .preCommitRegistrar(unused(PreCommitRegistrar.class))
+                .workflowEndedInvoker(unused(WorkflowEndedInvoker.class))
+                .bpmsInitiatedStartInvoker(unused(BpmsInitiatedStartInvoker.class))
+                .build();
+    }
+
+    /**
      * A complete set of collaborators, of which the scoping, the wiring and the two invokers of the
      * lifecycle of a workflow may be called.
      *
