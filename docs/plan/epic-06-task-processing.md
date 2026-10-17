@@ -405,9 +405,9 @@ what they showed is written here as well):
   `ZenBpmDeploymentWiringTest` 16, Quarkus `ZenBpmJobTimeoutTest` 1 and
   `ZenBpmWorkflowLifecycleTest` 3, none skipped (engine test support 12 unit and 3 integration
   tests, core 843 unit and 74 integration tests, Spring Boot 11 unit and 13 integration tests, smoke
-  test 35, Quarkus runtime 10, Quarkus deployment 48, Quarkus integration tests 3, coverage gate 37). The gate measured 100 % on
-  both platforms: of 21,030 instructions for Spring Boot and 20,904 for Quarkus on JDK 25, of 21,022
-  and 20,896 on JDK 21.
+  test 35, Quarkus runtime 10, Quarkus deployment 48, Quarkus integration tests 3, coverage gate 37).
+  The gate measured 100 % on both platforms: of 21,030 instructions for Spring Boot and 20,904 for
+  Quarkus on JDK 25, of 21,022 and 20,896 on JDK 21.
 - `Publish snapshots`, run
   [39067636930](https://github.com/pbinitiative/zenbpm-vanillabp-adapter/actions/runs/39067636930):
   green. The core snapshot it published to GitHub Packages, `2.0.0-20261017.203945-38`, holds the
