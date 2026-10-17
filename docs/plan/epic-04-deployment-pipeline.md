@@ -1320,15 +1320,16 @@ next file.
   same file again kept as version 1 "(unchanged)", a changed file version 2; the engine holds the
   process under `deploy-it__DeployIt` and the decision `deploy-it__rating` in one DMN resource
   definition (unchanged at the second and third start). `ZenBpmDeployingTest#everyFileIsDeployedAndItsVersionRegistered`
-  holds the order of the requests (ready, status, the file, its definition, the DMN file), the
-  version registered, what `ZenBpmDeployedProcesses` remembers, the INFO line and the declared
-  identifiers reported.
+  holds the order of the requests (ready, status, the DMN file, the BPMN file, its definition; the
+  DMN file came last until the answers to the reviews of F4.3), the version registered, what
+  `ZenBpmDeployedProcesses` remembers, the INFO line and the declared identifiers reported.
 - [x] A rejected file ends the boot naming file, process and the engine's reason; with
   `deployment-failure: warn` on a nowhere-first id the application boots degraded.
   `ZenBpmDeploymentServiceIT#aFileTheEngineRefusesEndsTheDeployment`: the pinned engine refuses a
   call activity whose `version` is no number, and the whole message names file, workflow module,
-  process and the engine's reason. `ZenBpmDeployingTest#aRejectedModelNamesTheFile` (nothing after
-  the refused file is sent, no version registered), `#aRejectedDecisionNamesTheFile`,
+  process and the engine's reason. `ZenBpmDeployingTest#aRejectedModelNamesTheFile` (since the
+  answers to the reviews of F4.3 the second of two BPMN files is refused, and nothing is registered
+  or remembered for the first), `#aRejectedDecisionNamesTheFile`,
   `#anotherFailureNamesTheFileAndTheAddress`. Booted against a server standing in for the engine
   which refuses every file: `ZenBpmRefusedFileBootTest` on Spring Boot ends the start with that
   message, and with `warn` on an adapter id behind the BPMS double the application boots and the
@@ -1339,13 +1340,14 @@ next file.
 
 **Implemented 2026-10-17.** Core: `ZenBpmDeploymentService.deployResources` waits for the engine,
 logs its version once, deploys every BPMN file (`model.ZenBpmModelWriter`: the bytes as read where
-nothing was changed) and every DMN file, registers the version of every process, remembers it in
-the new `ZenBpmDeployedProcesses` of the client factory, logs one INFO line per module and reports
-the identifiers the files declare; `ZenBpmBpmnModel` keeps the bytes it was read from;
-`ZenBpmScoping.apply` hands back the plain identifiers; `readDmn` keeps the decision ids and reads
-every DMN file as XML. `GAPS.md` has GAPS 24; the README and the architecture say what is built;
-S10.1.1 has the note of fit-check item 4. Tests: `ZenBpmDeployingTest` (5, against `FakeEngine`),
-`ZenBpmModelWriterTest` (2), `ZenBpmDeployedProcessesTest` (1), two more cases in
+nothing was changed) and every DMN file (the DMN files first since the answers to the reviews of
+F4.3), registers the version of every process (since then once the engine took every file),
+remembers it in the new `ZenBpmDeployedProcesses` of the client factory, logs one INFO line per
+module and reports the identifiers the files declare; `ZenBpmBpmnModel` keeps the bytes it was read
+from; `ZenBpmScoping.apply` hands back the plain identifiers; `readDmn` keeps the decision ids and
+reads every DMN file as XML. `GAPS.md` has GAPS 24; the README and the architecture say what is
+built; S10.1.1 has the note of fit-check item 4. Tests: `ZenBpmDeployingTest` (5, against
+`FakeEngine`), `ZenBpmModelWriterTest` (2), `ZenBpmDeployedProcessesTest` (1), two more cases in
 `ZenBpmModelReaderTest` (now 22) and `ZenBpmScopingTest` (now 8), `ZenBpmDeploymentServiceTest`
 (still 31: the non-XML DMN case holds in every mode now), the Docker tests
 `ZenBpmDeploymentServiceIT` (5, core) and `ZenBpmDeploymentIT` (1, `spring-boot`, with the test
