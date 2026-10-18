@@ -15,3 +15,11 @@ vanillabp:
   adapters:
     zenbpm:
       name-clash-avoidance: use-prefix
+      async-task-lock-renewal: PT2S
+  workflow-modules:
+    zenbpm-e2e:
+      workflows:
+        TaskFailures:
+          adapters:
+            zenbpm:
+              retry-backoff: PT1S

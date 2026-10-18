@@ -4,6 +4,7 @@
  */
 package org.pbinitiative.zenbpmadapter.quarkus.test;
 
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -126,7 +127,8 @@ public class E2eIntrospection {
      *
      * @param instanceKey The key of the instance
      * @return The <code>key</code> of each job, as text, as {@link #instances} gives the key of an
-     *         instance, and its <code>state</code>, as the engine names it
+     *         instance, its <code>state</code>, as the engine names it, and the
+     *         <code>elementId</code> of its task
      */
     @GET
     @Path("/jobs/{instanceKey}")
@@ -139,8 +141,32 @@ public class E2eIntrospection {
                 .stream()
                 .map(job -> Map.<String, Object>of("key", String.valueOf(job.key()), "state", job
                         .state()
-                        .name()))
+                        .name(), "elementId", job.elementId()))
                 .toList();
+    }
+
+    /**
+     * The elements an instance and the instances it started passed, as the engine's history names
+     * them.
+     *
+     * @param instanceKey The key of the instance
+     * @return The ids of the elements, those of the instance first
+     */
+    @GET
+    @Path("/visited/{instanceKey}")
+    public List<String> visited(@PathParam("instanceKey") final long instanceKey) {
+        final var visited = new ArrayList<String>();
+        rest()
+                .history(instanceKey, 1)
+                .items()
+                .forEach(entry -> visited.add(entry.elementId()));
+        rest()
+                .children(instanceKey)
+                .forEach(child -> rest()
+                        .history(child.key(), 1)
+                        .items()
+                        .forEach(entry -> visited.add(entry.elementId())));
+        return visited;
     }
 
     /**

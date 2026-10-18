@@ -1644,7 +1644,7 @@ whose one comment was valid and fixed in `6730aa1`). F6.3 and F6.4 are complete.
 
 ### S6.5.1 Inbound idempotency, restart delivery, Quarkus twins
 
-- [ ] **Depends on:** S6.3.1.
+- [x] **Depends on:** S6.3.1.
 
 **Instructions**
 
@@ -1683,5 +1683,207 @@ whose one comment was valid and fixed in `6730aa1`). F6.3 and F6.4 are complete.
 
 **Acceptance criteria**
 
-- [ ] Both platforms prove delivery, outcome and idempotency; the Quarkus report covers
+- [x] Both platforms prove delivery, outcome and idempotency; the Quarkus report covers
   `ZenBpmJobHandler` and `ZenBpmOpenTaskProbe`.
+  Spring Boot: `ZenBpmInboundIdempotencyIT#longHandlersKeepTheirLock` (a handler held six seconds
+  under a job-timeout of two is delivered once, delivery token 1, and completes; with the renewal
+  never scheduled it runs twice, mutant), `#aLostLockIsNamed` (every extension refused with `502`:
+  a second delivery runs beside the first, the renewal's WARN names the job, the task `print` and
+  the aggregate, the platform's "Two deliveries ... at the SAME time" names the second run, both
+  completions are refused, and the third delivery, delivery token 3, is answered from the record of
+  the run which committed first and its completion ends the workflow; the method ran twice, and the
+  record holds one `COMPLETED`), `#aRefusedCompletionIsSentAgainForTheNextDelivery` (the first
+  completion refused with `500`: the next delivery is answered from the record, the method ran once,
+  and the job is completed), and `ZenBpmRestartDeliveryIT` (a task left open by the first
+  application comes back to the restarted one, which answers it from the record, and its completion
+  ends the workflow; one committed run of the method). With the delivery id made new per delivery,
+  all three of those cases fail (mutants). Quarkus: `ZenBpmWorkflowLifecycleTest` delivers and
+  completes a service task, a send task, a business rule task served by a job and a task in a
+  sub-process with the gateways behind them deciding on what the handlers computed
+  (`#serviceTaskRunsAndGatewaySeesValues`), binds a mapped `@TaskParam`
+  (`#declaredTaskParametersAreBound`), routes a BPMN error to its boundary event
+  (`#bpmnErrorRoutesBoundary`), keeps a task left open while the engine hands it out again and
+  ends it on the application's completion with one run of its method (`#asyncTaskIsCompletedLater`),
+  reports a task a timer took away as cancelled once (`#aTaskTakenAwayIsReportedCanceled`), and
+  fails a thrown handler once per delivery until the incident (`#aThrownHandlerIsFailedUntilItsRetriesRunOut`);
+  `ZenBpmRestartDeliveryTest` answers the task delivered before the restart from the record after
+  it, completes it with one run of its method, and finds the packing the stop cut off `active` with
+  its 3 retries, no failure record and no incident, after which the restarted run packs it (with
+  the delivery id new per delivery, and with a thrown handler failed while its module stops, it
+  fails, mutants). The Quarkus report: a report built with `jacococli` 0.8.15 from
+  `quarkus/integration-tests/target/jacoco.exec` of the clean build alone, which holds the three
+  sessions of the prod-mode applications (the lifecycle application and both runs of the restart
+  application) and the test JVM's, against `core/target/classes`, covers 868 of the 1,577
+  instructions of `ZenBpmJobHandler` (30 of 39 methods: the completion by
+  `#serviceTaskRunsAndGatewaySeesValues`, the BPMN error by `#bpmnErrorRoutesBoundary`, the parking
+  by `#asyncTaskIsCompletedLater` and `#aTaskTakenAwayIsReportedCanceled`, the failure of a thrown
+  handler by `#aThrownHandlerIsFailedUntilItsRetriesRunOut`, the throw while the module stops by
+  `ZenBpmRestartDeliveryTest`) and 75 of the 115 of `ZenBpmOpenTaskProbe` (5 of 6 methods: the probe is
+  built when the module starts, and asked by the platform at the deliveries of the check in
+  `#aTaskTakenAwayIsReportedCanceled`). The gate is
+  unchanged.
+
+*Fit check, 2026-10-18, decided by the Implementor.* Checked against `main` (`009de37`),
+`ADAPTER-AUTHORS.md` (3.3, 3.4 and 5, "About deliveries": two deliveries of one task at the same
+moment both run, and the core names and counts it), the platform as the adapter resolves it
+(`DeliveryRecords#answerToARepeatedDelivery` and `#reportHandlerRanTwiceAtTheSameTime` of
+`migration-adapter-2.0.0-20261015.045823-21`, `TaskDeliveryLogReader` of `test-utils`), Camunda 8's
+`Camunda8InboundIdempotencyIT`, `Camunda8RestartDeliveryIT` with its `RestartDocker*` classes,
+`Camunda8RestartDeliveryTest` with its `C8Restart*` application and `Camunda8WorkflowLifecycleTest`,
+`QuarkusProdModeTest#stop` of Quarkus 3.40.0 (`Process#destroy`, so the application stops as on a
+`SIGTERM` and the JaCoCo agent writes its file), and the engine at the pin `bdd795a3` (source
+exported with `git archive`: `jobServer` and `distributedJobs` in
+`internal/cluster/jobmanager/server.go`, `JobManager.Start` and `OnPartitionRoleChange` in
+`internal/cluster/jobmanager/manager.go`; the image run by every new test). What did not fit, and
+what was decided:
+
+1. **Names and places** (brief question 4). Spring: `ZenBpmInboundIdempotencyIT` with the
+   application `it/idempotency` (`IdempotencyItApplication`, the aggregate `Ticket`, the process
+   `Idempotency` of `idempotency-it/idempotency.bpmn`, `idempotency-it.yaml`: two handler slots, a
+   job-timeout of two seconds), and `ZenBpmRestartDeliveryIT` with the application `it/restart`
+   (`RestartItApplication`, `Booking`, the process `Restart` of `restart-it/restart.bpmn`,
+   `restart-it.yaml`), booted twice with `SpringApplicationBuilder` on one named in-memory database,
+   as the drain IT boots its nodes. Quarkus: `ZenBpmRestartDeliveryTest` with an application of its
+   own in `quarkus/test/restart` (`RestartBooking`, the workflow module `zenbpm-restart` and its
+   process `Restart`, `restart/application.yaml`, the descriptor
+   `workflow-module-descriptor/restart-workflow-module`), on an engine of its own and a database file
+   which outlives both runs. Every model carries its diagram (decision 29).
+2. **How the renewal and the completion fail** (brief question 1). A proxy of the test, no switch in
+   main code: `JobReadsRefusingProxy` of S6.1.3 became `RefusingEngineProxy`, which refuses the
+   requests a pattern of method and path matches, with the status and as often as a case says, and
+   passes everything else on; `ZenBpmProbeOutageIT` refuses every job read with it as before. The
+   lost lock refuses every extension with `502`, as an engine whose partition has no leader answers.
+   Its completions are refused with `500`: a `502` is repeated by `ZenBpmCommandRetry` within the
+   lock, and in the first run of the case the repetition of the run which committed first got
+   through once the case stopped refusing, so no delivery came after the commits. The redelivery case
+   refuses the first completion with `500`, which the adapter does not repeat, so the job is left to
+   its lock and comes back.
+3. **"The core names both."** At the platform the adapter resolves, two deliveries which run at the
+   same time are named once, by the delivery which commits second ("Two deliveries of task ... were
+   processed at the SAME time"); nothing can name the first while it runs, because neither has a
+   record yet (`ADAPTER-AUTHORS.md` 5). The first is named by the adapter: the renewal's WARN says
+   that its lock could not be renewed and a second delivery may run beside it. So
+   `#aLostLockIsNamed` asserts both lines. Measured order: the renewal's WARN, both runs waiting in
+   their handlers at once, the platform's WARN after both commits, both completions refused, the
+   third delivery (delivery token 3) answered from the record, and its completion ends the job.
+4. **The renewal named the job type as the task** (found by `#aLostLockIsNamed`). The renewal starts
+   before the handler reads the job's instance, so its WARN said `task 'deploy-it__Idempotency__print'`
+   where every other message of the handler names the task as the application knows it.
+   `Renewal#describeAggregate` became `Renewal#describe(taskDefinition, aggregateId)`, which the
+   handler calls once it knows both; until then the job's type is named
+   (`ZenBpmLockRenewalTest#aLostLockEndsTheRenewal` starts with the scoped type and expects the plain
+   one).
+5. **GAPS 2** (brief question 2) is entered under the plan's number, in the table's shape, with the
+   evidence at the pin: the locks are the `distributedJobs` map of the leader's `jobServer`, and a
+   node which becomes leader starts a new `jobServer` with an empty one. The answer is the record,
+   which this story proves; GAPS 3 stays closed and is not entered.
+6. **What the restart proves** (beyond the story's words). "A task delivered before the restart and
+   completed after it" is a task left open for its asynchronous completion: the first run delivers
+   it and records `COMPLETION_PENDING`, the restarted application gets it again before its window
+   of a minute (the closed job stream released the lock of the task it left open, see decision 39),
+   the platform answers it from the record without running the method, and the application completes
+   it there. A handler which runs while the application stops is no such task: its transaction rolls
+   back, and it runs again after the restart, which is the twin of S6.2.2 below. Camunda 8's restart
+   tests measure a defect of that engine, an activation request which outlives its client; the job
+   stream of this engine drops a closed client's locks at once (measured by S6.2.2), so its shape is
+   kept and its measurement is not.
+7. **The Quarkus twins of S6.2.1 and S6.2.2** (brief question 3).
+   `ZenBpmWorkflowLifecycleTest#aThrownHandlerIsFailedUntilItsRetriesRunOut` (the process
+   `TaskFailures` with `retries="2"` and the workflow's `retry-backoff: PT1S`) and, in the restart
+   test, a packing which the stop cuts off: it waits while a file named after its booking exists in
+   the directory `zenbpm-restart.holds`, because the application runs in a JVM of its own and the test
+   lets it go on while the application stops; the test removes the file once the module unsubscribed
+   its types, so the handler throws while the module stops. No multi-node drain on Quarkus: the Spring
+   IT covers the platform-neutral part.
+8. **No twin of S6.4.1** (the note there): the Quarkus side of a renamed process needs nothing beyond
+   the core's tests.
+9. **The models of the lifecycle class** (brief question 6). `TaskMatrix`, `TaskOutcomes` and
+   `TaskTakenAway` are copies of the Spring fixtures, `TaskFailures` keeps only the charge; all four
+   are files of the workflow module `zenbpm-e2e`, and `StartProcess` is unchanged. Each has an
+   aggregate and a persistence of its own. A persistence shared through a generic base class made the
+   platform hand the start of one aggregate to the persistence of another (a `ClassCastException` in
+   `E2eJpaPersistence#save`, the reservation's persistence asked to save a payment), so each
+   implements `AggregatePersistenceAware` itself, as `E2ePersistence` does. The application now sets
+   `async-task-lock-renewal: PT2S`, which the task left open and the task taken away need, and the
+   boot case finds the subscribed type of `StartProcess` among the module's types.
+10. **The status-checked JSON read** (note from S5.3.1) is `EngineUnderTest#json(path)`: a `GET` of
+   the engine's REST API which refuses any status but `200`, naming the path, the status and the body,
+   and answers Jackson's `JsonNode` (`jackson-databind` is now a dependency of the module).
+   `ZenBpmDeploymentIT` reads the counts of definitions and decisions and the scoped id inside the
+   deployed DMN with it instead of searching the bodies; the Quarkus class, and the four Spring ITs
+   which held identical copies of the read, use it as well (`EngineUnderTestIT#aReadNotAnsweredWith200IsRefused`).
+11. **Both runs count** for the Quarkus report: each run of the application gets the JaCoCo agent,
+   which adds to the module's file; `jacococli execinfo` lists a session for each run beside the
+   test's own. Quarkus rotates its log file at boot by default, so the restart test sets
+   `quarkus.log.file.rotation.rotate-on-boot=false` and reads what each run wrote from where it began.
+12. **The acceptance's Quarkus report** (brief question 5) is proven through the run, the gate is
+   unchanged: a report from the JaCoCo file of `quarkus/integration-tests` alone, which holds only
+   the prod-mode applications and their tests, is written under the acceptance criterion above.
+13. **No decision.** Nothing here shapes code beyond the story; the renewal's message is a wording
+   the handler's messages already follow. README: a sentence on what a delivery handed out again
+   runs (held by `ZenBpmInboundIdempotencyIT` and both restart tests).
+
+**Implemented 2026-10-18.** Core: `ZenBpmLockRenewal.Renewal#describe(taskDefinition, aggregateId)`
+instead of `#describeAggregate`, so a lost lock names the task as the application knows it.
+Engine test support: `EngineUnderTest#json(path)`, the status-checked read, with `jackson-databind`.
+Spring Boot tests: `RefusingEngineProxy` (from `JobReadsRefusingProxy`), `ZenBpmInboundIdempotencyIT`
+with `it/idempotency` (`IdempotencyItApplication`, `Ticket`, `TicketRepository`, `TicketWorkflow`,
+`PrintingGate`), `idempotency-it.yaml` and `idempotency-it/idempotency.bpmn`;
+`ZenBpmRestartDeliveryIT` with `it/restart` (`RestartItApplication`, `Booking`,
+`BookingRepository`, `BookingWorkflow`), `restart-it.yaml` and `restart-it/restart.bpmn`;
+`ZenBpmDeploymentIT`, `ZenBpmProbeOutageIT`, `ZenBpmTaskProcessingIT`, `ZenBpmShutdownDrainIT` and
+`ZenBpmParkedTasksIT` read the engine through `EngineUnderTest#json`. Quarkus integration tests: the
+aggregates, persistences and workflows of `TaskMatrix`, `TaskOutcomes`, `TaskTakenAway` and
+`TaskFailures` (`E2eParcel*`, `E2eClaim*`, `E2eReservation*`, `E2ePayment*`) with
+`E2eTaskIntrospection`, the element id of a job and `introspect/visited/{key}` in `E2eIntrospection`,
+the four models in `zenbpm-e2e/processes/zenbpm`, `async-task-lock-renewal: PT2S` and the
+`retry-backoff` of `TaskFailures` in `application.yaml`; the restart application in
+`quarkus/test/restart` (`RestartBooking`, `RestartBookingPersistence`, `RestartBookingWorkflow`,
+`RestartIntrospection`), `restart/application.yaml`, `zenbpm-restart/processes/zenbpm/Restart.bpmn`
+and `workflow-module-descriptor/restart-workflow-module`. GAPS 2 (entered under the plan's number);
+the README's status.
+
+New tests: `ZenBpmInboundIdempotencyIT` (3), `ZenBpmRestartDeliveryIT` (1), Quarkus
+`ZenBpmRestartDeliveryTest` (1), six cases in `ZenBpmWorkflowLifecycleTest` (the five the story
+names and `#aThrownHandlerIsFailedUntilItsRetriesRunOut`), two in `EngineUnderTestIT`
+(`#aReadOfTheRestApiAnswersTheEnginesJson`, `#aReadNotAnsweredWith200IsRefused`);
+`ZenBpmLockRenewalTest#aLostLockEndsTheRenewal` now starts with the job's type and expects the task.
+
+Seen to fail, each restored afterwards (9 of 9 mutants, against green unmutated runs, a kill
+counted only where a test failed): the JSON read without its status check; `Renewal#describe`
+keeping the job's type; the handler naming the job's type to the renewal (against the engine:
+`#aLostLockIsNamed`); no renewal while a handler runs (against the engine:
+`#longHandlersKeepTheirLock`, the job is delivered twice); the delivery id new per delivery, against
+the engine four times (`#aRefusedCompletionIsSentAgainForTheNextDelivery`, `#aLostLockIsNamed`,
+`ZenBpmRestartDeliveryIT`, Quarkus `ZenBpmRestartDeliveryTest`: the method runs again); a thrown
+handler failed while its module stops (against the engine: Quarkus `ZenBpmRestartDeliveryTest`, the
+packing loses a retry).
+
+`TZ=Etc/UTC mvn clean install` on OpenJDK 25.0.2 builds green with every integration test run and
+none skipped (engine test support 12 unit and 5 integration tests, core 955 unit and 78 integration
+tests, Spring Boot 11 unit and 36 integration tests, smoke test 37, Quarkus runtime 10, Quarkus
+deployment 51, Quarkus integration tests 10, coverage gate 37). The gate measures 100 % of 24,756
+instructions for Spring Boot and 100 % of 24,630 for Quarkus, and `bin/check-deploy-safety.sh`
+passes (13 files on a green build, nothing after a red gate). No flake was hit.
+
+**E6 Done when**, checked 2026-10-18 on the clean build above:
+
+- *The task-matrix IT is green on Spring Boot*: met. `ZenBpmTaskProcessingIT` (19 tests) runs the
+  service task, the send task, the business rule task served by a job and the task in a
+  sub-process (`#happyPathRunsEveryTaskKind`), the gateway behind a task
+  (`#gatewayAfterTaskSeesTheNewValues`, `#aTaskInASubProcessNamesTheRootAndTheGatewayBehindItSeesTheValues`),
+  the BPMN error (`#aBpmnErrorRoutesTheBoundaryEvent`, `#anUnknownErrorCodeIsAnIncident`) and the
+  pending task (`#anAsynchronousTaskStaysOpen`, `#completeTaskEndsTheDormantWorkflow`).
+- *Its twin on Quarkus*: met. `ZenBpmWorkflowLifecycleTest` (9 tests, 6 of them new) runs the same
+  task kinds and gateways (`#serviceTaskRunsAndGatewaySeesValues`), the BPMN error
+  (`#bpmnErrorRoutesBoundary`) and the pending task (`#asyncTaskIsCompletedLater`) on a booted
+  prod-mode application, beside the parameter, the cancellation and the failure twins.
+- *Inbound idempotency is proven*: met on both platforms. Spring Boot `ZenBpmInboundIdempotencyIT`
+  (3 tests); on Quarkus the redelivery of a task left open is answered from the record in
+  `#asyncTaskIsCompletedLater` (its method ran once over several deliveries) and in
+  `ZenBpmRestartDeliveryTest` (1 test). The platform's naming of two runs at the same moment is
+  proven on Spring Boot only; it is the core's, and nothing of the Quarkus glue takes part in it.
+- *Restart delivery is proven*: met on both platforms. `ZenBpmRestartDeliveryIT` (1 test) and
+  Quarkus `ZenBpmRestartDeliveryTest` (1 test).
+
+So E6 is complete; nothing of it goes to a later story.

@@ -8,12 +8,6 @@ import static org.junit.jupiter.api.Assertions.assertAll;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-import java.io.IOException;
-import java.io.UncheckedIOException;
-import java.net.URI;
-import java.net.http.HttpClient;
-import java.net.http.HttpRequest;
-import java.net.http.HttpResponse;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.Optional;
@@ -38,9 +32,6 @@ import org.springframework.transaction.support.TransactionTemplate;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.json.JsonMapper;
-
 import io.vanillabp.integration.test.utils.SuppressOutputExtension;
 import io.vanillabp.spi.process.ProcessService;
 
@@ -63,7 +54,7 @@ class ZenBpmProbeOutageIT {
     @Container
     private static final EngineUnderTest ENGINE = new EngineUnderTest();
 
-    private static final JobReadsRefusingProxy PROXY = new JobReadsRefusingProxy(ENGINE::restAddress);
+    private static final RefusingEngineProxy PROXY = refusingEveryJobRead();
 
     @Autowired
     private ProcessService<Reservation> processService;
@@ -93,7 +84,7 @@ class ZenBpmProbeOutageIT {
                 .map(Reservation::getCheckTaskId));
 
         eventually(() -> Optional
-                .of(engineJson("/v1/jobs/%s".formatted(holdTaskId)))
+                .of(ENGINE.json("/v1/jobs/%s".formatted(holdTaskId)))
                 .filter(job -> "terminated".equals(job
                         .path("state")
                         .asText())));
@@ -102,9 +93,9 @@ class ZenBpmProbeOutageIT {
         eventually(() -> Optional
                 .of(deliveryTokenOf(checkTaskId))
                 .filter(token -> token >= deliveredBefore + 2));
-        final var asked = "/v1/jobs/%s".formatted(holdTaskId);
+        final var asked = "GET /v1/jobs/%s".formatted(holdTaskId);
         eventually(() -> Optional
-                .of(PROXY.refusedReads())
+                .of(PROXY.refused())
                 .filter(refused -> refused.contains(asked)));
 
         assertAll(
@@ -113,8 +104,8 @@ class ZenBpmProbeOutageIT {
                         .orElseThrow()
                         .getHoldCancellations()),
                 () -> assertTrue(PROXY
-                        .refusedReads()
-                        .contains(asked), PROXY.refusedReads()::toString));
+                        .refused()
+                        .contains(asked), PROXY.refused()::toString));
     }
 
     // the adapter reaches the engine's REST API through the proxy, its job stream directly
@@ -124,32 +115,18 @@ class ZenBpmProbeOutageIT {
         registry.add("vanillabp.adapters.zenbpm.grpc-address", ENGINE::grpcAddress);
     }
 
-    // raised by the engine with every delivery of the job
-    private static long deliveryTokenOf(final String jobKey) {
-        return engineJson("/v1/jobs/%s".formatted(jobKey))
-                .path("deliveryToken")
-                .asLong();
+    // refusing from the start, before the application asks anything
+    private static RefusingEngineProxy refusingEveryJobRead() {
+        final var proxy = new RefusingEngineProxy(ENGINE::restAddress);
+        proxy.refuse(RefusingEngineProxy.JOB_READ, 502, RefusingEngineProxy.ALWAYS);
+        return proxy;
     }
 
-    // read from the engine itself, past the proxy
-    private static JsonNode engineJson(final String path) {
-        try (var client = HttpClient.newHttpClient()) {
-            final var answer = client.send(HttpRequest
-                    .newBuilder(URI.create("%s%s".formatted(ENGINE.restAddress(), path)))
-                    .build(), HttpResponse.BodyHandlers.ofString());
-            assertEquals(200, answer.statusCode(), answer::body);
-            return JsonMapper
-                    .builder()
-                    .build()
-                    .readTree(answer.body());
-        } catch (final IOException e) {
-            throw new UncheckedIOException(e);
-        } catch (final InterruptedException e) {
-            Thread
-                    .currentThread()
-                    .interrupt();
-            throw new IllegalStateException(e);
-        }
+    // raised by the engine with every delivery of the job
+    private static long deliveryTokenOf(final String jobKey) {
+        return ENGINE.json("/v1/jobs/%s".formatted(jobKey))
+                .path("deliveryToken")
+                .asLong();
     }
 
     private static <T> T eventually(final Supplier<Optional<T>> read) {

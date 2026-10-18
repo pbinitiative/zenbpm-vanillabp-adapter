@@ -21,11 +21,17 @@
   </properties>
 
   <dependencies>
-    <!-- These classes start a container and hand on what it printed. No JUnit, no client
-         of the engine, no VanillaBP: what a test does WITH the engine belongs to the test. -->
+    <!-- These classes start a container, hand on what it printed and read its REST API, checking
+         the status of every answer. No JUnit, no client of the engine, no VanillaBP: what a test
+         does WITH the engine belongs to the test. -->
     <dependency>
       <groupId>org.testcontainers</groupId>
       <artifactId>testcontainers</artifactId>
+    </dependency>
+    <!-- the answers of the status-checked read -->
+    <dependency>
+      <groupId>com.fasterxml.jackson.core</groupId>
+      <artifactId>jackson-databind</artifactId>
     </dependency>
     <dependency>
       <groupId>org.slf4j</groupId>
@@ -44,11 +50,6 @@
     <dependency>
       <groupId>org.testcontainers</groupId>
       <artifactId>testcontainers-junit-jupiter</artifactId>
-      <scope>test</scope>
-    </dependency>
-    <dependency>
-      <groupId>com.fasterxml.jackson.core</groupId>
-      <artifactId>jackson-databind</artifactId>
       <scope>test</scope>
     </dependency>
   </dependencies>

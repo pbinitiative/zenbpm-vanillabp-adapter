@@ -9,12 +9,6 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-import java.io.IOException;
-import java.io.UncheckedIOException;
-import java.net.URI;
-import java.net.http.HttpClient;
-import java.net.http.HttpRequest;
-import java.net.http.HttpResponse;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.Optional;
@@ -37,9 +31,6 @@ import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.transaction.support.TransactionTemplate;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
-
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.json.JsonMapper;
 
 import io.vanillabp.integration.test.utils.SuppressOutputExtension;
 import io.vanillabp.spi.process.ProcessService;
@@ -116,29 +107,9 @@ class ZenBpmParkedTasksIT {
     }
 
     private static String stateOf(final String jobKey) {
-        return engineJson("/v1/jobs/%s".formatted(jobKey))
+        return ENGINE.json("/v1/jobs/%s".formatted(jobKey))
                 .path("state")
                 .asText();
-    }
-
-    private static JsonNode engineJson(final String path) {
-        try (var client = HttpClient.newHttpClient()) {
-            final var answer = client.send(HttpRequest
-                    .newBuilder(URI.create("%s%s".formatted(ENGINE.restAddress(), path)))
-                    .build(), HttpResponse.BodyHandlers.ofString());
-            assertEquals(200, answer.statusCode(), answer::body);
-            return JsonMapper
-                    .builder()
-                    .build()
-                    .readTree(answer.body());
-        } catch (final IOException e) {
-            throw new UncheckedIOException(e);
-        } catch (final InterruptedException e) {
-            Thread
-                    .currentThread()
-                    .interrupt();
-            throw new IllegalStateException(e);
-        }
     }
 
     private static <T> T eventually(final Supplier<Optional<T>> read) {

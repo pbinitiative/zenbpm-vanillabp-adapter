@@ -1,0 +1,198 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" id="zenbpm-e2e-task-outcomes"
+    xmlns:zenbpm="http://zenbpm.pbinitiative.org/1.0" targetNamespace="http://bpmn.io/schema/bpmn"
+    xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI"
+    xmlns:dc="http://www.omg.org/spec/DD/20100524/DC"
+    xmlns:di="http://www.omg.org/spec/DD/20100524/DI">
+  <bpmn:error id="Error_Damaged" name="Damaged" errorCode="damaged" />
+  <bpmn:error id="Error_Withdrawn" name="Withdrawn" errorCode="withdrawn" />
+  <bpmn:process id="TaskOutcomes" isExecutable="true">
+    <bpmn:startEvent id="Start">
+      <bpmn:outgoing>Flow_ToScenario</bpmn:outgoing>
+    </bpmn:startEvent>
+    <bpmn:exclusiveGateway id="Scenario" name="Which outcome?" default="Flow_ToInspect">
+      <bpmn:incoming>Flow_ToScenario</bpmn:incoming>
+      <bpmn:outgoing>Flow_ToInspect</bpmn:outgoing>
+      <bpmn:outgoing>Flow_ToAwaitApproval</bpmn:outgoing>
+    </bpmn:exclusiveGateway>
+    <bpmn:serviceTask id="Inspect" name="Inspect the claim">
+      <bpmn:extensionElements>
+        <zenbpm:taskDefinition type="inspect" />
+      </bpmn:extensionElements>
+      <bpmn:incoming>Flow_ToInspect</bpmn:incoming>
+      <bpmn:outgoing>Flow_ToInspected</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:boundaryEvent id="Damaged" name="Damaged" attachedToRef="Inspect">
+      <bpmn:outgoing>Flow_ToRefundable</bpmn:outgoing>
+      <bpmn:errorEventDefinition id="Damaged_Definition" errorRef="Error_Damaged" />
+    </bpmn:boundaryEvent>
+    <bpmn:endEvent id="Inspected">
+      <bpmn:incoming>Flow_ToInspected</bpmn:incoming>
+    </bpmn:endEvent>
+    <bpmn:exclusiveGateway id="Refundable" name="Refundable?" default="Flow_NotRefundable">
+      <bpmn:incoming>Flow_ToRefundable</bpmn:incoming>
+      <bpmn:outgoing>Flow_IsRefundable</bpmn:outgoing>
+      <bpmn:outgoing>Flow_NotRefundable</bpmn:outgoing>
+    </bpmn:exclusiveGateway>
+    <bpmn:endEvent id="Refunded">
+      <bpmn:incoming>Flow_IsRefundable</bpmn:incoming>
+    </bpmn:endEvent>
+    <bpmn:endEvent id="Kept">
+      <bpmn:incoming>Flow_NotRefundable</bpmn:incoming>
+    </bpmn:endEvent>
+    <bpmn:serviceTask id="AwaitApproval" name="Await the approval">
+      <bpmn:extensionElements>
+        <zenbpm:taskDefinition type="await-approval" />
+      </bpmn:extensionElements>
+      <bpmn:incoming>Flow_ToAwaitApproval</bpmn:incoming>
+      <bpmn:outgoing>Flow_ToApprovalDecision</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:boundaryEvent id="Withdrawn" name="Withdrawn" attachedToRef="AwaitApproval">
+      <bpmn:outgoing>Flow_ToClaimWithdrawn</bpmn:outgoing>
+      <bpmn:errorEventDefinition id="Withdrawn_Definition" errorRef="Error_Withdrawn" />
+    </bpmn:boundaryEvent>
+    <bpmn:exclusiveGateway id="ApprovalDecision" name="Approved?" default="Flow_ToRejected">
+      <bpmn:incoming>Flow_ToApprovalDecision</bpmn:incoming>
+      <bpmn:outgoing>Flow_ToApproved</bpmn:outgoing>
+      <bpmn:outgoing>Flow_ToRejected</bpmn:outgoing>
+    </bpmn:exclusiveGateway>
+    <bpmn:endEvent id="Approved">
+      <bpmn:incoming>Flow_ToApproved</bpmn:incoming>
+    </bpmn:endEvent>
+    <bpmn:endEvent id="Rejected">
+      <bpmn:incoming>Flow_ToRejected</bpmn:incoming>
+    </bpmn:endEvent>
+    <bpmn:endEvent id="ClaimWithdrawn">
+      <bpmn:incoming>Flow_ToClaimWithdrawn</bpmn:incoming>
+    </bpmn:endEvent>
+    <bpmn:sequenceFlow id="Flow_ToScenario" sourceRef="Start" targetRef="Scenario" />
+    <bpmn:sequenceFlow id="Flow_ToInspect" sourceRef="Scenario" targetRef="Inspect" />
+    <bpmn:sequenceFlow id="Flow_ToAwaitApproval" sourceRef="Scenario" targetRef="AwaitApproval">
+      <bpmn:conditionExpression>=scenario = "pending"</bpmn:conditionExpression>
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="Flow_ToInspected" sourceRef="Inspect" targetRef="Inspected" />
+    <bpmn:sequenceFlow id="Flow_ToRefundable" sourceRef="Damaged" targetRef="Refundable" />
+    <bpmn:sequenceFlow id="Flow_IsRefundable" sourceRef="Refundable" targetRef="Refunded">
+      <bpmn:conditionExpression>=refundable</bpmn:conditionExpression>
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="Flow_NotRefundable" sourceRef="Refundable" targetRef="Kept" />
+    <bpmn:sequenceFlow id="Flow_ToApprovalDecision" sourceRef="AwaitApproval" targetRef="ApprovalDecision" />
+    <bpmn:sequenceFlow id="Flow_ToApproved" sourceRef="ApprovalDecision" targetRef="Approved">
+      <bpmn:conditionExpression>=approved</bpmn:conditionExpression>
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="Flow_ToRejected" sourceRef="ApprovalDecision" targetRef="Rejected" />
+    <bpmn:sequenceFlow id="Flow_ToClaimWithdrawn" sourceRef="Withdrawn" targetRef="ClaimWithdrawn" />
+  </bpmn:process>
+  <bpmndi:BPMNDiagram id="BPMNDiagram_1">
+    <bpmndi:BPMNPlane id="BPMNPlane_1" bpmnElement="TaskOutcomes">
+      <bpmndi:BPMNShape id="Start_di" bpmnElement="Start">
+        <dc:Bounds x="167" y="80" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Refundable_di" bpmnElement="Refundable">
+        <dc:Bounds x="160" y="166" width="50" height="50" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Scenario_di" bpmnElement="Scenario">
+        <dc:Bounds x="270" y="80" width="50" height="50" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Refunded_di" bpmnElement="Refunded">
+        <dc:Bounds x="277" y="180" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Kept_di" bpmnElement="Kept">
+        <dc:Bounds x="277" y="266" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Inspect_di" bpmnElement="Inspect">
+        <dc:Bounds x="380" y="80" width="100" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="AwaitApproval_di" bpmnElement="AwaitApproval">
+        <dc:Bounds x="380" y="210" width="100" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Inspected_di" bpmnElement="Inspected">
+        <dc:Bounds x="547" y="80" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="ApprovalDecision_di" bpmnElement="ApprovalDecision">
+        <dc:Bounds x="540" y="166" width="50" height="50" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Approved_di" bpmnElement="Approved">
+        <dc:Bounds x="650" y="80" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Rejected_di" bpmnElement="Rejected">
+        <dc:Bounds x="650" y="166" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="ClaimWithdrawn_di" bpmnElement="ClaimWithdrawn">
+        <dc:Bounds x="160" y="352" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Damaged_di" bpmnElement="Damaged">
+        <dc:Bounds x="454" y="142" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Withdrawn_di" bpmnElement="Withdrawn">
+        <dc:Bounds x="454" y="272" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNEdge id="Flow_ToScenario_di" bpmnElement="Flow_ToScenario">
+        <di:waypoint x="203" y="98" />
+        <di:waypoint x="236" y="98" />
+        <di:waypoint x="236" y="105" />
+        <di:waypoint x="270" y="105" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_ToInspect_di" bpmnElement="Flow_ToInspect">
+        <di:waypoint x="320" y="105" />
+        <di:waypoint x="350" y="105" />
+        <di:waypoint x="350" y="120" />
+        <di:waypoint x="380" y="120" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_ToAwaitApproval_di" bpmnElement="Flow_ToAwaitApproval">
+        <di:waypoint x="320" y="105" />
+        <di:waypoint x="350" y="105" />
+        <di:waypoint x="350" y="250" />
+        <di:waypoint x="380" y="250" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_ToInspected_di" bpmnElement="Flow_ToInspected">
+        <di:waypoint x="480" y="120" />
+        <di:waypoint x="513" y="120" />
+        <di:waypoint x="513" y="98" />
+        <di:waypoint x="547" y="98" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_ToRefundable_di" bpmnElement="Flow_ToRefundable">
+        <di:waypoint x="472" y="178" />
+        <di:waypoint x="472" y="236" />
+        <di:waypoint x="185" y="236" />
+        <di:waypoint x="185" y="216" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_IsRefundable_di" bpmnElement="Flow_IsRefundable">
+        <di:waypoint x="210" y="191" />
+        <di:waypoint x="243" y="191" />
+        <di:waypoint x="243" y="198" />
+        <di:waypoint x="277" y="198" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_NotRefundable_di" bpmnElement="Flow_NotRefundable">
+        <di:waypoint x="210" y="191" />
+        <di:waypoint x="243" y="191" />
+        <di:waypoint x="243" y="284" />
+        <di:waypoint x="277" y="284" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_ToApprovalDecision_di" bpmnElement="Flow_ToApprovalDecision">
+        <di:waypoint x="480" y="250" />
+        <di:waypoint x="510" y="250" />
+        <di:waypoint x="510" y="191" />
+        <di:waypoint x="540" y="191" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_ToApproved_di" bpmnElement="Flow_ToApproved">
+        <di:waypoint x="590" y="191" />
+        <di:waypoint x="620" y="191" />
+        <di:waypoint x="620" y="98" />
+        <di:waypoint x="650" y="98" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_ToRejected_di" bpmnElement="Flow_ToRejected">
+        <di:waypoint x="590" y="191" />
+        <di:waypoint x="620" y="191" />
+        <di:waypoint x="620" y="184" />
+        <di:waypoint x="650" y="184" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_ToClaimWithdrawn_di" bpmnElement="Flow_ToClaimWithdrawn">
+        <di:waypoint x="472" y="308" />
+        <di:waypoint x="472" y="408" />
+        <di:waypoint x="178" y="408" />
+        <di:waypoint x="178" y="388" />
+      </bpmndi:BPMNEdge>
+    </bpmndi:BPMNPlane>
+  </bpmndi:BPMNDiagram>
+</bpmn:definitions>

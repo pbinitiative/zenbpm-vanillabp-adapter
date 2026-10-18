@@ -1,0 +1,16 @@
+quarkus:
+  datasource:
+    db-kind: h2
+  hibernate-orm:
+    schema-management:
+      strategy: update
+vanillabp:
+  outbox:
+    housekeeping:
+      zone: UTC
+  prioritized-adapters:
+    - zenbpm
+  adapters:
+    zenbpm:
+      name-clash-avoidance: use-prefix
+      async-task-lock-renewal: PT1M

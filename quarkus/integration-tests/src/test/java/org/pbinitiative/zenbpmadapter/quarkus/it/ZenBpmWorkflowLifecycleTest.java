@@ -12,18 +12,16 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.IOException;
-import java.net.URI;
-import java.net.http.HttpClient;
-import java.net.http.HttpRequest;
-import java.net.http.HttpResponse;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.locks.LockSupport;
+import java.util.function.BooleanSupplier;
 import java.util.function.Supplier;
 import java.util.logging.Level;
 import java.util.logging.Logger;
@@ -39,7 +37,6 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 
 import io.quarkus.test.QuarkusProdModeTest;
 import io.restassured.RestAssured;
-import io.restassured.path.json.JsonPath;
 import io.restassured.specification.RequestSpecification;
 import io.vanillabp.integration.test.utils.OneFreePortPerJvm;
 import io.vanillabp.integration.test.utils.SuppressOutputExtension;
@@ -49,7 +46,11 @@ import io.vanillabp.integration.test.utils.SuppressOutputExtension;
  * packaged extension deploys the workflow module <code>zenbpm-e2e</code>, one BPMN and one DMN file,
  * under <code>use-prefix</code>, subscribes the job type of its task, and starts a workflow through
  * the platform's two-phase start, whose instance evaluates the deployed decision and reaches the
- * task, whose job the adapter delivers to the application's method and completes.
+ * task, whose job the adapter delivers to the application's method and completes. The processes
+ * <code>TaskMatrix</code>, <code>TaskOutcomes</code>, <code>TaskTakenAway</code> and
+ * <code>TaskFailures</code>, copies of the Spring Boot task fixtures, have their tasks served the
+ * same way: the outcomes of a handler, a task left open and completed later, a task the engine took
+ * away, and a handler which throws.
  * <p>
  * The Spring Boot integration tests prove the same, and that is the point: a correct core says
  * nothing about whether the glue of a platform ever calls it, which is why coverage is measured per
@@ -118,6 +119,10 @@ class ZenBpmWorkflowLifecycleTest {
                     .addAsResource("application.yaml")
                     .addAsResource("zenbpm-e2e/processes/zenbpm/StartProcess.bpmn")
                     .addAsResource("zenbpm-e2e/processes/zenbpm/rating.dmn")
+                    .addAsResource("zenbpm-e2e/processes/zenbpm/TaskMatrix.bpmn")
+                    .addAsResource("zenbpm-e2e/processes/zenbpm/TaskOutcomes.bpmn")
+                    .addAsResource("zenbpm-e2e/processes/zenbpm/TaskTakenAway.bpmn")
+                    .addAsResource("zenbpm-e2e/processes/zenbpm/TaskFailures.bpmn")
                     .addAsResource("workflow-module-descriptor/workflow-module", "META-INF/workflow-module"))
             // the surefire configuration of this module hands 'jacoco.agent' to this JVM
             .setJVMArgs(testCoverageJavaAgent(quarkusProdModeTestDefaults()))
@@ -134,22 +139,40 @@ class ZenBpmWorkflowLifecycleTest {
 
     @Test
     @DisplayName("The boot deploys the BPMN and the DMN file under the prefixed ids, registers version 1 of the process, and subscribes the job type of its task")
-    void theBootDeploysTheModelAndTheDecision() throws IOException, InterruptedException {
-        final var definitions = engine("/v1/process-definitions?bpmnProcessId=%s".formatted(SCOPED_PROCESS_ID));
-        final var decisions = engine("/v1/dmn-resource-definitions?dmnResourceDefinitionId=zenbpm-e2e-rating");
-        final var decision = engine("/v1/dmn-resource-definitions/%s".formatted(decisions.getString("items[0].key")));
+    void theBootDeploysTheModelAndTheDecision() {
+        final var definitions = ENGINE.json("/v1/process-definitions?bpmnProcessId=%s".formatted(SCOPED_PROCESS_ID));
+        final var decisions = ENGINE.json("/v1/dmn-resource-definitions?dmnResourceDefinitionId=zenbpm-e2e-rating");
+        final var decision = ENGINE.json("/v1/dmn-resource-definitions/%s".formatted(decisions
+                .path("items")
+                .path(0)
+                .path("key")
+                .asText()));
+        final var subscribed = applicationLog()
+                .lines()
+                .filter(line -> line
+                        .contains("ZenBPM[zenbpm]: workflow module 'zenbpm-e2e' subscribed the job type(s) "))
+                .findFirst()
+                .orElse("");
 
         assertAll(
-                () -> assertEquals(1, definitions.getInt("totalCount"), definitions::prettify),
-                () -> assertEquals(1, definitions.getInt("items[0].version"), definitions::prettify),
-                () -> assertEquals(1, decisions.getInt("totalCount"), decisions::prettify),
+                () -> assertEquals(1, definitions
+                        .path("totalCount")
+                        .asInt(), definitions::toPrettyString),
+                () -> assertEquals(1, definitions
+                        .path("items")
+                        .path(0)
+                        .path("version")
+                        .asInt(), definitions::toPrettyString),
+                () -> assertEquals(1, decisions
+                        .path("totalCount")
+                        .asInt(), decisions::toPrettyString),
+                // the decision inside the deployed file carries the scoped id
                 () -> assertTrue(decision
-                        .prettify()
-                        .contains("zenbpm-e2e__rating"), decision::prettify),
+                        .path("dmnData")
+                        .asText()
+                        .contains("id=\"zenbpm-e2e__rating\""), decision::toPrettyString),
                 () -> assertEquals("1", text("introspect/versions/StartProcess")),
-                () -> assertTrue(applicationLog().contains(
-                        "ZenBPM[zenbpm]: workflow module 'zenbpm-e2e' subscribed the job type(s) %s".formatted(
-                                SCOPED_JOB_TYPE)),
+                () -> assertTrue(subscribed.contains("%s (job-timeout PT5M)".formatted(SCOPED_JOB_TYPE)),
                         APPLICATION_LOG::toString));
     }
 
@@ -208,6 +231,157 @@ class ZenBpmWorkflowLifecycleTest {
                 () -> assertEquals(List.of(), instancesOf(rolledBackId)));
     }
 
+    @Test
+    @DisplayName("A service task, a send task, a business rule task served by a job and a service task in a sub-process each run once, and the gateways behind the task and behind the sub-process decide on what the handlers computed")
+    void serviceTaskRunsAndGatewaySeesValues() {
+        final var id = uniqueAggregateId();
+
+        post("introspect/tasks/parcels/%s".formatted(id));
+        final var instanceKey = awaitTheEndOf(id);
+
+        final var parcel = object("introspect/tasks/parcels/%s".formatted(id));
+        final var visited = visited(instanceKey);
+        final var jobs = jobsOf(instanceKey);
+        assertAll(
+                () -> assertEquals("COMPLETED", awaitTheInstanceOf(id).get("state")),
+                // the workflow started with express false, and the handler of the weighing made
+                // the parcel express
+                () -> assertTrue(visited.containsAll(List.of("NotifyCourier", "Packed")), visited::toString),
+                () -> assertFalse(visited.contains("NotPacked"), visited::toString),
+                () -> assertEquals(true, parcel.get("weighed"), parcel::toString),
+                () -> assertEquals(true, parcel.get("courierNotified"), parcel::toString),
+                () -> assertEquals(true, parcel.get("rated"), parcel::toString),
+                () -> assertEquals(true, parcel.get("packed"), parcel::toString),
+                () -> assertEquals(List.of("COMPLETED", "COMPLETED", "COMPLETED"), jobs
+                        .stream()
+                        .map(job -> job.get("state"))
+                        .toList(), jobs::toString));
+    }
+
+    @Test
+    @DisplayName("A parameter the model maps into a task is bound to the method's @TaskParam")
+    void declaredTaskParametersAreBound() {
+        final var id = uniqueAggregateId();
+
+        post("introspect/tasks/parcels/%s".formatted(id));
+        awaitTheEndOf(id);
+
+        assertEquals("standard", object("introspect/tasks/parcels/%s".formatted(id)).get("tariff"));
+    }
+
+    @Test
+    @DisplayName("A BPMN error reaches the engine with the code the deployed model carries: the error boundary event takes over, the gateway behind it decides on what the handler computed, and the handler's work stays committed")
+    void bpmnErrorRoutesBoundary() {
+        final var id = uniqueAggregateId();
+
+        post("introspect/tasks/claims/%s?scenario=error&errorCode=damaged".formatted(id));
+        final var instanceKey = awaitTheEndOf(id);
+
+        final var claim = object("introspect/tasks/claims/%s".formatted(id));
+        final var visited = visited(instanceKey);
+        assertAll(
+                () -> assertEquals("COMPLETED", awaitTheInstanceOf(id).get("state")),
+                () -> assertTrue(visited.containsAll(List.of("Damaged", "Refunded")), visited::toString),
+                () -> assertFalse(visited.contains("Inspected"), visited::toString),
+                () -> assertEquals("TERMINATED", jobOf(instanceKey, "Inspect").get("state")),
+                () -> assertEquals(true, claim.get("inspected"), claim::toString),
+                () -> assertEquals(true, claim.get("refundable"), claim::toString));
+    }
+
+    @Test
+    @DisplayName("A task left open for its asynchronous completion stays open while the engine hands it out again, its handler runs once, and the application's completion ends the workflow on what it changed before")
+    void asyncTaskIsCompletedLater() {
+        final var id = uniqueAggregateId();
+
+        post("introspect/tasks/claims/%s?scenario=pending".formatted(id));
+        final var instanceKey = (String) awaitTheInstanceOf(id).get("key");
+        final var taskId = await(() -> Optional.ofNullable((String) object("introspect/tasks/claims/%s".formatted(id))
+                .get("approvalTaskId")), "the approval of claim '%s' to be delivered".formatted(id));
+        final var firstDelivery = deliveryTokenOf(taskId);
+        // the window of application.yaml is two seconds
+        await(() -> deliveryTokenOf(taskId) > firstDelivery, "the approval to be handed out again");
+        final var stillOpen = jobOf(instanceKey, "AwaitApproval").get("state");
+        post("introspect/tasks/claims/%s/approval".formatted(id));
+        awaitTheEndOf(id);
+
+        final var visited = visited(instanceKey);
+        assertAll(
+                () -> assertEquals("ACTIVE", stillOpen),
+                () -> assertEquals("COMPLETED", awaitTheInstanceOf(id).get("state")),
+                () -> assertTrue(visited.containsAll(List.of("ApprovalDecision", "Approved")), visited::toString),
+                () -> assertFalse(visited.contains("Rejected"), visited::toString),
+                () -> assertEquals("COMPLETED", jobOf(instanceKey, "AwaitApproval").get("state")),
+                () -> assertEquals(1, object("introspect/tasks/claims/%s".formatted(id)).get("approvalRequests")));
+    }
+
+    @Test
+    @DisplayName("A task an interrupting timer boundary event took away reaches the application as cancelled at a later delivery of its workflow, and only once")
+    void aTaskTakenAwayIsReportedCanceled() {
+        final var id = uniqueAggregateId();
+
+        post("introspect/tasks/reservations/%s".formatted(id));
+        final var holdTaskId = await(() -> Optional.ofNullable((String) reservation(id).get("holdTaskId")),
+                "the hold of reservation '%s' to be delivered".formatted(id));
+        final var checkTaskId = await(() -> Optional.ofNullable((String) reservation(id).get("checkTaskId")),
+                "the check of reservation '%s' to be delivered".formatted(id));
+        // the check comes back every two seconds, and the timer takes the hold away after two
+        await(() -> ((Integer) reservation(id).get("holdCancellations")) > 0, "the hold to be reported cancelled");
+        final var deliveredBefore = deliveryTokenOf(checkTaskId);
+        await(() -> deliveryTokenOf(checkTaskId) >= deliveredBefore + 2, "two more deliveries of the check");
+
+        assertAll(
+                () -> assertEquals(1, reservation(id).get("holdCancellations")),
+                () -> assertEquals("terminated", ENGINE
+                        .json("/v1/jobs/%s".formatted(holdTaskId))
+                        .path("state")
+                        .asText()),
+                () -> assertEquals("active", ENGINE
+                        .json("/v1/jobs/%s".formatted(checkTaskId))
+                        .path("state")
+                        .asText()));
+    }
+
+    @Test
+    @DisplayName("A handler which throws is failed at the engine once per delivery: a model with two retries is delivered twice, the backoff apart, and then raises an incident naming the attempts, the exception and the aggregate")
+    void aThrownHandlerIsFailedUntilItsRetriesRunOut() {
+        final var id = uniqueAggregateId();
+
+        post("introspect/tasks/payments/%s".formatted(id));
+        final var instanceKey = (String) awaitTheInstanceOf(id).get("key");
+        final var incident = await(() -> {
+            final var incidents = ENGINE
+                    .json("/v1/process-instances/%s/incidents".formatted(instanceKey))
+                    .path("items");
+            return incidents.isEmpty() ? Optional.empty() : Optional.of(incidents.get(0));
+        }, "an incident of the payment '%s'".formatted(id));
+
+        final List<Long> attempts = api()
+                .get("introspect/tasks/payments/%s/attempts".formatted(id))
+                .then()
+                .statusCode(200)
+                .extract()
+                .jsonPath()
+                .getList("$", Long.class);
+        final var charge = jobOf(instanceKey, "Charge");
+        assertAll(
+                () -> assertEquals(2, attempts.size(), attempts::toString),
+                () -> assertTrue(attempts.get(1) - attempts.get(0) >= 1000, attempts::toString),
+                () -> assertEquals("Charge", incident
+                        .path("elementId")
+                        .asText()),
+                () -> assertEquals(
+                        "Task 'charge' of workflow aggregate '%s' threw java.lang.IllegalStateException: the card was declined (job %s: 2 attempts, retries exhausted)"
+                                .formatted(id, charge.get("key")),
+                        incident
+                                .path("message")
+                                .asText()),
+                () -> assertEquals("FAILED", charge.get("state")),
+                () -> assertEquals(2, ENGINE
+                        .json("/v1/jobs/%s/failures".formatted(charge.get("key")))
+                        .path("items")
+                        .size()));
+    }
+
     // the ids of every test are new, because all tests of the class share one engine
     private static String uniqueAggregateId() {
         return "e2e-%s".formatted(UUID.randomUUID());
@@ -241,6 +415,45 @@ class ZenBpmWorkflowLifecycleTest {
                 .orElse(null);
     }
 
+    // the key of the instance, once it ended
+    private static String awaitTheEndOf(final String id) {
+        await(() -> !"ACTIVE".equals(awaitTheInstanceOf(id).get("state")), "the workflow of aggregate '%s' to end"
+                .formatted(id));
+        return (String) awaitTheInstanceOf(id).get("key");
+    }
+
+    private static Map<String, Object> jobOf(
+        final String instanceKey,
+        final String elementId
+    ) {
+        return await(() -> jobsOf(instanceKey)
+                .stream()
+                .filter(job -> elementId.equals(job.get("elementId")))
+                .findFirst(), "the job of %s of instance %s".formatted(elementId, instanceKey));
+    }
+
+    // raised by the engine with every delivery of the job
+    private static long deliveryTokenOf(final String jobKey) {
+        return ENGINE
+                .json("/v1/jobs/%s".formatted(jobKey))
+                .path("deliveryToken")
+                .asLong();
+    }
+
+    private static Map<String, Object> reservation(final String id) {
+        return object("introspect/tasks/reservations/%s".formatted(id));
+    }
+
+    private static List<String> visited(final String instanceKey) {
+        return api()
+                .get("introspect/visited/%s".formatted(instanceKey))
+                .then()
+                .statusCode(200)
+                .extract()
+                .jsonPath()
+                .getList("$", String.class);
+    }
+
     @SuppressWarnings("unchecked")
     private static Map<String, Object> variablesOf(final Map<String, Object> instance) {
         return (Map<String, Object>) instance.get("variables");
@@ -267,13 +480,24 @@ class ZenBpmWorkflowLifecycleTest {
     }
 
     private static void await(
-        final Supplier<Boolean> condition,
+        final BooleanSupplier condition,
+        final String what
+    ) {
+        await(() -> condition.getAsBoolean() ? Optional.of(Boolean.TRUE) : Optional.empty(), what);
+    }
+
+    private static <T> T await(
+        final Supplier<Optional<T>> read,
         final String what
     ) {
         final var deadline = Instant
                 .now()
                 .plus(TIMEOUT);
-        while (!condition.get()) {
+        while (true) {
+            final var found = read.get();
+            if (found.isPresent()) {
+                return found.get();
+            }
             assertTrue(Instant
                     .now()
                     .isBefore(deadline), () -> "waited %s for %s".formatted(TIMEOUT, what));
@@ -326,16 +550,6 @@ class ZenBpmWorkflowLifecycleTest {
                 .statusCode(200)
                 .extract()
                 .asString();
-    }
-
-    private static JsonPath engine(final String path) throws IOException, InterruptedException {
-        try (var client = HttpClient.newHttpClient()) {
-            final var response = client.send(HttpRequest
-                    .newBuilder(URI.create("%s%s".formatted(ENGINE.restAddress(), path)))
-                    .build(), HttpResponse.BodyHandlers.ofString());
-            assertEquals(200, response.statusCode(), () -> "GET %s: %s".formatted(path, response.body()));
-            return JsonPath.from(response.body());
-        }
     }
 
     private static String whereDockerIsThere(final Supplier<String> address) {

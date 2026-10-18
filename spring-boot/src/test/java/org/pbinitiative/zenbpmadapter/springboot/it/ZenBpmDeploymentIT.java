@@ -9,11 +9,6 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-import java.io.IOException;
-import java.net.URI;
-import java.net.http.HttpClient;
-import java.net.http.HttpRequest;
-import java.net.http.HttpResponse;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.Map;
@@ -64,7 +59,7 @@ class ZenBpmDeploymentIT {
 
     @Test
     @DisplayName("A booted application deploys its BPMN and DMN file under the prefixed ids; a start with the same files keeps version 1, one with a changed file gets version 2")
-    void aWorkflowModuleWithBpmnAndDmnDeploys(final CapturedOutput output) throws IOException, InterruptedException {
+    void aWorkflowModuleWithBpmnAndDmnDeploys(final CapturedOutput output) {
         final Optional<Integer> first;
         try (var context = run(VERSION_1)) {
             first = versionOfDeployIt(context);
@@ -81,8 +76,13 @@ class ZenBpmDeploymentIT {
         try (var context = run(VERSION_2)) {
             changed = versionOfDeployIt(context);
         }
-        final var definitions = engine("/v1/process-definitions?bpmnProcessId=deploy-it__DeployIt");
-        final var decisions = engine("/v1/dmn-resource-definitions?dmnResourceDefinitionId=deploy-it-rating");
+        final var definitions = ENGINE.json("/v1/process-definitions?bpmnProcessId=deploy-it__DeployIt");
+        final var decisions = ENGINE.json("/v1/dmn-resource-definitions?dmnResourceDefinitionId=deploy-it-rating");
+        final var decision = ENGINE.json("/v1/dmn-resource-definitions/%s".formatted(decisions
+                .path("items")
+                .path(0)
+                .path("key")
+                .asText()));
 
         assertAll(
                 () -> assertEquals(Optional.of(1), first),
@@ -91,10 +91,17 @@ class ZenBpmDeploymentIT {
                 () -> assertTrue(firstLog.contains("DeployIt.bpmn as process 'deploy-it__DeployIt', version 1, "),
                         firstLog),
                 () -> assertTrue(unchangedLog.contains(" (unchanged)"), unchangedLog),
-                () -> assertTrue(definitions.contains("\"totalCount\":2"), definitions),
-                () -> assertTrue(decisions.contains("\"totalCount\":1"), decisions),
-                () -> assertTrue(engine("/v1/dmn-resource-definitions/%s".formatted(keyIn(decisions))).contains(
-                        "deploy-it__rating"), decisions));
+                () -> assertEquals(2, definitions
+                        .path("totalCount")
+                        .asInt(), definitions::toPrettyString),
+                () -> assertEquals(1, decisions
+                        .path("totalCount")
+                        .asInt(), decisions::toPrettyString),
+                // the decision inside the deployed file carries the scoped id
+                () -> assertTrue(decision
+                        .path("dmnData")
+                        .asText()
+                        .contains("id=\"deploy-it__rating\""), decision::toPrettyString));
     }
 
     @Test
@@ -156,25 +163,6 @@ class ZenBpmDeploymentIT {
                                 "vanillabp.outbox.housekeeping.zone=UTC")
                         .map("--%s"::formatted)
                         .toArray(String[]::new));
-    }
-
-    private static String engine(final String path) throws IOException, InterruptedException {
-        try (var client = HttpClient.newHttpClient()) {
-            return client
-                    .send(HttpRequest
-                            .newBuilder(URI.create("%s%s".formatted(ENGINE.restAddress(), path)))
-                            .build(), HttpResponse.BodyHandlers.ofString())
-                    .body();
-        }
-    }
-
-    private static String keyIn(final String page) {
-        final var start = page.indexOf("\"key\":") + "\"key\":".length();
-        var end = start;
-        while (Character.isDigit(page.charAt(end))) {
-            ++end;
-        }
-        return page.substring(start, end);
     }
 
 }
