@@ -126,12 +126,12 @@ class ZenBpmLockRenewalTest {
     }
 
     @Test
-    @DisplayName("A lost lock ends the renewal with a WARN naming job, task and aggregate, and that a second delivery may run")
+    @DisplayName("A lost lock ends the renewal with a WARN naming job, task as the application knows it and aggregate, and that a second delivery may run")
     void aLostLockEndsTheRenewal(final CapturedOutput output) {
         engine.answers("POST", EXTEND, 409, "{\"code\":\"CONFLICT\",\"message\":\"lock not held\"}");
 
-        try (var renewal = lockRenewal.start(job(Duration.ZERO), JOB_TIMEOUT, "ship")) {
-            renewal.describeAggregate("order-7");
+        try (var renewal = lockRenewal.start(job(Duration.ZERO), JOB_TIMEOUT, "shop__Orders__ship")) {
+            renewal.describe("ship", "order-7");
             awaitLog(output, "is lost while its handler runs");
             pause(JOB_TIMEOUT);
         }

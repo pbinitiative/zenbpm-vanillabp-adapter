@@ -10,12 +10,6 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-import java.io.IOException;
-import java.io.UncheckedIOException;
-import java.net.URI;
-import java.net.http.HttpClient;
-import java.net.http.HttpRequest;
-import java.net.http.HttpResponse;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
@@ -66,7 +60,6 @@ import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
 import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.json.JsonMapper;
 
 import io.vanillabp.integration.test.utils.CapturedOutput;
 import io.vanillabp.integration.test.utils.SuppressOutputExtension;
@@ -528,10 +521,10 @@ class ZenBpmTaskProcessingIT {
                         .findById(reservationId)
                         .orElseThrow()
                         .getHoldCancellations()),
-                () -> assertEquals("terminated", engineJson("/v1/jobs/%s".formatted(holdTaskId))
+                () -> assertEquals("terminated", ENGINE.json("/v1/jobs/%s".formatted(holdTaskId))
                         .path("state")
                         .asText()),
-                () -> assertEquals("active", engineJson("/v1/jobs/%s".formatted(checkTaskId))
+                () -> assertEquals("active", ENGINE.json("/v1/jobs/%s".formatted(checkTaskId))
                         .path("state")
                         .asText()));
     }
@@ -608,7 +601,7 @@ class ZenBpmTaskProcessingIT {
                         .orElseThrow()
                         .isReserved()),
                 () -> assertEquals(JobRef.State.COMPLETED, reserve.state()),
-                () -> assertEquals(2, engineJson("/v1/jobs/%d".formatted(reserve.key()))
+                () -> assertEquals(2, ENGINE.json("/v1/jobs/%d".formatted(reserve.key()))
                         .path("retries")
                         .asInt()),
                 () -> assertEquals(List.of("COMPLETED"), deliveriesOf(paymentId)
@@ -637,7 +630,7 @@ class ZenBpmTaskProcessingIT {
             rest().failJob(hold.key(), failure);
             rest().failJob(hold.key(), failure);
 
-            final var job = engineJson("/v1/jobs/%d".formatted(hold.key()));
+            final var job = ENGINE.json("/v1/jobs/%d".formatted(hold.key()));
             assertAll(
                     () -> assertEquals(2, job
                             .path("retries")
@@ -683,7 +676,7 @@ class ZenBpmTaskProcessingIT {
     }
 
     private static List<JsonNode> failuresOf(final long jobKey) {
-        final var items = engineJson("/v1/jobs/%d/failures".formatted(jobKey)).path("items");
+        final var items = ENGINE.json("/v1/jobs/%d/failures".formatted(jobKey)).path("items");
         return StreamSupport
                 .stream(items.spliterator(), false)
                 .toList();
@@ -723,7 +716,7 @@ class ZenBpmTaskProcessingIT {
 
     // raised by the engine with every delivery of the job
     private static long deliveryTokenOf(final long jobKey) {
-        return engineJson("/v1/jobs/%d".formatted(jobKey))
+        return ENGINE.json("/v1/jobs/%d".formatted(jobKey))
                 .path("deliveryToken")
                 .asLong();
     }
@@ -773,29 +766,8 @@ class ZenBpmTaskProcessingIT {
     }
 
     private Stream<JsonNode> incidentsOf(final long instanceKey) {
-        final var items = engineJson("/v1/process-instances/%d/incidents".formatted(instanceKey)).path("items");
+        final var items = ENGINE.json("/v1/process-instances/%d/incidents".formatted(instanceKey)).path("items");
         return StreamSupport.stream(items.spliterator(), false);
-    }
-
-    // what the engine answers, read past the adapter's client, which keeps only what it needs
-    private static JsonNode engineJson(final String path) {
-        try (var client = HttpClient.newHttpClient()) {
-            final var answer = client.send(HttpRequest
-                    .newBuilder(URI.create("%s%s".formatted(ENGINE.restAddress(), path)))
-                    .build(), HttpResponse.BodyHandlers.ofString());
-            assertEquals(200, answer.statusCode(), answer::body);
-            return JsonMapper
-                    .builder()
-                    .build()
-                    .readTree(answer.body());
-        } catch (final IOException e) {
-            throw new UncheckedIOException(e);
-        } catch (final InterruptedException e) {
-            Thread
-                    .currentThread()
-                    .interrupt();
-            throw new IllegalStateException(e);
-        }
     }
 
     private ZenBpmRestClient rest() {

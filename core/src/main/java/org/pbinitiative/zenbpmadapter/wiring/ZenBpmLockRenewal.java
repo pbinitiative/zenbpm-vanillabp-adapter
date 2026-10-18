@@ -113,16 +113,16 @@ public final class ZenBpmLockRenewal {
      *
      * @param received The job as the job stream received it
      * @param jobTimeout The <code>job-timeout</code> its job type was subscribed with
-     * @param taskDefinition The task definition, for the messages
+     * @param jobType The job's type, which the messages name until the handler knows the task
      * @return The renewal, which the handler closes when it ends
      */
     public Renewal start(
         final ReceivedJob received,
         final Duration jobTimeout,
-        final String taskDefinition
+        final String jobType
     ) {
         final var job = received.job();
-        final var renewal = new Renewal(job.getKey(), job.getDeliveryToken(), jobTimeout, taskDefinition, received
+        final var renewal = new Renewal(job.getKey(), job.getDeliveryToken(), jobTimeout, jobType, received
                 .lockEnd(jobTimeout));
         received
                 .lockUntil()
@@ -189,7 +189,8 @@ public final class ZenBpmLockRenewal {
 
         private final Duration jobTimeout;
 
-        private final String taskDefinition;
+        // the job's type until the handler names the task as the application knows it
+        private volatile String taskDefinition;
 
         private volatile Instant lockEnd;
 
@@ -217,13 +218,13 @@ public final class ZenBpmLockRenewal {
             final long jobKey,
             final long deliveryToken,
             final Duration jobTimeout,
-            final String taskDefinition,
+            final String jobType,
             final Instant lockEnd
         ) {
             this.jobKey = jobKey;
             this.deliveryToken = deliveryToken;
             this.jobTimeout = jobTimeout;
-            this.taskDefinition = taskDefinition;
+            this.taskDefinition = jobType;
             this.lockEnd = lockEnd;
         }
 
@@ -237,12 +238,17 @@ public final class ZenBpmLockRenewal {
         }
 
         /**
-         * Names the workflow aggregate of the job once the handler knows it, so a lost lock names
-         * it as well.
+         * Names the task as the application knows it and the workflow aggregate of the job once
+         * the handler knows them, so a lost lock names them as well.
          *
+         * @param taskDefinition The task definition, as the workflow module wires it
          * @param aggregateId The aggregate's id
          */
-        public void describeAggregate(final String aggregateId) {
+        public void describe(
+            final String taskDefinition,
+            final String aggregateId
+        ) {
+            this.taskDefinition = taskDefinition;
             this.aggregateId = aggregateId;
         }
 

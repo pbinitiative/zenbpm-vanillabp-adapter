@@ -19,6 +19,7 @@ import java.util.Set;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Supplier;
 import java.util.regex.Pattern;
 
@@ -26,20 +27,42 @@ import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
 
 /**
- * A proxy in front of the engine's REST API which passes every request on, but answers the read of
- * one job (<code>GET /v1/jobs/{key}</code>) with <code>502</code>, as an engine without a leader for
- * the job's partition does. It stands for an engine which cannot be asked, for exactly the question
- * the probe of the open tasks asks, while everything else the adapter sends reaches the engine.
+ * A proxy in front of the engine's REST API which passes every request on, except those a test
+ * told it to refuse: it answers them itself, with the status the test chose, as an engine without
+ * a leader for the job's partition does with <code>502</code>, or one which failed with
+ * <code>500</code>. So a test makes exactly the call of the adapter fail which its case is about,
+ * while everything else the adapter sends reaches the engine, and no switch in the adapter's code
+ * is needed for it.
  */
-final class JobReadsRefusingProxy implements AutoCloseable {
+final class RefusingEngineProxy implements AutoCloseable {
 
-    private static final Pattern JOB_READ = Pattern.compile("/v1/jobs/\\d+");
+    /**
+     * How often a refusal applies where it applies to every matching request.
+     */
+    static final int ALWAYS = Integer.MAX_VALUE;
+
+    /**
+     * The read of one job.
+     */
+    static final Pattern JOB_READ = Pattern.compile("GET /v1/jobs/\\d+");
+
+    /**
+     * The extension of a job's lock.
+     */
+    static final Pattern LOCK_EXTENSION = Pattern.compile("POST /v1/jobs/\\d+/extend-lock");
+
+    /**
+     * The completion of a job.
+     */
+    static final Pattern COMPLETION = Pattern.compile("POST /v1/jobs/\\d+/complete");
 
     // the headers the JDK's client sets itself and refuses to be given
     private static final Set<String> RESTRICTED_HEADERS = Set.of("connection", "content-length", "expect", "host",
             "upgrade");
 
     private final Supplier<String> engineAddress;
+
+    private final List<Refusal> refusals = new CopyOnWriteArrayList<>();
 
     private final List<String> refused = new CopyOnWriteArrayList<>();
 
@@ -50,11 +73,12 @@ final class JobReadsRefusingProxy implements AutoCloseable {
     private HttpClient client;
 
     /**
-     * A proxy which starts when its address is first asked for.
+     * A proxy which starts when its address is first asked for, and refuses nothing until it is
+     * told to.
      *
      * @param engineAddress The address of the engine's REST API, asked when the proxy starts
      */
-    JobReadsRefusingProxy(final Supplier<String> engineAddress) {
+    RefusingEngineProxy(final Supplier<String> engineAddress) {
         this.engineAddress = engineAddress;
     }
 
@@ -73,11 +97,42 @@ final class JobReadsRefusingProxy implements AutoCloseable {
     }
 
     /**
-     * The reads of a job the proxy answered with <code>502</code>.
+     * Refuses the requests a pattern matches from now on.
      *
-     * @return Their paths, in the order received
+     * @param request What is refused: the method, a blank and the path, e.g. {@link #COMPLETION}
+     * @param status The status the proxy answers with, e.g. <code>502</code>
+     * @param times How many of those requests are refused, {@link #ALWAYS} for every one
      */
-    List<String> refusedReads() {
+    void refuse(
+        final Pattern request,
+        final int status,
+        final int times
+    ) {
+        refusals.add(new Refusal(request, status, new AtomicInteger(times)));
+    }
+
+    /**
+     * Passes every request on again, as before the first refusal.
+     */
+    void refuseNothing() {
+        refusals.clear();
+    }
+
+    /**
+     * Passes every request on again and forgets the requests refused so far, so that the next test
+     * of a class sharing the proxy reads only what was refused in its own case.
+     */
+    void startAfresh() {
+        refuseNothing();
+        refused.clear();
+    }
+
+    /**
+     * The requests the proxy refused.
+     *
+     * @return Each as its method, a blank and its path, in the order received
+     */
+    List<String> refused() {
         return List.copyOf(refused);
     }
 
@@ -106,15 +161,19 @@ final class JobReadsRefusingProxy implements AutoCloseable {
 
     private void handle(final HttpExchange exchange) throws IOException {
         try (exchange) {
-            final var path = exchange
+            final var request = "%s %s".formatted(exchange.getRequestMethod(), exchange
                     .getRequestURI()
-                    .getRawPath();
-            if ("GET".equals(exchange.getRequestMethod()) && JOB_READ
-                    .matcher(path)
-                    .matches()) {
-                refused.add(path);
-                respond(exchange, 502, "application/json",
-                        "{\"code\":\"BAD_GATEWAY\",\"message\":\"refused by the test\"}"
+                    .getRawPath());
+            final var refusal = refusals
+                    .stream()
+                    .filter(candidate -> candidate.takes(request))
+                    .findFirst();
+            if (refusal.isPresent()) {
+                refused.add(request);
+                respond(exchange, refusal
+                        .get()
+                        .status(), "application/json",
+                        "{\"code\":\"REFUSED_BY_THE_TEST\",\"message\":\"refused by the test\"}"
                                 .getBytes(StandardCharsets.UTF_8));
                 return;
             }
@@ -174,6 +233,21 @@ final class JobReadsRefusingProxy implements AutoCloseable {
                     .getResponseBody()
                     .write(body);
         }
+    }
+
+    private record Refusal(
+        Pattern request,
+        int status,
+        AtomicInteger left
+    ) {
+
+        // a refusal which applies takes one of the requests it may refuse
+        private boolean takes(final String candidate) {
+            return request
+                    .matcher(candidate)
+                    .matches() && (left.getAndUpdate(times -> times == ALWAYS ? ALWAYS : Math.max(0, times - 1)) > 0);
+        }
+
     }
 
 }

@@ -359,7 +359,7 @@ public final class ZenBpmJobHandler {
             return;
         }
         final var aggregate = named.get();
-        renewal.describeAggregate(aggregate.id());
+        renewal.describe(delivery.taskDefinition(), aggregate.id());
         drain.describe(entered, aggregate.id());
         final var context = new Invocation(adapterId, received, delivery.taskDefinition(), aggregate, workflowId, facts
                 .version(), deployedProcesses

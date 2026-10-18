@@ -1,0 +1,96 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" id="zenbpm-restart-restart"
+    xmlns:zenbpm="http://zenbpm.pbinitiative.org/1.0" targetNamespace="http://bpmn.io/schema/bpmn"
+    xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI"
+    xmlns:dc="http://www.omg.org/spec/DD/20100524/DC"
+    xmlns:di="http://www.omg.org/spec/DD/20100524/DI">
+  <bpmn:process id="Restart" isExecutable="true">
+    <bpmn:startEvent id="Start">
+      <bpmn:outgoing>Flow_ToKind</bpmn:outgoing>
+    </bpmn:startEvent>
+    <bpmn:exclusiveGateway id="Kind" name="Which booking?" default="Flow_ToAwaitConfirmation">
+      <bpmn:incoming>Flow_ToKind</bpmn:incoming>
+      <bpmn:outgoing>Flow_ToAwaitConfirmation</bpmn:outgoing>
+      <bpmn:outgoing>Flow_ToPack</bpmn:outgoing>
+    </bpmn:exclusiveGateway>
+    <bpmn:serviceTask id="AwaitConfirmation" name="Await the confirmation">
+      <bpmn:extensionElements>
+        <zenbpm:taskDefinition type="await-confirmation" />
+      </bpmn:extensionElements>
+      <bpmn:incoming>Flow_ToAwaitConfirmation</bpmn:incoming>
+      <bpmn:outgoing>Flow_ToConfirmed</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:endEvent id="Confirmed">
+      <bpmn:incoming>Flow_ToConfirmed</bpmn:incoming>
+    </bpmn:endEvent>
+    <bpmn:serviceTask id="Pack" name="Pack the booking">
+      <bpmn:extensionElements>
+        <zenbpm:taskDefinition type="pack" retries="3" />
+      </bpmn:extensionElements>
+      <bpmn:incoming>Flow_ToPack</bpmn:incoming>
+      <bpmn:outgoing>Flow_ToPacked</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:endEvent id="Packed">
+      <bpmn:incoming>Flow_ToPacked</bpmn:incoming>
+    </bpmn:endEvent>
+    <bpmn:sequenceFlow id="Flow_ToKind" sourceRef="Start" targetRef="Kind" />
+    <bpmn:sequenceFlow id="Flow_ToAwaitConfirmation" sourceRef="Kind" targetRef="AwaitConfirmation" />
+    <bpmn:sequenceFlow id="Flow_ToPack" sourceRef="Kind" targetRef="Pack">
+      <bpmn:conditionExpression>=kind = "pack"</bpmn:conditionExpression>
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="Flow_ToConfirmed" sourceRef="AwaitConfirmation" targetRef="Confirmed" />
+    <bpmn:sequenceFlow id="Flow_ToPacked" sourceRef="Pack" targetRef="Packed" />
+  </bpmn:process>
+  <bpmndi:BPMNDiagram id="BPMNDiagram_1">
+    <bpmndi:BPMNPlane id="BPMNPlane_1" bpmnElement="Restart">
+      <bpmndi:BPMNShape id="Start_di" bpmnElement="Start">
+        <dc:Bounds x="160" y="80" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Kind_di" bpmnElement="Kind">
+        <dc:Bounds x="256" y="80" width="50" height="50" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="AwaitConfirmation_di" bpmnElement="AwaitConfirmation">
+        <dc:Bounds x="366" y="80" width="100" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Pack_di" bpmnElement="Pack">
+        <dc:Bounds x="366" y="210" width="100" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Confirmed_di" bpmnElement="Confirmed">
+        <dc:Bounds x="526" y="80" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Packed_di" bpmnElement="Packed">
+        <dc:Bounds x="526" y="166" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNEdge id="Flow_ToKind_di" bpmnElement="Flow_ToKind">
+        <di:waypoint x="196" y="98" />
+        <di:waypoint x="226" y="98" />
+        <di:waypoint x="226" y="105" />
+        <di:waypoint x="256" y="105" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_ToAwaitConfirmation_di" bpmnElement="Flow_ToAwaitConfirmation">
+        <di:waypoint x="306" y="105" />
+        <di:waypoint x="336" y="105" />
+        <di:waypoint x="336" y="120" />
+        <di:waypoint x="366" y="120" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_ToPack_di" bpmnElement="Flow_ToPack">
+        <di:waypoint x="306" y="105" />
+        <di:waypoint x="336" y="105" />
+        <di:waypoint x="336" y="250" />
+        <di:waypoint x="366" y="250" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_ToConfirmed_di" bpmnElement="Flow_ToConfirmed">
+        <di:waypoint x="466" y="120" />
+        <di:waypoint x="496" y="120" />
+        <di:waypoint x="496" y="98" />
+        <di:waypoint x="526" y="98" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_ToPacked_di" bpmnElement="Flow_ToPacked">
+        <di:waypoint x="466" y="250" />
+        <di:waypoint x="496" y="250" />
+        <di:waypoint x="496" y="184" />
+        <di:waypoint x="526" y="184" />
+      </bpmndi:BPMNEdge>
+    </bpmndi:BPMNPlane>
+  </bpmndi:BPMNDiagram>
+</bpmn:definitions>

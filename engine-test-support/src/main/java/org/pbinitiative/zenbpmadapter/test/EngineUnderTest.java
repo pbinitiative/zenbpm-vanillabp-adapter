@@ -7,6 +7,10 @@ package org.pbinitiative.zenbpmadapter.test;
 
 import java.io.IOException;
 import java.io.UncheckedIOException;
+import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
 import java.time.Duration;
 import java.util.Properties;
 import java.util.regex.Pattern;
@@ -14,6 +18,9 @@ import java.util.regex.Pattern;
 import org.testcontainers.containers.GenericContainer;
 import org.testcontainers.containers.wait.strategy.Wait;
 import org.testcontainers.utility.DockerImageName;
+
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 
 /**
  * The ZenBPM engine an integration test runs against: one node, started from the image this
@@ -48,6 +55,14 @@ public final class EngineUnderTest extends GenericContainer<EngineUnderTest> {
      * is where a run gives up, so an engine which starts normally does not pay it.
      */
     private static final Duration STARTUP_TIMEOUT = Duration.ofMinutes(2);
+
+    /**
+     * How long a read of {@link #json(String)} may take. The engine answers in milliseconds, so
+     * the limit only turns an engine which stopped answering into a failure.
+     */
+    private static final Duration READ_TIMEOUT = Duration.ofSeconds(10);
+
+    private static final ObjectMapper JSON = new ObjectMapper();
 
     /**
      * An engine which is not started yet, ready to be declared as a {@code @Container} field.
@@ -115,6 +130,38 @@ public final class EngineUnderTest extends GenericContainer<EngineUnderTest> {
      */
     public String grpcAddress() {
         return "%s:%d".formatted(getHost(), getMappedPort(GRPC_PORT));
+    }
+
+    /**
+     * What the started engine answers to a <code>GET</code> of its REST API, read past the
+     * adapter's client, which keeps only what it needs. An answer other than <code>200</code> is
+     * refused, so a test never takes the body of an error for what it asked about.
+     *
+     * @param path The path with its query, e.g. <code>/v1/jobs/42</code>
+     * @return The answer
+     * @throws IllegalStateException Where the engine answers anything but <code>200</code>, naming
+     *             the path, the status and the body; or where it cannot be asked
+     */
+    public JsonNode json(final String path) {
+        try (var client = HttpClient.newHttpClient()) {
+            final var answer = client.send(HttpRequest
+                    .newBuilder(URI.create("%s%s".formatted(restAddress(), path)))
+                    .timeout(READ_TIMEOUT)
+                    .GET()
+                    .build(), HttpResponse.BodyHandlers.ofString());
+            if (answer.statusCode() != 200) {
+                throw new IllegalStateException("GET %s of the engine answered %d: %s".formatted(path, answer
+                        .statusCode(), answer.body()));
+            }
+            return JSON.readTree(answer.body());
+        } catch (final IOException e) {
+            throw new UncheckedIOException("GET %s of the engine failed".formatted(path), e);
+        } catch (final InterruptedException e) {
+            Thread
+                    .currentThread()
+                    .interrupt();
+            throw new IllegalStateException("GET %s of the engine was interrupted".formatted(path), e);
+        }
     }
 
     private static Properties read() {

@@ -6,6 +6,7 @@ package org.pbinitiative.zenbpmadapter.test;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.IOException;
@@ -14,6 +15,7 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.time.Duration;
+import java.util.regex.Pattern;
 
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.DisplayName;
@@ -111,6 +113,28 @@ class EngineUnderTestIT {
                         .startsWith(reported),
                 () -> "The engine reports commit '%s', the pin is '%s'. The report has to be a prefix of the pin, at least %d characters long."
                         .formatted(reported, EngineUnderTest.pinnedCommit(), SHORTEST_REPORTED_COMMIT));
+    }
+
+    @Test
+    @DisplayName("A read of the REST API answers the engine's JSON")
+    void aReadOfTheRestApiAnswersTheEnginesJson() {
+        final var definitions = ENGINE.json("/v1/process-definitions");
+
+        assertTrue(definitions
+                .path("totalCount")
+                .isNumber(), definitions::toPrettyString);
+    }
+
+    @Test
+    @DisplayName("A read the engine does not answer with 200 is refused, naming the path, the status and the body")
+    void aReadNotAnsweredWith200IsRefused() {
+        // no job has this key, and no partition holds it
+        final var refused = assertThrows(IllegalStateException.class, () -> ENGINE.json("/v1/jobs/1"));
+
+        assertTrue(Pattern
+                .compile("GET /v1/jobs/1 of the engine answered (?!200)\\d{3}: \\{.*\"message\".*}\\s*")
+                .matcher(refused.getMessage())
+                .matches(), refused::getMessage);
     }
 
     private static HttpResponse<String> get(final String path) throws IOException, InterruptedException {
