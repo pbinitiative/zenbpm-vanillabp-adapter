@@ -1032,8 +1032,9 @@ have to be raised with it.
 
 *Fit check, 2026-10-18, decided by the Implementor.* Checked against `main` with S6.2.1
 (`afeac31`), `ADAPTER-AUTHORS.md` (5: `stopWorkflowProcessing` races the handlers, the policy is
-written down in the README), the platform's `SpringBootDeploymentService` (a `SmartLifecycle`, so
-its stop runs inside `spring.lifecycle.timeout-per-shutdown-phase`), Camunda 8's `Camunda8Drain`,
+written down in the README), the platform's `SpringBootDeploymentService` (a `SmartLifecycle` with
+the synchronous `stop()` only; what bounds it is corrected in the answers to the reviews below),
+Camunda 8's `Camunda8Drain`,
 `Camunda8DeploymentService#stopWorkflowProcessing` and its decisions 6 and 51, and the engine at
 the pin `bdd795a3` (`removeClient` and `releaseLockOfFailedDelivery` in
 `internal/cluster/jobmanager/server.go`; the image run by `ZenBpmShutdownDrainIT`). What did not
@@ -1139,6 +1140,53 @@ tests, Spring Boot 11 unit and 27 integration tests, smoke test 37, Quarkus runt
 deployment 51, Quarkus integration tests 3, coverage gate 37). The gate measures 100 % of 22,908
 instructions for Spring Boot and 100 % of 22,782 for Quarkus, and `bin/check-deploy-safety.sh`
 passes (13 files on a green build, nothing after a red gate). No flake was hit.
+
+**Answers to two reviews of S6.2.1 and S6.2.2, 2026-10-18** (one by Claude, approve, 2 Minor and
+2 Nit; one by Copilot, request changes, 1 Major, the same as Claude's fourth). Every claim was
+checked in the code of the branch, in Spring Framework 7.0.9's sources and in the platform jar the
+build resolves. All four findings were valid and are fixed; none was about S6.2.1.
+
+- **A second delivery of one job hid the first from the drain** (Copilot 1, Major; Claude 4,
+  Nit). `ZenBpmDrain` kept one entry per job key, so of two runs of one job on one node, the one
+  which returned first removed the other's entry, and the shutdown neither waited for it nor named
+  it. Copilot reproduced it with the real dispatcher and handler (two delivery tokens of job 42;
+  the drain reported quiet after 0 ms with one handler held). The engine hands a job out again
+  once its lock lapsed (`capacityLocked`), to the same client too
+  (`ZenBpmJobLockIT#anExtensionOfALapsedDeliveryLeavesTheNextOneAlone`). Now `enter` returns a
+  handle per run, which `describe` and `leave` take
+  (`ZenBpmDrainTest#twoDeliveriesOfOneJobAreTwoHandlers`); decision 39 says every run is waited
+  for on its own. Camunda 8's `Camunda8Drain` has the same shape; it is not changed (policy).
+- **`spring.lifecycle.timeout-per-shutdown-phase` does not bound the drain** (Claude 1, Minor).
+  The platform's `SpringBootDeploymentService` implements only the synchronous
+  `SmartLifecycle#stop()`; Spring's `stop(Runnable)` runs it to its end on the shutdown thread
+  (`DefaultLifecycleProcessor#doStop`) before it counts the timeout. So the startup WARN, the
+  WARN about a cut-off handler and the constant's javadoc name only Kubernetes'
+  `terminationGracePeriodSeconds` (or whatever else stops the application) as the budget to raise.
+  Decision 39, written in this batch and not merged before, was corrected in place, and so was the
+  fit check above. The story's sentence ("Spring's and Kubernetes' budgets") is answered here.
+- **A job whose module stopped during the read of its instance was logged as a `use-prefix`
+  clash** (Claude 2, Minor). The dispatcher reads the instance's facts on the handler thread and
+  then looks for the module serving it; `unregister` had removed the module by then, and the WARN
+  sent an operator after a configuration problem which does not exist. The dispatcher now keeps
+  the handlers of stopped modules (put there before the module leaves the running ones) and hands
+  such a job to its module's handler, which starts nothing and logs that the module shuts down
+  (`ZenBpmJobDispatcherTest#aJobWhoseModuleStopsWhileItsInstanceIsReadIsNotStarted`, which stops
+  the module inside the engine's answer to the read).
+- **A module a closing factory refused stayed among the running modules** (Claude 3, Nit). Its
+  drain was put among them before the factory refused the start, so every later stop would have
+  waited for it and so for no handler at all. It is now put there after the start was accepted. A
+  reordering, not a guard; the reviewer and I found no path on the platforms which reaches it.
+
+Seen to fail, each restored afterwards (3 of 3 mutants, against green unmutated runs): the
+dispatcher without the fall-back to stopped modules; `unregister` without keeping the stopped
+handler; `leave` removing every run of the job key.
+
+`TZ=Etc/UTC mvn clean install` on OpenJDK 25.0.2 builds green after the fixes with every
+integration test run and none skipped (engine test support 12 unit and 3 integration tests, core
+905 unit and 74 integration tests, Spring Boot 11 unit and 27 integration tests, smoke test 37,
+Quarkus runtime 10, Quarkus deployment 51, Quarkus integration tests 3, coverage gate 37). The gate
+measures 100 % of 22,952 instructions for Spring Boot and 100 % of 22,826 for Quarkus, and
+`bin/check-deploy-safety.sh` passes (13 files on a green build, nothing after a red gate).
 
 ## F6.3 Asynchronous tasks
 

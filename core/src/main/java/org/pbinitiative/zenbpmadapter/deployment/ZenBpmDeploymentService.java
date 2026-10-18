@@ -688,9 +688,11 @@ public class ZenBpmDeploymentService implements AdapterDeploymentService<ZenBpmB
         final var stream = factory.stream();
         final var dispatcher = dispatcher();
         final var handler = new ZenBpmJobHandler(adapterId, factory, collaborators, context, retryBackoffs);
-        drainsOfRunningModules.put(workflowModuleId, handler.drain());
         context.processingStarted(new StartedProcessing(jobTypes, factory.workflowModuleStarted(workflowModuleId,
                 () -> stopWorkflowProcessing(workflowModuleId, context))));
+        // only a module the closing factory did not refuse counts as running, or the stop of the
+        // others would wait for it forever and so never wait for any handler
+        drainsOfRunningModules.put(workflowModuleId, handler.drain());
         dispatcher.register(handler);
         final var slots = factory
                 .executor()

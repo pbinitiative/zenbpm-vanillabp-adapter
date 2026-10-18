@@ -545,7 +545,7 @@ class ZenBpmAdapterConfigurationTest {
         assertAll(
                 () -> assertEquals(Kind.COMPLETE, warned.kind()),
                 () -> assertEquals(List.of(
-                        "vanillabp.adapters.orders.shutdown-grace is PT31S, above the PT30S which the shutdown budgets of the runtimes grant by default: raise spring.lifecycle.timeout-per-shutdown-phase on Spring Boot and terminationGracePeriodSeconds on Kubernetes with it, or the runtime ends the application before the handlers had their grace"),
+                        "vanillabp.adapters.orders.shutdown-grace is PT31S, above the PT30S which Kubernetes grants a pod to stop by default: raise terminationGracePeriodSeconds, or the stop timeout of whatever else runs the application, with it, or the application is killed before the handlers had their grace"),
                         warned.warnings()),
                 () -> assertEquals(List.of(), quiet.warnings()));
     }

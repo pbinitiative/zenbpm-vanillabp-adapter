@@ -642,10 +642,15 @@ types and marks the module as stopping; the stop of the last running module of a
 waits for the handlers of every module which stopped, all together, at most `shutdown-grace`, and
 names each handler which still runs after it with its job key, task and workflow aggregate. A wait
 per module would spend the grace once per module, and only the whole shutdown has a budget the
-application can compare the number with: Spring Boot's `spring.lifecycle.timeout-per-shutdown-phase`
-and Kubernetes' `terminationGracePeriodSeconds`, thirty seconds each by default. So
-`shutdown-grace` stays at the adapter level and is not resolved over the four levels, and one above
-thirty seconds is warned about at startup.
+application can compare the number with: the time the runtime grants the application to stop
+before it kills it, Kubernetes' `terminationGracePeriodSeconds`, thirty seconds by default. Spring
+Boot's `spring.lifecycle.timeout-per-shutdown-phase` is not such a budget here: the platform's
+deployment service implements only the synchronous `SmartLifecycle#stop()`, which Spring runs to
+its end before it starts to count that timeout (`DefaultLifecycleProcessor#doStop`, Spring
+Framework 7.0.9). So `shutdown-grace` stays at the adapter level and is not resolved over the four
+levels, and one above thirty seconds is warned about at startup. Every run of a handler is waited
+for on its own: a delivery of a job whose lock lapsed may run beside the earlier one on the same
+node, and the one which returns first does not end the wait for the other.
 
 While a module stops, a job which reaches its handler is not started, an outcome a handler reached
 is still reported, because its work is committed, and a handler which threw is not failed at the

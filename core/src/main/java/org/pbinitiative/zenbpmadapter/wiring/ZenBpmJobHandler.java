@@ -305,7 +305,7 @@ public final class ZenBpmJobHandler {
                 adapterId, job.getKey(), taskDefinition, renewal::lockEnd, this::isStopping));
         // entered before the module's state is read, and the stop sets the state before it looks
         // at what entered: so either the stop waits for this handler or this handler sees the stop
-        drain.enter(job.getKey(), taskDefinition);
+        final var entered = drain.enter(job.getKey(), taskDefinition);
         try {
             if (drain.isStopping()) {
                 log.info("""
@@ -314,7 +314,7 @@ public final class ZenBpmJobHandler {
                         workflowModuleId);
                 return;
             }
-            run(received, facts, delivery, renewal);
+            run(received, facts, delivery, renewal, entered);
         } catch (final RuntimeException e) {
             // what reaches here failed on its way to the engine after its repetitions; the
             // invocation itself is answered in run
@@ -328,7 +328,7 @@ public final class ZenBpmJobHandler {
                     "ZenBPM[{}]: job {} (task '{}') could not be answered to the engine; it is left to its lock, after which the engine hands it out again",
                     adapterId, job.getKey(), taskDefinition, e);
         } finally {
-            drain.leave(job.getKey());
+            drain.leave(entered);
         }
     }
 
@@ -336,7 +336,8 @@ public final class ZenBpmJobHandler {
         final ReceivedJob received,
         final InstanceFacts facts,
         final Delivery delivery,
-        final ZenBpmLockRenewal.Renewal renewal
+        final ZenBpmLockRenewal.Renewal renewal,
+        final ZenBpmDrain.Entered entered
     ) {
         final var job = received.job();
         final var idVariableName = idVariableNameOf(facts.scopedProcessId());
@@ -359,7 +360,7 @@ public final class ZenBpmJobHandler {
         }
         final var aggregate = named.get();
         renewal.describeAggregate(aggregate.id());
-        drain.describe(job.getKey(), aggregate.id());
+        drain.describe(entered, aggregate.id());
         final var context = new Invocation(adapterId, received, delivery.taskDefinition(), aggregate, workflowId, facts
                 .version(), deployedProcesses
                         .versionOf(workflowModuleId, delivery.plainProcessId())

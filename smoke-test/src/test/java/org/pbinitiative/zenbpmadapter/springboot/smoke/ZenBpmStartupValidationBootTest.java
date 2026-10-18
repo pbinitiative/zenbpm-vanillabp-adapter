@@ -319,7 +319,7 @@ class ZenBpmStartupValidationBootTest {
                 "vanillabp.adapters.zenbpm.rest-address=http://localhost:8080",
                 "vanillabp.adapters.zenbpm.shutdown-grace=PT45S")) {
             final var block = StartupBlock.configuration(output.getAllOfThisTest());
-            final var warning = "vanillabp.adapters.zenbpm.shutdown-grace is PT45S, above the PT30S which the shutdown budgets of the runtimes grant by default: raise spring.lifecycle.timeout-per-shutdown-phase on Spring Boot and terminationGracePeriodSeconds on Kubernetes with it";
+            final var warning = "vanillabp.adapters.zenbpm.shutdown-grace is PT45S, above the PT30S which Kubernetes grants a pod to stop by default: raise terminationGracePeriodSeconds";
 
             assertAll(
                     () -> assertTrue(context.isRunning()),

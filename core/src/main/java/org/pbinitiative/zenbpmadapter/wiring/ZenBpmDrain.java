@@ -9,7 +9,7 @@ import java.time.Instant;
 import java.util.Collection;
 import java.util.Comparator;
 import java.util.List;
-import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.locks.LockSupport;
 
@@ -47,7 +47,10 @@ public final class ZenBpmDrain {
 
     private final String workflowModuleId;
 
-    private final Map<Long, Running> running = new ConcurrentHashMap<>();
+    // one entry per run of a handler, not per job: a delivery of a job whose lock lapsed may run
+    // beside the earlier one on this node, and the one which returns first must not take the other
+    // out of what the shutdown waits for
+    private final Set<Entered> running = ConcurrentHashMap.newKeySet();
 
     private volatile boolean stopping;
 
@@ -96,37 +99,39 @@ public final class ZenBpmDrain {
      *
      * @param jobKey The job key
      * @param taskDefinition The task, as the application knows it
+     * @return This run of the handler, which {@link #describe(Entered, String)} and
+     *         {@link #leave(Entered)} name
      */
-    public void enter(
+    public Entered enter(
         final long jobKey,
         final String taskDefinition
     ) {
-        running.put(jobKey, new Running(jobKey, taskDefinition, null, Instant.now()));
+        final var entered = new Entered(jobKey, taskDefinition, Instant.now());
+        running.add(entered);
+        return entered;
     }
 
     /**
      * Names the workflow aggregate of a running handler, once the handler found it.
      *
-     * @param jobKey The job key
+     * @param entered The run of the handler
      * @param aggregateId The id of the workflow aggregate
      */
     public void describe(
-        final long jobKey,
+        final Entered entered,
         final String aggregateId
     ) {
-        running.computeIfPresent(jobKey, (
-            key,
-            entered) -> new Running(key, entered.taskDefinition(), aggregateId, entered.since()));
+        entered.aggregateId = aggregateId;
     }
 
     /**
-     * Deregisters the handler of a job, which returned. Called in a <code>finally</code>, so a
+     * Deregisters a run of a handler, which returned. Called in a <code>finally</code>, so a
      * handler which threw leaves as well.
      *
-     * @param jobKey The job key
+     * @param entered The run of the handler
      */
-    public void leave(final long jobKey) {
-        running.remove(jobKey);
+    public void leave(final Entered entered) {
+        running.remove(entered);
     }
 
     /**
@@ -136,8 +141,8 @@ public final class ZenBpmDrain {
      */
     public List<Running> running() {
         return running
-                .values()
                 .stream()
+                .map(Entered::running)
                 .sorted(Comparator.comparing(Running::since))
                 .toList();
     }
@@ -187,9 +192,9 @@ public final class ZenBpmDrain {
                 still runs after the shutdown waited {} for it, for {} ms by now, and is cut off. The job is not \
                 failed, so it keeps its retries; its lock is released when the job stream closes, and the engine \
                 hands it to another node, whose delivery VanillaBP answers from its record where this one \
-                committed. Raise {} where handlers legitimately run that long, and the shutdown budget of the \
-                runtime with it (spring.lifecycle.timeout-per-shutdown-phase, Kubernetes' \
-                terminationGracePeriodSeconds).""", adapterId, handler.jobKey(), handler.taskDefinition(),
+                committed. Raise {} where handlers legitimately run that long, and the time the runtime grants \
+                the application to stop with it (Kubernetes' terminationGracePeriodSeconds).""", adapterId,
+                handler.jobKey(), handler.taskDefinition(),
                 handler.aggregateId() == null ? "not read yet" : handler.aggregateId(), workflowModuleId, grace,
                 Duration
                         .between(handler.since(), now)
@@ -201,6 +206,35 @@ public final class ZenBpmDrain {
         return drains
                 .stream()
                 .allMatch(drain -> drain.running.isEmpty());
+    }
+
+    /**
+     * One run of a handler, as it entered the drain. Two runs of one job are two entries.
+     */
+    public static final class Entered {
+
+        private final long jobKey;
+
+        private final String taskDefinition;
+
+        private final Instant since;
+
+        private volatile String aggregateId;
+
+        private Entered(
+            final long jobKey,
+            final String taskDefinition,
+            final Instant since
+        ) {
+            this.jobKey = jobKey;
+            this.taskDefinition = taskDefinition;
+            this.since = since;
+        }
+
+        private Running running() {
+            return new Running(jobKey, taskDefinition, aggregateId, since);
+        }
+
     }
 
     /**

@@ -35,16 +35,16 @@ class ZenBpmDrainTest {
     void aHandlerRunsFromEnteringToLeaving() {
         final var drain = new ZenBpmDrain("orders", "shop");
 
-        drain.enter(42, "ship");
+        final var handler = drain.enter(42, "ship");
         final var entered = drain
                 .running()
                 .getFirst();
-        drain.describe(42, "order-1");
+        drain.describe(handler, "order-1");
         final var described = drain
                 .running()
                 .getFirst();
-        drain.leave(42);
-        drain.describe(42, "order-1");
+        drain.leave(handler);
+        drain.describe(handler, "order-1");
 
         assertAll(
                 () -> assertEquals(42, entered.jobKey()),
@@ -54,6 +54,31 @@ class ZenBpmDrainTest {
                 () -> assertEquals(entered.since(), described.since()),
                 () -> assertEquals(List.of(), drain.running()),
                 () -> assertEquals("shop", drain.workflowModuleId()));
+    }
+
+    @Test
+    @DisplayName("Two deliveries of one job which run side by side are two handlers: the one which returned leaves, the other is still waited for and named")
+    void twoDeliveriesOfOneJobAreTwoHandlers(final CapturedOutput output) {
+        final var drain = new ZenBpmDrain("orders", "shop");
+        final var first = drain.enter(42, "ship");
+        final var second = drain.enter(42, "ship");
+        drain.describe(first, "order-1");
+        drain.describe(second, "order-2");
+
+        drain.leave(first);
+        final var quiet = ZenBpmDrain.awaitEveryModuleQuiet(List.of(drain), Duration.ofMillis(200));
+
+        final var stillRunning = drain.running();
+        assertAll(
+                () -> assertFalse(quiet),
+                () -> assertEquals(1, stillRunning.size()),
+                () -> assertEquals("order-2", stillRunning
+                        .getFirst()
+                        .aggregateId()),
+                () -> assertTrue(output
+                        .getAllOfThisTest()
+                        .contains("the handler of job 42 (task 'ship', workflow aggregate 'order-2'"),
+                        output::getAllOfThisTest));
     }
 
     @Test
@@ -73,10 +98,10 @@ class ZenBpmDrainTest {
     @DisplayName("The wait ends when the last handler returned, well before the grace is over, and says that the module drained")
     void theWaitEndsWithTheLastHandler(final CapturedOutput output) throws Exception {
         final var drain = new ZenBpmDrain("orders", "shop");
-        drain.enter(42, "ship");
+        final var handler = drain.enter(42, "ship");
         final var leaving = CompletableFuture.runAsync(() -> {
             sleep(Duration.ofMillis(300));
-            drain.leave(42);
+            drain.leave(handler);
         });
 
         final var started = System.nanoTime();
@@ -97,8 +122,7 @@ class ZenBpmDrainTest {
     @DisplayName("A handler which still runs after the grace is named with its job, task, aggregate and module, the key to raise and the budgets of the runtime")
     void aHandlerAfterTheGraceIsNamed(final CapturedOutput output) {
         final var drain = new ZenBpmDrain("orders", "shop");
-        drain.enter(42, "ship");
-        drain.describe(42, "order-1");
+        drain.describe(drain.enter(42, "ship"), "order-1");
         drain.enter(43, "pack");
 
         final var quiet = ZenBpmDrain.awaitEveryModuleQuiet(List.of(drain), Duration.ofMillis(200));
@@ -116,7 +140,7 @@ class ZenBpmDrainTest {
                         "The job is not failed, so it keeps its retries; its lock is released when the job stream closes"),
                         log),
                 () -> assertTrue(log.contains(
-                        "Raise vanillabp.adapters.orders.shutdown-grace where handlers legitimately run that long, and the shutdown budget of the runtime with it (spring.lifecycle.timeout-per-shutdown-phase, Kubernetes' terminationGracePeriodSeconds)"),
+                        "Raise vanillabp.adapters.orders.shutdown-grace where handlers legitimately run that long, and the time the runtime grants the application to stop with it (Kubernetes' terminationGracePeriodSeconds)"),
                         log));
     }
 

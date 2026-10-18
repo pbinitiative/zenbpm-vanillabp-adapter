@@ -188,10 +188,9 @@ public class ZenBpmAdapterConfiguration {
     public static final Duration DEFAULT_SHUTDOWN_GRACE = Duration.parse(DEFAULT_SHUTDOWN_GRACE_ISO);
 
     /**
-     * The longest <code>shutdown-grace</code> which fits into the shutdown budgets the runtimes grant
-     * by default: Spring Boot's <code>spring.lifecycle.timeout-per-shutdown-phase</code> and
-     * Kubernetes' <code>terminationGracePeriodSeconds</code>, thirty seconds each. A longer one is
-     * warned about at startup.
+     * The longest <code>shutdown-grace</code> which fits into the time Kubernetes grants a pod to stop
+     * by default, <code>terminationGracePeriodSeconds</code> of thirty seconds. A longer one is warned
+     * about at startup.
      */
     public static final Duration LONGEST_SHUTDOWN_GRACE_WITHIN_THE_USUAL_BUDGETS = Duration.ofSeconds(30);
 
@@ -1332,7 +1331,7 @@ public class ZenBpmAdapterConfiguration {
             return;
         }
         warnings.add(
-                "%s is %s, above the %s which the shutdown budgets of the runtimes grant by default: raise spring.lifecycle.timeout-per-shutdown-phase on Spring Boot and terminationGracePeriodSeconds on Kubernetes with it, or the runtime ends the application before the handlers had their grace"
+                "%s is %s, above the %s which Kubernetes grants a pod to stop by default: raise terminationGracePeriodSeconds, or the stop timeout of whatever else runs the application, with it, or the application is killed before the handlers had their grace"
                         .formatted(propertyKey(adapterId, "shutdown-grace"), shutdownGrace,
                                 LONGEST_SHUTDOWN_GRACE_WITHIN_THE_USUAL_BUDGETS));
     }

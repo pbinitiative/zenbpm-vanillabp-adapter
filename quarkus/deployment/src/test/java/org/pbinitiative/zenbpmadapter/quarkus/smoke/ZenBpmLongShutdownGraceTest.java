@@ -24,7 +24,7 @@ import jakarta.inject.Inject;
 @ExtendWith(SuppressOutputExtension.class)
 class ZenBpmLongShutdownGraceTest {
 
-    private static final String WARNING = "vanillabp.adapters.zenbpm.shutdown-grace is PT45S, above the PT30S which the shutdown budgets of the runtimes grant by default";
+    private static final String WARNING = "vanillabp.adapters.zenbpm.shutdown-grace is PT45S, above the PT30S which Kubernetes grants a pod to stop by default: raise terminationGracePeriodSeconds";
 
     @RegisterExtension
     static final QuarkusExtensionTest extensionTest = SmokeApplication

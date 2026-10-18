@@ -6,6 +6,7 @@ package org.pbinitiative.zenbpmadapter.wiring;
 
 import static org.junit.jupiter.api.Assertions.assertAll;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.time.Duration;
@@ -23,6 +24,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.pbinitiative.zenbpmadapter.ZenBpmProcessingContext.WiredProcess;
+import org.pbinitiative.zenbpmadapter.client.FakeEngine;
 import org.pbinitiative.zenbpmadapter.client.ReceivedJob;
 import org.pbinitiative.zenbpmadapter.client.ZenBpmExecutor;
 import org.pbinitiative.zenbpmadapter.client.grpc.Zenbpm.WaitingJob;
@@ -282,6 +284,30 @@ class ZenBpmJobDispatcherTest {
         assertEquals(1, jobs.invoker
                 .invocations()
                 .size());
+    }
+
+    @Test
+    @DisplayName("A job whose module stops while the instance of the job is read is not started, and is reported as arriving during the shutdown, not as a job nobody serves")
+    void aJobWhoseModuleStopsWhileItsInstanceIsReadIsNotStarted(final CapturedOutput output) {
+        jobs.engine.answers("GET", "/v1/process-instances/%d".formatted(INSTANCE), exchange -> {
+            jobs.dispatcher.unregister("shop");
+            FakeEngine.respond(exchange, 200, """
+                    {"key": %d, "processDefinitionKey": 4503599627370498, "bpmnProcessId": "shop__Order",
+                     "version": 3, "businessKey": "order-1", "createdAt": "2026-10-17T14:30:25.123Z",
+                     "state": "active", "processType": "default", "variables": {"id": "order-1"}}
+                    """.formatted(INSTANCE));
+        });
+
+        jobs.runs(job(42));
+
+        final var log = output.getAllOfThisTest();
+        assertAll(
+                () -> assertEquals(List.of(), jobs.invoker.invocations()),
+                () -> assertEquals(List.of(), jobs.commands()),
+                () -> assertTrue(log.contains(
+                        "job 42 (task 'ship') arrived while workflow module 'shop' shuts down, so it is not started"),
+                        log),
+                () -> assertFalse(log.contains("'use-prefix'"), log));
     }
 
     @Test
