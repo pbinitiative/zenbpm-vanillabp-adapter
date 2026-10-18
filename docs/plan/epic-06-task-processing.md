@@ -1199,6 +1199,15 @@ seen to fail without the lock). Nothing that holds the factory's or the stream's
 the context, so the lock cannot deadlock. The full build ran again green, none skipped (core 906 unit tests; 100 % of 22,959 and 22,833
 instructions), and `bin/check-deploy-safety.sh` passes.
 
+After the merge (`4651056`), the `Checks` run 39098017032 on `main` failed on JDK 25 in
+`ZenBpmShutdownDrainIT#anotherNodeGetsTheOpenJobsAtOnce`; JDK 21 and `Publish snapshots` were
+green. The test assumed that node a's only handler slot always takes the packing and the labelling
+waits for it. The engine hands the two jobs of the parallel branches out in no fixed order: in that
+run node a received the labelling first and completed it (the engine logged its completion while
+node a held the lock), so node b packed the parcel but could never label it. No adapter code was
+at fault. The test now holds whichever of the two tasks reaches node a's handler first
+(`PackingGate#holdEither`), and waits until both reached node a.
+
 ## F6.3 Asynchronous tasks
 
 ### S6.3.1 `COMPLETE_TASK` and `CANCEL_TASK`
