@@ -85,6 +85,34 @@ class ZenBpmStartupValidationTest {
     }
 
     @Test
+    @DisplayName("Every warning of a validation is a warning of the adapter id, also beside a complete configuration")
+    void warningsAreWarnings() {
+        final var report = new CollectedStartupReport();
+        final var configuration = configured(ADDRESS);
+        configuration.setShutdownGrace(Duration.ofMinutes(1));
+
+        try (var registry = registryOf(List.of("orders"), Map.of("orders", configuration), report)) {
+            final var warning = report
+                    .findings()
+                    .getFirst();
+            assertAll(
+                    () -> assertEquals(1, report
+                            .findings()
+                            .size(), report.findings()::toString),
+                    () -> assertEquals("warn", warning.level()),
+                    () -> assertEquals(StartupTopic.CONFIGURATION, warning.topic()),
+                    () -> assertEquals("zenbpm adapter 'orders'", warning.scope()),
+                    () -> assertTrue(warning
+                            .message()
+                            .contains("vanillabp.adapters.orders.shutdown-grace is PT1M, above the PT30S"),
+                            warning.message()),
+                    () -> assertTrue(registry
+                            .getFactory("orders")
+                            .isConfigured()));
+        }
+    }
+
+    @Test
     @DisplayName("Every notice of a validation is a notice of the adapter id, also beside a complete configuration")
     void noticesAreNotices() {
         final var report = new CollectedStartupReport();

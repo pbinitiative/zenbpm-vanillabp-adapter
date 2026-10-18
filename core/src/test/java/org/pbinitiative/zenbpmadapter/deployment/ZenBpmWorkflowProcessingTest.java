@@ -6,6 +6,7 @@ package org.pbinitiative.zenbpmadapter.deployment;
 
 import static org.junit.jupiter.api.Assertions.assertAll;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -194,6 +195,34 @@ class ZenBpmWorkflowProcessingTest {
                 "TYPE_UNSUBSCRIBE charge",
                 "TYPE_UNSUBSCRIBE invoice"),
                 described(all));
+    }
+
+    @Test
+    @DisplayName("Modules which stop one after another are waited for once, by the stop of the last running one, within one shutdown-grace")
+    void modulesWhichStopAreWaitedForOnce(final CapturedOutput output) {
+        final var deploymentService = deploymentService(TestWiring.claiming());
+        final var shop = withJobTypes("shop", "charge");
+        final var billing = withJobTypes("billing", "invoice");
+        deploymentService.startWorkflowProcessing("shop", shop);
+        deploymentService.startWorkflowProcessing("billing", billing);
+
+        deploymentService.stopWorkflowProcessing("shop", shop);
+        final var afterTheFirst = output.getAllOfThisTest();
+        deploymentService.stopWorkflowProcessing("billing", billing);
+        deploymentService.stopWorkflowProcessing("billing", billing);
+
+        final var log = output.getAllOfThisTest();
+        assertAll(
+                () -> assertFalse(afterTheFirst.contains("drained after"), afterTheFirst),
+                () -> assertTrue(log.contains(
+                        "ZenBPM[orders]: the handlers of 2 workflow modules are waited for together, within one vanillabp.adapters.orders.shutdown-grace of PT20S"),
+                        log),
+                () -> assertTrue(log.contains("workflow module 'shop' drained after"), log),
+                () -> assertTrue(log.contains("workflow module 'billing' drained after"), log),
+                () -> assertEquals(1, log
+                        .lines()
+                        .filter(line -> line.contains("workflow module 'billing' drained after"))
+                        .count(), log));
     }
 
     @Test

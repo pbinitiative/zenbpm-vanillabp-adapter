@@ -123,6 +123,9 @@ public final class ZenBpmStartupValidation {
             result
                     .notices()
                     .forEach(notice -> notice(startupReport, scope, notice));
+            result
+                    .warnings()
+                    .forEach(warning -> warn(startupReport, scope, warning));
             if (result.endsTheBoot()) {
                 endingTheStart.add(result.message());
             } else if (result.kind() != ValidationResult.Kind.COMPLETE) {

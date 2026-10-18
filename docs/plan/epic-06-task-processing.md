@@ -1013,7 +1013,7 @@ passes (13 files on a green build, nothing after a red gate). No flake was hit.
 
 ### S6.2.2 Drain and shutdown
 
-- [ ] **Depends on:** S6.2.1.
+- [x] **Depends on:** S6.2.1.
 
 **Instructions**
 
@@ -1030,6 +1030,60 @@ queue and the ones a cut-off handler held go to another node immediately instead
 `job-timeout`. A `shutdown-grace` above 30 s warns at startup that Spring's and Kubernetes' budgets
 have to be raised with it.
 
+*Fit check, 2026-10-18, decided by the Implementor.* Checked against `main` with S6.2.1
+(`afeac31`), `ADAPTER-AUTHORS.md` (5: `stopWorkflowProcessing` races the handlers, the policy is
+written down in the README), the platform's `SpringBootDeploymentService` (a `SmartLifecycle`, so
+its stop runs inside `spring.lifecycle.timeout-per-shutdown-phase`), Camunda 8's `Camunda8Drain`,
+`Camunda8DeploymentService#stopWorkflowProcessing` and its decisions 6 and 51, and the engine at
+the pin `bdd795a3` (`removeClient` and `releaseLockOfFailedDelivery` in
+`internal/cluster/jobmanager/server.go`; the image run by `ZenBpmShutdownDrainIT`). What did not
+fit, and what was decided:
+
+1. **One wait per adapter id, not per module** (beyond the story). The platform stops the modules
+   one after another, so a wait in each stop would spend `shutdown-grace` once per module. As in
+   Camunda 8 (its decision 51), each stop unsubscribes and marks its module, and the stop of the
+   last running module waits for the handlers of every stopped module together:
+   `ZenBpmDrain#awaitEveryModuleQuiet`, decision 39 (new).
+   `ZenBpmWorkflowProcessingTest#modulesWhichStopAreWaitedForOnce`,
+   `ZenBpmDrainTest#severalModulesAreOneWait`. Camunda 8's second half, waiting until the cluster
+   released the workers, has no counterpart: closing the stream drops every lock of the client at
+   once (`removeClient`).
+2. **When the state is read** (brief question 6): after the handler returned, so a handler which
+   started before the stop and threw during it is not failed
+   (`ZenBpmJobHandlerTest#aHandlerWhichThrowsWhileTheModuleStopsIsNotFailed`,
+   `ZenBpmShutdownDrainIT#aCutOffHandlerCostsNoFailure`). Besides, a job which reaches the handler
+   once its module stops is not started at all: the dispatcher may have found the handler just
+   before the stop, and its handler would start after the wait looked
+   (`#aJobWhichArrivesWhileTheModuleStopsIsNotStarted`). A handler enters the drain before it reads
+   the state, and the stop sets the state before it looks at the drain, so one of the two sees the
+   other.
+3. **What is still sent while a module stops.** An outcome a handler reached (completion, BPMN
+   error, a parked task) and the failure without retries of a job whose workflow this application
+   does not own or whose instance names no aggregate (decision 33): those answer the job, they are
+   not caused by the shutdown. The acceptance criterion's "no `fail` command" is read as no failure
+   of a thrown handler.
+4. **`shutdown-grace` stays at the adapter level** (brief question 7): it is bound there only on both
+   platforms, and only the whole shutdown has a budget to compare it with (decision 39). The WARN
+   above thirty seconds goes through a new list of warnings of the validation, which both platforms
+   write into the block at the end of the start at WARN (`ZenBpmStartupValidationBootTest`,
+   Quarkus `ZenBpmLongShutdownGraceTest`).
+5. **Another node gets the jobs at once** (brief question 8): measured, node b ran the packing whose
+   handler node a had cut off and the labelling which waited for node a's one handler slot within
+   65 and 112 ms of node a's close (two runs), against a job-timeout of sixty seconds. The engine
+   at the pin drops the locks of a client whose stream closed, so no gap was found. With the
+   factory not closing the stream, the case fails after its thirty seconds.
+6. **The factory's `close()`** needed no change: its backstop already stopped every module which
+   never stopped, with a WARN, before it closes the stream, and that stop now waits as the last one;
+   `close()` does not wait the grace again (the note from S2.4.2 under S2.4.1). The executor does
+   not interrupt a handler it was shut down under; such a handler which throws later is left to its
+   lock as well.
+7. **The IT** (brief question 9): `ZenBpmShutdownDrainIT` boots its own application `it/drain`
+   (`DrainItApplication`, the process `Drain` of `drain-it/drain.bpmn` with its diagram: the packing
+   and the labelling in parallel) once per node with `SpringApplicationBuilder`, both nodes on one
+   named in-memory database, with one handler slot and a job-timeout of a minute. It has the
+   story's three cases and `#aHandlerAfterTheGraceIsNamed`, which keeps the handler running past a
+   grace of a second. The Quarkus twin belongs to S6.5.1.
+
 **Tests**: `ZenBpmDrainTest`, `ZenBpmShutdownDrainIT#aHandlerWithinTheGraceFinishes`,
 `#aCutOffHandlerCostsNoFailure` (the job is still `active` afterwards, no incident),
 `#anotherNodeGetsTheOpenJobsAtOnce` (a second application context receives the queued jobs of the
@@ -1037,8 +1091,54 @@ stopped one within a second, not after `job-timeout`).
 
 **Acceptance criteria**
 
-- [ ] No `fail` command leaves the adapter while a module shuts down; the job's retries are
+- [x] No `fail` command leaves the adapter while a module shuts down; the job's retries are
   unchanged afterwards.
+  `ZenBpmShutdownDrainIT#aCutOffHandlerCostsNoFailure`: the handler of `Pack` (`retries="3"`)
+  which started before node a closed throws while the module stops; afterwards the job is `ACTIVE`
+  with 3 retries, has no failure record and its instance no incident, and the log says that it is
+  not failed and keeps its retries. `#aHandlerAfterTheGraceIsNamed`: a handler still running after a
+  grace of one second is named with job key, task, aggregate and module, the close takes at least
+  the grace, and the job keeps its 3 retries. `#aHandlerWithinTheGraceFinishes`: a handler released
+  during the stop completes its job while the module stops, and the module drains.
+  `#anotherNodeGetsTheOpenJobsAtOnce`: node b ran the cut-off packing and the labelling which waited
+  for node a's slot within 65 and 112 ms of node a's close (two runs; job-timeout sixty seconds).
+  `ZenBpmJobHandlerTest` pins the stop races (a throw during the stop sends nothing; an outcome
+  reached during it is sent; a job reaching the handler after the stop is not started; the drain
+  holds a handler with its task and aggregate while it runs), `ZenBpmDrainTest` the wait (until the
+  last handler leaves, the grace once for several modules, a WARN per cut-off handler, a grace of
+  zero, an interrupted wait), `ZenBpmWorkflowProcessingTest#modulesWhichStopAreWaitedForOnce` that
+  the stop of the last running module waits for all of them.
+
+**Implemented 2026-10-18.** Core: `wiring/ZenBpmDrain` (per module, held by its handler);
+`ZenBpmJobHandler` enters and leaves the drain, starts no job and fails no thrown handler while the
+module stops; `ZenBpmDeploymentService#stopWorkflowProcessing` lets the stop of the last running
+module of the adapter id wait for every stopped module within one `shutdown-grace`;
+`ZenBpmAdapterConfiguration.ValidationResult#warnings` with the WARN about a `shutdown-grace` above
+thirty seconds (`LONGEST_SHUTDOWN_GRACE_WITHIN_THE_USUAL_BUDGETS`), which `ZenBpmStartupValidation`
+reports at WARN on both platforms. Decision 39 (new). README: the shutdown policy.
+
+New tests: `ZenBpmDrainTest` (7), four cases in `ZenBpmJobHandlerTest`,
+`ZenBpmWorkflowProcessingTest#modulesWhichStopAreWaitedForOnce`,
+`ZenBpmAdapterConfigurationTest#aLongShutdownGraceIsWarnedAbout`,
+`ZenBpmStartupValidationTest#warningsAreWarnings`, the smoke test's
+`ZenBpmStartupValidationBootTest#aLongShutdownGraceIsWarnedAboutInTheBlock`, Quarkus
+`ZenBpmLongShutdownGraceTest` (1), and Spring Boot `ZenBpmShutdownDrainIT` (4) with the application
+`it/drain` and `drain-it/drain.bpmn`.
+
+Seen to fail, each restored afterwards (12 of 12 mutants, against green unmutated runs): a thrown
+handler failed while its module stops (also against the engine: the job lost a retry); a job
+started after the stop; the drain not left, not told the aggregate; the wait not waiting, ignoring
+an interrupt; every module waiting on its own; the WARN at thirty seconds; the warnings logged as
+notices; against the engine, the stop not waiting at all (the completion never reached the engine)
+and the factory not closing the stream (node b got nothing within thirty seconds). A mutant written
+as `while (false)` did not compile and was written again as a condition.
+
+`TZ=Etc/UTC mvn clean install` on OpenJDK 25.0.2 builds green with every integration test run and
+none skipped (engine test support 12 unit and 3 integration tests, core 903 unit and 74 integration
+tests, Spring Boot 11 unit and 27 integration tests, smoke test 37, Quarkus runtime 10, Quarkus
+deployment 51, Quarkus integration tests 3, coverage gate 37). The gate measures 100 % of 22,908
+instructions for Spring Boot and 100 % of 22,782 for Quarkus, and `bin/check-deploy-safety.sh`
+passes (13 files on a green build, nothing after a red gate). No flake was hit.
 
 ## F6.3 Asynchronous tasks
 

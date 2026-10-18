@@ -312,6 +312,22 @@ class ZenBpmStartupValidationBootTest {
         }
     }
 
+    @Test
+    @DisplayName("A shutdown-grace above thirty seconds boots with a warning in the block, naming the budgets of the runtime to raise with it")
+    void aLongShutdownGraceIsWarnedAboutInTheBlock(final CapturedOutput output) {
+        try (var context = run("vanillabp.prioritized-adapters=zenbpm",
+                "vanillabp.adapters.zenbpm.rest-address=http://localhost:8080",
+                "vanillabp.adapters.zenbpm.shutdown-grace=PT45S")) {
+            final var block = StartupBlock.configuration(output.getAllOfThisTest());
+            final var warning = "vanillabp.adapters.zenbpm.shutdown-grace is PT45S, above the PT30S which the shutdown budgets of the runtimes grant by default: raise spring.lifecycle.timeout-per-shutdown-phase on Spring Boot and terminationGracePeriodSeconds on Kubernetes with it";
+
+            assertAll(
+                    () -> assertTrue(context.isRunning()),
+                    () -> assertEquals(1, block
+                            .split(warning, -1).length - 1, block));
+        }
+    }
+
     /**
      * The smoke application names <code>vanillabp.outbox.housekeeping.zone</code>, because the
      * platform reports a missing zone in the same section wherever the JVM runs on UTC, as on CI.

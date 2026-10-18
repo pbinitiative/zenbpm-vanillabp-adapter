@@ -1,0 +1,16 @@
+spring:
+  jpa:
+    hibernate:
+      ddl-auto: update
+vanillabp:
+  prioritized-adapters:
+    - zenbpm
+  adapters:
+    zenbpm:
+      name-clash-avoidance: use-prefix
+      resources-location: classpath*:drain-it
+      worker-threads: 1
+      job-timeout: PT60S
+  outbox:
+    housekeeping:
+      zone: UTC

@@ -22,6 +22,7 @@ import org.pbinitiative.zenbpmadapter.ZenBpmDeployedProcesses;
 import org.pbinitiative.zenbpmadapter.ZenBpmProcessingContext;
 import org.pbinitiative.zenbpmadapter.ZenBpmProcessingContext.StartedProcessing;
 import org.pbinitiative.zenbpmadapter.ZenBpmProcessingContext.WiredProcess;
+import org.pbinitiative.zenbpmadapter.client.ZenBpmAdapterConfiguration;
 import org.pbinitiative.zenbpmadapter.client.ZenBpmClientFactory;
 import org.pbinitiative.zenbpmadapter.client.ZenBpmClientRegistry;
 import org.pbinitiative.zenbpmadapter.client.ZenBpmEngineWait;
@@ -39,6 +40,7 @@ import org.pbinitiative.zenbpmadapter.model.ZenBpmMultiInstanceItems;
 import org.pbinitiative.zenbpmadapter.model.ZenBpmScoping;
 import org.pbinitiative.zenbpmadapter.model.ZenBpmTaskParameters;
 import org.pbinitiative.zenbpmadapter.model.ZenBpmUnsupportedConstructs;
+import org.pbinitiative.zenbpmadapter.wiring.ZenBpmDrain;
 import org.pbinitiative.zenbpmadapter.wiring.ZenBpmJobDispatcher;
 import org.pbinitiative.zenbpmadapter.wiring.ZenBpmJobHandler;
 import org.pbinitiative.zenbpmadapter.wiring.ZenBpmJobTimeoutResolver;
@@ -112,6 +114,18 @@ public class ZenBpmDeploymentService implements AdapterDeploymentService<ZenBpmB
      * subscription.
      */
     private final Map<String, ModuleJobTimeout> jobTimeoutsOfTheModules = new ConcurrentHashMap<>();
+
+    /**
+     * The drains of the workflow modules whose processing runs, by workflow module id.
+     */
+    private final Map<String, ZenBpmDrain> drainsOfRunningModules = new ConcurrentHashMap<>();
+
+    /**
+     * The drains of the workflow modules which stopped while another module of this adapter id
+     * still ran, and which the stop of the last one waits for: the grace is one budget for all of
+     * them, see decision 39 in the repository's DECISIONS.md. Guarded by itself.
+     */
+    private final List<ZenBpmDrain> drainsToWaitFor = new ArrayList<>();
 
     /**
      * Builds the deployment service of one adapter id. Fails first where this adapter and the
@@ -674,6 +688,7 @@ public class ZenBpmDeploymentService implements AdapterDeploymentService<ZenBpmB
         final var stream = factory.stream();
         final var dispatcher = dispatcher();
         final var handler = new ZenBpmJobHandler(adapterId, factory, collaborators, context, retryBackoffs);
+        drainsOfRunningModules.put(workflowModuleId, handler.drain());
         context.processingStarted(new StartedProcessing(jobTypes, factory.workflowModuleStarted(workflowModuleId,
                 () -> stopWorkflowProcessing(workflowModuleId, context))));
         dispatcher.register(handler);
@@ -701,9 +716,15 @@ public class ZenBpmDeploymentService implements AdapterDeploymentService<ZenBpmB
     /**
      * Stops the workflow processing of a workflow module: unsubscribes its job types, where no other
      * module of this adapter id subscribes them, hands no further job to the module's handler, which
-     * repeats no failed command any more, and removes the hook of the client factory after the last
-     * of them. It is idempotent, because the platform and the closing client factory may both stop a
-     * module. Jobs delivered before keep their locks, and a handler which runs goes on.
+     * from now on repeats no failed command, starts no job and fails no job whose handler threw, and
+     * removes the hook of the client factory after the last of them. It is idempotent, because the
+     * platform and the closing client factory may both stop a module. Jobs delivered before keep
+     * their locks, which the closing job stream releases, and a handler which runs goes on.
+     * <p>
+     * The stop of the last running module of this adapter id waits for the handlers of every module
+     * which stopped, all together, at most <code>shutdown-grace</code>, and names each handler which
+     * still runs then: the platform stops the modules one after another, and a wait per module would
+     * spend the grace once per module, see decision 39 in the repository's DECISIONS.md.
      *
      * @param workflowModuleId The workflow module
      * @param context What its deployment collected
@@ -731,6 +752,28 @@ public class ZenBpmDeploymentService implements AdapterDeploymentService<ZenBpmB
                 String.join(", ", started
                         .get()
                         .jobTypes()));
+        final List<ZenBpmDrain> stopped;
+        synchronized (drainsToWaitFor) {
+            drainsToWaitFor.add(drainsOfRunningModules.remove(workflowModuleId));
+            if (!drainsOfRunningModules.isEmpty()) {
+                log.debug(
+                        "ZenBPM[{}]: workflow module '{}' stopped while {} further module(s) of this adapter id run, so its handlers are waited for with theirs",
+                        adapterId, workflowModuleId, drainsOfRunningModules.size());
+                return;
+            }
+            stopped = List.copyOf(drainsToWaitFor);
+            drainsToWaitFor.clear();
+        }
+        final var grace = factory
+                .configuration()
+                .getShutdownGrace();
+        if (stopped.size() > 1) {
+            log.info(
+                    "ZenBPM[{}]: the handlers of {} workflow modules are waited for together, within one {} of {}",
+                    adapterId, stopped.size(), ZenBpmAdapterConfiguration.propertyKey(adapterId, "shutdown-grace"),
+                    grace);
+        }
+        ZenBpmDrain.awaitEveryModuleQuiet(stopped, grace);
     }
 
     // two workflow modules share a job type where its name is not scoped, and the job stream keeps

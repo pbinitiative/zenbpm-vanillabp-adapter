@@ -18,6 +18,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicReference;
 
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -726,6 +727,92 @@ class ZenBpmJobHandlerTest {
                         .getAllOfThisTest()
                         .contains("an instance above instance 200 of job 42 (task 'ship') is not known"),
                         output::getAllOfThisTest));
+    }
+
+    @Test
+    @DisplayName("A handler which started before the module stopped and threw during the stop is not failed at the engine, so its job keeps its retries")
+    void aHandlerWhichThrowsWhileTheModuleStopsIsNotFailed(final CapturedOutput output) {
+        jobs.holds(ROOT, "default", null, "order-1", "\"id\": \"order-1\"");
+        jobs.takesTheCommands(ROOT);
+        jobs.invoker.answers(context -> {
+            jobs.dispatcher.unregister("shop");
+            throw new IllegalStateException("the connection pool was closed");
+        });
+
+        jobs.runs(JobRunning.job(ROOT, 3, 1));
+
+        final var log = output.getAllOfThisTest();
+        assertAll(
+                () -> assertEquals(List.of(), jobs.commands()),
+                () -> assertTrue(log.contains(
+                        "the handler of job 42 (task 'ship', workflow aggregate 'order-1') threw while workflow module 'shop' shuts down, so the job is not failed and keeps its retries"),
+                        log),
+                () -> assertTrue(log.contains("java.lang.IllegalStateException: the connection pool was closed"), log));
+    }
+
+    @Test
+    @DisplayName("An outcome a handler reached while its module stops is still reported: the work is committed")
+    void anOutcomeReachedWhileTheModuleStopsIsReported() {
+        jobs.holds(ROOT, "default", null, "order-1", "\"id\": \"order-1\"");
+        jobs.takesTheCommands(ROOT);
+        jobs.invoker.answers(context -> {
+            jobs.dispatcher.unregister("shop");
+            return WorkflowTaskOutcome.completed();
+        });
+
+        jobs.runs(JobRunning.job(ROOT));
+
+        assertEquals(List.of("PATCH /v1/process-instances/100/variables", "POST /v1/jobs/42/complete"), jobs
+                .commands());
+    }
+
+    @Test
+    @DisplayName("A job handed to the handler after its module began to stop is not started and is left to its lock")
+    void aJobWhichArrivesWhileTheModuleStopsIsNotStarted(final CapturedOutput output) {
+        jobs.holds(ROOT, "default", null, "order-1", "\"id\": \"order-1\"");
+        jobs.takesTheCommands(ROOT);
+        jobs.handler.stopping();
+
+        jobs.runs(JobRunning.job(ROOT));
+
+        assertAll(
+                () -> assertEquals(List.of(), jobs.invoker.invocations()),
+                () -> assertEquals(List.of(), jobs.commands()),
+                () -> assertEquals(List.of(), jobs.handler
+                        .drain()
+                        .running()),
+                () -> assertTrue(output
+                        .getAllOfThisTest()
+                        .contains(
+                                "job 42 (task 'ship') arrived while workflow module 'shop' shuts down, so it is not started; the closing job stream releases its lock"),
+                        output::getAllOfThisTest));
+    }
+
+    @Test
+    @DisplayName("A handler is in the module's drain while it runs, with its task and aggregate, and leaves it when it returns")
+    void aRunningHandlerIsInTheDrain() {
+        jobs.holds(ROOT, "default", null, "order-1", "\"id\": \"order-1\"");
+        jobs.takesTheCommands(ROOT);
+        final var whileRunning = new AtomicReference<List<ZenBpmDrain.Running>>();
+        jobs.invoker.answers(context -> {
+            whileRunning.set(jobs.handler
+                    .drain()
+                    .running());
+            return WorkflowTaskOutcome.completed();
+        });
+
+        jobs.runs(JobRunning.job(ROOT));
+
+        final var running = whileRunning
+                .get()
+                .getFirst();
+        assertAll(
+                () -> assertEquals(42, running.jobKey()),
+                () -> assertEquals("ship", running.taskDefinition()),
+                () -> assertEquals("order-1", running.aggregateId()),
+                () -> assertEquals(List.of(), jobs.handler
+                        .drain()
+                        .running()));
     }
 
     // job 42 of the module's type in instance 100, as the engine answers it

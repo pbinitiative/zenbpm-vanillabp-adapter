@@ -64,6 +64,11 @@ final class JobRunning implements AutoCloseable {
     final ZenBpmJobDispatcher dispatcher;
 
     /**
+     * The handler of the workflow module <code>shop</code>, registered with the dispatcher.
+     */
+    final ZenBpmJobHandler handler;
+
+    /**
      * The adapter id with one handler slot per worker thread.
      *
      * @param workerThreads How many handlers run at once
@@ -90,8 +95,9 @@ final class JobRunning implements AutoCloseable {
         keys.accept(configuration);
         factory = new ZenBpmClientFactory("orders", configuration, () -> "shop");
         dispatcher = new ZenBpmJobDispatcher("orders", factory);
-        dispatcher.register(handlerOf("shop", NameClashAvoidance.USE_PREFIX,
-                new WiredProcess("Order", "shop__Order", Set.of(JOB_TYPE), true, false)));
+        handler = handlerOf("shop", NameClashAvoidance.USE_PREFIX, new WiredProcess("Order", "shop__Order", Set.of(
+                JOB_TYPE), true, false));
+        dispatcher.register(handler);
     }
 
     /**

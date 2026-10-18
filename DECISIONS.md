@@ -631,3 +631,29 @@ ten seconds, because Camunda 8 has no backoff in the model to fall back to. So `
 any backoff at its `JOBS_MAX_RETRY_BACKOFF` (a day by default), so the adapter warns about no upper
 bound, and it refuses a fraction of a second while the application starts, which the engine would
 refuse with `400`.
+
+### 39. A shutdown waits once for the handlers of every workflow module, and fails no job it cut off
+
+Decided by the implementation pipeline in place of the maintainers, as their policy for the
+autonomous run asks; the Camunda 8 adapter decided the same (its decisions 6 and 51).
+
+The platform stops the workflow modules one after another. Each stop unsubscribes the module's job
+types and marks the module as stopping; the stop of the last running module of an adapter id then
+waits for the handlers of every module which stopped, all together, at most `shutdown-grace`, and
+names each handler which still runs after it with its job key, task and workflow aggregate. A wait
+per module would spend the grace once per module, and only the whole shutdown has a budget the
+application can compare the number with: Spring Boot's `spring.lifecycle.timeout-per-shutdown-phase`
+and Kubernetes' `terminationGracePeriodSeconds`, thirty seconds each by default. So
+`shutdown-grace` stays at the adapter level and is not resolved over the four levels, and one above
+thirty seconds is warned about at startup.
+
+While a module stops, a job which reaches its handler is not started, an outcome a handler reached
+is still reported, because its work is committed, and a handler which threw is not failed at the
+engine: the failure would spend one of the job's retries (decision 27) for a cause which is the
+shutdown, not the job. The module's state is read after the handler returned, so a handler which
+started before the stop and threw during it costs no retry either. The client factory closes the job
+stream after the wait, and the engine then drops every lock of the adapter's client
+(`removeClient` in `internal/cluster/jobmanager/server.go` at the pinned commit `bdd795a3`): the
+jobs a cut-off handler held and the ones which waited for a handler slot go to another node at once
+(measured: within about a tenth of a second, against a job-timeout of a minute), with their retries
+untouched. The delivery record of the platform decides whether the work runs again.

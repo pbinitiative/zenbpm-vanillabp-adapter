@@ -58,7 +58,9 @@ import java.util.stream.Collectors;
  * job of a handler which threw out again, sent with the failure in whole seconds; without the key
  * the <code>retryBackoff</code> of the task's model applies, else the engine's own default</li>
  * <li><code>shutdown-grace</code> (default {@value #DEFAULT_SHUTDOWN_GRACE_ISO}) - how long a
- * shutdown waits for the handlers in flight</li>
+ * shutdown waits for the handlers in flight, all workflow modules of the adapter id together; one
+ * above thirty seconds is warned about, because the runtime's shutdown budget has to grow with
+ * it</li>
  * <li><code>workflow-visibility-timeout</code> (default
  * {@value #DEFAULT_WORKFLOW_VISIBILITY_TIMEOUT_ISO}) - how long a started workflow may stay
  * invisible to a query</li>
@@ -186,6 +188,14 @@ public class ZenBpmAdapterConfiguration {
     public static final Duration DEFAULT_SHUTDOWN_GRACE = Duration.parse(DEFAULT_SHUTDOWN_GRACE_ISO);
 
     /**
+     * The longest <code>shutdown-grace</code> which fits into the shutdown budgets the runtimes grant
+     * by default: Spring Boot's <code>spring.lifecycle.timeout-per-shutdown-phase</code> and
+     * Kubernetes' <code>terminationGracePeriodSeconds</code>, thirty seconds each. A longer one is
+     * warned about at startup.
+     */
+    public static final Duration LONGEST_SHUTDOWN_GRACE_WITHIN_THE_USUAL_BUDGETS = Duration.ofSeconds(30);
+
+    /**
      * The default of <code>workflow-visibility-timeout</code> as written in a configuration.
      */
     public static final String DEFAULT_WORKFLOW_VISIBILITY_TIMEOUT_ISO = "PT2S";
@@ -273,12 +283,15 @@ public class ZenBpmAdapterConfiguration {
      * @param endsTheBoot Whether the platform has to end the boot with the message instead of
      *          logging it
      * @param notices Lines worth one INFO at startup, which the platform logs whatever the kind
+     * @param warnings Lines worth one WARN at startup, which the platform logs whatever the kind:
+     *          values which work but hold a risk the application has to deal with
      */
     public record ValidationResult(
         Kind kind,
         String message,
         boolean endsTheBoot,
-        List<String> notices
+        List<String> notices,
+        List<String> warnings
     ) {
 
         /**
@@ -307,15 +320,17 @@ public class ZenBpmAdapterConfiguration {
         }
 
         /**
-         * Copies the notices, so a result cannot change after it was handed out.
+         * Copies the notices and the warnings, so a result cannot change after it was handed out.
          *
          * @param kind Whether the adapter instance is unconfigured, inconsistent or complete
          * @param message The guiding message, naming the keys concerned; empty where complete
          * @param endsTheBoot Whether the platform has to end the boot with the message
          * @param notices Lines worth one INFO at startup
+         * @param warnings Lines worth one WARN at startup
          */
         public ValidationResult {
             notices = List.copyOf(notices);
+            warnings = List.copyOf(warnings);
         }
 
     }
@@ -906,6 +921,7 @@ public class ZenBpmAdapterConfiguration {
         final var connectionDefects = new ArrayList<String>();
         final var valueDefects = new ArrayList<String>();
         final var notices = new ArrayList<String>();
+        final var warnings = new ArrayList<String>();
 
         final var restAddressMissing = isBlank(restAddress);
         if (!restAddressMissing) {
@@ -956,6 +972,7 @@ public class ZenBpmAdapterConfiguration {
                 retryBackoff, "the retryBackoff of the task's model applies, else the engine's own default",
                 valueDefects);
         addNegativeDurationDefect(adapterId, "shutdown-grace", shutdownGrace, DEFAULT_SHUTDOWN_GRACE_ISO, valueDefects);
+        addShutdownGraceWarning(adapterId, warnings);
         addNegativeDurationDefect(
                 adapterId,
                 "workflow-visibility-timeout",
@@ -1019,9 +1036,9 @@ public class ZenBpmAdapterConfiguration {
         if (connectionDefects.isEmpty() && valueDefects.isEmpty()) {
             if (restAddressMissing) {
                 final var message = unconfiguredMessage(adapterId);
-                return new ValidationResult(ValidationResult.Kind.UNCONFIGURED, message, false, notices);
+                return new ValidationResult(ValidationResult.Kind.UNCONFIGURED, message, false, notices, warnings);
             }
-            return new ValidationResult(ValidationResult.Kind.COMPLETE, "", false, notices);
+            return new ValidationResult(ValidationResult.Kind.COMPLETE, "", false, notices, warnings);
         }
 
         final var defects = new ArrayList<String>(connectionDefects);
@@ -1029,7 +1046,7 @@ public class ZenBpmAdapterConfiguration {
         final var degrades = nowhereFirst && deploymentFailureWarns && valueDefects.isEmpty();
         return new ValidationResult(
                 ValidationResult.Kind.INCONSISTENT, inconsistentMessage(adapterId, defects, nowhereFirst,
-                        deploymentFailureWarns, degrades), !degrades, notices);
+                        deploymentFailureWarns, degrades), !degrades, notices, warnings);
     }
 
     /**
@@ -1305,6 +1322,19 @@ public class ZenBpmAdapterConfiguration {
             defects.add("%s is PT0S, but a job has to stay locked for a while to the node which runs it; %s"
                     .formatted(propertyKey, withoutTheKey));
         }
+    }
+
+    private void addShutdownGraceWarning(
+        final String adapterId,
+        final List<String> warnings
+    ) {
+        if (shutdownGrace.compareTo(LONGEST_SHUTDOWN_GRACE_WITHIN_THE_USUAL_BUDGETS) <= 0) {
+            return;
+        }
+        warnings.add(
+                "%s is %s, above the %s which the shutdown budgets of the runtimes grant by default: raise spring.lifecycle.timeout-per-shutdown-phase on Spring Boot and terminationGracePeriodSeconds on Kubernetes with it, or the runtime ends the application before the handlers had their grace"
+                        .formatted(propertyKey(adapterId, "shutdown-grace"), shutdownGrace,
+                                LONGEST_SHUTDOWN_GRACE_WITHIN_THE_USUAL_BUDGETS));
     }
 
     // the engine reads a backoff in whole seconds and refuses a fraction of one; a negative backoff

@@ -532,6 +532,25 @@ class ZenBpmAdapterConfigurationTest {
     }
 
     @Test
+    @DisplayName("A shutdown-grace above thirty seconds is warned about, naming the budgets of the runtime to raise with it; thirty seconds are not")
+    void aLongShutdownGraceIsWarnedAbout() {
+        final var longGrace = configured("http://zenbpm:8080");
+        longGrace.setShutdownGrace(Duration.ofSeconds(31));
+        final var usualGrace = configured("http://zenbpm:8080");
+        usualGrace.setShutdownGrace(Duration.ofSeconds(30));
+
+        final var warned = longGrace.validate(ADAPTER_ID, false, false);
+        final var quiet = usualGrace.validate(ADAPTER_ID, false, false);
+
+        assertAll(
+                () -> assertEquals(Kind.COMPLETE, warned.kind()),
+                () -> assertEquals(List.of(
+                        "vanillabp.adapters.orders.shutdown-grace is PT31S, above the PT30S which the shutdown budgets of the runtimes grant by default: raise spring.lifecycle.timeout-per-shutdown-phase on Spring Boot and terminationGracePeriodSeconds on Kubernetes with it, or the runtime ends the application before the handlers had their grace"),
+                        warned.warnings()),
+                () -> assertEquals(List.of(), quiet.warnings()));
+    }
+
+    @Test
     @DisplayName("The engine's address is the REST address normalised, without '/v1'")
     void theEngineAddressLeavesTheApiVersionOut() {
         assertEquals(URI.create("http://zenbpm:8080"), configured("http://zenbpm:8080/v1/").engineAddress());
@@ -653,14 +672,18 @@ class ZenBpmAdapterConfigurationTest {
     }
 
     @Test
-    @DisplayName("The notices of a validation cannot be changed afterwards")
+    @DisplayName("The notices and the warnings of a validation cannot be changed afterwards")
     void theNoticesAreACopy() {
         final var notices = new ArrayList<String>();
         notices.add("one");
-        final var validation = new ZenBpmAdapterConfiguration.ValidationResult(Kind.COMPLETE, "", false, notices);
+        final var warnings = new ArrayList<String>();
+        warnings.add("four");
+        final var validation = new ZenBpmAdapterConfiguration.ValidationResult(Kind.COMPLETE, "", false, notices, warnings);
         notices.add("two");
+        warnings.add("five");
 
         assertEquals(List.of("one"), validation.notices());
+        assertEquals(List.of("four"), validation.warnings());
         assertThrows(UnsupportedOperationException.class, () -> validation
                 .notices()
                 .add("three"));
