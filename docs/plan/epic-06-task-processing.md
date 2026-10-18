@@ -676,11 +676,11 @@ engine at the pin `bdd795a3` (`handleBoundaryTimer` in `pkg/bpmn/timer.go`, the 
    `ZenBpmInstanceCache#workflowIdOf`) with the workflow the core names; another one, and an
    instance the cache cannot place, is `CANNOT_SAY`. A job of a sub-process of the same workflow
    is answered (`#aJobOfASubProcessBelongsToTheWorkflow`).
-4. **A `404` is gone** as the plan says (changed after the reviews: a `404` cannot say, see the
-   answers to the two reviews below), although the engine answers a read on a follower which may
-   lag behind (GAPS 20): the core asks only about a task it recorded a delivery of, so the job
-   existed for at least as long as that delivery took. GAPS 20's adapter behaviour now says so.
-   Every other failure, the engine's `502` and `500` among them, is `CANNOT_SAY`.
+4. **A `404` cannot say**, unlike instruction 1, which reads it as gone. A read is answered by a
+   follower which may lag behind (GAPS 20), a job taken away stays readable as `terminated`, and
+   the engine keeps the jobs of a workflow while it runs. The story first read a `404` as gone, as
+   the plan says; the answers to the two reviews below say why that changed. Every other failure,
+   the engine's `502` and `500` among them, is `CANNOT_SAY` as well.
 5. **When the core is asked** (instruction 2). After a completion the engine took, a BPMN error it
    took and a parked task; not after a delivery the handler refused (no aggregate, a workflow
    nobody owns here), a thrown handler, a gone job, an ended workflow, a lost lock at the parking,
