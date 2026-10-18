@@ -786,6 +786,35 @@ Quarkus runtime 10, Quarkus deployment 49, Quarkus integration tests 3, coverage
 measures 100 % of 22,164 instructions on Spring Boot and 100 % of 22,030 on Quarkus, and
 `bin/check-deploy-safety.sh` passes (13 files on a green build, nothing after a red gate).
 
+**S6.1.2 and S6.1.3 done 2026-10-18**, merged to `main` as `56ff68b` (pull request #44, after two
+reviews, whose three findings were all valid and fixed, and CodeRabbit's review, whose two
+comments were answered: one valid and fixed in `26a03f6`, one withdrawn by CodeRabbit). F6.1 is
+complete. On that commit (GitHub keeps run logs for 90 days, so what they showed is written here
+as well):
+
+- `Checks`, run
+  [39082742564](https://github.com/pbinitiative/zenbpm-vanillabp-adapter/actions/runs/39082742564):
+  green on both JDKs. `bin/check-engine-copies.sh` reported both copies as the engine's files of
+  `bdd795a3...`. `ZenBpmTaskProcessingIT` ran 11 tests, `ZenBpmProbeOutageIT` 1,
+  `ZenBpmParkedTasksIT` 1, `ZenBpmStartupValidationBootTest` 15, `ZenBpmOpenTaskProbeTest` 8,
+  `ZenBpmJobStreamTest` 42, `ZenBpmJobHandlerTest` 29, `ZenBpmLockRenewalTest` 20,
+  `ZenBpmAdapterConfigurationTest` 112, core `ZenBpmStartupValidationTest` 14 and Quarkus
+  `ZenBpmAsyncTaskKeysTest` 1, none skipped (engine test support 12 unit and 3 integration tests,
+  core 877 unit and 74 integration tests, Spring Boot 11 unit and 19 integration tests, smoke test
+  36, Quarkus runtime 10, Quarkus deployment 49, Quarkus integration tests 3, coverage gate 37). The
+  gate measured 100 % on both platforms: of 22,164 instructions for Spring Boot and 22,030 for
+  Quarkus on JDK 25, of 22,156 and 22,022 on JDK 21.
+- `Publish snapshots`, run
+  [39082742698](https://github.com/pbinitiative/zenbpm-vanillabp-adapter/actions/runs/39082742698):
+  green. The core snapshot it published to GitHub Packages, `2.0.0-20261018.002625-40`, holds the
+  stories' new and changed main classes (`ZenBpmOpenTaskProbe`, `ZenBpmJobHandler`,
+  `ZenBpmLockRenewal`, `ZenBpmJobStream` with its parked jobs, `JobFailure`,
+  `ZenBpmAdapterConfiguration$AsyncTaskMaxAgeAction`) and no test class, fake, fixture, BPMN or
+  DMN file; `quarkus/integration-tests`, the smoke test, the engine test support and the coverage
+  modules skipped deployment. Both report pages (`spring-boot-report/index.html`,
+  `quarkus-report/index.html`) answer HTTP 200 and show 0 of 22,164 (Spring Boot) and 0 of 22,030
+  (Quarkus) instructions missed.
+
 ## F6.2 Failures and shutdown
 
 ### S6.2.1 A failed handler is failed at the engine, with retries and backoff
