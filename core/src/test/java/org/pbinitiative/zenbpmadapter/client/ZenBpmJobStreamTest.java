@@ -29,6 +29,7 @@ import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.ScheduledThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.locks.LockSupport;
 import java.util.regex.Pattern;
 
 import org.junit.jupiter.api.AfterEach;
@@ -204,6 +205,92 @@ class ZenBpmJobStreamTest {
                 .contains("WARN  o.p.z.client.ZenBpmJobStream - ZenBPM[orders]: the job stream to fake-engine:9090 is "
                         + "down (UNAVAILABLE: connection reset); no job arrives until it is back. It is opened again "
                         + "after PT0.01S, then after twice as long each time, up to PT0.04S."));
+    }
+
+    @Test
+    @DisplayName("A job parked under a live lock raises its type's cap of active jobs by one, and the job's return or its lapsed lock lowers it again")
+    void aParkedJobRaisesTheCapOfItsType() {
+        stream.subscribe("module-a", "default-cap", Duration.ZERO, 0);
+        stream.subscribe("module-a", "t1", Duration.ofMinutes(5), 2);
+        final var call = engine.call(0);
+        call.subscriptions(2);
+        final var later = Instant
+                .now()
+                .plus(Duration.ofHours(1));
+
+        stream.parked("t1", 17, later);
+        stream.parked("t1", 18, later);
+        stream.parked("t1", 17, later.plusSeconds(60));
+        stream.parked("not-subscribed", 19, later);
+        stream.parked("default-cap", 20, later);
+        call.send(job(17, "t1"));
+        call.subscriptions(5);
+        stream.parked("t1", 21, Instant
+                .now()
+                .minusSeconds(1));
+        stream.parked("t1", 22, Instant
+                .now()
+                .plusMillis(300));
+        call.subscriptions(6);
+        LockSupport.parkNanos(Duration
+                .ofMillis(500)
+                .toNanos());
+        call.send(job(30, "t1"));
+
+        assertEquals(List.of(subscribe("default-cap", 0, 0), subscribe("t1", 300_000, 2), subscribe("t1", 300_000, 3),
+                subscribe("t1", 300_000, 4), subscribe("t1", 300_000, 3), subscribe("t1", 300_000, 4), subscribe("t1",
+                        300_000, 3)),
+                call.subscriptions(7));
+    }
+
+    @Test
+    @DisplayName("After a failed call a type with parked jobs is sent again with its raised cap")
+    void aReconnectKeepsTheRaisedCap() {
+        stream.subscribe("module-a", "t1", Duration.ofMinutes(5), 2);
+        stream.parked("t1", 17, Instant
+                .now()
+                .plus(Duration.ofHours(1)));
+        engine
+                .call(0)
+                .subscriptions(2);
+
+        engine
+                .call(0)
+                .fail(Status.UNAVAILABLE.withDescription("connection reset"));
+
+        assertEquals(List.of(subscribe("t1", 300_000, 3)), engine
+                .call(1)
+                .subscriptions(1));
+    }
+
+    @Test
+    @DisplayName("A cap raised above the engine's default ceiling is warned about once, naming the engine's setting")
+    void aCapAboveTheEnginesCeilingIsWarnedAboutOnce(final CapturedOutput output) {
+        stream.subscribe("module-a", "t1", Duration.ofMinutes(5), 999);
+        final var later = Instant
+                .now()
+                .plus(Duration.ofHours(1));
+
+        stream.parked("t1", 17, later);
+        assertFalse(output
+                .getAllOfThisTest()
+                .contains("JOB_MANAGER_MAX_ACTIVE_JOBS_CAP"));
+        stream.parked("t1", 18, later);
+        stream.parked("t1", 19, later);
+
+        assertAll(
+                () -> assertEquals(1, occurrences(output.getAllOfThisTest(), "are parked for")),
+                () -> assertTrue(output
+                        .getAllOfThisTest()
+                        .contains(
+                                """
+                                        WARN  o.p.z.client.ZenBpmJobStream - ZenBPM[orders]: 2 jobs of type 't1' are parked for \
+                                        their asynchronous completion, so the job stream asks the engine for up to 1001 active \
+                                        jobs of the type. The engine lowers that to its JOB_MANAGER_MAX_ACTIVE_JOBS_CAP, 1000 \
+                                        unless it is set, and beyond it a new job of the type waits until the lock of a parked \
+                                        one lapses. Raise JOB_MANAGER_MAX_ACTIVE_JOBS_CAP at the engine, or shorten \
+                                        vanillabp.adapters.orders.async-task-lock-renewal."""),
+                        output::getAllOfThisTest));
     }
 
     @Test

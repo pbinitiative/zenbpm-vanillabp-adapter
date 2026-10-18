@@ -9,6 +9,7 @@ vanillabp:
     zenbpm:
       name-clash-avoidance: use-prefix
       resources-location: classpath*:task-it
+      async-task-lock-renewal: PT2S
   outbox:
     housekeeping:
       zone: UTC

@@ -68,6 +68,7 @@ public class ZenBpmClientAutoConfiguration {
         return ZenBpmStartupValidation.registryOf(coreProperties.adapterIdsOfType(ZenBpmAdapter.ADAPTER_TYPE),
                 overlay::configurationOf, coreProperties::isFirstPriorityAnywhere, adapterId -> coreProperties
                         .getDeploymentFailureFor(adapterId) == DeploymentFailurePolicy.WARN,
+                coreProperties.resolvedDeliveryRetention(),
                 () -> environment
                         .getProperty(APPLICATION_NAME_PROPERTY),
                 startupReport.getIfAvailable());

@@ -12,6 +12,7 @@ import java.util.List;
 import java.util.Set;
 import java.util.concurrent.locks.LockSupport;
 import java.util.function.BooleanSupplier;
+import java.util.function.Consumer;
 import java.util.stream.Collectors;
 
 import org.pbinitiative.zenbpmadapter.TestCollaborators;
@@ -58,10 +59,25 @@ final class JobRunning implements AutoCloseable {
      * @param workerThreads How many handlers run at once
      */
     JobRunning(final int workerThreads) {
+        this(workerThreads, configuration -> {
+        });
+    }
+
+    /**
+     * The adapter id with one handler slot per worker thread and further keys set.
+     *
+     * @param workerThreads How many handlers run at once
+     * @param keys What sets the further keys of the adapter id
+     */
+    JobRunning(
+        final int workerThreads,
+        final Consumer<ZenBpmAdapterConfiguration> keys
+    ) {
         final var configuration = new ZenBpmAdapterConfiguration();
         configuration.setRestAddress(engine.address());
         configuration.setGrpcAddress("localhost:1");
         configuration.setWorkerThreads(String.valueOf(workerThreads));
+        keys.accept(configuration);
         factory = new ZenBpmClientFactory("orders", configuration, () -> "shop");
         dispatcher = new ZenBpmJobDispatcher("orders", factory);
         dispatcher.register(handlerOf("shop", NameClashAvoidance.USE_PREFIX,

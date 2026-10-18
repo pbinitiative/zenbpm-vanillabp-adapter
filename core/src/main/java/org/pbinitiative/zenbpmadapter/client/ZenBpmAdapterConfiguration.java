@@ -48,6 +48,12 @@ import java.util.stream.Collectors;
  * <li><code>job-timeout</code> (default {@value #DEFAULT_JOB_TIMEOUT_ISO}) - how long a job stays
  * locked to the node which received it; the lock is renewed while its handler runs, and a job type
  * is subscribed with it</li>
+ * <li><code>async-task-lock-renewal</code> (default {@value #DEFAULT_ASYNC_TASK_LOCK_RENEWAL_ISO}) -
+ * how long the job of a task left open for its asynchronous completion stays locked once its
+ * handler returned; it has to stay below <code>vanillabp.delivery.retention</code></li>
+ * <li><code>async-task-max-age-action</code> (default <code>report</code>) - <code>incident</code>
+ * fails the job of a task open longer than <code>vanillabp.delivery.max-task-age</code> without
+ * retries, so the engine raises an incident</li>
  * <li><code>retry-backoff</code> (default {@value #DEFAULT_RETRY_BACKOFF_ISO}) - the first wait
  * after a failed handler</li>
  * <li><code>max-redeliveries</code> (default {@value #DEFAULT_MAX_REDELIVERIES}) - after which
@@ -161,6 +167,17 @@ public class ZenBpmAdapterConfiguration {
     public static final Duration DEFAULT_JOB_TIMEOUT = Duration.parse(DEFAULT_JOB_TIMEOUT_ISO);
 
     /**
+     * The default of <code>async-task-lock-renewal</code> as written in a configuration.
+     */
+    public static final String DEFAULT_ASYNC_TASK_LOCK_RENEWAL_ISO = "PT1H";
+
+    /**
+     * The default of <code>async-task-lock-renewal</code>.
+     */
+    public static final Duration DEFAULT_ASYNC_TASK_LOCK_RENEWAL = Duration.parse(
+            DEFAULT_ASYNC_TASK_LOCK_RENEWAL_ISO);
+
+    /**
      * The default of <code>retry-backoff</code> as written in a configuration.
      */
     public static final String DEFAULT_RETRY_BACKOFF_ISO = "PT10S";
@@ -236,6 +253,36 @@ public class ZenBpmAdapterConfiguration {
     }
 
     /**
+     * What the adapter does with a task left open for its asynchronous completion longer than
+     * <code>vanillabp.delivery.max-task-age</code> allows, beside the line the platform's core
+     * logs about it.
+     */
+    public enum AsyncTaskMaxAgeAction {
+
+        /**
+         * Nothing beyond the core's line: the job stays locked and is renewed as before. The
+         * default.
+         */
+        REPORT,
+
+        /**
+         * The job is failed without retries, so the engine raises an incident which names the
+         * aggregate and the age.
+         */
+        INCIDENT;
+
+        /**
+         * The value as a configuration writes it.
+         *
+         * @return E.g. <code>report</code>
+         */
+        public String configured() {
+            return name().toLowerCase(Locale.ROOT);
+        }
+
+    }
+
+    /**
      * What {@link #validate(String, boolean, boolean)} found.
      *
      * @param kind Whether the adapter instance is unconfigured, inconsistent or complete
@@ -307,6 +354,14 @@ public class ZenBpmAdapterConfiguration {
     private Integer workerThreadsBound;
 
     private Duration jobTimeout = DEFAULT_JOB_TIMEOUT;
+
+    private Duration asyncTaskLockRenewal = DEFAULT_ASYNC_TASK_LOCK_RENEWAL;
+
+    /**
+     * As the application wrote it, so a value which names no action is refused by the validation
+     * with the values there are; <code>null</code> for the default.
+     */
+    private String asyncTaskMaxAgeAction;
 
     private Duration retryBackoff = DEFAULT_RETRY_BACKOFF;
 
@@ -549,6 +604,58 @@ public class ZenBpmAdapterConfiguration {
      */
     public void setJobTimeout(final Duration jobTimeout) {
         this.jobTimeout = jobTimeout == null ? DEFAULT_JOB_TIMEOUT : jobTimeout;
+    }
+
+    /**
+     * How long the job of a task left open for its asynchronous completion stays locked once its
+     * handler returned.
+     *
+     * @return Never <code>null</code>
+     */
+    public Duration getAsyncTaskLockRenewal() {
+        return asyncTaskLockRenewal;
+    }
+
+    /**
+     * How long the job of a task left open for its asynchronous completion stays locked once its
+     * handler returned.
+     *
+     * @param asyncTaskLockRenewal The duration, or <code>null</code> for the default
+     */
+    public void setAsyncTaskLockRenewal(final Duration asyncTaskLockRenewal) {
+        this.asyncTaskLockRenewal = asyncTaskLockRenewal == null ? DEFAULT_ASYNC_TASK_LOCK_RENEWAL
+                : asyncTaskLockRenewal;
+    }
+
+    /**
+     * What the adapter does with a task left open longer than the platform's maximum age, as the
+     * application wrote it.
+     *
+     * @return The value, or <code>null</code> where the application did not set the key
+     */
+    public String getAsyncTaskMaxAgeAction() {
+        return asyncTaskMaxAgeAction;
+    }
+
+    /**
+     * What the adapter does with a task left open longer than the platform's maximum age.
+     *
+     * @param asyncTaskMaxAgeAction <code>report</code> or <code>incident</code>, in any case, or
+     *            <code>null</code> for the default
+     */
+    public void setAsyncTaskMaxAgeAction(final String asyncTaskMaxAgeAction) {
+        this.asyncTaskMaxAgeAction = asyncTaskMaxAgeAction;
+    }
+
+    /**
+     * What the adapter does with a task left open longer than the platform's maximum age. Defined
+     * for a configuration {@link #validate(String, boolean, boolean, Duration)} found no defect
+     * in.
+     *
+     * @return The action, {@link AsyncTaskMaxAgeAction#REPORT} where the key is not set
+     */
+    public AsyncTaskMaxAgeAction asyncTaskMaxAgeActionInUse() {
+        return asyncTaskMaxAgeActionOf(asyncTaskMaxAgeAction).orElse(AsyncTaskMaxAgeAction.REPORT);
     }
 
     /**
@@ -831,6 +938,29 @@ public class ZenBpmAdapterConfiguration {
         final boolean nowhereFirst,
         final boolean deploymentFailureWarns
     ) {
+        return validate(adapterId, nowhereFirst, deploymentFailureWarns, null);
+    }
+
+    /**
+     * The same, with the platform's <code>vanillabp.delivery.retention</code>, which
+     * <code>async-task-lock-renewal</code> has to stay below: the redelivery of a task left open is
+     * answered from the record of its delivery, and a record removed before the lock lapses lets
+     * the <code>&#64;WorkflowTask</code> method run a second time.
+     *
+     * @param adapterId The adapter id
+     * @param nowhereFirst Whether the adapter is first priority in no prioritized-adapters list
+     * @param deploymentFailureWarns Whether the adapter's <code>deployment-failure</code> policy
+     *          is <code>warn</code>
+     * @param deliveryRetention How long the platform keeps the record of a delivery;
+     *          <code>null</code> where the caller knows none, which checks nothing against it
+     * @return The outcome and the message the platform logs or ends the boot with
+     */
+    public ValidationResult validate(
+        final String adapterId,
+        final boolean nowhereFirst,
+        final boolean deploymentFailureWarns,
+        final Duration deliveryRetention
+    ) {
         final var connectionDefects = new ArrayList<String>();
         final var valueDefects = new ArrayList<String>();
         final var notices = new ArrayList<String>();
@@ -873,6 +1003,8 @@ public class ZenBpmAdapterConfiguration {
         addNegativeDurationDefect(adapterId, "job-timeout", jobTimeout, DEFAULT_JOB_TIMEOUT_ISO, valueDefects);
         addJobTimeoutDefect(propertyKey(adapterId, "job-timeout"), jobTimeout, "the default is %s".formatted(
                 DEFAULT_JOB_TIMEOUT_ISO), valueDefects);
+        addAsyncTaskDefects(adapterId, deliveryRetention, valueDefects);
+        addAsyncTaskMaxAgeActionDefect(adapterId, valueDefects);
         addNegativeDurationDefect(adapterId, "retry-backoff", retryBackoff, DEFAULT_RETRY_BACKOFF_ISO, valueDefects);
         addNegativeDurationDefect(adapterId, "shutdown-grace", shutdownGrace, DEFAULT_SHUTDOWN_GRACE_ISO, valueDefects);
         addNegativeDurationDefect(
@@ -1235,6 +1367,58 @@ public class ZenBpmAdapterConfiguration {
             defects.add("%s is PT0S, but a job has to stay locked for a while to the node which runs it; %s"
                     .formatted(propertyKey, withoutTheKey));
         }
+    }
+
+    private void addAsyncTaskDefects(
+        final String adapterId,
+        final Duration deliveryRetention,
+        final List<String> defects
+    ) {
+        final var renewalKey = propertyKey(adapterId, "async-task-lock-renewal");
+        if (asyncTaskLockRenewal.isNegative() || asyncTaskLockRenewal.isZero()) {
+            defects.add("""
+                    %s is %s, but the job of a task left open for its asynchronous completion has to stay locked \
+                    for a while, or the engine hands it out again at once; the default is %s"""
+                    .formatted(renewalKey, asyncTaskLockRenewal, DEFAULT_ASYNC_TASK_LOCK_RENEWAL_ISO));
+            return;
+        }
+        if ((deliveryRetention != null) && (asyncTaskLockRenewal.compareTo(deliveryRetention) >= 0)) {
+            defects.add("""
+                    %s is %s, which is not shorter than vanillabp.delivery.retention (%s). When the lock of a task \
+                    left open lapses, the engine hands its job out again, and the redelivery is answered from the \
+                    record of the delivery; a record removed before that lets the @WorkflowTask method run a second \
+                    time. Set %s well below the retention, at most a tenth of it (%s here), or raise \
+                    vanillabp.delivery.retention"""
+                    .formatted(renewalKey, asyncTaskLockRenewal, deliveryRetention, renewalKey, deliveryRetention
+                            .dividedBy(10)));
+        }
+    }
+
+    private void addAsyncTaskMaxAgeActionDefect(
+        final String adapterId,
+        final List<String> defects
+    ) {
+        if ((asyncTaskMaxAgeAction != null) && asyncTaskMaxAgeActionOf(asyncTaskMaxAgeAction).isEmpty()) {
+            defects.add("%s is '%s'; it is '%s', the default, or '%s'".formatted(propertyKey(adapterId,
+                    "async-task-max-age-action"), asyncTaskMaxAgeAction.trim(),
+                    AsyncTaskMaxAgeAction.REPORT
+                            .configured(),
+                    AsyncTaskMaxAgeAction.INCIDENT.configured()));
+        }
+    }
+
+    private static Optional<AsyncTaskMaxAgeAction> asyncTaskMaxAgeActionOf(final String configured) {
+        if (configured == null) {
+            return Optional.empty();
+        }
+        for (final var action : AsyncTaskMaxAgeAction.values()) {
+            if (action
+                    .configured()
+                    .equalsIgnoreCase(configured.trim())) {
+                return Optional.of(action);
+            }
+        }
+        return Optional.empty();
     }
 
     // a negative time to live has a defect of its own, so it is left out here

@@ -12,6 +12,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.IOException;
 import java.io.UncheckedIOException;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
@@ -30,6 +31,7 @@ import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.json.JsonMapper;
 
 import io.vanillabp.integration.adapter.spi.workflowtask.DeliveryOfAnUnknownWorkflowException;
+import io.vanillabp.integration.adapter.spi.workflowtask.TaskExistence;
 import io.vanillabp.integration.adapter.spi.workflowtask.TaskKind;
 import io.vanillabp.integration.adapter.spi.workflowtask.WorkflowTaskOutcome;
 import io.vanillabp.integration.test.utils.CapturedOutput;
@@ -39,9 +41,12 @@ import io.vanillabp.integration.test.utils.SuppressOutputExtension;
  * What the handler of a workflow module makes of a job: the invocation context it hands to the
  * platform's core, the update of the variables of every instance up to the workflow before the
  * completion, the failure without retries of a job whose instance names no aggregate or whose
- * workflow this application does not own, what at-least-once delivery leaves over, and the outcomes
- * it does not carry out yet, which it leaves to the job's lock. Every job gives its handler slot
- * back.
+ * workflow this application does not own, what at-least-once delivery leaves over, a BPMN error
+ * sent with its scoped code after the values were written, a task left open parked by its window or,
+ * overdue under the incident action, failed without retries, and a handler which throws, which it
+ * leaves to the job's lock. Once an outcome reached the engine, and only then, the core looks at the
+ * other open tasks of the workflow with the probe of the job's process. Every job gives its handler
+ * slot back.
  */
 @ExtendWith(SuppressOutputExtension.class)
 class ZenBpmJobHandlerTest {
@@ -408,22 +413,300 @@ class ZenBpmJobHandlerTest {
     }
 
     @Test
-    @DisplayName("A BPMN error and a task left open for its asynchronous completion are not carried out yet: a WARN, and the job is left to its lock")
-    void aBpmnErrorAndAnOpenTaskAreLeftToTheirLocks(final CapturedOutput output) {
+    @DisplayName("A BPMN error writes the shared values and the id into every instance up to the workflow, and then fails the job with the scoped code, the same values, a message for the incident, the delivery's token and the stream's client, without retries")
+    void aBpmnErrorIsSentScopedWithTheValuesAfterTheyWereWritten(final CapturedOutput output) {
+        jobs.holds(ROOT, "default", null, "order-1", "\"id\": \"order-1\"");
+        jobs.holds(SUB_PROCESS, "subprocess", ROOT, "order-1", "\"id\": \"order-1\"");
+        jobs.takesTheCommands(SUB_PROCESS, ROOT);
+        jobs.engine.answers("GET", "/v1/jobs/42", 200, job42("terminated"));
+        jobs.invoker.shares(Map.of("refundable", true));
+        jobs.invoker.answers(context -> WorkflowTaskOutcome.bpmnError("out-of-stock", "Out of stock"));
+
+        jobs.runs(JobRunning.job(SUB_PROCESS));
+
+        final var failure = json(jobs
+                .bodiesOf("POST", "/v1/jobs/42/fail")
+                .getFirst());
+        assertAll(
+                () -> assertEquals(List.of(
+                        "PATCH /v1/process-instances/200/variables",
+                        "PATCH /v1/process-instances/100/variables",
+                        "POST /v1/jobs/42/fail"),
+                        jobs.commands()),
+                () -> assertEquals("shop__out-of-stock", failure.get("errorCode")),
+                () -> assertEquals(Map.of("refundable", true, "id", "order-1"), failure.get("variables")),
+                () -> assertEquals(7, failure.get("deliveryToken")),
+                () -> assertEquals(jobs.factory.clientId(), failure.get("clientId")),
+                () -> assertEquals(
+                        "BPMN error 'Out of stock' of task 'ship' (workflow aggregate 'order-1') is caught by no error boundary event and no error event sub-process, its code",
+                        failure.get("message")),
+                () -> assertFalse(failure.containsKey("retries"), failure::toString),
+                () -> assertFalse(output
+                        .getAllOfThisTest()
+                        .contains("so the engine raised an incident"), output::getAllOfThisTest));
+    }
+
+    @Test
+    @DisplayName("A BPMN error no event of the model catches, which the engine answers with an incident, is named in a WARN")
+    void aBpmnErrorNothingCatchesIsNamed(final CapturedOutput output) {
         jobs.holds(ROOT, "default", null, "order-1", "\"id\": \"order-1\"");
         jobs.takesTheCommands(ROOT);
+        jobs.engine.answers("GET", "/v1/jobs/42", 200, job42("failed"));
+        jobs.invoker.answers(context -> WorkflowTaskOutcome.bpmnError("lost", "lost"));
 
+        jobs.runs(JobRunning.job(ROOT));
+
+        assertTrue(output
+                .getAllOfThisTest()
+                .contains(
+                        "no error boundary event and no error event sub-process catches the BPMN error 'lost' of job 42 (task 'ship', workflow aggregate 'order-1'), whose code is 'shop__lost' at the engine, so the engine raised an incident on the task"),
+                output::getAllOfThisTest);
+    }
+
+    @Test
+    @DisplayName("Where the job cannot be read after its BPMN error, nothing more is said, and the delivery is done")
+    void aBpmnErrorWhoseJobCannotBeReadIsDone(final CapturedOutput output) {
+        jobs.holds(ROOT, "default", null, "order-1", "\"id\": \"order-1\"");
+        jobs.takesTheCommands(ROOT);
+        jobs.engine.answers("GET", "/v1/jobs/42", 502, "{\"code\":\"BAD_GATEWAY\",\"message\":\"no leader\"}");
+        jobs.invoker.answers(context -> WorkflowTaskOutcome.bpmnError("lost", "lost"));
+
+        jobs.runs(JobRunning.job(ROOT));
+
+        final var log = output.getAllOfThisTest();
+        assertAll(
+                () -> assertEquals(List.of("PATCH /v1/process-instances/100/variables", "POST /v1/jobs/42/fail"), jobs
+                        .commands()),
+                () -> assertFalse(log.contains("raised an incident"), log),
+                () -> assertFalse(log.contains("could not be answered"), log));
+    }
+
+    @Test
+    @DisplayName("A BPMN error which finds the job gone, and one whose workflow ended while the handler ran, are what at-least-once delivery leaves over: a WARN each")
+    void aBpmnErrorOfAGoneJobOrAnEndedWorkflowIsWarned(final CapturedOutput output) {
+        jobs.holds(ROOT, "default", null, "order-1", "\"id\": \"order-1\"");
+        jobs.takesTheCommands(ROOT);
+        jobs.engine.answers("POST", "/v1/jobs/42/fail", 409, "{\"code\":\"CONFLICT\",\"message\":\"superseded\"}");
+        jobs.invoker.answers(context -> WorkflowTaskOutcome.bpmnError("out-of-stock", "Out of stock"));
+
+        jobs.runs(JobRunning.job(ROOT));
+        jobs.engine.answers("PATCH", "/v1/process-instances/100/variables", 409,
+                "{\"code\":\"CONFLICT\",\"message\":\"Can update variables only for process instances in active or failed state\"}");
+        jobs.runs(JobRunning.job(ROOT));
+
+        final var log = output.getAllOfThisTest();
+        assertAll(
+                () -> assertEquals(List.of(
+                        "PATCH /v1/process-instances/100/variables",
+                        "POST /v1/jobs/42/fail",
+                        "PATCH /v1/process-instances/100/variables"),
+                        jobs.commands()),
+                () -> assertTrue(log.contains(
+                        "job 42 (task 'ship', workflow aggregate 'order-1') was gone when its BPMN error 'out-of-stock' was to be sent"),
+                        log),
+                () -> assertTrue(log.contains(
+                        "ended or was cancelled while the handler ran, so the job is not failed with its BPMN error"),
+                        log));
+    }
+
+    @Test
+    @DisplayName("A BPMN error the engine refuses for another reason leaves the job to its lock, with a WARN, and the job is not read")
+    void aRefusedBpmnErrorLeavesTheJobToItsLock(final CapturedOutput output) {
+        jobs.holds(ROOT, "default", null, "order-1", "\"id\": \"order-1\"");
+        jobs.takesTheCommands(ROOT);
+        jobs.engine.answers("POST", "/v1/jobs/42/fail", 400, "{\"code\":\"BAD_REQUEST\",\"message\":\"no\"}");
+        jobs.invoker.answers(context -> WorkflowTaskOutcome.bpmnError("out-of-stock", "Out of stock"));
+
+        jobs.runs(JobRunning.job(ROOT));
+
+        assertAll(
+                () -> assertTrue(output
+                        .getAllOfThisTest()
+                        .contains("job 42 (task 'ship') could not be answered to the engine"),
+                        output::getAllOfThisTest),
+                () -> assertEquals(List.of(), jobs.bodiesOf("GET", "/v1/jobs/42")));
+    }
+
+    @Test
+    @DisplayName("A task left open for its asynchronous completion is parked:its lock is extended once by async-task-lock-renewal, for the stream's client and its own delivery, and nothing else is sent")
+    void aTaskLeftOpenIsParkedForTheWindow() {
+        jobs.holds(ROOT, "default", null, "order-1", "\"id\": \"order-1\"");
+        jobs.engine.answers("POST", "/v1/jobs/42/extend-lock", 200, "{\"lockUntil\":\"%s\"}".formatted(Instant
+                .now()
+                .plus(Duration.ofHours(1))));
+        jobs.invoker.answers(context -> WorkflowTaskOutcome.completionPending());
+
+        jobs.runs(JobRunning.job(ROOT));
+        jobs.invoker.answers(context -> WorkflowTaskOutcome.completionPending(Duration.ofDays(8), true));
+        jobs.runs(JobRunning.job(ROOT));
+
+        final var parking = "{\"clientId\":\"%s\",\"lockDuration\":\"PT3600S\",\"deliveryToken\":7}".formatted(
+                jobs.factory.clientId());
+        assertAll(
+                () -> assertEquals(List.of("POST /v1/jobs/42/extend-lock", "POST /v1/jobs/42/extend-lock"), jobs
+                        .commands()),
+                () -> assertEquals(List.of(parking, parking), jobs.bodiesOf("POST", "/v1/jobs/42/extend-lock")),
+                () -> assertEquals(List.of(), jobs.invoker.syncedReads()));
+    }
+
+    @Test
+    @DisplayName("A task left open whose lock is lost or whose job is gone when it is to be parked is no failure of the handler")
+    void aTaskLeftOpenWhoseLockIsLostIsQuiet(final CapturedOutput output) {
+        jobs.holds(ROOT, "default", null, "order-1", "\"id\": \"order-1\"");
+        jobs.engine.answers("POST", "/v1/jobs/42/extend-lock", 409,
+                "{\"code\":\"CONFLICT\",\"message\":\"lock not held\"}");
+        jobs.invoker.answers(context -> WorkflowTaskOutcome.completionPending());
+
+        jobs.runs(JobRunning.job(ROOT));
+        jobs.engine.answers("POST", "/v1/jobs/42/extend-lock", 404, "{\"code\":\"NOT_FOUND\",\"message\":\"no job\"}");
+        jobs.runs(JobRunning.job(ROOT));
+
+        assertFalse(output
+                .getAllOfThisTest()
+                .contains("could not be answered"), output::getAllOfThisTest);
+    }
+
+    @Test
+    @DisplayName("A parking the engine refuses otherwise leaves the job to its lock, with a WARN")
+    void aRefusedParkingLeavesTheJobToItsLock(final CapturedOutput output) {
+        jobs.holds(ROOT, "default", null, "order-1", "\"id\": \"order-1\"");
+        jobs.engine.answers("POST", "/v1/jobs/42/extend-lock", 400, "{\"code\":\"BAD_REQUEST\",\"message\":\"no\"}");
+        jobs.invoker.answers(context -> WorkflowTaskOutcome.completionPending());
+
+        jobs.runs(JobRunning.job(ROOT));
+
+        assertTrue(output
+                .getAllOfThisTest()
+                .contains("job 42 (task 'ship') could not be answered to the engine"), output::getAllOfThisTest);
+    }
+
+    @Test
+    @DisplayName("With async-task-max-age-action 'incident', a task left open longer than the maximum age is failed without retries, whatever retries the job has left, with a message naming the aggregate, the age and the keys, for its delivery and the stream's client, and is not parked")
+    void anOverdueTaskWithTheIncidentActionIsFailedWithoutRetries(final CapturedOutput output) {
+        try (var incidents = new JobRunning(2, keys -> keys.setAsyncTaskMaxAgeAction("incident"))) {
+            incidents.holds(ROOT, "default", null, "order-1", "\"id\": \"order-1\"");
+            incidents.takesTheCommands(ROOT);
+            incidents.engine.answers("POST", "/v1/jobs/42/extend-lock", 200, "{\"lockUntil\":\"%s\"}".formatted(
+                    Instant
+                            .now()
+                            .plus(Duration.ofHours(1))));
+            incidents.invoker.answers(context -> WorkflowTaskOutcome.completionPending(Duration.ofDays(8), false));
+            incidents.runs(JobRunning.job(ROOT));
+            incidents.invoker.answers(context -> WorkflowTaskOutcome.completionPending(Duration.ofDays(8), true));
+
+            incidents.runs(JobRunning.job(ROOT));
+
+            final var failure = json(incidents
+                    .bodiesOf("POST", "/v1/jobs/42/fail")
+                    .getFirst());
+            assertAll(
+                    () -> assertEquals(List.of("POST /v1/jobs/42/extend-lock", "POST /v1/jobs/42/fail"), incidents
+                            .commands()),
+                    () -> assertEquals(0, failure.get("retries")),
+                    () -> assertFalse(failure.containsKey("errorCode"), failure::toString),
+                    () -> assertEquals(7, failure.get("deliveryToken")),
+                    () -> assertEquals(incidents.factory.clientId(), failure.get("clientId")),
+                    () -> assertEquals(
+                            """
+                                    Task 'ship' of workflow aggregate 'order-1' (process 'Order' of workflow module 'shop') has \
+                                    waited for its asynchronous completion for PT192H, longer than vanillabp.delivery.max-task-age \
+                                    allows. The application owes it a ProcessService#completeTask or #cancelTask. Complete or \
+                                    cancel it and resolve this incident, raise the maximum age where such a wait is legitimate, \
+                                    or set vanillabp.adapters.orders.async-task-max-age-action back to 'report'.""",
+                            failure.get(
+                                    "message")),
+                    () -> assertTrue(output
+                            .getAllOfThisTest()
+                            .contains("job 42 is failed without retries, so an incident shows it: Task 'ship'"),
+                            output::getAllOfThisTest));
+        }
+    }
+
+    @Test
+    @DisplayName("After a completion, a BPMN error and a parked task the core looks at the other open tasks of the workflow, with the context of the delivery and the probe of its process, which asks the engine about a task the process serves by a job and about nothing else")
+    void theOtherOpenTasksAreLookedAtOnceTheOutcomeReachedTheEngine() {
+        jobs.holds(ROOT, "default", null, "order-1", "\"id\": \"order-1\"");
+        jobs.takesTheCommands(ROOT);
+        jobs.engine.answers("GET", "/v1/jobs/42", 200, job42("terminated"));
+        jobs.engine.answers("POST", "/v1/jobs/42/extend-lock", 200, "{\"lockUntil\":\"%s\"}".formatted(Instant
+                .now()
+                .plus(Duration.ofHours(1))));
+
+        jobs.runs(JobRunning.job(ROOT));
         jobs.invoker.answers(context -> WorkflowTaskOutcome.bpmnError("out-of-stock", "Out of stock"));
         jobs.runs(JobRunning.job(ROOT));
         jobs.invoker.answers(context -> WorkflowTaskOutcome.completionPending());
         jobs.runs(JobRunning.job(ROOT));
 
-        final var log = output.getAllOfThisTest();
+        final var reports = jobs.invoker.reports();
+        final var probe = reports
+                .getFirst()
+                .probe();
         assertAll(
-                () -> assertEquals(List.of(), jobs.commands()),
-                () -> assertTrue(log.contains("answered BPMN_ERROR, which this adapter does not carry out yet"), log),
-                () -> assertTrue(log.contains("answered COMPLETION_PENDING, which this adapter does not carry out yet"),
-                        log));
+                () -> assertEquals(3, reports.size()),
+                () -> assertTrue(reports
+                        .stream()
+                        .allMatch(report -> "shop".equals(report.workflowModuleId()) && "Order".equals(report
+                                .bpmnProcessId()) && "42".equals(
+                                        report
+                                                .wakeUp()
+                                                .getTaskId()) && "100".equals(
+                                                        report
+                                                                .wakeUp()
+                                                                .getWorkflowId())),
+                        reports::toString),
+                () -> assertEquals(TaskExistence.GONE, probe.stillExists("100", "42", "ship")),
+                () -> assertEquals(TaskExistence.CANNOT_SAY, probe.stillExists("100", "42", "approve")));
+    }
+
+    @Test
+    @DisplayName("Nothing is looked at after a delivery the handler refused, nor after an outcome which did not reach the engine")
+    void nothingIsLookedAtWhereNoOutcomeReachedTheEngine() {
+        jobs.holds(ROOT, "default", null, "order-1", "\"id\": \"order-1\"");
+        jobs.holds(SUB_PROCESS, "default", null, null, "");
+        jobs.engine.answers("POST", "/v1/jobs/42/fail", 204, null);
+        jobs.engine.answers("POST", "/v1/jobs/42/complete", 404, "{\"code\":\"NOT_FOUND\",\"message\":\"no job\"}");
+        jobs.engine.answers("POST", "/v1/jobs/42/extend-lock", 409,
+                "{\"code\":\"CONFLICT\",\"message\":\"lock not held\"}");
+        jobs.engine.answers("PATCH", "/v1/process-instances/100/variables", 204, null);
+
+        // a job of an instance which names no aggregate, a workflow nobody owns here, a thrown
+        // handler, a gone job at the completion, a lost lock at the parking
+        jobs.runs(JobRunning.job(SUB_PROCESS));
+        jobs.invoker.answers(context -> {
+            throw new DeliveryOfAnUnknownWorkflowException("orders", "shop", "Order", "ship", "org.example.Order", "order-1", "100");
+        });
+        jobs.runs(JobRunning.job(ROOT));
+        jobs.invoker.answers(context -> {
+            throw new IllegalStateException("the warehouse is closed");
+        });
+        jobs.runs(JobRunning.job(ROOT));
+        jobs.invoker.answers(context -> WorkflowTaskOutcome.completed());
+        jobs.runs(JobRunning.job(ROOT));
+        jobs.invoker.answers(context -> WorkflowTaskOutcome.completionPending());
+        jobs.runs(JobRunning.job(ROOT));
+
+        assertEquals(List.of(), jobs.invoker.reports());
+    }
+
+    @Test
+    @DisplayName("A look at the other open tasks which fails costs the delivery nothing")
+    void aFailingLookCostsTheDeliveryNothing(final CapturedOutput output) {
+        jobs.holds(ROOT, "default", null, "order-1", "\"id\": \"order-1\"");
+        jobs.takesTheCommands(ROOT);
+        jobs.invoker.failsToReport(new IllegalStateException("no connection to the delivery log"));
+
+        jobs.runs(JobRunning.job(ROOT));
+
+        assertAll(
+                () -> assertEquals(1, jobs.invoker
+                        .reports()
+                        .size()),
+                () -> assertEquals(List.of("PATCH /v1/process-instances/100/variables", "POST /v1/jobs/42/complete"),
+                        jobs.commands()),
+                () -> assertFalse(output
+                        .getAllOfThisTest()
+                        .contains("could not be answered"), output::getAllOfThisTest));
     }
 
     @Test
@@ -463,6 +746,14 @@ class ZenBpmJobHandlerTest {
                         .getAllOfThisTest()
                         .contains("an instance above instance 200 of job 42 (task 'ship') is not known"),
                         output::getAllOfThisTest));
+    }
+
+    // job 42 of the module's type in instance 100, as the engine answers it
+    private static String job42(final String state) {
+        return """
+                {"key": 42, "elementId": "Ship", "type": "shop__Order__ship", "elementType": "SERVICE_TASK",
+                 "processInstanceKey": 100, "elementInstanceKey": 4503599627370599, "state": "%s",
+                 "createdAt": "2026-10-17T10:00:00Z", "inputVariables": {}}""".formatted(state);
     }
 
     private static Map<String, Object> json(final String body) {

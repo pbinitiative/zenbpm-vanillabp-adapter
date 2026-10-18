@@ -381,6 +381,23 @@ public interface VanillaBpZenBpmProperties {
         Optional<Duration> jobTimeout();
 
         /**
+         * <code>async-task-lock-renewal</code>: how long the job of a task left open for its
+         * asynchronous completion stays locked once its handler returned.
+         *
+         * @return The value, empty where the application did not set the key
+         */
+        Optional<Duration> asyncTaskLockRenewal();
+
+        /**
+         * <code>async-task-max-age-action</code>: what the adapter does with a task left open
+         * longer than the platform's maximum age, mapped as written so the validation names a value
+         * which is no action.
+         *
+         * @return The value, empty where the application did not set the key
+         */
+        Optional<String> asyncTaskMaxAgeAction();
+
+        /**
          * <code>retry-backoff</code>: the first wait after a failed handler, at the adapter level.
          *
          * @return The value, empty where the application did not set the key
@@ -465,6 +482,8 @@ public interface VanillaBpZenBpmProperties {
             configuration.setWorkerThreads(workerThreads().orElse(null));
             configuration.setWorkerThreadsBound(workerThreadsBound().orElse(null));
             configuration.setJobTimeout(jobTimeout().orElse(null));
+            configuration.setAsyncTaskLockRenewal(asyncTaskLockRenewal().orElse(null));
+            configuration.setAsyncTaskMaxAgeAction(asyncTaskMaxAgeAction().orElse(null));
             configuration.setRetryBackoff(retryBackoff().orElse(null));
             configuration.setMaxRedeliveries(maxRedeliveries().orElse(null));
             configuration.setShutdownGrace(shutdownGrace().orElse(null));

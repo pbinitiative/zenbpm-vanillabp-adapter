@@ -12,8 +12,11 @@ import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
+import java.util.concurrent.locks.ReentrantLock;
 
 import org.pbinitiative.zenbpmadapter.client.ReceivedJob;
+import org.pbinitiative.zenbpmadapter.client.ZenBpmCommandRetry;
 import org.pbinitiative.zenbpmadapter.client.ZenBpmErrors;
 import org.pbinitiative.zenbpmadapter.client.ZenBpmRestClient;
 
@@ -44,6 +47,14 @@ import lombok.extern.slf4j.Slf4j;
  * another client holds the job) ends the renewal with a WARN, because a second delivery of the job
  * may run beside the handler now; the platform's record of deliveries decides which of them
  * counts. A job the engine no longer holds ends it quietly. The renewal ends with the handler.
+ * <p>
+ * A job whose task stays open for its asynchronous completion is <b>parked</b> instead: the renewal
+ * ends, an extension under way is waited for, and the lock is extended once by
+ * <code>async-task-lock-renewal</code>. The engine extends a lock from the moment a request
+ * reaches it, so an extension by the <code>job-timeout</code> arriving after the parking would
+ * shorten the parked lock again. Where the engine answers a deadline shorter than the window by
+ * more than {@link #CLOCK_TOLERANCE}, a WARN says so once per adapter id, naming
+ * <code>JOB_MANAGER_MAX_LOCK_DURATION_MS</code>, which the engine lowers every lock to.
  */
 @Slf4j
 public final class ZenBpmLockRenewal {
@@ -70,6 +81,8 @@ public final class ZenBpmLockRenewal {
     private final ThreadFactory calls;
 
     private final AtomicBoolean shorterLockReported = new AtomicBoolean();
+
+    private final AtomicBoolean shorterParkingReported = new AtomicBoolean();
 
     /**
      * The renewal of one adapter id. Contacts nothing.
@@ -143,6 +156,28 @@ public final class ZenBpmLockRenewal {
                 engineDeadline, shorterBy, jobTimeout, adapterId);
     }
 
+    // once per adapter id, as the WARN about a shorter lock of a running handler
+    private void reportAShorterParking(
+        final long jobKey,
+        final Instant engineDeadline,
+        final Instant counted,
+        final Duration window
+    ) {
+        final var shorterBy = Duration.between(engineDeadline, counted);
+        if ((shorterBy.compareTo(CLOCK_TOLERANCE) <= 0) || shorterParkingReported.getAndSet(true)) {
+            return;
+        }
+        log.warn("""
+                ZenBPM[{}]: the engine says the lock of job {}, whose task stays open for its asynchronous \
+                completion, lapses at {}, {} before the async-task-lock-renewal of {} counted on this \
+                application's clock. Either the engine's clock runs behind this application's, or the window is \
+                above the engine's jobManager.maxLockDurationMs (JOB_MANAGER_MAX_LOCK_DURATION_MS, 24 hours by \
+                default), which lowers every lock to it; then set vanillabp.adapters.{}.async-task-lock-renewal \
+                below that maximum, or raise the maximum at the engine. Until then the job comes back sooner and \
+                is parked again, which costs a delivery each time. This is said once.""", adapterId, jobKey,
+                engineDeadline, shorterBy, window, adapterId);
+    }
+
     /**
      * The renewal of the lock of one job while its handler runs.
      */
@@ -172,6 +207,11 @@ public final class ZenBpmLockRenewal {
          * one extension under way touches it.
          */
         private int unanswered;
+
+        /**
+         * Held while an extension is sent, so the parking of the job waits for one under way.
+         */
+        private final ReentrantLock sending = new ReentrantLock();
 
         private Renewal(
             final long jobKey,
@@ -220,6 +260,38 @@ public final class ZenBpmLockRenewal {
             }
         }
 
+        /**
+         * Ends the renewal and locks the job for a window, for a task the application completes
+         * later: its handler returns, and the engine hands the job out again only once the window
+         * passed. An extension under way is waited for first, so it cannot shorten the window
+         * afterwards.
+         *
+         * @param window <code>async-task-lock-renewal</code>
+         * @param retry The repetition of the commands of the job's delivery
+         * @return When the window ends, counted on the application's clock from the moment the
+         *         extension was sent
+         * @throws RuntimeException What the extension failed with after its repetitions, such as a
+         *             lost lock where the job was completed meanwhile or its lock lapsed
+         */
+        public Instant park(
+            final Duration window,
+            final ZenBpmCommandRetry retry
+        ) {
+            close();
+            sending.lock();
+            sending.unlock();
+            final var sent = new AtomicReference<Instant>();
+            final var granted = retry.read("lock extension of the task left open", () -> {
+                sent.set(Instant.now());
+                return rest.extendJobLock(jobKey, clientId, window, deliveryToken);
+            }, answer -> false);
+            final var counted = sent
+                    .get()
+                    .plus(window);
+            reportAShorterParking(jobKey, granted, counted, window);
+            return counted;
+        }
+
         private void schedule(final Duration delay) {
             synchronized (this) {
                 if (ended) {
@@ -237,6 +309,19 @@ public final class ZenBpmLockRenewal {
         }
 
         private void extend() {
+            sending.lock();
+            try {
+                // the job was parked meanwhile, whose window an extension now would shorten
+                if (ended) {
+                    return;
+                }
+                extendNow();
+            } finally {
+                sending.unlock();
+            }
+        }
+
+        private void extendNow() {
             // the engine extends from the moment the request reaches it, which comes after this one
             final var sent = Instant.now();
             final Instant granted;

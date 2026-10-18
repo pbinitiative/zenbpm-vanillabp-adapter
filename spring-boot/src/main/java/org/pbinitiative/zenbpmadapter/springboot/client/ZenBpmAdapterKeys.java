@@ -39,6 +39,10 @@ public class ZenBpmAdapterKeys {
 
     private Duration jobTimeout;
 
+    private Duration asyncTaskLockRenewal;
+
+    private String asyncTaskMaxAgeAction;
+
     private Duration retryBackoff;
 
     private Integer maxRedeliveries;
@@ -229,6 +233,47 @@ public class ZenBpmAdapterKeys {
     }
 
     /**
+     * <code>async-task-lock-renewal</code>: how long the job of a task left open for its
+     * asynchronous completion stays locked once its handler returned.
+     *
+     * @return The value, or <code>null</code> where the application did not set the key
+     */
+    public Duration getAsyncTaskLockRenewal() {
+        return asyncTaskLockRenewal;
+    }
+
+    /**
+     * <code>async-task-lock-renewal</code>: how long the job of a task left open for its
+     * asynchronous completion stays locked once its handler returned.
+     *
+     * @param asyncTaskLockRenewal The value as bound
+     */
+    public void setAsyncTaskLockRenewal(final Duration asyncTaskLockRenewal) {
+        this.asyncTaskLockRenewal = asyncTaskLockRenewal;
+    }
+
+    /**
+     * <code>async-task-max-age-action</code>: what the adapter does with a task left open longer
+     * than the platform's maximum age, bound as written so the validation names a value which is no
+     * action.
+     *
+     * @return The value, or <code>null</code> where the application did not set the key
+     */
+    public String getAsyncTaskMaxAgeAction() {
+        return asyncTaskMaxAgeAction;
+    }
+
+    /**
+     * <code>async-task-max-age-action</code>: what the adapter does with a task left open longer
+     * than the platform's maximum age.
+     *
+     * @param asyncTaskMaxAgeAction The value as bound
+     */
+    public void setAsyncTaskMaxAgeAction(final String asyncTaskMaxAgeAction) {
+        this.asyncTaskMaxAgeAction = asyncTaskMaxAgeAction;
+    }
+
+    /**
      * <code>retry-backoff</code>: the first wait after a failed handler, at the adapter level.
      *
      * @return The value, or <code>null</code> where the application did not set the key
@@ -408,6 +453,8 @@ public class ZenBpmAdapterKeys {
         configuration.setWorkerThreads(workerThreads);
         configuration.setWorkerThreadsBound(workerThreadsBound);
         configuration.setJobTimeout(jobTimeout);
+        configuration.setAsyncTaskLockRenewal(asyncTaskLockRenewal);
+        configuration.setAsyncTaskMaxAgeAction(asyncTaskMaxAgeAction);
         configuration.setRetryBackoff(retryBackoff);
         configuration.setMaxRedeliveries(maxRedeliveries);
         configuration.setShutdownGrace(shutdownGrace);

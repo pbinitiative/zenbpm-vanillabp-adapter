@@ -70,6 +70,7 @@ public class ZenBpmClientProducer {
         return ZenBpmStartupValidation.registryOf(coreProperties.adapterIdsOfType(ZenBpmAdapter.ADAPTER_TYPE),
                 overlay::configurationOf, coreProperties::isFirstPriorityAnywhere, adapterId -> coreProperties
                         .getDeploymentFailureFor(adapterId) == DeploymentFailurePolicy.WARN,
+                coreProperties.resolvedDeliveryRetention(),
                 () -> config
                         .getOptionalValue(APPLICATION_NAME_PROPERTY, String.class)
                         .orElse(null),

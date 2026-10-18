@@ -420,7 +420,7 @@ what they showed is written here as well):
 
 ### S6.1.2 BPMN error and pending outcomes
 
-- [ ] **Depends on:** S6.1.1.
+- [x] **Depends on:** S6.1.1.
 
 **Instructions**
 
@@ -452,12 +452,143 @@ capped-deadline WARN.
 
 **Acceptance criteria**
 
-- [ ] The error code reaches the engine scoped; the aggregate changes stay committed.
-- [ ] The incident action fails the job with `retries: 0`, whatever retries the job has left.
+- [x] The error code reaches the engine scoped; the aggregate changes stay committed.
+  `ZenBpmTaskProcessingIT#aBpmnErrorRoutesTheBoundaryEvent`: the handler of `Inspect` raises
+  `damaged`, which the model carries as `deploy-it__damaged`; the error boundary event `Damaged`
+  catches it, the gateway behind it ends in `Refunded` on the value the handler set, the job is
+  `TERMINATED`, the claim is inspected and refundable, and the delivery log records `BPMN_ERROR`.
+  With the code sent unscoped the boundary event does not catch it (mutant).
+  `#anUnknownErrorCodeIsAnIncident`: an uncaught `lost` ends in an incident on `Inspect` naming
+  `deploy-it__lost`, the job is `FAILED`, and the handler's work is committed.
+  `ZenBpmJobHandlerTest#aBpmnErrorIsSentScopedWithTheValuesAfterTheyWereWritten` pins the requests:
+  the updates of the sub-process and the root, then the failure with `shop__out-of-stock`, the
+  values, the delivery token and the client id, and no `retries`.
+- [x] The incident action fails the job with `retries: 0`, whatever retries the job has left.
+  `ZenBpmJobHandlerTest#anOverdueTaskWithTheIncidentActionIsFailedWithoutRetries`: with
+  `async-task-max-age-action: incident` the delivery whose outcome says the maximum age passed is
+  failed with `retries: 0`, no code, the message naming the task, the aggregate, the age and the
+  keys, the delivery token and the client id, and is not parked; the one before it, under the age,
+  is parked. A task over the age under `report` is parked (`#aTaskLeftOpenIsParkedForTheWindow`).
+  End to end, `ZenBpmTaskProcessingIT#anAsynchronousTaskStaysOpen` sees a task left open come back
+  at least twice within 15 s under a window of two seconds while its handler ran once and the job
+  stays active.
+
+*Fit check, 2026-10-17, decided by the Implementor.* Checked against `main` (`116d701`),
+`ADAPTER-AUTHORS.md` (sections 3.3, 3.4 and 5), the platform's code as the adapter resolves it
+(`WorkflowTaskOutcome`, `MigrationAdapterProperties#resolvedDeliveryRetention`), Camunda 8's
+`Camunda8JobHandler` (its BPMN_ERROR and COMPLETION_PENDING branches, `failAsOverdue`) and
+`Camunda8AdapterConfiguration#validateAsyncTaskLockRenewal`, and the engine at the pin `bdd795a3`
+(source exported with `git archive`: `JobFailByKey`, `prepareBoundaryErrorTransition` and
+`failJobWithIncident` in `pkg/bpmn/jobs_api.go` and `pkg/bpmn/engine_error_event.go`,
+`jobServer.extendLock` in `internal/cluster/jobmanager/server.go`, the descriptions of
+`/jobs/{jobKey}/fail` and `/jobs/{jobKey}/extend-lock` in `openapi/api.yaml`; image run by
+`ZenBpmTaskProcessingIT`). What did not fit, and what was decided:
+
+1. **The values of a BPMN error** (brief question 1). Read at the pin: with an error code the engine
+   hands the failure's variables to the catching event. An error boundary event propagates them
+   into the instance which holds it, through its output mapping or all of them where it has none
+   (`PropagateMappedOutputsOrAll`); an error event sub-process starts with them; where nothing
+   catches the code they are only kept as the job's output variables. So the handler writes the
+   values exactly as before a completion, into every instance from the job's own up to the root
+   with decision 34's handling of `404` and `409` (decision 35), and then sends the same values with
+   the failure, which adds the output mapping of a catching event a modeller may rely on (Camunda
+   8's shape). No new decision. Measured end to end: the gateway behind the error boundary event
+   of `#aBpmnErrorRoutesTheBoundaryEvent` decides on what the handler computed.
+2. **An unmatched error code** (brief question 2). Read: `failJobWithIncident` fails the job and
+   raises an incident whose message is the failure's `message`, `: ` and the code; the retries are
+   neither read nor spent. Measured: the incident of `#anUnknownErrorCodeIsAnIncident` reads exactly
+   `BPMN error 'lost' of task 'inspect' (workflow aggregate '…') is caught by no error boundary
+   event and no error event sub-process, its code: deploy-it__lost`, and the job is `FAILED`. The
+   engine behaves as the plan says, so there is no GAPS entry. Its answer to the failure is the same
+   whether an event caught the code or not, so the handler reads the job once afterwards and logs a
+   WARN where it is `failed`; a node which lags behind may still answer `active`, and then only the
+   incident says it. The engine uses the failure's `message` for that incident alone, which is why
+   the message says that nothing caught the error.
+3. **The capped deadline** (brief question 3). The answer of `extend-lock` carries the new
+   deadline, `now` plus the smaller of the duration asked for and `jobManager.maxLockDurationMs`.
+   So the parking compares it as `ZenBpmLockRenewal` compares a running handler's, with the same
+   tolerance of a second, and logs a WARN once per adapter id naming `async-task-lock-renewal` and
+   `JOB_MANAGER_MAX_LOCK_DURATION_MS` (and, as for the running handler, an engine clock behind).
+   No WARN at startup.
+4. **The parking and the renewal of S6.1.1.** The engine extends a lock from the moment a request
+   reaches it, so an extension of the running handler's renewal which arrives after the parking
+   would cut the window down to the `job-timeout`. `ZenBpmLockRenewal.Renewal#park` ends the
+   renewal, waits for an extension under way, and then extends by the window through the
+   delivery's command retry; the handler returns right after, which frees its slot. A lost lock or
+   a gone job at the parking is quiet (the task was completed meanwhile, or the engine hands the
+   job out again, which parks it then); any other refusal leaves the job to its lock with the WARN
+   of S6.1.1.
+5. **Startup validation** (brief question 4). `ZenBpmAdapterConfiguration#validate` takes the
+   platform's `vanillabp.delivery.retention` (`MigrationAdapterProperties#resolvedDeliveryRetention`),
+   handed in by `ZenBpmStartupValidation#registryOf` on both platforms. An `async-task-lock-renewal`
+   of `PT0S`, a negative one, one not shorter than the retention, and an `async-task-max-age-action`
+   which names no action are value defects, which end the start even of an adapter id which may
+   boot degraded. Both are checked while the application starts on Quarkus as well, where the
+   adapter reads every key from the runtime configuration. `async-task-max-age-action` is bound as
+   text and read by the adapter, as `worker-threads` is, so both platforms name the key and the
+   values in the adapter's words instead of the binder's. Both keys exist at the adapter level only.
+6. **The incident action** fails with `retries: 0`, no error code, a message adapted from Camunda 8
+   which names the task, the aggregate, the process, the module, the age, `vanillabp.delivery.max-task-age`
+   and the key to set back, the delivery's token and the stream's client id. A task over the age
+   under `report` is parked as before, and the core's line says it.
+7. **Where the tests live** (brief question 8). `ZenBpmTaskProcessingIT` gained the process
+   `TaskOutcomes` (`task-it/task-outcomes.bpmn`, with its diagram) with the aggregate `Claim`; the
+   application sets `async-task-lock-renewal: PT2S`, which nothing else of the class meets. The
+   redeliveries of the parked job are counted by the job's `deliveryToken`, which the engine raises
+   with every delivery, read past the adapter's client. The Quarkus twins belong to S6.5.1 (brief
+   question 9); on Quarkus this story has the binding and the validation
+   (`ZenBpmAsyncTaskKeysTest`).
+8. `ZenBpmJobHandlerTest#aBpmnErrorAndAnOpenTaskAreLeftToTheirLocks` is replaced by the tests of
+   both outcomes; a thrown handler stays logged and left to its lock until S6.2.1
+   (`#aThrowingHandlerIsLeftToItsLock`).
+
+**Implemented 2026-10-17.** Core: the BPMN error, the parking and the incident action in
+`wiring/ZenBpmJobHandler`; `ZenBpmLockRenewal.Renewal#park` and the WARN about a lowered parking;
+`async-task-lock-renewal`, `async-task-max-age-action` (`AsyncTaskMaxAgeAction`) and the check
+against the delivery retention in `ZenBpmAdapterConfiguration` (`validate` with the retention),
+`ZenBpmStartupValidation#registryOf` with the retention; `JobFailure#withErrorCode(String, String)`.
+Spring Boot and Quarkus: both keys at the adapter level and the platform's retention handed to the
+validation. The README's status, the key table and the handler's outline in
+`docs/architecture/01-architecture.md`, the BPMN error row of `docs/analysis/02-spi-requirements-mapping.md`.
+
+New tests: in `ZenBpmJobHandlerTest` `#aBpmnErrorIsSentScopedWithTheValuesAfterTheyWereWritten`,
+`#aBpmnErrorNothingCatchesIsNamed`, `#aBpmnErrorWhoseJobCannotBeReadIsDone`,
+`#aBpmnErrorOfAGoneJobOrAnEndedWorkflowIsWarned`, `#aRefusedBpmnErrorLeavesTheJobToItsLock`,
+`#aTaskLeftOpenIsParkedForTheWindow`, `#aTaskLeftOpenWhoseLockIsLostIsQuiet`,
+`#aRefusedParkingLeavesTheJobToItsLock`, `#anOverdueTaskWithTheIncidentActionIsFailedWithoutRetries`;
+in `ZenBpmLockRenewalTest` `#aParkedJobIsExtendedOnceByTheWindow`,
+`#aParkingWaitsForTheExtensionUnderWay`, `#anExtensionDueBeforeTheParkingSendsNothingAfterIt`,
+`#aParkingTheEngineLoweredIsNamedOnce`, `#aParkingAsCountedRaisesNoWarn`, `#aRefusedParkingIsPassedOn`;
+`ZenBpmAdapterConfigurationTest#theAsyncTaskLockRenewalStaysBelowTheDeliveryRetention` and three
+defect cases; `ZenBpmStartupValidationTest#theDeliveryRetentionReachesTheValidation`; the bindings in
+both platforms' `VanillaBpZenBpmPropertiesTest`; the smoke test's
+`ZenBpmStartupValidationBootTest#theKeysOfTasksLeftOpenAreValidatedAgainstThePlatform`; Quarkus
+`ZenBpmAsyncTaskKeysTest`; Spring Boot `ZenBpmTaskProcessingIT#aBpmnErrorRoutesTheBoundaryEvent`,
+`#anUnknownErrorCodeIsAnIncident` and `#anAsynchronousTaskStaysOpen` with the process
+`TaskOutcomes` of `task-it/task-outcomes.bpmn`.
+
+Seen to fail, each restored afterwards (22 of 22 mutants, against green unmutated runs): the error
+code sent unscoped (also against the engine: the boundary event does not catch it, and
+`#anUnknownErrorCodeIsAnIncident` reads another code), the values not written before a BPMN error,
+a BPMN error without the delivery's token and client id, the WARN of an uncaught error said always,
+a gone job at a BPMN error not tolerated, another refusal of a BPMN error swallowed, the task left
+open not parked (also against the engine: `#anAsynchronousTaskStaysOpen` sees no redelivery within
+30 s), the incident action never taken, and taken under `report`, a lost lock at the parking not
+tolerated, the parking not ending the renewal, not waiting for the extension under way, an
+extension which was due before the parking sent after it, the WARN of a lowered parking never, every
+time and without its tolerance, a renewal equal to the retention accepted, the retention not handed
+to the validation, a renewal of zero accepted, an action which names none accepted.
+
+`TZ=Etc/UTC mvn clean install` on OpenJDK 25.0.2 builds green with every integration test run and
+none skipped (engine test support 12 unit and 3 integration tests, core 862 unit and 74 integration
+tests, Spring Boot 11 unit and 16 integration tests, smoke test 36, Quarkus runtime 10, Quarkus
+deployment 49, Quarkus integration tests 3, coverage gate 37). The gate measures 100 % of 21,758
+instructions for Spring Boot and 100 % of 21,624 for Quarkus, and `bin/check-deploy-safety.sh`
+passes. No flake was hit.
 
 ### S6.1.3 Report the tasks the engine no longer has
 
-- [ ] **Depends on:** S6.1.1.
+- [x] **Depends on:** S6.1.1.
 
 The engine cannot say per element what it took away: a boundary event, an instance cancelled over
 REST or a terminate end event removes jobs, and nobody tells the application. The contract's answer
@@ -501,10 +632,159 @@ fail: no `CANCELED`).
 
 **Acceptance criteria**
 
-- [ ] A service task the engine took away reaches the application as `@TaskEvent CANCELED` at the
+- [x] A service task the engine took away reaches the application as `@TaskEvent CANCELED` at the
   next delivery of the same workflow, once.
-- [ ] An unavailable engine never produces a `CANCELED`.
-- [ ] A user task is never reported twice (the poller of S8.1.1 and this probe).
+  `ZenBpmTaskProcessingIT#aTaskTakenAwayByABoundaryEventIsReportedCanceled`: the interrupting timer
+  boundary event of `Hold` (`task-it/task-taken-away.bpmn`) terminates its job after two seconds;
+  at a following delivery of `Check`, the other task left open of the workflow, the method of
+  `hold` is called with `CANCELED`, and after two more deliveries of `Check` it was called so once.
+  With the handler never handing the core a probe, the cancellation does not come (mutant).
+- [x] An unavailable engine never produces a `CANCELED`.
+  `ZenBpmProbeOutageIT#aProbeOutageCancelsNothing`: behind a proxy which answers every read of a job
+  with `502`, the same workflow's hold is terminated, the check is delivered twice more, the probe's
+  read of the hold's job was refused, and the hold is never reported cancelled. With a failure read
+  as gone it is (mutant). `ZenBpmOpenTaskProbeTest#whatIsNoAnswerCannotSay` pins `502`, `500`, a job
+  of another workflow and an instance the cache cannot place as `CANNOT_SAY`.
+- [x] A user task is never reported twice (the poller of S8.1.1 and this probe).
+  The probe answers `CANNOT_SAY` without a request for every task definition its process does not
+  serve by a job of the job stream, user tasks among them, and for a question without a definition
+  (`ZenBpmOpenTaskProbeTest#whatIsNotAJobOfThisProcessCannotSay`); the handler's probe is built
+  from the process's job types, which hold no user task
+  (`ZenBpmJobHandlerTest#theOtherOpenTasksAreLookedAtOnceTheOutcomeReachedTheEngine`). The poller
+  of S8.1.1 does not exist yet.
+
+*Fit check, 2026-10-17, decided by the Implementor.* Checked against `main` with S6.1.2 on the
+branch, `ADAPTER-AUTHORS.md` section 3.4, the platform's SPI as the adapter resolves it (the jar
+of `vanillabp-adapter-spi` 2.0.0-SNAPSHOT: `OpenTaskProbe#stillExists` with two arguments, abstract,
+and with three, the default the core calls; `TaskExistence`;
+`WorkflowTaskInvoker#reportTasksTheBpmsNoLongerHas(String, String, TaskInvocationContext,
+OpenTaskProbe)`), Camunda 8's `Camunda8OpenTaskProbe` and its call in `Camunda8JobHandler`, and the
+engine at the pin `bdd795a3` (`handleBoundaryTimer` in `pkg/bpmn/timer.go`, the `Job` resource of
+`openapi/api.yaml`). What did not fit, and what was decided:
+
+1. **One probe per claimed process, not per adapter id.** The rule of brief question 5 needs the
+   task definitions a process serves by jobs, which are the module's, so the handler of a module
+   builds one `ZenBpmOpenTaskProbe` per claimed process at its start, from the process's job types
+   (`WiredProcess#jobTypes`, which holds no user task) named as the application knows them
+   (`plainTaskDefinition`, the definition the core recorded). The probe holds the adapter id's REST
+   client and instance cache only; it costs no client of its own.
+2. **A user task, and anything else no job of the process serves** (brief question 5): answered
+   `CANNOT_SAY` without a request, and so is a question without a task definition (the abstract
+   two-argument method, which the core does not call). Pinned by
+   `ZenBpmOpenTaskProbeTest#whatIsNotAJobOfThisProcessCannotSay`; S8.1.1's note 4 holds from now on.
+3. **The job's workflow.** The probe compares the root of the job's instance (decision 28, through
+   `ZenBpmInstanceCache#workflowIdOf`) with the workflow the core names; another one, and an
+   instance the cache cannot place, is `CANNOT_SAY`. A job of a sub-process of the same workflow
+   is answered (`#aJobOfASubProcessBelongsToTheWorkflow`).
+4. **A `404` cannot say**, unlike instruction 1, which reads it as gone. A read is answered by a
+   follower which may lag behind (GAPS 20), a job taken away stays readable as `terminated`, and
+   the engine keeps the jobs of a workflow while it runs. The story first read a `404` as gone, as
+   the plan says; the answers to the two reviews below say why that changed. Every other failure,
+   the engine's `502` and `500` among them, is `CANNOT_SAY` as well.
+5. **When the core is asked** (instruction 2). After a completion the engine took, a BPMN error it
+   took and a parked task; not after a delivery the handler refused (no aggregate, a workflow
+   nobody owns here), a thrown handler, a gone job, an ended workflow, a lost lock at the parking,
+   nor the incident action (Camunda 8 does not either). A look which throws is logged at DEBUG and
+   costs the delivery nothing (`ZenBpmJobHandlerTest#theOtherOpenTasksAreLookedAtOnceTheOutcomeReachedTheEngine`,
+   `#nothingIsLookedAtWhereNoOutcomeReachedTheEngine`, `#aFailingLookCostsTheDeliveryNothing`).
+6. **The timer boundary event** (brief question 7). Read at the pin: an interrupting timer boundary
+   event sets the active jobs of its activity to `terminated`. Measured: the hold of
+   `#aTaskTakenAwayByABoundaryEventIsReportedCanceled` is `terminated` once its timer of two seconds
+   fired. The IT models the plan's two parallel tasks as two tasks left open (`@TaskId`), because
+   the core asks only about a task whose record is open; the wake-up is the redelivery of the
+   second task every `async-task-lock-renewal`, Camunda 8's shape (`Camunda8OtherOpenTasksIT`).
+   The aggregate `Reservation` is `@DynamicUpdate`: the two branches' handlers save it side by side,
+   which the platform warns about at startup, and each writes an attribute of its own.
+7. **The probe outage** (brief question 6) has an IT class of its own, `ZenBpmProbeOutageIT`, with
+   the same application and fixture, whose REST address is a proxy of the test,
+   `JobReadsRefusingProxy`, which answers every `GET /v1/jobs/{key}` with `502` and passes
+   everything else on; the job stream goes to the engine directly. No switch in main code. The test
+   waits until the hold is terminated, then for two more deliveries of the check and for the proxy
+   to have refused the read of the hold's job, and finds the hold never reported cancelled.
+8. Instructions 3 and 4 hold as written: the adapter reads neither platform setting, and the probe
+   sends a read only.
+
+**Implemented 2026-10-18.** Core: `wiring/ZenBpmOpenTaskProbe`; `ZenBpmJobHandler` builds one per
+claimed process and hands it to `reportTasksTheBpmsNoLongerHas` once an outcome reached the engine.
+GAPS 20's adapter behaviour names the probe; the README's status and the `OpenTaskProbe` row of
+`docs/analysis/02-spi-requirements-mapping.md`.
+
+New tests: `ZenBpmOpenTaskProbeTest` (8); in `ZenBpmJobHandlerTest`
+`#theOtherOpenTasksAreLookedAtOnceTheOutcomeReachedTheEngine`,
+`#nothingIsLookedAtWhereNoOutcomeReachedTheEngine` and `#aFailingLookCostsTheDeliveryNothing`;
+Spring Boot `ZenBpmTaskProcessingIT#aTaskTakenAwayByABoundaryEventIsReportedCanceled` with the
+process `TaskTakenAway` of `task-it/task-taken-away.bpmn`, and `ZenBpmProbeOutageIT` (1) with the
+proxy `JobReadsRefusingProxy`. The Quarkus twin, `ZenBpmWorkflowLifecycleTest#aTaskTakenAwayIsReportedCanceled`,
+belongs to S6.5.1.
+
+Seen to fail, each restored afterwards (14 of 14 mutants, against green unmutated runs): the probe
+asking about a task its process does not serve by a job, and about one without a definition;
+answering for a job of another workflow, and for one whose instance the cache cannot place; a
+failure read as gone (also against the engine: `ZenBpmProbeOutageIT` sees the hold cancelled); a
+failed job gone; a terminated job still there; a `404` that cannot say; the handler never handing
+the core the probe (also against the engine), handing it after every outcome, and after a completion
+which found the job gone; a failing look costing the delivery.
+
+`TZ=Etc/UTC mvn clean install` on OpenJDK 25.0.2 builds green with every integration test run and
+none skipped (engine test support 12 unit and 3 integration tests, core 873 unit and 74 integration
+tests, Spring Boot 11 unit and 18 integration tests, smoke test 36, Quarkus runtime 10, Quarkus
+deployment 49, Quarkus integration tests 3, coverage gate 37). The gate measures 100 % of 21,980
+instructions for Spring Boot and 100 % of 21,846 for Quarkus, and `bin/check-deploy-safety.sh`
+passes. No flake was hit.
+
+**Answers to two reviews of S6.1.2 and S6.1.3, 2026-10-18** (one by Claude, request changes, 3
+findings; one by Copilot, request changes, 1 finding, the same as Claude 1). Every claim was
+checked in the code of the branch and in the engine's source at `bdd795a3`. Both reviewers
+measured the first one against the pinned engine, and the fix was measured there too.
+
+Valid and fixed:
+
+- **A parked job kept its slot of the engine's cap** (Claude 1, Blocker; Copilot 1, Major). The
+  engine counts every job whose lock has not lapsed against its client's cap of active jobs of the
+  type (`capacityLocked` in `internal/cluster/jobmanager/server.go`). `extendLock` only moves the
+  lock's end, and the cap was the number of handler slots (decision 9). So as many tasks left open
+  of one type as there are slots stopped every further job of that type. After a lapse the engine
+  hands out the oldest job first, which is the parked one, parked again. With one slot, the
+  reviewers saw a second job never arrive in 25 s. `ZenBpmJobStream#parked` keeps the parked jobs
+  of a type, each with the end of its lock on the application's clock (decision 36), which
+  `Renewal#park` now returns. It subscribes the type again with its cap raised by those whose lock
+  has not lapsed; the engine replaces a client's settings on a second subscription
+  (`subscribeClient`). A parked job stops counting when it arrives again or its lock lapsed. A
+  reconnect sends the raised cap. Past the engine's default ceiling of 1000 a WARN names
+  `JOB_MANAGER_MAX_ACTIVE_JOBS_CAP` once. This is decision 37, which supersedes in part decision 9.
+  GAPS 28 records the engine's side. Pinned by
+  `ZenBpmParkedTasksIT#aParkedTaskLeavesRoomForTheNextOfItsType` (one handler slot, a window of a
+  minute: the second task of the type arrives and both stay open),
+  `ZenBpmJobStreamTest#aParkedJobRaisesTheCapOfItsType`, `#aReconnectKeepsTheRaisedCap`,
+  `#aCapAboveTheEnginesCeilingIsWarnedAboutOnce` and
+  `ZenBpmLockRenewalTest#aParkedLockIsCountedOnTheApplicationsClock`. Subscribing with the
+  engine's largest cap instead was rejected: one node of the application would take every waiting
+  job of a type while the others stay idle.
+- **The probe read a `404` as gone** (Claude 2, Major). A job read is answered by a follower
+  (`ZenNode.GetJob` in `internal/cluster/node.go` asks `GetPartitionFollower`). The engine deletes
+  jobs only together with an instance that ended under a parent that ended, after its history time
+  to live (`DeleteProcessInstancesJobs` and `FindInactiveInstancesToDelete`). A job taken away
+  stays readable as `terminated`. The core asks only during a delivery of the workflow. So a `404`
+  is a lagging node far more often than a task taken away, and it now answers `CANNOT_SAY`
+  (`ZenBpmOpenTaskProbeTest#aJobTheEngineDoesNotKnowCannotSay`). Fit-check item 4 of S6.1.3,
+  GAPS 20, the probe's javadoc, the architecture and the mapping were corrected. The rare case
+  left, a job of a sub-process nested in a sub-process which ended, keeps its record open until
+  the workflow ends, which is the safe direction.
+- **An unwrapped line of the README's status paragraph** (Claude 3, Nit): rewrapped.
+
+Seen to fail, each restored afterwards (10 of 10 mutants, against green unmutated runs): the
+handler not telling the stream about a parked job (also against the engine:
+`ZenBpmParkedTasksIT` waits 30 s for the second task in vain); lapsed locks never forgotten; a job
+which arrives again still counted; the WARN said at the ceiling, and every time; a type of the
+engine's default cap raised; a reconnect sending the cap without the raise; a changed cap not sent;
+the lock counted to the engine's end instead of the application's; a `404` read as gone again.
+
+`TZ=Etc/UTC mvn clean install` on OpenJDK 25.0.2 builds green after the fixes with every
+integration test run and none skipped (engine test support 12 unit and 3 integration tests, core
+877 unit and 74 integration tests, Spring Boot 11 unit and 19 integration tests, smoke test 36,
+Quarkus runtime 10, Quarkus deployment 49, Quarkus integration tests 3, coverage gate 37). The gate
+measures 100 % of 22,164 instructions on Spring Boot and 100 % of 22,030 on Quarkus, and
+`bin/check-deploy-safety.sh` passes (13 files on a green build, nothing after a red gate).
 
 ## F6.2 Failures and shutdown
 

@@ -212,6 +212,32 @@ class ZenBpmStartupValidationBootTest {
     }
 
     @Test
+    @DisplayName("An async-task-lock-renewal not below the platform's delivery retention and an async-task-max-age-action which names no action end the start, naming the keys and the fix")
+    void theKeysOfTasksLeftOpenAreValidatedAgainstThePlatform() {
+        final var failure = rootOf(assertThrows(Exception.class, () -> run("vanillabp.prioritized-adapters=zenbpm",
+                "vanillabp.adapters.zenbpm.rest-address=http://localhost:8080",
+                "vanillabp.delivery.retention=PT1H",
+                "vanillabp.adapters.zenbpm.async-task-lock-renewal=PT1H",
+                "vanillabp.adapters.zenbpm.async-task-max-age-action=fail").close()));
+
+        assertAll(
+                () -> assertTrue(failure
+                        .getMessage()
+                        .contains(
+                                "  - vanillabp.adapters.zenbpm.async-task-lock-renewal is PT1H, which is not shorter than vanillabp.delivery.retention (PT1H)."),
+                        failure.getMessage()),
+                () -> assertTrue(failure
+                        .getMessage()
+                        .contains("at most a tenth of it (PT6M here), or raise vanillabp.delivery.retention"),
+                        failure.getMessage()),
+                () -> assertTrue(failure
+                        .getMessage()
+                        .contains(
+                                "  - vanillabp.adapters.zenbpm.async-task-max-age-action is 'fail'; it is 'report', the default, or 'incident'"),
+                        failure.getMessage()));
+    }
+
+    @Test
     @DisplayName("An address defect of an adapter id nowhere first with policy 'warn' boots degraded, with a warning")
     void anAddressDefectWhichMayDegradeBootsDegraded(final CapturedOutput output) {
         try (var context = run(degraded())) {

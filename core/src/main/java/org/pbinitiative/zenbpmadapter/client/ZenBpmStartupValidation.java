@@ -4,6 +4,7 @@
  */
 package org.pbinitiative.zenbpmadapter.client;
 
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
@@ -73,6 +74,8 @@ public final class ZenBpmStartupValidation {
      * @param firstPriorityAnywhere Whether an adapter id is first in any prioritized-adapters list
      * @param deploymentFailureWarns Whether an adapter id's <code>deployment-failure</code> policy is
      *            <code>warn</code>
+     * @param deliveryRetention The platform's <code>vanillabp.delivery.retention</code>, which
+     *            <code>async-task-lock-renewal</code> has to stay below
      * @param applicationName The application's name as the platform knows it
      * @param startupReport Where the findings go; <code>null</code> sends them to the log
      * @return The registry, with a factory per adapter id in the given order
@@ -84,11 +87,12 @@ public final class ZenBpmStartupValidation {
         final Function<String, ZenBpmAdapterConfiguration> configurationOf,
         final Predicate<String> firstPriorityAnywhere,
         final Predicate<String> deploymentFailureWarns,
+        final Duration deliveryRetention,
         final Supplier<String> applicationName,
         final StartupReport startupReport
     ) {
         return registryOf(adapterIds, configurationOf, firstPriorityAnywhere, deploymentFailureWarns,
-                startupReport, ProtobufRuntimeCheck::defect, (
+                deliveryRetention, startupReport, ProtobufRuntimeCheck::defect, (
                     adapterId,
                     configuration) -> new ZenBpmClientFactory(adapterId, configuration, applicationName));
     }
@@ -102,6 +106,7 @@ public final class ZenBpmStartupValidation {
         final Function<String, ZenBpmAdapterConfiguration> configurationOf,
         final Predicate<String> firstPriorityAnywhere,
         final Predicate<String> deploymentFailureWarns,
+        final Duration deliveryRetention,
         final StartupReport startupReport,
         final Supplier<Optional<String>> protobufDefect,
         final BiFunction<String, ZenBpmAdapterConfiguration, ZenBpmClientFactory> factoryWithClients
@@ -113,7 +118,7 @@ public final class ZenBpmStartupValidation {
                     () -> "The platform has no configuration of ZenBPM adapter id '%s'; it hands in one with every key unset where the id sets nothing but its type."
                             .formatted(adapterId));
             final var result = configuration.validate(adapterId, !firstPriorityAnywhere.test(adapterId),
-                    deploymentFailureWarns.test(adapterId));
+                    deploymentFailureWarns.test(adapterId), deliveryRetention);
             final var scope = scopeOf(adapterId);
             result
                     .notices()
