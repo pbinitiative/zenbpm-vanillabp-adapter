@@ -13,6 +13,7 @@ import static org.pbinitiative.zenbpmadapter.client.ContractFixtures.uniqueBusin
 
 import java.time.Duration;
 import java.time.Instant;
+import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
@@ -24,6 +25,8 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.pbinitiative.zenbpmadapter.client.api.CreateInstanceRequest;
+import org.pbinitiative.zenbpmadapter.client.api.JobFailure;
+import org.pbinitiative.zenbpmadapter.client.api.JobRef;
 import org.pbinitiative.zenbpmadapter.test.EngineUnderTest;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
@@ -32,7 +35,8 @@ import io.vanillabp.integration.test.utils.SuppressOutputExtension;
 
 /**
  * The lock a subscription asks for, as the pinned engine keeps it: a job stays with the stream
- * it was handed to until the lock lapses, is extended, or the stream closes. Each test subscribes
+ * it was handed to until the lock lapses, is extended, or the stream closes. A job a stream holds
+ * is completed and failed by anybody, and which of the two frees the holder's slot at once. Each test subscribes
  * a job type of its own, so the jobs of one test never reach the streams of another.
  */
 @ExtendWith(SuppressOutputExtension.class)
@@ -214,6 +218,88 @@ class ZenBpmJobLockIT {
                                     .received()
                                     .receivedAt())
                             .compareTo(DELIVERY) <= 0));
+        }
+    }
+
+    @Test
+    @DisplayName("A job another stream holds is completed by a client which names neither its delivery nor a client id, and its slot of the type's cap comes free at once, not after the lock")
+    void aJobAnotherStreamHoldsIsCompletedByAnyoneAndItsSlotComesFreeAtOnce() {
+        final var jobType = deployed("complete-held");
+        final var inbox = new JobInbox();
+        final var longLock = Duration.ofMinutes(1);
+        try (var holder = stream(inbox)) {
+            holder.subscribe("module-a", jobType, longLock, 1);
+            final var first = start(jobType);
+            final var held = inbox.next(first, DELIVERY);
+            final var second = start(jobType);
+            final var keptOut = inbox.nextIfAny(second, Duration.ofSeconds(2));
+
+            rest.completeJob(held.key(), Map.of());
+            final var completedAt = Instant.now();
+            final var next = inbox.next(second, DELIVERY);
+
+            assertAll(
+                    () -> assertTrue(keptOut.isEmpty(), "the cap of one let in a second job"),
+                    () -> assertEquals(JobRef.State.COMPLETED, rest
+                            .job(held.key())
+                            .orElseThrow()
+                            .state()),
+                    () -> assertTrue(Duration
+                            .between(completedAt, next
+                                    .received()
+                                    .receivedAt())
+                            .compareTo(DELIVERY) <= 0));
+        }
+    }
+
+    @Test
+    @DisplayName("A job another stream holds is failed with a BPMN error by a client which names neither its delivery nor the holder's client id, and the holder keeps the slot until the lock lapses")
+    void aJobAnotherStreamHoldsIsFailedByAnyoneAndTheHolderKeepsItsSlot() {
+        final var jobType = deployed("fail-held-elsewhere");
+        final var inbox = new JobInbox();
+        try (var holder = stream(inbox)) {
+            holder.subscribe("module-a", jobType, Duration.ofMinutes(1), 1);
+            final var first = start(jobType);
+            final var held = inbox.next(first, DELIVERY);
+            final var second = start(jobType);
+
+            rest.failJob(held.key(), JobFailure
+                    .withErrorCode("withdrawn", "cancelled elsewhere")
+                    .ofTheDelivery(0, clientId()));
+            final var keptOut = inbox.nextIfAny(second, Duration.ofSeconds(3));
+
+            assertAll(
+                    () -> assertEquals(JobRef.State.FAILED, rest
+                            .job(held.key())
+                            .orElseThrow()
+                            .state()),
+                    () -> assertTrue(keptOut.isEmpty(), "the lock of the failed job was released"));
+        }
+    }
+
+    @Test
+    @DisplayName("A job failed with a BPMN error by a client which names the holder's client id but no delivery frees the holder's slot at once")
+    void aJobFailedWithTheHoldersClientIdFreesItsSlotAtOnce() {
+        final var jobType = deployed("fail-held-here");
+        final var inbox = new JobInbox();
+        final var clientId = clientId();
+        try (var holder = stream(inbox, clientId)) {
+            holder.subscribe("module-a", jobType, Duration.ofMinutes(1), 1);
+            final var first = start(jobType);
+            final var held = inbox.next(first, DELIVERY);
+            final var second = start(jobType);
+
+            rest.failJob(held.key(), JobFailure
+                    .withErrorCode("withdrawn", "cancelled here")
+                    .ofTheDelivery(0, clientId));
+            final var failedAt = Instant.now();
+            final var next = inbox.next(second, DELIVERY);
+
+            assertTrue(Duration
+                    .between(failedAt, next
+                            .received()
+                            .receivedAt())
+                    .compareTo(DELIVERY) <= 0);
         }
     }
 

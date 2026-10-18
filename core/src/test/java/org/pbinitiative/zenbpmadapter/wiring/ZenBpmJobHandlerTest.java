@@ -611,9 +611,11 @@ class ZenBpmJobHandlerTest {
                             """
                                     Task 'ship' of workflow aggregate 'order-1' (process 'Order' of workflow module 'shop') has \
                                     waited for its asynchronous completion for PT192H, longer than vanillabp.delivery.max-task-age \
-                                    allows. The application owes it a ProcessService#completeTask or #cancelTask. Complete or \
-                                    cancel it and resolve this incident, raise the maximum age where such a wait is legitimate, \
-                                    or set vanillabp.adapters.orders.async-task-max-age-action back to 'report'.""",
+                                    allows. The application owes it a ProcessService#completeTask or #cancelTask, which the \
+                                    engine takes only once this incident is resolved. Set \
+                                    vanillabp.adapters.orders.async-task-max-age-action back to 'report', or raise the maximum \
+                                    age where such a wait is legitimate, then resolve this incident: the next delivery leaves the \
+                                    task open again, and the application can complete or cancel it.""",
                             failure.get(
                                     "message")),
                     () -> assertTrue(output

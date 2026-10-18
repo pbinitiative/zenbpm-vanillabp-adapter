@@ -16,7 +16,6 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
-import java.util.OptionalLong;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.stream.Stream;
@@ -55,15 +54,16 @@ import lombok.extern.slf4j.Slf4j;
  * What the core asks of one ZenBPM adapter id at runtime: one instance per configured adapter
  * id, built by the platform modules.
  * <p>
- * This version of the adapter starts workflows, answers every probe, counts the open tasks of a
- * process and says what the engine does with the values a workflow carries. It serves every
- * operation the core requires of each adapter, so the core accepts it while the application
- * starts. Every other handler and every method of the viewer/history API throw: where the adapter
- * id has no clients, the message of its validation, which names the keys to set; otherwise an
- * {@link UnsupportedOperationException} which says that the call is not built yet. Nothing
- * pretends to have done the work. The operations a BPMS may lack, sending a signal and telling the
- * BPMS about a changed aggregate, are left out, so the core answers them as not supported. A probe of an adapter id without clients throws the message of its validation as
- * well.
+ * This version of the adapter starts workflows, completes and cancels the tasks the application
+ * left open, answers every probe, counts the open tasks of a process and says what the engine does
+ * with the values a workflow carries. It serves every operation the core requires of each adapter,
+ * so the core accepts it while the application starts. Every other handler and every method of the
+ * viewer/history API throw: where the adapter id has no clients, the message of its validation,
+ * which names the keys to set; otherwise an {@link UnsupportedOperationException} which says that
+ * the call is not built yet. Nothing pretends to have done the work. The operations a BPMS may
+ * lack, sending a signal and telling the BPMS about a changed aggregate, are left out, so the core
+ * answers them as not supported. A probe of an adapter id without clients throws the message of
+ * its validation as well.
  * <p>
  * A start asks the engine nothing in phase one, because there is nothing to ask before an
  * instance exists. Phase two starts the latest version of the process under the id the engine
@@ -71,6 +71,10 @@ import lombok.extern.slf4j.Slf4j;
  * aggregate shares (see {@link ZenBpmSharedValues}), and reports the key and the version of the
  * new instance. A start the engine answers with <code>404</code>, because it holds no such
  * process, is permanent, see decision 30 in the repository's DECISIONS.md.
+ * <p>
+ * A task the application completes or cancels is checked right before the caller's transaction
+ * commits, and phase two writes the shared values into the engine before it completes the task's
+ * job or fails it with the BPMN error the application named, see {@link ZenBpmTaskOutcomes}.
  * <p>
  * Each field has an accessor of its own and no Lombok getter on the class, see decision 13 in the
  * repository's DECISIONS.md.
@@ -86,13 +90,6 @@ public class ZenBpmProcessService<A> implements MigratableProcessService<A> {
      * configurable: an operator may have to raise the window, not the rate.
      */
     private static final Duration VISIBILITY_PROBE_INTERVAL = Duration.ofMillis(250);
-
-    /**
-     * Where a key of the engine carries the partition which holds it: bits 12 to 21.
-     */
-    private static final int PARTITION_SHIFT = 12;
-
-    private static final long PARTITION_MASK = 0x3FF;
 
     private final String adapterId;
 
@@ -144,9 +141,14 @@ public class ZenBpmProcessService<A> implements MigratableProcessService<A> {
                 }, request -> {
                     throw notBuiltYet("phase two of %s".formatted(operation.name()));
                 })));
-        // replaces the handler which is not built yet, in its place
+        // each replaces the handler which is not built yet, in its place
         handlers.put(PhaseOperation.START_WORKFLOW, PhaseOperationHandler.of(this::askNothingBeforeAStart,
                 this::startWorkflow));
+        final var tasks = new ZenBpmTaskOutcomes<A>(adapterId, factory, collaborators, this::variablesOf);
+        handlers.put(PhaseOperation.COMPLETE_TASK, PhaseOperationHandler.of(tasks::checkBeforeTheCompletion,
+                tasks::complete));
+        handlers.put(PhaseOperation.CANCEL_TASK, PhaseOperationHandler.of(tasks::checkBeforeTheCancellation,
+                tasks::cancel));
         this.phaseOperations = Collections.unmodifiableMap(handlers);
     }
 
@@ -182,7 +184,7 @@ public class ZenBpmProcessService<A> implements MigratableProcessService<A> {
 
     /**
      * A handler for every operation the core requires of each adapter: the start of a workflow,
-     * and a handler which throws for every other.
+     * the completion and the cancellation of a task, and a handler which throws for every other.
      *
      * @return The handlers, which cannot be changed
      */
@@ -558,13 +560,10 @@ public class ZenBpmProcessService<A> implements MigratableProcessService<A> {
         final var scopedProcessId = collaborators
                 .scoping()
                 .scopedProcessId(workflowModuleId, bpmnProcessId, adapterId);
-        final var variables = ZenBpmSharedValues.forCommand(request
-                .aggregatePersistence()
-                .getAggregateIdName(), aggregateId, sharedValuesOf(request));
         final var start = CreateInstanceRequest
                 .latestVersionOf(scopedProcessId)
                 .withBusinessKey(String.valueOf(aggregateId))
-                .withVariables(variables);
+                .withVariables(variablesOf(request));
         final var timeToLive = historyTimeToLiveOf(workflowModuleId, bpmnProcessId).map(ZenBpmTimeToLive::engineForm);
 
         final var started = createInstance(timeToLive
@@ -578,16 +577,24 @@ public class ZenBpmProcessService<A> implements MigratableProcessService<A> {
         request.reportStartedWorkflow(String.valueOf(started.key()), String.valueOf(started.version()));
     }
 
+    // what a command of phase two sends about the workflow: the values the aggregate shares, and
+    // its id
+    private Map<String, Object> variablesOf(final PhaseTwoRequest<A> request) {
+        return ZenBpmSharedValues.forCommand(request
+                .aggregatePersistence()
+                .getAggregateIdName(), request.workflowAggregateId(), sharedValuesOf(request));
+    }
+
     // the aggregate is loaded here, after the caller committed, because the request carries its
-    // id only. One which is gone by now starts its workflow with the id alone, which is all the
-    // workflow needs to be found
+    // id only. One which is gone by now sends the id alone, which is all a workflow needs to be
+    // found
     private Map<String, Object> sharedValuesOf(final PhaseTwoRequest<A> request) {
         final var aggregate = request
                 .aggregatePersistence()
                 .loadById(request.workflowAggregateId());
         if (aggregate == null) {
             log.warn(
-                    "ZenBPM[{}]: the workflow aggregate '{}' could not be loaded, so workflow '{}' of workflow module '{}' is started with its id alone and no shared value",
+                    "ZenBPM[{}]: the workflow aggregate '{}' could not be loaded, so what is sent about workflow '{}' of workflow module '{}' carries its id alone and no shared value",
                     adapterId, request.workflowAggregateId(), request.bpmnProcessId(), request.workflowModuleId());
             return Map.of();
         }
@@ -627,7 +634,7 @@ public class ZenBpmProcessService<A> implements MigratableProcessService<A> {
         final String kind
     ) {
         final var rest = clients();
-        final var key = keyOf(taskId);
+        final var key = ZenBpmKeys.keyOf(taskId);
         if (key.isEmpty()) {
             log.debug("ZenBPM[{}]: {} '{}' is no key of this engine, so the engine does not know it", adapterId, kind,
                     taskId);
@@ -638,10 +645,10 @@ public class ZenBpmProcessService<A> implements MigratableProcessService<A> {
         try {
             job = rest.job(key.getAsLong());
         } catch (final RuntimeException failure) {
-            if (isAKeyOfAPartitionTheEngineDoesNotHave(rest, key.getAsLong(), failure)) {
+            if (ZenBpmKeys.isAKeyOfAPartitionTheEngineDoesNotHave(rest, key.getAsLong(), failure)) {
                 probeAnswered();
                 log.debug("ZenBPM[{}]: {} names partition {}, which the engine does not have, so it does not know it",
-                        adapterId, subject, partitionOf(key.getAsLong()));
+                        adapterId, subject, ZenBpmKeys.partitionOf(key.getAsLong()));
                 return WorkflowAwareness.UNKNOWN_TO_BPMS;
             }
             return unavailable(subject, failure);
@@ -680,33 +687,6 @@ public class ZenBpmProcessService<A> implements MigratableProcessService<A> {
         }
     }
 
-    // a 502 is all the engine answers for a key of a partition it does not have, and also for a
-    // partition which has no leader right now, so the partitions it reports tell the two apart; a
-    // status which does not come, or names no partition at all, leaves the failure as it was,
-    // because an engine always has a partition and one which names none has not said which
-    private boolean isAKeyOfAPartitionTheEngineDoesNotHave(
-        final ZenBpmRestClient rest,
-        final long key,
-        final RuntimeException failure
-    ) {
-        if (!(failure instanceof ZenBpmApiException refusal) || (refusal.getStatus() != 502)) {
-            return false;
-        }
-        try {
-            final var partitions = rest
-                    .status()
-                    .partitions();
-            return !partitions.isEmpty() && !partitions.contains(partitionOf(key));
-        } catch (final RuntimeException statusFailure) {
-            failure.addSuppressed(statusFailure);
-            return false;
-        }
-    }
-
-    private static int partitionOf(final long key) {
-        return (int) ((key >>> PARTITION_SHIFT) & PARTITION_MASK);
-    }
-
     private static Set<String> jobElementsOf(
         final String workflowModuleId,
         final ProcessDefinitionRef version,
@@ -739,7 +719,7 @@ public class ZenBpmProcessService<A> implements MigratableProcessService<A> {
         final String aggregateId,
         final String workflowId
     ) {
-        final var key = keyOf(workflowId);
+        final var key = ZenBpmKeys.keyOf(workflowId);
         if (key.isEmpty()) {
             return false;
         }
@@ -832,20 +812,6 @@ public class ZenBpmProcessService<A> implements MigratableProcessService<A> {
                 .variables()
                 .get(idVariableName);
         return (idVariable != null) && aggregateId.equals(String.valueOf(idVariable));
-    }
-
-    // every key the engine hands out is a positive number, so anything else is the id of another
-    // BPMS
-    private static OptionalLong keyOf(final String id) {
-        if (id == null) {
-            return OptionalLong.empty();
-        }
-        try {
-            final var key = Long.parseLong(id);
-            return key > 0 ? OptionalLong.of(key) : OptionalLong.empty();
-        } catch (final NumberFormatException notANumber) {
-            return OptionalLong.empty();
-        }
     }
 
     // the engine reads whole milliseconds, so a moment inside one is moved to the next

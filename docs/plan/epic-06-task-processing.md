@@ -1241,7 +1241,7 @@ keeps run logs for 90 days, so what they showed is written here as well):
 
 ### S6.3.1 `COMPLETE_TASK` and `CANCEL_TASK`
 
-- [ ] **Depends on:** S6.1.2.
+- [x] **Depends on:** S6.1.2.
 
 **Instructions**
 
@@ -1263,13 +1263,164 @@ keeps run logs for 90 days, so what they showed is written here as well):
 
 **Acceptance criteria**
 
-- [ ] The pre-commit check runs right before the commit (the registrar's hook), not at the call.
+- [x] The pre-commit check runs right before the commit (the registrar's hook), not at the call.
+  `ZenBpmTaskProcessingIT#aTaskWhichEndsBeforeTheCommitIsNotFoundAtTheCommit`: inside the
+  application's transaction the task left open is completed through the process service while it
+  still waits, and then completed by another client over REST; the commit fails with the platform's
+  `TaskNotFoundException` ("task '<id>' is gone, the engine holds it as completed"), the aggregate's
+  change is rolled back, and the workflow ends on the path of the value it had. With the check run at
+  the call the commit goes through (mutant, also against the engine).
+  `ZenBpmPreCommitCheckTest#phaseOneRegistersTheCheckWithoutAskingTheEngine`: phase one of both
+  operations registers one check each, for the aggregate's class, against an engine on a closed
+  port, and `#theCheckAsksTheEngineWhenTheHookRuns` sees the check fail when the hook runs.
+  `ZenBpmTaskProcessingIT#completeTaskEndsTheDormantWorkflow`: the gateway behind the completed task
+  takes the branch of the value the application set before the completion, and the job is
+  `COMPLETED`; `#cancelTaskRoutesTheBoundaryEvent`: the error boundary event `Withdrawn` catches the
+  code the model carries scoped, and the job is `TERMINATED`; `#completingAGoneTaskIsAWarnedNoOp`:
+  a completion and a cancellation of one task in one transaction end the workflow once, and the
+  second costs a WARN.
+
+*Fit check, 2026-10-18, decided by the Implementor.* Checked against `main` (`39a6e80`),
+`ADAPTER-AUTHORS.md` (2.2: phase one only asks; 3.4: a task phase one finds gone throws
+`TaskNotFoundException`; 5: a phase-two call may arrive twice and for a task which is gone), the
+platform as the adapter resolves it (`PreCommitRegistrar#beforeCommit(Class<?>, Runnable)`,
+`PhaseOneRequest`, `PhaseTwoRequest`, `PhaseOperation.COMPLETE_TASK`/`CANCEL_TASK` and their keys,
+`MigrationProcessService#phaseOneRequest`, `DeliveryRecords`), Camunda 8's
+`Camunda8ProcessService` (`registerPreCommitExistenceCheck`, `newTaskNotFound`, `completeTask`,
+`cancelTask`, `variablesOf`) and `Camunda8PreCommitCheckTest`, and the engine at the pin `bdd795a3`
+(source exported with `git archive`: `completeJob`, `failJob`, `releaseLock`,
+`releaseLockOfFailedDelivery`, `releaseLockOfEndedJob` and `capacityLocked` in
+`internal/cluster/jobmanager/server.go`, `JobCompleteByKey`, `repeatedCompletion`, `JobFailByKey`
+and `ensureJobStillWaits` in `pkg/bpmn/jobs_api.go`, `ZenNode.CompleteJob`/`FailJob` in
+`internal/cluster/node.go`; the image run by `ZenBpmJobLockIT` and `ZenBpmTaskProcessingIT`). What
+did not fit, and what was decided:
+
+1. **Names and places.** Both handlers are `processservice/ZenBpmTaskOutcomes`, which the process
+   service builds once and hands the start's way of loading the shared values; the key helpers the
+   task probes used (`keyOf`, the partition of a key, decision 32's read of the partitions) moved
+   into `processservice/ZenBpmKeys`, so the check reads a key as the probes do. The fake-server
+   tests are `ZenBpmTaskOutcomesTest` instead of cases in `ZenBpmProcessServiceTest`, as the probes
+   have classes of their own; `ZenBpmPreCommitCheckTest` has Camunda 8's shape. S8.2.1 reuses the
+   class for the user task, which is a job as well (a note there says so).
+2. **The registrar's signature.** In the resolved jars `beforeCommit` takes the aggregate's class;
+   the check passes `aggregatePersistence().getAggregateClass()`, so the platform resolves the
+   transaction runner of that aggregate.
+3. **The shared values** (the story names `syncedWorkflowAggregateValues`). Phase two loads the
+   aggregate through the request's persistence and asks the platform's sync, as the start does and
+   as Camunda 8's `variablesOf` does, with the id variable last (`ZenBpmSharedValues.forCommand`):
+   one way for every command of phase two. The invoker's method serves the handler of a delivery,
+   which names its process by the job.
+4. **Who may complete a parked job** (brief question 1). Read and measured at the pin: the engine
+   completes a job whoever asks, without a delivery, and drops its lock; it fails one whoever asks
+   as well, but a failure without a delivery releases the lock only where the client id it names
+   holds it; a command refused because the job ended drops the lock too. `ZenBpmJobLockIT` measures
+   it (`#aJobAnotherStreamHoldsIsCompletedByAnyoneAndItsSlotComesFreeAtOnce`,
+   `#aJobAnotherStreamHoldsIsFailedByAnyoneAndTheHolderKeepsItsSlot`,
+   `#aJobFailedWithTheHoldersClientIdFreesItsSlotAtOnce`). So phase two sends no delivery token;
+   unlike the brief's recommendation the cancellation names this node's client id, which releases
+   the lock where this node parked the job and changes nothing elsewhere. Sending a token read from
+   the job was rejected: a redelivery between the read and the failure would answer `409` and lose
+   the cancellation. Decision 40 (new). End to end, `ZenBpmTaskProcessingIT` completes and cancels a
+   task the application's job stream parked, through REST calls which name no delivery.
+5. **A `404` in the check** (brief question 2). Asked again every quarter of a second within
+   `workflow-visibility-timeout`, as the workflow probes' window, then `TaskNotFoundException`; the
+   same for an instance of the job the node does not know yet, which then rolls the transaction
+   back with an `IllegalStateException`, because whose task it is cannot be said. A `502` for a key
+   of a partition the engine does not report is not found (decision 32). This reads a `404` as
+   decision 32 does, so it is no decision of its own. An interrupted thread asks no more and keeps
+   its interrupt.
+6. **The parked count** (brief question 3). Where the engine dropped the lock, after a completion,
+   a cancellation from the node which parked the job, or a command refused because the job ended,
+   that node ends the count at once (`ZenBpmJobStream#parkedJobEnded`); where nothing was sent
+   because the job had ended already, the engine keeps the lock until it lapses (nothing else
+   removes it) and the count stays as long. Decision 40 supersedes decision 37 in part; pinned by
+   `ZenBpmTaskOutcomesTest#aJobThisNodeParkedStopsCountingOnceItsTaskEnded` and
+   `ZenBpmJobStreamTest#aParkedJobWhoseTaskEndedLowersTheCapAtOnce`.
+7. **Whose task it is** (brief question 4). The dispatcher's rule: the process of the job's own
+   instance, read through the instance cache, and the workflow module which serves it. The phase-one
+   request names only the workflow service's primary process (`MigrationProcessService` builds it
+   with that id), so a task of a called or a declared process could not be told from the request;
+   `ZenBpmDeployedProcesses#recordServed` keeps which module serves which process, written while
+   wiring (S6.4.1 adds the declared ids), and `#moduleServing` answers the check. A task of
+   another module names that module, one of a process no module of the application serves says so.
+8. **A task which carries an incident** (beyond the story). At the pin a `failed` job takes no
+   completion and no failure (`ensureJobStillWaits`), so it is refused at the commit with an
+   `IllegalStateException`, not `TaskNotFoundException`: the task is there. This contradicted the
+   incident S6.1.2's `async-task-max-age-action: incident` raises, whose message advised to
+   complete or cancel the task and then resolve the incident, an order the engine refuses. Its
+   message now says to set the key back to `report` (or raise the maximum age) and resolve the
+   incident first, after which the next delivery leaves the task open again and the application can
+   end it (`ZenBpmJobHandlerTest#anOverdueTaskWithTheIncidentActionIsFailedWithoutRetries`).
+9. **Phase two of a job which ended.** A job read as `completed` or `terminated` is a WARN and
+   nothing is sent: a node which lags behind answers an earlier state, never a later one (a
+   `failed` one is repeated, see the answers to the reviews below). A `404` or `409` of
+   the command is a WARN too, and so is a `409` of the `PATCH` (decision 34). Measured end to end:
+   the platform probes the task before it dispatches an entry and skips one whose task ended, with a
+   WARN of its own ("Skipped phase two of canceling task ... it has ended already; the entry is
+   consumed", `ZenBpmTaskProcessingIT#completingAGoneTaskIsAWarnedNoOp`), so the adapter's WARN
+   covers a task which ends after that probe, which the fake-server tests hold. A completion of a
+   completed job is answered `201` (`repeatedCompletion`).
+10. **While a module stops** (brief question 5). Phase two is no run of a handler: it is not in the
+   drain, it uses no `ZenBpmCommandRetry`, and it is sent while a module stops. A failure which may
+   pass is thrown and the outbox repeats it. A parked job runs no handler, so the drain neither
+   counts nor waits for it; nothing changed there.
+11. **What is repeated** (brief question 6). A job or an instance the node does not know yet, a
+   `404` of the `PATCH` and an unavailable engine are thrown and repeatable; a task id which is no
+   number fails `Long.parseLong`, which `ZenBpmErrors` reads as permanent; a gone job is a WARN and
+   no exception (`ZenBpmTaskOutcomesTest#whatMayPassIsRepeated`, `#aTaskIdWhichIsNoNumberIsPermanent`).
+12. **The cancellation's incident.** Where no error event catches the code, the failure's message
+   becomes the incident's ("Task <key> (element '<id>', workflow aggregate '<id>') was cancelled
+   with BPMN error '<code>', which no error boundary event and no error event sub-process catches,
+   its code: <scoped code>"), and the job read once afterwards names it in a WARN, as the handler
+   does for a BPMN error.
+13. **ITs** (brief question 10). Spring `ZenBpmTaskProcessingIT`: the process `TaskOutcomes` got a
+   gateway on the shared `approved` behind the task left open and an error boundary event
+   `withdrawn` on it (`task-it/task-outcomes.bpmn`, diagram regenerated). The Quarkus twin
+   (`#asyncTaskIsCompletedLater`) belongs to S6.5.1; the core's tests count for the Quarkus report
+   as well, so it stays at 100 % without one.
+14. **Docs.** README status, the architecture's outline, the `COMPLETE_TASK`/`CANCEL_TASK` row of
+   the SPI mapping; the README's table of failures is unchanged.
+
+**Implemented 2026-10-18.** Core: `processservice/ZenBpmTaskOutcomes` (both phases of both
+operations), `processservice/ZenBpmKeys` (the key helpers of the task probes, moved),
+`ZenBpmProcessService` serving `COMPLETE_TASK` and `CANCEL_TASK` and sharing the start's variables,
+`ZenBpmDeployedProcesses#recordServed` and `#moduleServing` (written by `wireBpmn`),
+`ZenBpmJobStream#parkedJobEnded`; the message of the incident action in `ZenBpmJobHandler`.
+Decision 40 (new), decision 37 marked as superseded in part. README status, the architecture's
+outline, the SPI mapping.
+
+New tests: `ZenBpmTaskOutcomesTest` (29), `ZenBpmPreCommitCheckTest` (2),
+`ZenBpmJobStreamTest#aParkedJobWhoseTaskEndedLowersTheCapAtOnce`,
+`ZenBpmDeployedProcessesTest#theModuleServingAProcessIsFoundByItsScopedId`, the served processes in
+`ZenBpmWorkflowProcessingTest#aModuleSubscribesTheJobTypesOfItsClaimedProcesses`, `ZenBpmJobLockIT`
+(3 new, pinned engine), Spring Boot `ZenBpmTaskProcessingIT` (4 new) with the process `TaskOutcomes`
+extended. `ZenBpmProcessServiceTest` counts the two operations among the built ones.
+
+Seen to fail, each restored afterwards (22 of 22 mutants, against green unmutated runs): an ended
+task, and one with an incident, passing the check; the scope not checked; a node which lags behind
+not asked again; an interrupt swallowed; a key of a missing partition read as unavailable; the check
+run at the call (also against the engine); a job which ended completed all the same; the values
+written into the job's instance only; an ended workflow, and a gone completion and cancellation,
+thrown; another failure of a cancellation swallowed; the cancellation without the client id; the
+error code sent unscoped (also against the engine, where the mutant had to strip the IT's module);
+the count not ended after a completion; the count ended where nothing was sent (it survived the
+first test, which then parked a second job to tell the two apart); a cancellation nothing caught
+always warned; the stream keeping the count of an ended job; wiring recording no served process.
+
+`TZ=Etc/UTC mvn clean install` on OpenJDK 25.0.2 builds green with every integration test run and
+none skipped (engine test support 12 unit and 3 integration tests, core 939 unit and 77 integration
+tests, Spring Boot 11 unit and 31 integration tests, smoke test 37, Quarkus runtime 10, Quarkus
+deployment 51, Quarkus integration tests 3, coverage gate 37). The gate measures 100 % of 23,961
+instructions for Spring Boot and 100 % of 23,835 for Quarkus, and `bin/check-deploy-safety.sh`
+passes (13 files on a green build, nothing after a red gate). Flakes hit: the known
+`ZenBpmJobStreamTest#aConnectionNobodyAnswersIsNoReturn` ("Address already in use") once, green on
+the next run.
 
 ## F6.4 Renamed processes
 
 ### S6.4.1 Workers for declared process ids
 
-- [ ] **Depends on:** S6.1.1.
+- [x] **Depends on:** S6.1.1.
 
 **Instructions**
 
@@ -1287,7 +1438,178 @@ secondary with model B, the old workflow's task is served).
 
 **Acceptance criteria**
 
-- [ ] A workflow of a renamed process finishes after the rename under `use-prefix`.
+- [x] A workflow of a renamed process finishes after the rename under `use-prefix`.
+  `ZenBpmRenamedProcessIT#aWorkflowOfARenamedProcessFinishesAfterTheRename`: the version of the
+  application before the rename deploys `Shipping`, starts a workflow of it which waits at a timer,
+  and stops; the version after it deploys `Dispatch`, declares `Shipping` beside it, and its start
+  line says that `deploy-it__Shipping__ship` is subscribed for it. The workflow's instance of
+  `deploy-it__Shipping` ends `COMPLETED`, the shipment was shipped by the version after the rename,
+  and its `@TaskParam` `destination` was bound from the job of the old model. With the declared id
+  not served at all the workflow never ends (mutant, against the engine).
+  `ZenBpmDeclaredProcessWorkersTest#aDeclaredIdIsServedByTheTaskTypesTheEngineHolds` pins which
+  types: the task's type of every version the engine holds is subscribed with its job-timeout and
+  routed to the module, a user task's type is not, and the start's line names both and the task
+  definition no held model names.
+
+*Fit check, 2026-10-18, decided by the Implementor.* Checked against `main` with S6.3.1 on the
+branch, `ADAPTER-AUTHORS.md` (3.2: "Serving those workflows is a second matter, and that one IS
+yours"; 3.3: a declared id answers `true` to both lifecycle questions), the platform as the adapter
+resolves it (`WorkflowTaskWiring#taskWiringOfProcessesNobodyDeployed(String)` answering
+`Map<String, Collection<String>>`, a method wired by element id contributing nothing), Camunda 8's
+`Camunda8DeploymentService` (`openTheWorkersOfTheProcessesNobodyDeployed`,
+`reportWhatADeclaredIdIsServedWith`, `Camunda8ProcessVersions#predatesDeployedVersion`), its decision
+19 and `Camunda8RenamedProcessIT`, and the engine at the pin `bdd795a3` (`createUserTask` in
+`pkg/bpmn/usertasks.go`, the distribution by type in `internal/cluster/jobmanager/server.go`; the
+image run by `ZenBpmRenamedProcessIT`). What did not fit, and what was decided:
+
+1. **Names and places.** `deployment/ZenBpmDeclaredProcessWorkers`, the name the architecture's
+   layout gave it; `startWorkflowProcessing` asks it before it subscribes and records what it found
+   like the wiring of a claimed process (`WiredProcess` and the job-timeout of each type in the
+   module's context), so the types are subscribed, routed to the module, probed and unsubscribed
+   with the others, and no code of the job stream, the dispatcher or the handler changed.
+2. **User tasks are jobs at this engine** (brief question 8). The story's premise that a composed
+   type "cannot know user-task types" and so subscribes nothing for them does not hold: the engine
+   creates a user task as a job of its `zenbpm:taskDefinition` type, which the deployment scoped
+   like a task's, and the job stream hands out any job of a subscribed type. A method serving a
+   user task of the old model by task definition would compose that user task's type, and the
+   handler would complete the user task like a service task. So the models the engine holds under
+   the id are read (every version), and a composed type is subscribed only where a held model gives
+   it to an element which creates a job for a worker; a user task's type and a type no held model
+   names are named in the start's line. Where the models cannot be read, nothing is subscribed for
+   the id and a WARN says so. Decision 41 (new), because it shapes what E8 builds on: the user tasks
+   of a renamed process are read from the same models (a note under S8.1.1 says so).
+3. **The start's line** (brief question 7). One INFO per declared id names the module, the id, the
+   id the engine holds it under, the types subscribed for it, the types the deployed processes
+   subscribe already, the user tasks and the task definitions no held model names. An id whose
+   methods are all wired by element id gets the WARN of Camunda 8's decision 19 with both ways out.
+   What a job of such a workflow carries, checked at the pin and in this repository: the adapter
+   writes input mappings only into multi-instance bodies (`ZenBpmTaskParameters`); outside one a job
+   carries the variables of its scope from the engine. So the line says that, instead of the story's
+   "fetches no input mappings". `ZenBpmRenamedProcessIT` binds the `@TaskParam` `destination` of the
+   version after the rename from a job of the model the version before deployed.
+4. **Routing and the probe** (brief question 9). The declared id is recorded as a process the
+   module serves (`WiredProcess`, and `ZenBpmDeployedProcesses#recordServed`, which the check of
+   S6.3.1 reads), so the dispatcher hands a job of its instances to the module, the open-task probe
+   of the handler answers for its types (no user-task type), and a task of it can be completed
+   through the process service. Under `none` the composed type is the deployed process's type, so
+   nothing new is subscribed, and the jobs are still routed
+   (`ZenBpmDeclaredProcessWorkersTest#underNoneADeclaredIdSubscribesNoTypeOfItsOwn`).
+5. **Job-timeouts.** A composed type is subscribed with the `job-timeout` resolved for the declared
+   id and the task definition, and the rule that a type shared by two modules has one job-timeout
+   holds for it too; the conflict ends the start of the processing, since the declared ids are
+   known only after the module deployed.
+6. **`predatesDeployedVersion`** of a job of a declared id stays `false`, because nothing of this
+   start was deployed under the id, as Camunda 8's `predatesDeployedVersion` answers it.
+7. **Where the IT lives** (brief question 10). `ZenBpmRenamedProcessIT` in `springboot/it` boots
+   two applications one after the other on one named in-memory database (`it/renamed/before`,
+   deploying `Shipping` from `renamed-it/before/shipping.bpmn`, and `it/renamed/after`, deploying
+   `Dispatch` from `renamed-it/after/dispatch.bpmn` and declaring `Shipping`), both models with
+   their diagrams. The workflow waits at a timer of eight seconds, so the version before the rename
+   is closed before the task is due. The Quarkus side needs nothing beyond the core's tests, which
+   count for its report.
+
+**Implemented 2026-10-18.** Core: `deployment/ZenBpmDeclaredProcessWorkers`;
+`ZenBpmDeploymentService#startWorkflowProcessing` serves the declared ids before it subscribes
+(recorded like a claimed process: `WiredProcess`, job-timeouts, the served process of S6.3.1), and
+the two lifecycle flags of a process are read by one helper each. Decision 41 (new). README status,
+the architecture's section on user tasks, the SPI mapping, a note under S8.1.1.
+
+New tests: `ZenBpmDeclaredProcessWorkersTest` (8); Spring Boot `ZenBpmRenamedProcessIT` (1)
+with the applications `it/renamed/before` and `it/renamed/after`, the aggregate `Shipment`, the
+models `renamed-it/before/shipping.bpmn` and `renamed-it/after/dispatch.bpmn` and
+`renamed-it.yaml`. `TestWiring` answers the declared ids.
+
+Seen to fail, each restored afterwards (12 of 12 mutants, against green unmutated runs): every
+composed type served, a user task's included; a user task's type taken for one no model holds; an
+id wired by element id reading the engine; models which cannot be read serving nothing without a
+word; a failed read taken as models without tasks; a declared id not recorded as served; not routed
+to its module; its types subscribed with the default job-timeout; a type shared with another
+module not checked; a restart counting the declared types as the deployed ones; an adapter id
+without clients asking the wiring; nothing of a declared id served (against the engine:
+`ZenBpmRenamedProcessIT` waits for the workflow in vain).
+
+`TZ=Etc/UTC mvn clean install` on OpenJDK 25.0.2 builds green with every integration test run and
+none skipped (engine test support 12 unit and 3 integration tests, core 947 unit and 77 integration
+tests, Spring Boot 11 unit and 32 integration tests, smoke test 37, Quarkus runtime 10, Quarkus
+deployment 51, Quarkus integration tests 3, coverage gate 37). The gate measures 100 % of 24,501
+instructions for Spring Boot and 100 % of 24,375 for Quarkus, and `bin/check-deploy-safety.sh`
+passes (13 files on a green build, nothing after a red gate). No flake was hit.
+
+**Answers to two reviews of S6.3.1 and S6.4.1, 2026-10-18** (one by Claude, approve after the
+Minor ones, 2 Minor and 3 Nit; one by Copilot, request changes, 2 Major). Every claim was checked
+in the code of the branch and in the engine at the pin `bdd795a3`. All seven findings were valid
+and are fixed.
+
+- **A type a held model gives to a task in one version and to a user task in another was served**
+  (Copilot 1, Major). `ZenBpmDeclaredProcessWorkers#compose` looked for the type among the held
+  tasks first, so such a type was subscribed, and the user task's job was run and completed like a
+  service task's (the handler reports every job as a task). Copilot reproduced it against the
+  pinned image. A user task is never taken from the stream (E8 polls user tasks), and the job's type
+  cannot tell the two apart, so a type any held version gives to a user task is now never
+  subscribed, even where another version gives it to a task, and the start's line names it; the
+  workflows of the version with the task stand still at it. Decision 41, written in this batch and
+  not merged before, was corrected in place. Copilot suggested guarding by the delivered element
+  type instead; that would leave the user task's job locked to the stream and handed out again at
+  every lapse, so it was not taken.
+- **A held model with a task served elsewhere made every version unreadable** (Copilot 2, Major).
+  `ZenBpmModelReader` gives such a task no task definition, and adding `null` to the set of types
+  threw; the catch read it as models which cannot be read, so nothing of the id was served, at
+  every start. A task without a task definition now gives no type, as in the deployment.
+- **Phase two dropped the outcome of a task which carries an incident** (Claude 1, Minor). A
+  `failed` job was read as ended, a WARN, and the outbox entry was done, although resolving the
+  incident makes the job wait again, and the probes and the check call it still there. Phase two
+  now throws a repeatable `IllegalStateException` for it (naming `async-task-max-age-action`), and
+  after a `409` of the command it reads the job once more and throws the same where it is `failed`,
+  so the outbox repeats the completion or cancellation until the incident is resolved. A
+  cancellation nothing catches raises such an incident itself; where its answer was lost, the
+  repeat waits for that incident's resolution too, and then cancels again, which is what the
+  application asked.
+- **A failed read of the task's instance in the check named no key** (Claude 2, Minor). The
+  instance read now ends the transaction with the job read's message, naming `rest-address` and
+  `request-timeout`.
+- **The WARN about held models which cannot be read named no cause** (Claude 3, Nit). It now carries
+  the read's failure, and says that the next start reads them again.
+- **No test against the engine for the user-task half of decision 41** (Claude 4, Nit).
+  `ZenBpmDeploymentServiceIT#aDeclaredIdIsServedOnlyByTypesNoHeldUserTaskCarries` deploys two
+  versions under a declared id to the pinned engine: one with a task of `ship` and a task without a
+  task definition, one with a user task of `ship` and a task of `pack`; only `pack` is served.
+- **The start's line printed empty lists** (Claude 5, Nit). A clause without names is left out,
+  and a declared id nothing serves is a WARN.
+
+New tests: `ZenBpmTaskOutcomesTest#aTaskWhichCarriesAnIncidentIsRepeated`,
+`#aCommandRefusedForAJobWhichCarriesAnIncidentIsRepeated`,
+`#aJobWhichCannotBeReadAfterARefusalIsRepeated`,
+`#anEngineWhichDoesNotAnswerForTheInstanceRollsTheTransactionBack`;
+`ZenBpmDeclaredProcessWorkersTest#aTypeAUserTaskOfAnyVersionCarriesIsNotServed`,
+`#aTaskWithoutATaskDefinitionInAHeldModelIsPassedOver`, `#aDeclaredIdNothingServesIsAWarn`; the IT
+above. `#aTaskWhichEndedMeanwhileIsAWarnedNoOp` no longer counts `failed` among the ended states.
+
+Seen to fail, each restored afterwards (9 of 9 mutants, against green unmutated runs, two of them
+also against the engine): the user tasks' types looked at after the tasks' (also against the
+engine); a task without a task definition not passed over (also against the engine); phase two
+without the check for a `failed` job; the read after a refused completion left out, and after a
+refused cancellation; the instance read of the check not wrapped; the refusal not kept with a
+failed read after it; a declared id nothing serves logged at INFO; an empty clause printed.
+
+`TZ=Etc/UTC mvn clean install` on OpenJDK 25.0.2 builds green after the fixes with every
+integration test run and none skipped (engine test support 12 unit and 3 integration tests, core
+953 unit and 78 integration tests, Spring Boot 11 unit and 32 integration tests, smoke test 37,
+Quarkus runtime 10, Quarkus deployment 51, Quarkus integration tests 3, coverage gate 37). The gate
+measures 100 % of 24,685 instructions for Spring Boot and 100 % of 24,559 for Quarkus, and
+`bin/check-deploy-safety.sh` passes (13 files on a green build, nothing after a red gate). No flake
+was hit.
+
+CodeRabbit's review of pull request #49 had one comment, valid: `ZenBpmDeployedProcesses` let the
+last workflow module which recorded a process win. The check of colliding process ids sees only
+the deployed ones, and the platform names a declared id per module, so under `none` a module which
+declares `Orders` without a model took the process over from the module which claims it, and the
+check before the commit then refused that module's own tasks. A process now stays the first
+module's, and the start of the second ends with a message naming both modules and the
+`name-clash-avoidance` keys (`ZenBpmDeclaredProcessWorkersTest#aDeclaredIdAnotherModuleClaimsIsRefused`,
+`ZenBpmDeployedProcessesTest#aProcessServedByOneModuleStaysThatModules`; 3 of 3 mutants killed:
+the old `put`, the same module refused on a restart, no refusal). The full build ran
+again green, none skipped (core 955 unit and 78 integration tests; 100 % of 24,751 and 24,625
+instructions), and `bin/check-deploy-safety.sh` passes.
 
 ## F6.5 Idempotency and restarts on both platforms
 

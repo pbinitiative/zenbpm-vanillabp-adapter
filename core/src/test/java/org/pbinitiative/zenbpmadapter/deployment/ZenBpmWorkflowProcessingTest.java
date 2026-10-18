@@ -18,6 +18,7 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.locks.LockSupport;
 
@@ -94,7 +95,7 @@ class ZenBpmWorkflowProcessingTest {
     }
 
     @Test
-    @DisplayName("A module subscribes the job types of its claimed processes, each with the job-timeout of its task and the handler slots as the cap, none of a process nobody claims, registers the factory's hook, and unsubscribes them and removes the hook when it stops, once")
+    @DisplayName("A module subscribes the job types of its claimed processes, each with the job-timeout of its task and the handler slots as the cap, none of a process nobody claims, which it does not serve either, registers the factory's hook, and unsubscribes them and removes the hook when it stops, once")
     void aModuleSubscribesTheJobTypesOfItsClaimedProcesses() {
         final var deploymentService = new ZenBpmDeploymentService(ADAPTER_ID, registry, TestCollaborators.of(
                 ADAPTER_ID, TestScoping.of(NameClashAvoidance.USE_PREFIX), TestWiring
@@ -144,7 +145,13 @@ class ZenBpmWorkflowProcessingTest {
                         "TYPE_UNSUBSCRIBE shop__Orders__pack"),
                         described(all.subList(3, all.size()))),
                 () -> assertEquals(6, all.size()),
-                () -> assertEquals(Set.of(), factory.getOpenWorkflowModules()));
+                () -> assertEquals(Set.of(), factory.getOpenWorkflowModules()),
+                () -> assertEquals(Optional.of("shop"), factory
+                        .deployedProcesses()
+                        .moduleServing("shop__Orders")),
+                () -> assertEquals(Optional.empty(), factory
+                        .deployedProcesses()
+                        .moduleServing("shop__Partner")));
     }
 
     @Test

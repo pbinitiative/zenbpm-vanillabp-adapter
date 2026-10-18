@@ -12,9 +12,10 @@ import jakarta.persistence.Table;
 
 /**
  * The workflow aggregate of the outcomes other than a completion: a BPMN error, raised with the code
- * the claim names, and a task left open for its asynchronous completion. It shares which of the two
- * the workflow runs, and whether the claim is refundable, which the path of the error boundary event
- * decides on.
+ * the claim names, and a task left open for its asynchronous completion, which the application
+ * completes or cancels later. It shares which of the two the workflow runs, whether the claim is
+ * refundable, which the path of the error boundary event decides on, and whether it was approved,
+ * which the gateway behind the task left open decides on.
  */
 @NoSyncWithBPMS
 @Entity
@@ -39,6 +40,9 @@ public class Claim {
 
     @SyncWithBPMS
     private boolean refundable;
+
+    @SyncWithBPMS
+    private boolean approved;
 
     private String errorCode;
 
@@ -97,6 +101,23 @@ public class Claim {
      */
     public boolean isRefundable() {
         return refundable;
+    }
+
+    /**
+     * Whether the application approved the claim, which the gateway behind the task left open
+     * decides on.
+     *
+     * @return Whether it is approved
+     */
+    public boolean isApproved() {
+        return approved;
+    }
+
+    /**
+     * Approves the claim, before the application completes the task left open.
+     */
+    public void approve() {
+        this.approved = true;
     }
 
     /**

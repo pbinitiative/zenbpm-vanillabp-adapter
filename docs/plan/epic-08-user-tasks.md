@@ -58,6 +58,14 @@ tasks of instruction 1 to `WiredProcess`, or beside it.
 An interval above zero but below one second polls the engine almost without pause: WARN at startup
 naming the key, as the configuration refuses only negative values.
 
+*Note from S6.4.1, 2026-10-18.* A process id a workflow module declares without a model (the old id
+of a renamed process) has user tasks as well, and only the models the engine holds under that id
+say which types they have. `deployment/ZenBpmDeclaredProcessWorkers` reads those models already
+(every version) and names the user-task types it found in the start's line; decision 41 keeps them
+off the job stream. Poll the user-task types of a declared id from the same read (Camunda 8's
+decision 19 reads its user-task listeners from the held models for the same reason), so a user task
+created in a workflow of the old id after the rename is notified.
+
 *Note from S2.4.2, 2026-10-15.* The poller runs on a timing thread, so it hands a notification to a
 handler slot with `ZenBpmExecutor.tryExecute`, which never waits, and not with `execute`, which
 waits for a slot and would hold the timing thread for as long as a handler runs. A notification
@@ -90,6 +98,19 @@ in scope, a gone task throws `io.vanillabp.spi.process.TaskNotFoundException` as
 two `patchVariables` + `completeJob` resp. `failJob(key, scopedErrorCode, values)`. The engine
 routes a boundary error event on a user task like on a service task, which is the one thing this
 adapter can do and Camunda 8 cannot - say so in the README. `awarenessOfUserTask` is S5.2.2.
+
+*Note from S6.3.1, 2026-10-18.* Both handlers of a task the application left open are
+`processservice/ZenBpmTaskOutcomes`: the check before the commit (`active`, of a process the module
+serves by `ZenBpmDeployedProcesses#moduleServing`; ended or unknown within
+`workflow-visibility-timeout` is `TaskNotFoundException`, another module's or `failed` an
+`IllegalStateException`) and phase two (the values up to the root, then `complete` or `fail` with
+the scoped code, no delivery token, this node's client id; a job which ended is a WARN). A user task
+is a job, so build the two user-task handlers from the same class instead of a copy; its messages say
+"task", so give it the word for a user task then. The platform probes a task before phase one and
+before it dispatches an entry, and ignores or skips one whose task ended with a WARN of its own, so
+the `TaskNotFoundException` of the check shows only for a task which ends between the call and the
+commit (`ZenBpmTaskProcessingIT#aTaskWhichEndsBeforeTheCommitIsNotFoundAtTheCommit` is the shape of
+`#completingAUserTaskWhichIsGoneThrowsTaskNotFound`).
 
 **Tests**: `ZenBpmUserTaskIT#completeUserTaskContinuesWithSharedValues`,
 `#cancelUserTaskRoutesTheBoundaryEvent`, `#completingAGoneUserTaskIsAWarnedNoOp`,

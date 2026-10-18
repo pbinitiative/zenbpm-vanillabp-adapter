@@ -529,15 +529,9 @@ public class ZenBpmDeploymentService implements AdapterDeploymentService<ZenBpmB
                                 .userTasks()
                                 .stream())
                 .toList());
-        final var starts = collaborators.bpmsInitiatedStartInvoker();
-        starts.ifPresent(invoker -> reportTheStarts(invoker, workflowModuleId, bpmnProcessId, model));
-        final boolean reportsItsStart = starts
-                .map(invoker -> invoker.startsAWorkflowOfItsOwn(workflowModuleId, bpmnProcessId))
-                .orElse(false);
-        final boolean reportsItsEnd = collaborators
-                .workflowEndedInvoker()
-                .map(invoker -> invoker.workflowEndedHandlerExists(workflowModuleId, bpmnProcessId))
-                .orElse(false);
+        collaborators
+                .bpmsInitiatedStartInvoker()
+                .ifPresent(invoker -> reportTheStarts(invoker, workflowModuleId, bpmnProcessId, model));
         wiring.reportConcurrentTokenElements(workflowModuleId, bpmnProcessId, model.concurrentTokenElements());
         ZenBpmMultiInstanceItems.refuseItemsNoElementHandsOver(model, workflowModuleId, wiring);
         ZenBpmCallActivities.carryTheAggregateId(model, workflowModuleId, wiring);
@@ -557,8 +551,10 @@ public class ZenBpmDeploymentService implements AdapterDeploymentService<ZenBpmB
                     refuseAnotherJobTimeoutOfASharedType(jobType,
                             new ModuleJobTimeout(workflowModuleId, bpmnProcessId, task.taskDefinition(), jobTimeout));
                 });
-        context.recordWiring(new WiredProcess(bpmnProcessId, scoping.scopedProcessId(workflowModuleId, bpmnProcessId,
-                adapterId), jobTypes, reportsItsStart, reportsItsEnd));
+        final var scopedProcessId = scoping.scopedProcessId(workflowModuleId, bpmnProcessId, adapterId);
+        context.recordWiring(new WiredProcess(bpmnProcessId, scopedProcessId, jobTypes, reportsItsStart(
+                workflowModuleId, bpmnProcessId), reportsItsEnd(workflowModuleId, bpmnProcessId)));
+        recordServed(workflowModuleId, bpmnProcessId, scopedProcessId);
         log.info(
                 "ZenBPM[{}]: wired {} task(s) and {} user task(s) of BPMN process '{}' (file '{}', workflow module '{}')",
                 adapterId, model
@@ -663,7 +659,13 @@ public class ZenBpmDeploymentService implements AdapterDeploymentService<ZenBpmB
      * it. The hook which stops the module where the client factory closes first is registered
      * before the first subscription, so a factory which closes already refuses the module before
      * anything is subscribed. A job type two workflow modules share stays subscribed until both
-     * stopped. A module without a job type subscribes nothing and asks the engine nothing.
+     * stopped. A module without a job type subscribes nothing.
+     * <p>
+     * The workflows of a process id the module declares without bringing a model for it, such as
+     * the old id of a renamed process, are served as well, by the job types the methods serving
+     * that id name where a model the engine holds under the id gives them to a task, see
+     * {@link ZenBpmDeclaredProcessWorkers} and decision 41 in the repository's DECISIONS.md; the
+     * engine is asked for those models only where the module declares such an id.
      * <p>
      * The module's {@link ZenBpmJobHandler} is registered with the {@link ZenBpmJobDispatcher} of
      * this adapter id before the first subscription, so the first job finds it. Every type is
@@ -680,6 +682,11 @@ public class ZenBpmDeploymentService implements AdapterDeploymentService<ZenBpmB
         final String workflowModuleId,
         final ZenBpmProcessingContext context
     ) {
+        // an adapter id without clients has no engine to read the models of a declared process from,
+        // and refuses below where the module subscribes anything
+        if (factory.isConfigured()) {
+            serveTheProcessesNobodyDeployed(workflowModuleId, context);
+        }
         final var jobTypes = context.jobTypes();
         if (jobTypes.isEmpty()) {
             log.info("ZenBPM[{}]: workflow module '{}' has no job type to subscribe", adapterId, workflowModuleId);
@@ -781,6 +788,105 @@ public class ZenBpmDeploymentService implements AdapterDeploymentService<ZenBpmB
                     grace);
         }
         ZenBpmDrain.awaitEveryModuleQuiet(stopped, grace);
+    }
+
+    // a job goes to the workflow module which serves the process of its instance, so a process the
+    // engine knows under one id is served by one module: under none a module which declares a
+    // process without a model may name the process another module claims, which the check of the
+    // deployed ids does not see
+    private void recordServed(
+        final String workflowModuleId,
+        final String bpmnProcessId,
+        final String scopedProcessId
+    ) {
+        factory
+                .deployedProcesses()
+                .recordServed(workflowModuleId, scopedProcessId)
+                .ifPresent(other -> {
+                    throw new IllegalStateException("""
+                            Workflow modules '%s' and '%s' both serve the workflows of BPMN process '%s', which \
+                            ZenBPM (adapter '%s') knows as '%s', so whose task a job of them is cannot be said. One \
+                            of them declares the process without bringing a model for it, under name-clash-avoidance \
+                            'none'. Let one workflow module only serve that process, or keep the modules' ids apart \
+                            with vanillabp.adapters.%s.name-clash-avoidance: use-prefix (or \
+                            vanillabp.workflow-modules.%s.adapters.%s.name-clash-avoidance) before any workflow of \
+                            them runs: changing it later is a BPMS migration."""
+                            .formatted(other, workflowModuleId, bpmnProcessId, adapterId, scopedProcessId, adapterId,
+                                    workflowModuleId, adapterId));
+                });
+    }
+
+    // the job types are recorded like those of a claimed process, so they are subscribed, routed to
+    // the module and unsubscribed with the others
+    private void serveTheProcessesNobodyDeployed(
+        final String workflowModuleId,
+        final ZenBpmProcessingContext context
+    ) {
+        final var declared = collaborators
+                .workflowTaskWiring()
+                .taskWiringOfProcessesNobodyDeployed(workflowModuleId);
+        if (declared.isEmpty()) {
+            return;
+        }
+        final var subscribedBefore = new LinkedHashSet<String>();
+        context
+                .wiredProcesses()
+                .values()
+                .stream()
+                .filter(process -> !declared.containsKey(process.bpmnProcessId()))
+                .forEach(process -> subscribedBefore.addAll(process.jobTypes()));
+        new ZenBpmDeclaredProcessWorkers(adapterId, factory, collaborators)
+                .compose(workflowModuleId, declared, subscribedBefore)
+                .forEach(process -> serve(workflowModuleId, process, context));
+    }
+
+    private void serve(
+        final String workflowModuleId,
+        final ZenBpmDeclaredProcessWorkers.DeclaredProcess declared,
+        final ZenBpmProcessingContext context
+    ) {
+        final var bpmnProcessId = declared.bpmnProcessId();
+        recordServed(workflowModuleId, bpmnProcessId, declared.scopedBpmnProcessId());
+        if (declared
+                .jobTypes()
+                .isEmpty()) {
+            return;
+        }
+        declared
+                .jobTypes()
+                .forEach((
+                    taskDefinition,
+                    jobType) -> {
+                    final var jobTimeout = jobTimeouts.jobTimeoutFor(workflowModuleId, bpmnProcessId, taskDefinition);
+                    context.recordJobTimeout(jobType, jobTimeout, bpmnProcessId, taskDefinition, adapterId);
+                    refuseAnotherJobTimeoutOfASharedType(jobType,
+                            new ModuleJobTimeout(workflowModuleId, bpmnProcessId, taskDefinition, jobTimeout));
+                });
+        context.recordWiring(
+                new WiredProcess(bpmnProcessId, declared.scopedBpmnProcessId(), new LinkedHashSet<>(declared
+                        .jobTypes()
+                        .values()), reportsItsStart(workflowModuleId, bpmnProcessId), reportsItsEnd(workflowModuleId,
+                                bpmnProcessId)));
+    }
+
+    private boolean reportsItsStart(
+        final String workflowModuleId,
+        final String bpmnProcessId
+    ) {
+        return collaborators
+                .bpmsInitiatedStartInvoker()
+                .map(invoker -> invoker.startsAWorkflowOfItsOwn(workflowModuleId, bpmnProcessId))
+                .orElse(false);
+    }
+
+    private boolean reportsItsEnd(
+        final String workflowModuleId,
+        final String bpmnProcessId
+    ) {
+        return collaborators
+                .workflowEndedInvoker()
+                .map(invoker -> invoker.workflowEndedHandlerExists(workflowModuleId, bpmnProcessId))
+                .orElse(false);
     }
 
     // two workflow modules share a job type where its name is not scoped, and the job stream keeps

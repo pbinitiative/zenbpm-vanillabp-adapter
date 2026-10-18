@@ -20,6 +20,7 @@ import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.concurrent.locks.LockSupport;
 import java.util.function.Supplier;
 
@@ -45,6 +46,7 @@ import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
 import io.vanillabp.integration.adapter.spi.NameClashAvoidance;
+import io.vanillabp.integration.test.utils.CapturedOutput;
 import io.vanillabp.integration.test.utils.SuppressOutputExtension;
 
 /**
@@ -283,6 +285,52 @@ class ZenBpmDeploymentServiceIT {
                 of the workflow module.""", failure.getMessage());
     }
 
+    @Test
+    @DisplayName("A process id declared without a model is served by the types the models the engine holds under it give to a task and to no user task, in any version, a task without a task definition passed over")
+    void aDeclaredIdIsServedOnlyByTypesNoHeldUserTaskCarries(final CapturedOutput output) {
+        rest.deployBpmn(heldUnderTheDeclaredId(
+                """
+                        <bpmn:serviceTask id="Ship">
+                          <bpmn:extensionElements><zenbpm:taskDefinition type="declared-it__Old__ship" /></bpmn:extensionElements>
+                        </bpmn:serviceTask>
+                        <bpmn:serviceTask id="Label" />"""));
+        rest.deployBpmn(heldUnderTheDeclaredId(
+                """
+                        <bpmn:userTask id="Ship">
+                          <bpmn:extensionElements><zenbpm:taskDefinition type="declared-it__Old__ship" /></bpmn:extensionElements>
+                        </bpmn:userTask>
+                        <bpmn:serviceTask id="Pack">
+                          <bpmn:extensionElements><zenbpm:taskDefinition type="declared-it__Old__pack" /></bpmn:extensionElements>
+                        </bpmn:serviceTask>"""));
+        final var deploymentService = deploymentService(NameClashAvoidance.USE_PREFIX, TestWiring
+                .claiming("Version1")
+                .declaringWithoutAModel("Old", "pack", "ship"));
+        final var context = prepared(deploymentService, "declared-it", "version-1.bpmn", "Version1");
+
+        deploymentService.startWorkflowProcessing("declared-it", context);
+        deploymentService.stopWorkflowProcessing("declared-it", context);
+
+        assertAll(
+                () -> assertEquals(2, rest
+                        .processDefinitions("declared-it__Old", false)
+                        .size()),
+                () -> assertEquals(Set.of("declared-it__Old__pack"), context
+                        .wiredProcesses()
+                        .get("Old")
+                        .jobTypes()),
+                () -> assertTrue(output
+                        .getOutOfThisTest()
+                        .contains(
+                                """
+                                        its workflows are served by the job types [declared-it__Old__pack] subscribed for it. \
+                                        Not served: the task definition(s) [ship], which a user task of a model held under that \
+                                        id carries"""),
+                        output::getOutOfThisTest),
+                () -> assertFalse(output
+                        .getOutOfThisTest()
+                        .contains("could not be read"), output::getOutOfThisTest));
+    }
+
     private static void deploy(
         final TestWiring wiring,
         final String workflowModuleId,
@@ -325,6 +373,20 @@ class ZenBpmDeploymentServiceIT {
                 model);
         deploymentService.wireBpmn(workflowModuleId, filename, bpmnProcessId, model, context);
         return context;
+    }
+
+    // a version of the process an earlier version of the application deployed under the old id
+    private static byte[] heldUnderTheDeclaredId(final String tasks) {
+        return """
+                <?xml version="1.0" encoding="UTF-8"?>
+                <bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL"
+                    xmlns:zenbpm="http://zenbpm.pbinitiative.org/1.0" id="declared-it" targetNamespace="test">
+                  <bpmn:process id="declared-it__Old" isExecutable="true">
+                    <bpmn:startEvent id="Start" />
+                    %s
+                  </bpmn:process>
+                </bpmn:definitions>
+                """.formatted(tasks).getBytes(StandardCharsets.UTF_8);
     }
 
     private static JobRef activeJob(final String jobType) {

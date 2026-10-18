@@ -15,6 +15,11 @@ import java.util.concurrent.ConcurrentHashMap;
  * writes it, and the services which later name a process by its definition read it, so they do
  * not have to ask the engine for what the start learned already.
  * <p>
+ * It also knows which workflow module serves the instances of a process, by the id the engine
+ * knows the process under: every process a workflow service claims, and every process id a
+ * workflow service declares without bringing a model for it, such as the old id of a renamed
+ * process. That is what decides whose task a job is, wherever a job is met.
+ * <p>
  * The client factory of the adapter id keeps it, because every service of the adapter id holds
  * that factory. It is filled while the application starts and read from any thread afterwards.
  */
@@ -23,6 +28,12 @@ public final class ZenBpmDeployedProcesses {
     private final Map<ProcessOfModule, DeployedProcess> byProcess = new ConcurrentHashMap<>();
 
     private final Map<Long, DeployedProcess> byKey = new ConcurrentHashMap<>();
+
+    /**
+     * The workflow module which serves the instances of a process, by the id the engine knows the
+     * process under.
+     */
+    private final Map<String, String> servingModules = new ConcurrentHashMap<>();
 
     /**
      * Nothing deployed yet: the client factory of an adapter id builds one.
@@ -112,6 +123,35 @@ public final class ZenBpmDeployedProcesses {
         final String scopedBpmnProcessId
     ) {
         return scopedIdsOf(workflowModuleId).contains(scopedBpmnProcessId);
+    }
+
+    /**
+     * Remembers that a workflow module serves the instances of a process: one a workflow service
+     * claims, or one it declares without bringing a model for it. A process another workflow
+     * module serves already stays that module's, and the caller learns which one it is.
+     *
+     * @param workflowModuleId The workflow module
+     * @param scopedBpmnProcessId The process id as the engine knows it
+     * @return The other workflow module which serves the process already, empty where none does
+     */
+    public Optional<String> recordServed(
+        final String workflowModuleId,
+        final String scopedBpmnProcessId
+    ) {
+        return Optional
+                .ofNullable(servingModules.putIfAbsent(scopedBpmnProcessId, workflowModuleId))
+                .filter(before -> !before.equals(workflowModuleId));
+    }
+
+    /**
+     * The workflow module which serves the instances of a process.
+     *
+     * @param scopedBpmnProcessId The process id as the engine knows it
+     * @return The workflow module, empty where no workflow module of this application serves the
+     *         process
+     */
+    public Optional<String> moduleServing(final String scopedBpmnProcessId) {
+        return Optional.ofNullable(servingModules.get(scopedBpmnProcessId));
     }
 
     private Optional<DeployedProcess> deployed(

@@ -556,8 +556,10 @@ public final class ZenBpmJobHandler {
         final var message = """
                 Task '%s' of workflow aggregate '%s' (process '%s' of workflow module '%s') has waited for its \
                 asynchronous completion for %s, longer than vanillabp.delivery.max-task-age allows. The application \
-                owes it a ProcessService#completeTask or #cancelTask. Complete or cancel it and resolve this \
-                incident, raise the maximum age where such a wait is legitimate, or set %s back to 'report'."""
+                owes it a ProcessService#completeTask or #cancelTask, which the engine takes only once this incident \
+                is resolved. Set %s back to 'report', or raise the maximum age where such a wait is legitimate, then \
+                resolve this incident: the next delivery leaves the task open again, and the application can complete \
+                or cancel it."""
                 .formatted(delivery.taskDefinition(), aggregate.id(), delivery.plainProcessId(), workflowModuleId,
                         openFor, ZenBpmAdapterConfiguration.propertyKey(adapterId, "async-task-max-age-action"));
         log.warn("ZenBPM[{}]: job {} is failed without retries, so an incident shows it: {}", adapterId, received

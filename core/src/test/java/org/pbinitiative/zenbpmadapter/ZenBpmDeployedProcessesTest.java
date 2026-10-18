@@ -50,4 +50,36 @@ class ZenBpmDeployedProcessesTest {
                 () -> assertFalse(deployed.ownsScopedProcessId("shop", "billing__Order")));
     }
 
+    @Test
+    @DisplayName("The workflow module which serves a process is found by the id the engine knows the process under, whether the module deployed it or not")
+    void theModuleServingAProcessIsFoundByItsScopedId() {
+        final var deployed = new ZenBpmDeployedProcesses();
+        deployed.recordServed("shop", "shop__Order");
+        deployed.recordServed("shop", "shop__OrderBeforeTheRename");
+        deployed.recordServed("billing", "billing__Order");
+
+        assertAll(
+                () -> assertEquals(Optional.of("shop"), deployed.moduleServing("shop__Order")),
+                () -> assertEquals(Optional.of("shop"), deployed.moduleServing("shop__OrderBeforeTheRename")),
+                () -> assertEquals(Optional.of("billing"), deployed.moduleServing("billing__Order")),
+                () -> assertEquals(Optional.empty(), deployed.moduleServing("crm__Order")),
+                () -> assertEquals(List.of(), deployed.scopedIdsOf("shop")));
+    }
+
+    @Test
+    @DisplayName("A process a workflow module serves stays that module's when another module records it, which learns who serves it; the same module may record it again")
+    void aProcessServedByOneModuleStaysThatModules() {
+        final var deployed = new ZenBpmDeployedProcesses();
+
+        final var first = deployed.recordServed("shop", "Order");
+        final var again = deployed.recordServed("shop", "Order");
+        final var other = deployed.recordServed("billing", "Order");
+
+        assertAll(
+                () -> assertEquals(Optional.empty(), first),
+                () -> assertEquals(Optional.empty(), again),
+                () -> assertEquals(Optional.of("shop"), other),
+                () -> assertEquals(Optional.of("shop"), deployed.moduleServing("Order")));
+    }
+
 }

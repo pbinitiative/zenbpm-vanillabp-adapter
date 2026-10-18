@@ -605,6 +605,10 @@ Subscribing every type with the engine's largest cap instead was rejected: it le
 application take every waiting job of a type, while the other nodes stay idle and the jobs wait in
 front of its busy slots.
 
+*"one completed or taken away meanwhile counts until its lock would have lapsed" is superseded in
+part by decision 40: a parked job whose task the application completes or cancels on the node which
+parked it stops counting as soon as the engine dropped its lock.*
+
 ### 38. The adapter writes no default of retries into a model and sends a backoff only where one is configured
 
 Decided by the implementation pipeline in place of the maintainers, as their policy for the
@@ -662,3 +666,85 @@ stream after the wait, and the engine then drops every lock of the adapter's cli
 jobs a cut-off handler held and the ones which waited for a handler slot go to another node at once
 (measured: within about a tenth of a second, against a job-timeout of a minute), with their retries
 untouched. The delivery record of the platform decides whether the work runs again.
+
+### 40. A task the application completes or cancels is ended without a delivery, and stops counting where it was parked
+
+Decided by the implementation pipeline in place of the maintainers, as their policy for the
+autonomous run asks. It supersedes in part decision 37, whose parked job counted until its lock
+would have lapsed once its task was completed.
+
+The application completes or cancels a task it left open through the process service, on
+whichever node of the application it runs, and it holds the task id only, not the delivery of the
+job stream which parked it. At the pinned commit `bdd795a3` the engine completes a job whoever asks
+and without any delivery, and drops its lock (`completeJob` and `releaseLock` in
+`internal/cluster/jobmanager/server.go`: "a REST client which never held the lock may complete a
+job"). It fails a job whoever asks as well, but a failure which names no delivery releases the lock
+only where the client id it names holds it (`releaseLockOfFailedDelivery`), and a command it refuses
+because the job ended drops the lock too (`releaseLockOfEndedJob`). A job which ended without a
+command, taken away by an event of the model or by the end of its workflow, keeps its lock until the
+lock lapses: nothing else removes it. `ZenBpmJobLockIT` measured the three cases against the pinned
+image: a completion by a client which names no client id, and a failure which names the holder's
+client id, let the holder's next job of the type in at once; a failure which names another client
+id leaves the slot taken.
+
+So phase two of a completion and of a cancellation sends no delivery token, and a cancellation, a
+failure with the error code, names the job stream's client id of the node which sends it. Reading
+the job's current token and sending it was rejected: where the engine hands the job out again
+between the read and the failure, it answers the failure `409`, which reads as a job which ended,
+and the cancellation would be lost.
+
+Where the engine dropped the lock, after a completion, after a cancellation sent from the node which
+parked the job, or after a command refused because the job ended, that node ends the job's count at
+once, so the cap of its type does not let in a job more than it has slots. Where nothing was sent,
+because the job had ended already, the count stays until the lock would have lapsed, as long as the
+engine counts it. On any other node nothing is counted: there the holder's count of a completed job
+lets in at most one job too many per such task until the lock would have lapsed, which waits for a
+free slot like any other, as decision 37 allows; a cancellation sent from another node leaves the
+engine's lock and the holder's count alike.
+
+### 41. A process id the application declares without a model is served where a model the engine holds makes its task definitions tasks
+
+Decided by the implementation pipeline in place of the maintainers, as their policy for the
+autonomous run asks.
+
+A workflow module may declare a BPMN process id under which it deploys nothing, which is how a
+renamed process keeps being served: the workflows started before the rename still run in the
+engine, on the models an earlier version of the application deployed under the old id. Under
+`use-prefix` a job type carries the process it was deployed with, so the jobs of those workflows
+carry names no subscription of the deployed processes asks for, and nobody notices, because a job
+nobody takes has not failed. The platform names, per such id, what the application's methods serve
+(`taskWiringOfProcessesNobodyDeployed`): today the task definition of every method, and nothing for
+a method wired by element id. The adapter composes a job type from each, scoped by the id as the
+deployment of the id scoped it, which is the shape of the Camunda 8 adapter (its decision 19).
+
+Composing alone is not enough on this engine. At the pinned commit `bdd795a3` the engine creates a
+user task as a job like any other (`createUserTask` calls `createInternalTask` in
+`pkg/bpmn/usertasks.go`), typed by its `zenbpm:taskDefinition`, which the deployment scoped like the
+type of a task, and the job stream hands out every job of a subscribed type. So a type composed from
+the task definition of a method serving a user task is that user task's type, and the job stream
+would hand the user task to a handler, which would run it and complete it like a service task: a
+task meant for a person done by nobody. Camunda 8 opens both kinds of subscription and lets the
+wrong one stay idle, because there a user task is no job.
+
+So the adapter reads the models the engine holds under the id, every version, because the
+workflows still running may run on any of them: one request for the versions and one per version.
+A composed type is subscribed only where one of those models gives it to an element which creates a
+job for a worker and none of them gives it to a user task: where one version gives a type to a task
+and another to a user task, a job of that type cannot be told apart by its type, so the type is not
+subscribed and the workflows of the version with the task stand still at it. One they give to a
+user task is named at startup and left to the handling of user tasks, which reads it from the same
+models; one they give to no element is named as well and subscribes nothing, because no job of
+those workflows carries it. A task served elsewhere names no task definition and gives no type. Where the models cannot be read,
+nothing is subscribed for the id and a WARN says so, because a guess could serve a user task as a
+service task; the next start of the application serves those workflows. The models are read while
+the workflow module starts its processing, right after its deployment reached the engine.
+
+A method wired by element id names no task definition, so no job type can be composed for it, and
+its workflows stand still; the start says so and names both ways out, as Camunda 8 does: wire the
+method by task definition, or keep deploying the old model under its old id until its workflows
+ended. Where a composed type is one a deployed process subscribes already, under `none` or under
+`use-prefix` without per-process task definitions, nothing is subscribed twice, but the declared id
+is recorded with its types all the same, because a job goes to the workflow module which serves the
+process of its instance. A job of those workflows carries the variables of its scope, and inside a
+multi-instance body only what the model held maps into it, which the version of the application
+that deployed it wrote for the names its methods read then.

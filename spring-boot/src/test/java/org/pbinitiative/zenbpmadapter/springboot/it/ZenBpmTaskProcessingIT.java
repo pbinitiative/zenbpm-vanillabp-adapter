@@ -7,6 +7,7 @@ package org.pbinitiative.zenbpmadapter.springboot.it;
 import static org.junit.jupiter.api.Assertions.assertAll;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.IOException;
@@ -19,6 +20,7 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
@@ -66,9 +68,11 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.json.JsonMapper;
 
+import io.vanillabp.integration.test.utils.CapturedOutput;
 import io.vanillabp.integration.test.utils.SuppressOutputExtension;
 import io.vanillabp.integration.test.utils.delivery.TaskDeliveryLogReader;
 import io.vanillabp.spi.process.ProcessService;
+import io.vanillabp.spi.process.TaskNotFoundException;
 
 /**
  * The tasks of a booted Spring Boot application run against the pinned engine: a service task, a
@@ -83,7 +87,11 @@ import io.vanillabp.spi.process.ProcessService;
  * is routed by the error boundary event which catches its code, or ends in an incident where none
  * does, and a task left open for its asynchronous completion is parked, and parked again whenever
  * the engine hands its job out once more. A task which a timer boundary event took away is reported
- * cancelled at the next delivery of its workflow. A handler which throws is failed at the engine,
+ * cancelled at the next delivery of its workflow. A task left open which the application completes
+ * later ends its workflow, one it cancels with a BPMN error is caught by the error boundary event of
+ * the model, a task which ends between the call and the commit rolls the transaction back, and a
+ * task which ended before phase two reached it costs a WARN and nothing else. A
+ * handler which throws is failed at the engine,
  * which spends one of the retries the model gives the task and hands the job out again after the
  * configured backoff, and raises an incident after the last one; a failure repeated with its
  * delivery token counts once.
@@ -390,6 +398,110 @@ class ZenBpmTaskProcessingIT {
     }
 
     @Test
+    @DisplayName("A task left open which the application completes ends the dormant workflow, and the gateway behind it decides on what the application changed before the completion")
+    void completeTaskEndsTheDormantWorkflow() {
+        final var claimId = uniqueClaimId();
+        final var started = start(new Claim(claimId, Claim.PENDING, null));
+        final var taskId = approvalTaskOf(claimId);
+
+        transactionTemplate.executeWithoutResult(status -> {
+            final var claim = claims
+                    .findById(claimId)
+                    .orElseThrow();
+            claim.approve();
+            claimProcessService.completeTask(claim, taskId);
+        });
+        final var ended = awaitTheEndOf(started.key());
+
+        assertAll(
+                () -> assertEquals(ProcessInstanceRef.State.COMPLETED, ended.state()),
+                () -> assertTrue(visited(ended).containsAll(List.of("ApprovalDecision", "Approved")), () -> visited(
+                        ended).toString()),
+                () -> assertFalse(visited(ended).contains("Rejected"), () -> visited(ended).toString()),
+                () -> assertEquals(JobRef.State.COMPLETED, jobOf(started.key(), "AwaitApproval").state()));
+    }
+
+    @Test
+    @DisplayName("A task left open which the application cancels with a BPMN error is caught by the error boundary event of the model, which carries the code scoped")
+    void cancelTaskRoutesTheBoundaryEvent() {
+        final var claimId = uniqueClaimId();
+        final var started = start(new Claim(claimId, Claim.PENDING, null));
+        final var taskId = approvalTaskOf(claimId);
+
+        transactionTemplate.executeWithoutResult(status -> claimProcessService.cancelTask(claims
+                .findById(claimId)
+                .orElseThrow(), taskId, "withdrawn"));
+        final var ended = awaitTheEndOf(started.key());
+
+        assertAll(
+                () -> assertEquals(ProcessInstanceRef.State.COMPLETED, ended.state()),
+                () -> assertTrue(visited(ended).containsAll(List.of("Withdrawn", "ClaimWithdrawn")), () -> visited(
+                        ended).toString()),
+                () -> assertFalse(visited(ended).contains("ApprovalDecision"), () -> visited(ended).toString()),
+                () -> assertEquals(JobRef.State.TERMINATED, jobOf(started.key(), "AwaitApproval").state()));
+    }
+
+    @Test
+    @DisplayName("Phase two of a task which ended meanwhile is a WARN and nothing else, so its outbox entry is done")
+    void completingAGoneTaskIsAWarnedNoOp(final CapturedOutput output) {
+        final var claimId = uniqueClaimId();
+        final var started = start(new Claim(claimId, Claim.PENDING, null));
+        final var taskId = approvalTaskOf(claimId);
+
+        // both checks pass, as the task waits at the commit, so the second phase two finds it
+        // ended: the platform's probe of the task before it dispatches says so, and where the task
+        // ends after that probe, the adapter's command finds it ended
+        transactionTemplate.executeWithoutResult(status -> {
+            final var claim = claims
+                    .findById(claimId)
+                    .orElseThrow();
+            claimProcessService.completeTask(claim, taskId);
+            claimProcessService.cancelTask(claim, taskId, "withdrawn");
+        });
+        final var ended = awaitTheEndOf(started.key());
+        final var warned = eventually(() -> Optional
+                .of(output.getOutOfThisTest())
+                .filter(out -> out.contains("task '%s'".formatted(taskId)) && out.contains(
+                        "it has ended already; the entry is consumed")));
+
+        assertAll(
+                () -> assertEquals(ProcessInstanceRef.State.COMPLETED, ended.state()),
+                () -> assertTrue(warned.contains("WARN"), warned));
+    }
+
+    @Test
+    @DisplayName("The check of a completion runs right before the commit, not at the call: a task which ends between the two is not found, and the transaction is rolled back with the platform's TaskNotFoundException")
+    void aTaskWhichEndsBeforeTheCommitIsNotFoundAtTheCommit() {
+        final var claimId = uniqueClaimId();
+        final var started = start(new Claim(claimId, Claim.PENDING, null));
+        final var taskId = approvalTaskOf(claimId);
+
+        final var refused = assertThrows(TaskNotFoundException.class, () -> transactionTemplate
+                .executeWithoutResult(status -> {
+                    final var claim = claims
+                            .findById(claimId)
+                            .orElseThrow();
+                    claim.approve();
+                    claimProcessService.completeTask(claim, taskId);
+                    // somebody else completes the task after the call and before the commit
+                    rest().completeJob(Long.parseLong(taskId), Map.of());
+                }));
+        final var ended = awaitTheEndOf(started.key());
+
+        assertAll(
+                () -> assertTrue(refused
+                        .getMessage()
+                        .contains("task '%s' is gone, the engine holds it as completed".formatted(taskId)),
+                        refused
+                                .getMessage()),
+                () -> assertFalse(claims
+                        .findById(claimId)
+                        .orElseThrow()
+                        .isApproved()),
+                () -> assertTrue(visited(ended).contains("Rejected"), () -> visited(ended).toString()));
+    }
+
+    @Test
     @DisplayName("A task an interrupting timer boundary event took away reaches the application as cancelled at the next delivery of its workflow, and only once")
     void aTaskTakenAwayByABoundaryEventIsReportedCanceled() {
         final var reservationId = "reservation-%s".formatted(UUID.randomUUID());
@@ -586,6 +698,12 @@ class ZenBpmTaskProcessingIT {
                 .items()
                 .stream()
                 .findFirst());
+    }
+
+    private String approvalTaskOf(final String claimId) {
+        return eventually(() -> claims
+                .findById(claimId)
+                .map(Claim::getApprovalTaskId));
     }
 
     private JobRef jobOf(
