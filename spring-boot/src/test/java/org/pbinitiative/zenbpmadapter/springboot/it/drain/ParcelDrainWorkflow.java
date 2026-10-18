@@ -13,7 +13,8 @@ import io.vanillabp.spi.service.WorkflowTask;
 
 /**
  * The workflow of the shutdown: a parcel is packed and labelled in parallel, and each task records
- * the node which ran it. The packing waits where the test holds it on this node.
+ * the node which ran it. The packing, and where the test asks so the labelling, waits where the
+ * test holds it on this node.
  */
 @Service
 @WorkflowService(workflowAggregateClass = DrainedParcel.class, bpmnProcess = @BpmnProcess(bpmnProcessId = "Drain"))
@@ -44,12 +45,15 @@ public class ParcelDrainWorkflow {
     }
 
     /**
-     * Labels the parcel.
+     * Labels the parcel, after the test let it go on where it holds the labelling on this node.
      *
      * @param parcel The parcel
      */
     @WorkflowTask(taskDefinition = "label")
     public void label(final DrainedParcel parcel) {
+        if (PackingGate.labellingPassesOn(parcel.getId(), node)) {
+            throw new IllegalStateException("the label printer was taken away");
+        }
         parcel.labelledBy(node);
     }
 

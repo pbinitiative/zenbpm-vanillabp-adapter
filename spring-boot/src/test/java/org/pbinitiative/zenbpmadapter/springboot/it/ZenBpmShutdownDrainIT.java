@@ -198,15 +198,17 @@ class ZenBpmShutdownDrainIT {
     }
 
     @Test
-    @DisplayName("Another node gets the jobs a stopped node held at once, not after their job-timeout: the closed job stream released the lock of the cut-off packing and of the labelling which waited for a slot")
+    @DisplayName("Another node gets the jobs a stopped node held at once, not after their job-timeout: the closed job stream released the lock of the cut-off task and of the one which waited for its slot")
     void anotherNodeGetsTheOpenJobsAtOnce() {
         final var parcelId = uniqueParcelId();
-        PackingGate.hold(parcelId, "a");
+        // node a has one handler slot: whichever of the two tasks the engine hands out first is held
+        // in it, and the other one waits for the slot
+        PackingGate.holdEither(parcelId, "a");
         final var nodeA = boot("a", "PT1S");
         final var instance = start(nodeA, parcelId);
-        eventually(() -> PackingGate.isWaiting(parcelId), "the packing to wait in its handler on node a");
-        // node a has one handler slot, which the packing takes, so the labelling waits for it
-        eventually(() -> deliveryTokenOf(jobOf(instance, "Label").key()) > 0, "the labelling to reach node a");
+        eventually(() -> PackingGate.isWaiting(parcelId), "a task of the parcel to wait in its handler on node a");
+        eventually(() -> (deliveryTokenOf(jobOf(instance, "Pack").key()) > 0) && (deliveryTokenOf(jobOf(instance,
+                "Label").key()) > 0), "both tasks to reach node a");
         final var nodeB = boot("b", "PT1S");
 
         nodeA.close();

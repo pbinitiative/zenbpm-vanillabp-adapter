@@ -38,6 +38,13 @@ public final class PackingGate {
 
     private static final Set<String> WAITING = ConcurrentHashMap.newKeySet();
 
+    /**
+     * The parcels whose labelling is held like their packing: the engine hands out the two tasks
+     * of a parcel in no fixed order, so a test which needs one of them in the node's only handler
+     * slot and the other one waiting for it holds whichever comes first.
+     */
+    private static final Set<String> LABELLING_HELD_TOO = ConcurrentHashMap.newKeySet();
+
     private PackingGate() {
     }
 
@@ -53,6 +60,21 @@ public final class PackingGate {
     ) {
         HELD_ON.put(parcelId, node);
         RELEASES.put(parcelId, new CountDownLatch(1));
+    }
+
+    /**
+     * Holds the packing and the labelling of a parcel on a node. The node's handler slot holds the
+     * one which comes first, so the other one waits for the slot.
+     *
+     * @param parcelId The parcel
+     * @param node The node whose handler waits
+     */
+    public static void holdEither(
+        final String parcelId,
+        final String node
+    ) {
+        LABELLING_HELD_TOO.add(parcelId);
+        hold(parcelId, node);
     }
 
     /**
@@ -79,6 +101,21 @@ public final class PackingGate {
      */
     public static boolean isWaiting(final String parcelId) {
         return WAITING.contains(parcelId);
+    }
+
+    /**
+     * Waits where the labelling of a parcel is held on this node, see
+     * {@link #holdEither(String, String)}, and says whether the handler throws then.
+     *
+     * @param parcelId The parcel
+     * @param node This node
+     * @return <code>true</code> where the handler is to throw
+     */
+    static boolean labellingPassesOn(
+        final String parcelId,
+        final String node
+    ) {
+        return LABELLING_HELD_TOO.contains(parcelId) && passOn(parcelId, node);
     }
 
     /**
