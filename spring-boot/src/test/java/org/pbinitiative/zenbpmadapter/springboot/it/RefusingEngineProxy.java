@@ -119,6 +119,15 @@ final class RefusingEngineProxy implements AutoCloseable {
     }
 
     /**
+     * Passes every request on again and forgets the requests refused so far, so that the next test
+     * of a class sharing the proxy reads only what was refused in its own case.
+     */
+    void startAfresh() {
+        refuseNothing();
+        refused.clear();
+    }
+
+    /**
      * The requests the proxy refused.
      *
      * @return Each as its method, a blank and its path, in the order received

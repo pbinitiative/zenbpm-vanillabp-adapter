@@ -31,11 +31,14 @@ public class E2eParcel {
 
     private String tariff;
 
-    private boolean weighed;
+    // how often each handler ran and committed, so that a test tells one run from two
+    private int weighings;
 
-    private boolean courierNotified;
+    private int courierNotifications;
 
-    private boolean rated;
+    private int ratings;
+
+    private int packings;
 
     /**
      * Built by JPA.
@@ -81,42 +84,50 @@ public class E2eParcel {
     }
 
     /**
-     * @return Whether the parcel was weighed
+     * @return How often the parcel was weighed
      */
-    public boolean isWeighed() {
-        return weighed;
+    public int getWeighings() {
+        return weighings;
     }
 
     /**
-     * @return Whether the courier was told
+     * @return How often the courier was told
      */
-    public boolean isCourierNotified() {
-        return courierNotified;
+    public int getCourierNotifications() {
+        return courierNotifications;
     }
 
     /**
-     * @return Whether the parcel was rated
+     * @return How often the parcel was rated
      */
-    public boolean isRated() {
-        return rated;
+    public int getRatings() {
+        return ratings;
+    }
+
+    /**
+     * @return How often the parcel was packed
+     */
+    public int getPackings() {
+        return packings;
     }
 
     void weigh(final String tariff) {
-        this.weighed = true;
+        this.weighings++;
         this.tariff = tariff;
         // what the gateway behind the task decides on: the workflow started with false
         this.express = true;
     }
 
     void notifyCourier() {
-        this.courierNotified = true;
+        this.courierNotifications++;
     }
 
     void rate() {
-        this.rated = true;
+        this.ratings++;
     }
 
     void pack() {
+        this.packings++;
         // what the gateway behind the sub-process decides on
         this.packed = true;
     }

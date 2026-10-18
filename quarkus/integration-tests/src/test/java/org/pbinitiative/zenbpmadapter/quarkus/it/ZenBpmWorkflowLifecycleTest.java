@@ -248,9 +248,13 @@ class ZenBpmWorkflowLifecycleTest {
                 // the parcel express
                 () -> assertTrue(visited.containsAll(List.of("NotifyCourier", "Packed")), visited::toString),
                 () -> assertFalse(visited.contains("NotPacked"), visited::toString),
-                () -> assertEquals(true, parcel.get("weighed"), parcel::toString),
-                () -> assertEquals(true, parcel.get("courierNotified"), parcel::toString),
-                () -> assertEquals(true, parcel.get("rated"), parcel::toString),
+                // each handler committed exactly one run, the one of the sub-process's job too,
+                // whose job belongs to the sub-process's instance and so is not among the jobs
+                // below
+                () -> assertEquals(1, parcel.get("weighings"), parcel::toString),
+                () -> assertEquals(1, parcel.get("courierNotifications"), parcel::toString),
+                () -> assertEquals(1, parcel.get("ratings"), parcel::toString),
+                () -> assertEquals(1, parcel.get("packings"), parcel::toString),
                 () -> assertEquals(true, parcel.get("packed"), parcel::toString),
                 () -> assertEquals(List.of("COMPLETED", "COMPLETED", "COMPLETED"), jobs
                         .stream()

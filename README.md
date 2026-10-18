@@ -136,12 +136,13 @@ above thirty seconds the start warns that the runtime's shutdown budget has to g
 names each handler it gave up on with its job, task and aggregate. While a module stops, an outcome
 a handler reached is still reported, but a handler which threw is not failed at the engine, so its
 job keeps its retries; the job stream closes last, which releases every lock the application held,
-so another node gets those jobs at once instead of after their `job-timeout` (decision 39). A job
-the engine hands out again, after its lock was lost, a new leader of the engine's partition, which
-knows no lock (GAPS 2), or a restart of the application, runs its method once where an earlier
-delivery committed: the platform answers it from its record of deliveries, and the adapter sends
-the recorded outcome to the engine; two deliveries which run at the same time both run, and the
-adapter names the lock it could not keep, and the platform the second run. What is built next, and
+so another node gets those jobs at once instead of after their `job-timeout` (decision 39). The
+engine can hand a job out again: when its lock was lost, when its partition got a new leader, which
+knows no locks (see [`GAPS.md`](./GAPS.md)), or after the application restarted. Where an earlier
+delivery committed, the method does not run again: the platform answers the delivery from its
+record of deliveries, and the adapter sends the recorded outcome to the engine. Two deliveries which
+run at the same time both run; the adapter names the lock it could not keep, and the platform names
+the second run. What is built next, and
 in which order, is the implementation plan in [`docs/`](docs/README.md).
 
 ## Modules

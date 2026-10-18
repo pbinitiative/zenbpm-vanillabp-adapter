@@ -1866,6 +1866,38 @@ deployment 51, Quarkus integration tests 10, coverage gate 37). The gate measure
 instructions for Spring Boot and 100 % of 24,630 for Quarkus, and `bin/check-deploy-safety.sh`
 passes (13 files on a green build, nothing after a red gate). No flake was hit.
 
+**Answers to two reviews of S6.5.1, 2026-10-18** (one by Claude, ready to merge, 1 Minor and 1
+Nit; one by Copilot, approve, 1 Minor). Every claim was checked in the code of the branch. All three
+findings were valid and are fixed; none needed a decision.
+
+- **The Quarkus task matrix did not prove that each task runs once** (Claude 1, Minor). The case's
+  name promises it, but `E2eParcel` kept a boolean per handler, which a second run sets again. The
+  sub-process's `Pack` job belongs to the sub-process's instance, so it is not among the root's
+  jobs the case reads. `E2eParcel` now counts the committed runs of each handler (`weighings`,
+  `courierNotifications`, `ratings`, `packings`), and the case asserts one of each, as the Spring
+  Boot twin counts four deliveries.
+- **The README cited a GAPS number in a sentence hard to read** (Claude 2, Nit). A README cites
+  only decisions; the status now says the same in three sentences and links `GAPS.md`.
+- **`ZenBpmInboundIdempotencyIT` depended on the order of its methods** (Copilot 1, Minor). Its
+  `@AfterEach` cleared the proxy's refusals but not the requests the proxy refused. So under
+  JUnit's method-name order, `#aRefusedCompletionIsSentAgainForTheNextDelivery` found the renewals
+  and completions refused in `#aLostLockIsNamed`, and failed. Copilot reproduced this. The class
+  now starts every case with `RefusingEngineProxy#startAfresh`, which also forgets what was
+  refused. Inside a case, `#refuseNothing` stays the switch, and the case keeps its history.
+
+Seen to fail, each restored afterwards (3 of 3 mutants, against green unmutated runs against the
+engine): `#startAfresh` keeping the history (`ZenBpmInboundIdempotencyIT` under the method-name
+order, as Copilot's failure); the weighing counted twice and the packing in the sub-process counted
+twice (`#serviceTaskRunsAndGatewaySeesValues`, `expected: <1> but was: <2>`).
+
+`TZ=Etc/UTC mvn clean install` on OpenJDK 25.0.2 builds green after the fixes with every
+integration test run and none skipped (engine test support 12 unit and 5 integration tests, core
+955 unit and 78 integration tests, Spring Boot 11 unit and 36 integration tests, smoke test 37,
+Quarkus runtime 10, Quarkus deployment 51, Quarkus integration tests 10, coverage gate 37). The gate
+measures 100 % of 24,756 instructions for Spring Boot and 100 % of 24,630 for Quarkus, and
+`bin/check-deploy-safety.sh` passes (13 files on a green build, nothing after a red gate). No flake
+was hit.
+
 **E6 Done when**, checked 2026-10-18 on the clean build above:
 
 - *The task-matrix IT is green on Spring Boot*: met. `ZenBpmTaskProcessingIT` (19 tests) runs the
@@ -1875,9 +1907,9 @@ passes (13 files on a green build, nothing after a red gate). No flake was hit.
   the BPMN error (`#aBpmnErrorRoutesTheBoundaryEvent`, `#anUnknownErrorCodeIsAnIncident`) and the
   pending task (`#anAsynchronousTaskStaysOpen`, `#completeTaskEndsTheDormantWorkflow`).
 - *Its twin on Quarkus*: met. `ZenBpmWorkflowLifecycleTest` (9 tests, 6 of them new) runs the same
-  task kinds and gateways (`#serviceTaskRunsAndGatewaySeesValues`), the BPMN error
-  (`#bpmnErrorRoutesBoundary`) and the pending task (`#asyncTaskIsCompletedLater`) on a booted
-  prod-mode application, beside the parameter, the cancellation and the failure twins.
+  task kinds and gateways, each handler run once (`#serviceTaskRunsAndGatewaySeesValues`), the
+  BPMN error (`#bpmnErrorRoutesBoundary`) and the pending task (`#asyncTaskIsCompletedLater`) on a
+  booted prod-mode application, beside the parameter, the cancellation and the failure twins.
 - *Inbound idempotency is proven*: met on both platforms. Spring Boot `ZenBpmInboundIdempotencyIT`
   (3 tests); on Quarkus the redelivery of a task left open is answered from the record in
   `#asyncTaskIsCompletedLater` (its method ran once over several deliveries) and in

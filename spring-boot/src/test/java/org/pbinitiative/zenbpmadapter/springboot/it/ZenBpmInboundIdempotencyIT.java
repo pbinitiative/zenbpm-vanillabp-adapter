@@ -104,8 +104,8 @@ class ZenBpmInboundIdempotencyIT {
     private ZenBpmClientRegistry clients;
 
     @AfterEach
-    void refuseNothingAnyMore() {
-        PROXY.refuseNothing();
+    void startTheProxyAfresh() {
+        PROXY.startAfresh();
     }
 
     @AfterAll
