@@ -18,6 +18,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.function.Consumer;
 import java.util.stream.Stream;
 
@@ -38,6 +39,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import io.vanillabp.integration.adapter.spi.AdapterCollaborators;
 import io.vanillabp.integration.adapter.spi.AggregateSyncMode;
 import io.vanillabp.integration.adapter.spi.NameClashAvoidance;
+import io.vanillabp.integration.adapter.spi.PhaseOneRequest;
 import io.vanillabp.integration.adapter.spi.PhaseOperationHandler;
 import io.vanillabp.integration.adapter.spi.PhaseTwoRequest;
 import io.vanillabp.integration.adapter.spi.WorkflowAggregateSync;
@@ -46,6 +48,7 @@ import io.vanillabp.integration.adapter.spi.values.ValueTypeVerdict;
 import io.vanillabp.integration.adapter.spi.workflowstart.WorkflowStartReport;
 import io.vanillabp.integration.spi.AggregatePersistenceAware;
 import io.vanillabp.integration.spi.PhaseOperation;
+import io.vanillabp.integration.spi.PhaseTwoCall;
 import io.vanillabp.integration.test.utils.CapturedOutput;
 import io.vanillabp.integration.test.utils.SuppressOutputExtension;
 
@@ -61,6 +64,9 @@ class ZenBpmProcessServiceTest {
     private static final String NOT_CONFIGURED = "ZenBPM adapter 'orders' is not configured: set the key";
 
     private static final ObjectMapper JSON = new ObjectMapper();
+
+    private static final Set<PhaseOperation> BUILT = Set.of(PhaseOperation.START_WORKFLOW,
+            PhaseOperation.COMPLETE_TASK, PhaseOperation.CANCEL_TASK);
 
     private static final String STARTED = """
             {
@@ -139,7 +145,7 @@ class ZenBpmProcessServiceTest {
     }
 
     @Test
-    @DisplayName("Every handler and viewer method refuses with the message of the validation where the adapter id has no clients, a start included")
+    @DisplayName("Every handler and viewer method refuses with the message of the validation where the adapter id has no clients, a start and the handlers of a task included")
     void anAdapterIdWithoutClientsRefusesWithItsValidationMessage() {
         final var processService = startingProcessService(unconfigured("orders"), (
             module,
@@ -147,8 +153,19 @@ class ZenBpmProcessServiceTest {
         final var start = processService
                 .phaseOperations()
                 .get(PhaseOperation.START_WORKFLOW);
+        final var completion = processService
+                .phaseOperations()
+                .get(PhaseOperation.COMPLETE_TASK);
+        final var cancellation = processService
+                .phaseOperations()
+                .get(PhaseOperation.CANCEL_TASK);
         final var calls = Stream.concat(Stream.of(() -> start.phaseOne(null), () -> start.phaseTwo(startRequest(
-                new ArrayList<>()))), notBuiltYet(processService));
+                new ArrayList<>())), () -> completion.phaseOne(taskRequest()), () -> completion.phaseTwo(
+                        startRequest(
+                                new ArrayList<>())),
+                () -> cancellation.phaseOne(taskRequest()), () -> cancellation.phaseTwo(
+                        startRequest(new ArrayList<>()))),
+                notBuiltYet(processService));
 
         assertAll(calls.map(call -> () -> assertEquals(NOT_CONFIGURED, assertThrows(IllegalStateException.class,
                 call::run).getMessage())));
@@ -156,7 +173,7 @@ class ZenBpmProcessServiceTest {
     }
 
     @Test
-    @DisplayName("Every handler but the start and the viewer methods of a configured adapter id say that they are not built yet, and what they were asked to do")
+    @DisplayName("Every handler but the start and those of a task, and the viewer methods, of a configured adapter id say that they are not built yet, and what they were asked to do")
     void aConfiguredAdapterIdSaysThatTheCallIsNotBuiltYet() {
         try (var factory = configured("http://localhost:8080")) {
             final var processService = startingProcessService(factory, (
@@ -169,14 +186,17 @@ class ZenBpmProcessServiceTest {
 
             assertAll(
                     () -> assertEquals(
-                            "ZenBPM adapter 'orders': phase one of COMPLETE_TASK is implemented in a later story",
+                            "ZenBPM adapter 'orders': phase one of COMPLETE_USER_TASK is implemented in a later story",
                             messages.getFirst()),
                     () -> assertEquals(
-                            "ZenBPM adapter 'orders': phase two of COMPLETE_TASK is implemented in a later story",
+                            "ZenBPM adapter 'orders': phase two of COMPLETE_USER_TASK is implemented in a later story",
                             messages.get(1)),
                     () -> assertTrue(messages
                             .stream()
-                            .noneMatch(message -> message.contains(" of START_WORKFLOW ")), messages::toString),
+                            .noneMatch(message -> BUILT
+                                    .stream()
+                                    .anyMatch(built -> message.contains(" of %s ".formatted(built.name())))),
+                            messages::toString),
                     () -> assertEquals(List.of(
                             "ZenBPM adapter 'orders': listing the process definitions of workflow 'Order' of workflow module 'shop' is implemented in a later story",
                             "ZenBPM adapter 'orders': reading the BPMN XML of process definition 'definition-1' of workflow module 'shop' is implemented in a later story",
@@ -286,7 +306,7 @@ class ZenBpmProcessServiceTest {
                 () -> assertTrue(output
                         .getAllOfThisTest()
                         .contains(
-                                "ZenBPM[orders]: the workflow aggregate 'order-1' could not be loaded, so workflow 'Order' of workflow module 'shop' is started with its id alone and no shared value"),
+                                "ZenBPM[orders]: the workflow aggregate 'order-1' could not be loaded, so what is sent about workflow 'Order' of workflow module 'shop' carries its id alone and no shared value"),
                         output.getAllOfThisTest()));
     }
 
@@ -372,7 +392,7 @@ class ZenBpmProcessServiceTest {
                 .phaseOperations()
                 .entrySet()
                 .stream()
-                .filter(handler -> handler.getKey() != PhaseOperation.START_WORKFLOW)
+                .filter(handler -> !BUILT.contains(handler.getKey()))
                 .map(Map.Entry::getValue)
                 .flatMap(handler -> Stream.<Consumer<PhaseOperationHandler<Object>>>of(
                         phases -> phases.phaseOne(null),
@@ -407,6 +427,11 @@ class ZenBpmProcessServiceTest {
 
     private static AdapterCollaborators collaborators() {
         return TestCollaborators.of("orders", TestScoping.of(NameClashAvoidance.USE_PREFIX), new SharingTheAmount());
+    }
+
+    private static PhaseOneRequest<Object> taskRequest() {
+        return new PhaseOneRequest<>("shop", "Order", persistence(new Object()), new Object(), Map
+                .of(PhaseTwoCall.ARG_TASK_ID, "42"));
     }
 
     private static PhaseTwoRequest<Object> startRequest(final List<String> reported) {

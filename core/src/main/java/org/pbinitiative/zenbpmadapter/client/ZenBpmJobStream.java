@@ -325,6 +325,27 @@ public class ZenBpmJobStream implements AutoCloseable {
     }
 
     /**
+     * Ends the count of a parked job whose task the application completed or cancelled. The
+     * engine drops the lock of a job it completed, of one it failed for the stream which holds the
+     * lock, and of one it refused a command for because the job ended, at once, so the raise of the
+     * cap goes at once as well, see decision 40 in the repository's DECISIONS.md. A job this
+     * stream did not park, which another node of the application may hold, changes nothing.
+     *
+     * @param jobType The job's type
+     * @param jobKey The job
+     */
+    public synchronized void parkedJobEnded(
+        final String jobType,
+        final long jobKey
+    ) {
+        final var subscribed = subscriptions.get(jobType);
+        if (subscribed == null) {
+            return;
+        }
+        recount(jobType, subscribed, () -> subscribed.parked.remove(jobKey));
+    }
+
+    /**
      * How often the call was opened again after a failure since the stream was built.
      *
      * @return The number of attempts, successful or not

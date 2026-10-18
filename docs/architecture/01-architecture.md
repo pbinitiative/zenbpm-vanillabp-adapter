@@ -299,6 +299,17 @@ retries` or the engine's `jobs.defaultRetries`. After the outcome was sent, the 
 /v1/jobs/{key}`, `completed`/`terminated` = GONE, `active`/`failed` = STILL_THERE, anything
 else CANNOT_SAY, a `404` included (a lagging node, GAPS 20). That is how `@TaskEvent CANCELED` reaches a service task the engine dropped.
 
+A task the handler left open is completed or cancelled later by the application
+(`ZenBpmTaskOutcomes`, S6.3.1). Phase one registers a check for the transaction of the aggregate
+(`preCommitRegistrar().beforeCommit`), which reads the job and the process of its instance right
+before the commit: `active` and of a process the module serves passes; `completed`, `terminated`
+or unknown after `workflow-visibility-timeout` throws `TaskNotFoundException`; another module's
+process and `failed` (an incident) throw `IllegalStateException`. Phase two writes the values as
+for COMPLETED and then sends `POST /jobs/{key}/complete`, resp. `POST /jobs/{key}/fail {errorCode:
+scoped code, variables, clientId}`, without a delivery token, which the application does not have;
+the engine takes both whoever sends them. A job this node parked stops raising its type's cap once
+the engine dropped its lock (decision 40).
+
 Every handler runs `load -> invoke -> save -> commit -> report`, at least once. `deliversTasksAtLeastOnce()`
 is `true`, and the delivery id is the job key. A second delivery while a handler still runs happens
 only where the lock was lost: the renewal answered `409`, or the partition leader changed (the lock

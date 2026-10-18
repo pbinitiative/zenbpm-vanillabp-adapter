@@ -244,6 +244,28 @@ class ZenBpmJobStreamTest {
     }
 
     @Test
+    @DisplayName("A parked job whose task the application completed or cancelled lowers the cap at once; one this stream did not park, or of a type it does not subscribe, changes nothing")
+    void aParkedJobWhoseTaskEndedLowersTheCapAtOnce() {
+        stream.subscribe("module-a", "t1", Duration.ofMinutes(5), 2);
+        final var call = engine.call(0);
+        call.subscriptions(1);
+        final var later = Instant
+                .now()
+                .plus(Duration.ofHours(1));
+        stream.parked("t1", 17, later);
+        stream.parked("t1", 18, later);
+        call.subscriptions(3);
+
+        stream.parkedJobEnded("t1", 17);
+        stream.parkedJobEnded("t1", 99);
+        stream.parkedJobEnded("not-subscribed", 18);
+        stream.parkedJobEnded("t1", 18);
+
+        assertEquals(List.of(subscribe("t1", 300_000, 2), subscribe("t1", 300_000, 3), subscribe("t1", 300_000, 4),
+                subscribe("t1", 300_000, 3), subscribe("t1", 300_000, 2)), call.subscriptions(5));
+    }
+
+    @Test
     @DisplayName("After a failed call a type with parked jobs is sent again with its raised cap")
     void aReconnectKeepsTheRaisedCap() {
         stream.subscribe("module-a", "t1", Duration.ofMinutes(5), 2);

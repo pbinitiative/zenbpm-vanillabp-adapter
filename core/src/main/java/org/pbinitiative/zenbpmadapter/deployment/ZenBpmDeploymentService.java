@@ -557,8 +557,12 @@ public class ZenBpmDeploymentService implements AdapterDeploymentService<ZenBpmB
                     refuseAnotherJobTimeoutOfASharedType(jobType,
                             new ModuleJobTimeout(workflowModuleId, bpmnProcessId, task.taskDefinition(), jobTimeout));
                 });
-        context.recordWiring(new WiredProcess(bpmnProcessId, scoping.scopedProcessId(workflowModuleId, bpmnProcessId,
-                adapterId), jobTypes, reportsItsStart, reportsItsEnd));
+        final var scopedProcessId = scoping.scopedProcessId(workflowModuleId, bpmnProcessId, adapterId);
+        context.recordWiring(
+                new WiredProcess(bpmnProcessId, scopedProcessId, jobTypes, reportsItsStart, reportsItsEnd));
+        factory
+                .deployedProcesses()
+                .recordServed(workflowModuleId, scopedProcessId);
         log.info(
                 "ZenBPM[{}]: wired {} task(s) and {} user task(s) of BPMN process '{}' (file '{}', workflow module '{}')",
                 adapterId, model

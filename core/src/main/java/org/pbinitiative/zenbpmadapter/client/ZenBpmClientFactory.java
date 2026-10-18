@@ -315,9 +315,10 @@ public class ZenBpmClientFactory implements AutoCloseable {
     }
 
     /**
-     * What the deployments of this start brought to the engine of this adapter id, which every
-     * service of the adapter id reads through this factory. It needs no client, so an adapter id
-     * without clients has one as well, which stays empty.
+     * What the deployments of this start brought to the engine of this adapter id, and which
+     * workflow module serves which process, which every service of the adapter id reads through
+     * this factory. It needs no client, so an adapter id without clients has one as well, which
+     * learns the processes the workflow modules serve and no deployment.
      *
      * @return The deployed processes
      */

@@ -193,6 +193,34 @@ public final class TestCollaborators {
                 .build();
     }
 
+    /**
+     * A complete set of collaborators, of which the scoping, the sync of aggregates and the hook
+     * before a commit may be called: what the handlers of a task meet.
+     *
+     * @param adapterId The adapter id they are handed to
+     * @param scoping The platform's name-clash scoping, as the test wants it to answer
+     * @param workflowAggregateSync The platform's sync of aggregates, as the test wants it to answer
+     * @param preCommitRegistrar Where a check before the commit is handed, as the test wants it
+     * @return The collaborators
+     */
+    public static AdapterCollaborators withPreCommitRegistrar(
+        final String adapterId,
+        final NameClashAvoidanceSupport scoping,
+        final WorkflowAggregateSync workflowAggregateSync,
+        final PreCommitRegistrar preCommitRegistrar
+    ) {
+        return AdapterCollaborators
+                .forAdapter(adapterId)
+                .workflowTaskWiring(unused(WorkflowTaskWiring.class))
+                .workflowTaskInvoker(unused(WorkflowTaskInvoker.class))
+                .scoping(scoping)
+                .workflowAggregateSync(workflowAggregateSync)
+                .preCommitRegistrar(preCommitRegistrar)
+                .workflowEndedInvoker(unused(WorkflowEndedInvoker.class))
+                .bpmsInitiatedStartInvoker(unused(BpmsInitiatedStartInvoker.class))
+                .build();
+    }
+
     private static <T> T unused(final Class<T> type) {
         return type.cast(Proxy.newProxyInstance(TestCollaborators.class.getClassLoader(), new Class<?>[]{
                 type

@@ -605,6 +605,10 @@ Subscribing every type with the engine's largest cap instead was rejected: it le
 application take every waiting job of a type, while the other nodes stay idle and the jobs wait in
 front of its busy slots.
 
+*"one completed or taken away meanwhile counts until its lock would have lapsed" is superseded in
+part by decision 40: a parked job whose task the application completes or cancels on the node which
+parked it stops counting as soon as the engine dropped its lock.*
+
 ### 38. The adapter writes no default of retries into a model and sends a backoff only where one is configured
 
 Decided by the implementation pipeline in place of the maintainers, as their policy for the
@@ -662,3 +666,38 @@ stream after the wait, and the engine then drops every lock of the adapter's cli
 jobs a cut-off handler held and the ones which waited for a handler slot go to another node at once
 (measured: within about a tenth of a second, against a job-timeout of a minute), with their retries
 untouched. The delivery record of the platform decides whether the work runs again.
+
+### 40. A task the application completes or cancels is ended without a delivery, and stops counting where it was parked
+
+Decided by the implementation pipeline in place of the maintainers, as their policy for the
+autonomous run asks. It supersedes in part decision 37, whose parked job counted until its lock
+would have lapsed once its task was completed.
+
+The application completes or cancels a task it left open through the process service, on
+whichever node of the application it runs, and it holds the task id only, not the delivery of the
+job stream which parked it. At the pinned commit `bdd795a3` the engine completes a job whoever asks
+and without any delivery, and drops its lock (`completeJob` and `releaseLock` in
+`internal/cluster/jobmanager/server.go`: "a REST client which never held the lock may complete a
+job"). It fails a job whoever asks as well, but a failure which names no delivery releases the lock
+only where the client id it names holds it (`releaseLockOfFailedDelivery`), and a command it refuses
+because the job ended drops the lock too (`releaseLockOfEndedJob`). A job which ended without a
+command, taken away by an event of the model or by the end of its workflow, keeps its lock until the
+lock lapses: nothing else removes it. `ZenBpmJobLockIT` measured the three cases against the pinned
+image: a completion by a client which names no client id, and a failure which names the holder's
+client id, let the holder's next job of the type in at once; a failure which names another client
+id leaves the slot taken.
+
+So phase two of a completion and of a cancellation sends no delivery token, and a cancellation, a
+failure with the error code, names the job stream's client id of the node which sends it. Reading
+the job's current token and sending it was rejected: where the engine hands the job out again
+between the read and the failure, it answers the failure `409`, which reads as a job which ended,
+and the cancellation would be lost.
+
+Where the engine dropped the lock, after a completion, after a cancellation sent from the node which
+parked the job, or after a command refused because the job ended, that node ends the job's count at
+once, so the cap of its type does not let in a job more than it has slots. Where nothing was sent,
+because the job had ended already, the count stays until the lock would have lapsed, as long as the
+engine counts it. On any other node nothing is counted: there the holder's count of a completed job
+lets in at most one job too many per such task until the lock would have lapsed, which waits for a
+free slot like any other, as decision 37 allows; a cancellation sent from another node leaves the
+engine's lock and the holder's count alike.

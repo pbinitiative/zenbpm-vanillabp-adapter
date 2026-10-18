@@ -100,7 +100,16 @@ it is locked once more without running the method again. The engine counts a loc
 its type's cap of active jobs, so the adapter raises the cap by every task it keeps open, and the
 next task of the type still arrives (decision 37). With `async-task-max-age-action: incident` a
 task open longer than `vanillabp.delivery.max-task-age` is failed without retries instead, so an
-incident names it. A method which throws is failed at the engine without an error code, so the
+incident names it. The application completes such a task later, or cancels it with a BPMN error,
+through its process service: right before its transaction commits, the adapter asks the engine
+whether the task still waits and belongs to the workflow module; a task which ended, or which the
+engine does not know within `workflow-visibility-timeout`, throws the platform's
+`TaskNotFoundException`, and a task of another module or one which carries an incident rolls the
+transaction back with an `IllegalStateException` naming the reason. After the commit the shared
+values are written as for a completed task, and the job is completed, or failed with the error code
+as the deployed model carries it, so an error boundary event takes over; a task which ended
+meanwhile costs a WARN and nothing else. The engine takes both from any node of the application,
+without the delivery which left the task open (decision 40). A method which throws is failed at the engine without an error code, so the
 engine spends one attempt of the task, hands the job out again after the backoff, and after the
 last attempt raises an incident which names the attempts, the task, the aggregate and the
 exception (decision 27); a failure sent again for the same delivery counts once. How many attempts

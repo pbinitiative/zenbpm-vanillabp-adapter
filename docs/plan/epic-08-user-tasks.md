@@ -91,6 +91,19 @@ two `patchVariables` + `completeJob` resp. `failJob(key, scopedErrorCode, values
 routes a boundary error event on a user task like on a service task, which is the one thing this
 adapter can do and Camunda 8 cannot - say so in the README. `awarenessOfUserTask` is S5.2.2.
 
+*Note from S6.3.1, 2026-10-18.* Both handlers of a task the application left open are
+`processservice/ZenBpmTaskOutcomes`: the check before the commit (`active`, of a process the module
+serves by `ZenBpmDeployedProcesses#moduleServing`; ended or unknown within
+`workflow-visibility-timeout` is `TaskNotFoundException`, another module's or `failed` an
+`IllegalStateException`) and phase two (the values up to the root, then `complete` or `fail` with
+the scoped code, no delivery token, this node's client id; a job which ended is a WARN). A user task
+is a job, so build the two user-task handlers from the same class instead of a copy; its messages say
+"task", so give it the word for a user task then. The platform probes a task before phase one and
+before it dispatches an entry, and ignores or skips one whose task ended with a WARN of its own, so
+the `TaskNotFoundException` of the check shows only for a task which ends between the call and the
+commit (`ZenBpmTaskProcessingIT#aTaskWhichEndsBeforeTheCommitIsNotFoundAtTheCommit` is the shape of
+`#completingAUserTaskWhichIsGoneThrowsTaskNotFound`).
+
 **Tests**: `ZenBpmUserTaskIT#completeUserTaskContinuesWithSharedValues`,
 `#cancelUserTaskRoutesTheBoundaryEvent`, `#completingAGoneUserTaskIsAWarnedNoOp`,
 `#completingAUserTaskWhichIsGoneThrowsTaskNotFound` (phase one).
