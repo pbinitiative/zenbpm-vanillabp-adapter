@@ -1919,3 +1919,30 @@ was hit.
   Quarkus `ZenBpmRestartDeliveryTest` (1 test).
 
 So E6 is complete; nothing of it goes to a later story.
+
+**S6.5.1 done 2026-10-18**, merged to `main` as `cf1402d` (pull request #51, after two reviews,
+whose three findings were all valid and fixed in `01487ef`, and CodeRabbit's review, which left no
+comment). F6.5 is complete, and with it E6. On `cf1402d` (GitHub keeps run logs for 90 days, so
+what they showed is written here as well):
+
+- `Checks`, run
+  [39131248377](https://github.com/pbinitiative/zenbpm-vanillabp-adapter/actions/runs/39131248377):
+  green on both JDKs. `bin/check-engine-copies.sh` (in the JDK 25 job) reported both copies as the
+  engine's files of `bdd795a3...`. On both JDKs `ZenBpmInboundIdempotencyIT` ran 3 tests,
+  `ZenBpmRestartDeliveryIT` 1, Quarkus `ZenBpmRestartDeliveryTest` 1,
+  `ZenBpmWorkflowLifecycleTest` 9, `EngineUnderTestIT` 5, `ZenBpmLockRenewalTest` 20,
+  `ZenBpmDeploymentIT` 2, `ZenBpmProbeOutageIT` 1, `ZenBpmTaskProcessingIT` 19,
+  `ZenBpmShutdownDrainIT` 4 and `ZenBpmParkedTasksIT` 1, none skipped (engine test support 12 unit
+  and 5 integration tests, core 955 unit and 78 integration tests, Spring Boot 11 unit and 36
+  integration tests, smoke test 37, Quarkus runtime 10, Quarkus deployment 51, Quarkus integration
+  tests 10, coverage gate 37). The gate measured 100 % on both platforms: of 24,756 instructions
+  for Spring Boot and 24,630 for Quarkus on JDK 25, of 24,746 and 24,620 on JDK 21.
+- `Publish snapshots`, run
+  [39131248272](https://github.com/pbinitiative/zenbpm-vanillabp-adapter/actions/runs/39131248272):
+  green. The core snapshot it published to GitHub Packages, `2.0.0-20261018.132232-47`, holds the
+  story's changed main class (`ZenBpmLockRenewal` with `Renewal#describe(String, String)`, and
+  `ZenBpmJobHandler`) and no test class, fake, fixture or BPMN file;
+  `quarkus/integration-tests`, the smoke test, the engine test support and the coverage modules
+  skipped deployment. Both report pages (`spring-boot-report/index.html`,
+  `quarkus-report/index.html`) answer HTTP 200 and show 0 of 24,756 (Spring Boot) and 0 of 24,630
+  (Quarkus) instructions missed.
