@@ -268,10 +268,12 @@ public final class ZenBpmLockRenewal {
          *
          * @param window <code>async-task-lock-renewal</code>
          * @param retry The repetition of the commands of the job's delivery
+         * @return When the window ends, counted on the application's clock from the moment the
+         *         extension was sent
          * @throws RuntimeException What the extension failed with after its repetitions, such as a
          *             lost lock where the job was completed meanwhile or its lock lapsed
          */
-        public void park(
+        public Instant park(
             final Duration window,
             final ZenBpmCommandRetry retry
         ) {
@@ -283,9 +285,11 @@ public final class ZenBpmLockRenewal {
                 sent.set(Instant.now());
                 return rest.extendJobLock(jobKey, clientId, window, deliveryToken);
             }, answer -> false);
-            reportAShorterParking(jobKey, granted, sent
+            final var counted = sent
                     .get()
-                    .plus(window), window);
+                    .plus(window);
+            reportAShorterParking(jobKey, granted, counted, window);
+            return counted;
         }
 
         private void schedule(final Duration delay) {

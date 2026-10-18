@@ -676,7 +676,8 @@ engine at the pin `bdd795a3` (`handleBoundaryTimer` in `pkg/bpmn/timer.go`, the 
    `ZenBpmInstanceCache#workflowIdOf`) with the workflow the core names; another one, and an
    instance the cache cannot place, is `CANNOT_SAY`. A job of a sub-process of the same workflow
    is answered (`#aJobOfASubProcessBelongsToTheWorkflow`).
-4. **A `404` is gone** as the plan says, although the engine answers a read on a follower which may
+4. **A `404` is gone** as the plan says (changed after the reviews: a `404` cannot say, see the
+   answers to the two reviews below), although the engine answers a read on a follower which may
    lag behind (GAPS 20): the core asks only about a task it recorded a delivery of, so the job
    existed for at least as long as that delivery took. GAPS 20's adapter behaviour now says so.
    Every other failure, the engine's `502` and `500` among them, is `CANNOT_SAY`.
@@ -730,6 +731,60 @@ tests, Spring Boot 11 unit and 18 integration tests, smoke test 36, Quarkus runt
 deployment 49, Quarkus integration tests 3, coverage gate 37). The gate measures 100 % of 21,980
 instructions for Spring Boot and 100 % of 21,846 for Quarkus, and `bin/check-deploy-safety.sh`
 passes. No flake was hit.
+
+**Answers to two reviews of S6.1.2 and S6.1.3, 2026-10-18** (one by Claude, request changes, 3
+findings; one by Copilot, request changes, 1 finding, the same as Claude 1). Every claim was
+checked in the code of the branch and in the engine's source at `bdd795a3`. Both reviewers
+measured the first one against the pinned engine, and the fix was measured there too.
+
+Valid and fixed:
+
+- **A parked job kept its slot of the engine's cap** (Claude 1, Blocker; Copilot 1, Major). The
+  engine counts every job whose lock has not lapsed against its client's cap of active jobs of the
+  type (`capacityLocked` in `internal/cluster/jobmanager/server.go`). `extendLock` only moves the
+  lock's end, and the cap was the number of handler slots (decision 9). So as many tasks left open
+  of one type as there are slots stopped every further job of that type. After a lapse the engine
+  hands out the oldest job first, which is the parked one, parked again. With one slot, the
+  reviewers saw a second job never arrive in 25 s. `ZenBpmJobStream#parked` keeps the parked jobs
+  of a type, each with the end of its lock on the application's clock (decision 36), which
+  `Renewal#park` now returns. It subscribes the type again with its cap raised by those whose lock
+  has not lapsed; the engine replaces a client's settings on a second subscription
+  (`subscribeClient`). A parked job stops counting when it arrives again or its lock lapsed. A
+  reconnect sends the raised cap. Past the engine's default ceiling of 1000 a WARN names
+  `JOB_MANAGER_MAX_ACTIVE_JOBS_CAP` once. This is decision 37, which supersedes in part decision 9.
+  GAPS 28 records the engine's side. Pinned by
+  `ZenBpmParkedTasksIT#aParkedTaskLeavesRoomForTheNextOfItsType` (one handler slot, a window of a
+  minute: the second task of the type arrives and both stay open),
+  `ZenBpmJobStreamTest#aParkedJobRaisesTheCapOfItsType`, `#aReconnectKeepsTheRaisedCap`,
+  `#aCapAboveTheEnginesCeilingIsWarnedAboutOnce` and
+  `ZenBpmLockRenewalTest#aParkedLockIsCountedOnTheApplicationsClock`. Subscribing with the
+  engine's largest cap instead was rejected: one node of the application would take every waiting
+  job of a type while the others stay idle.
+- **The probe read a `404` as gone** (Claude 2, Major). A job read is answered by a follower
+  (`ZenNode.GetJob` in `internal/cluster/node.go` asks `GetPartitionFollower`). The engine deletes
+  jobs only together with an instance that ended under a parent that ended, after its history time
+  to live (`DeleteProcessInstancesJobs` and `FindInactiveInstancesToDelete`). A job taken away
+  stays readable as `terminated`. The core asks only during a delivery of the workflow. So a `404`
+  is a lagging node far more often than a task taken away, and it now answers `CANNOT_SAY`
+  (`ZenBpmOpenTaskProbeTest#aJobTheEngineDoesNotKnowCannotSay`). Fit-check item 4 of S6.1.3,
+  GAPS 20, the probe's javadoc, the architecture and the mapping were corrected. The rare case
+  left, a job of a sub-process nested in a sub-process which ended, keeps its record open until
+  the workflow ends, which is the safe direction.
+- **An unwrapped line of the README's status paragraph** (Claude 3, Nit): rewrapped.
+
+Seen to fail, each restored afterwards (10 of 10 mutants, against green unmutated runs): the
+handler not telling the stream about a parked job (also against the engine:
+`ZenBpmParkedTasksIT` waits 30 s for the second task in vain); lapsed locks never forgotten; a job
+which arrives again still counted; the WARN said at the ceiling, and every time; a type of the
+engine's default cap raised; a reconnect sending the cap without the raise; a changed cap not sent;
+the lock counted to the engine's end instead of the application's; a `404` read as gone again.
+
+`TZ=Etc/UTC mvn clean install` on OpenJDK 25.0.2 builds green after the fixes with every
+integration test run and none skipped (engine test support 12 unit and 3 integration tests, core
+877 unit and 74 integration tests, Spring Boot 11 unit and 19 integration tests, smoke test 36,
+Quarkus runtime 10, Quarkus deployment 49, Quarkus integration tests 3, coverage gate 37). The gate
+measures 100 % of 22,164 instructions on Spring Boot and 100 % of 22,030 on Quarkus, and
+`bin/check-deploy-safety.sh` passes (13 files on a green build, nothing after a red gate).
 
 ## F6.2 Failures and shutdown
 

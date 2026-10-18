@@ -26,23 +26,27 @@ import lombok.extern.slf4j.Slf4j;
  * the engine, and, for an instance the instance cache does not hold yet, of the instances up to its
  * workflow:
  * <ul>
- * <li>a job the engine does not hold, or one which was completed or terminated, is
- * {@link TaskExistence#GONE};</li>
+ * <li>a job which was completed or terminated is {@link TaskExistence#GONE};</li>
  * <li>an active job is {@link TaskExistence#STILL_THERE}, and so is a failed one, which waits for
  * its incident to be resolved;</li>
- * <li>everything else is {@link TaskExistence#CANNOT_SAY}: an engine which could not be asked or
- * answered something else, an id which is no key, a job of another workflow, and a task this
- * probe is not asked about. A failure is never read as gone, because the core would report every
- * open task of a workflow as cancelled at the engine's next hiccup.</li>
+ * <li>everything else is {@link TaskExistence#CANNOT_SAY}: a job the engine does not know, an
+ * engine which could not be asked or answered something else, an id which is no key, a job of
+ * another workflow, and a task this probe is not asked about. A failure is never read as gone,
+ * because the core would report every open task of a workflow as cancelled at the engine's next
+ * hiccup.</li>
  * </ul>
  * Only a task served by a job of the job stream is asked about: a task definition the process
  * subscribes as a job type. A user task, and anything else, is {@link TaskExistence#CANNOT_SAY},
  * because its cancellation reaches the application another way, and a task reported twice is
  * worse than one reported late.
  * <p>
- * A read is answered by a node of the engine which may lag behind its partition's leader, so a job
- * created a moment before it is asked about may be answered as gone. The core asks only about a
- * task delivered before, so the job was there for at least as long as that delivery took.
+ * A job the engine does not know is no gone task. A read is answered by a node of the engine which
+ * may lag behind its partition's leader, and so does not know a job created a moment before. A job
+ * the engine took away stays readable as terminated, and the engine deletes the jobs of an
+ * instance only together with the instance, once it and its parent ended and its history time to
+ * live passed, while the core asks about the tasks of a workflow only during a delivery of it. So
+ * an unknown job is far more likely a lagging node than a task taken away, and a task reported
+ * cancelled while the engine still waits for it costs more than one reported late.
  */
 @Slf4j
 public final class ZenBpmOpenTaskProbe implements OpenTaskProbe {
@@ -112,7 +116,7 @@ public final class ZenBpmOpenTaskProbe implements OpenTaskProbe {
             return rest
                     .job(jobKey)
                     .map(job -> existenceOf(job, workflowKey))
-                    .orElse(TaskExistence.GONE);
+                    .orElse(TaskExistence.CANNOT_SAY);
         } catch (final RuntimeException e) {
             log.debug("ZenBPM[{}]: the engine did not say whether it still holds job {} (task '{}'): {}", adapterId,
                     jobKey, taskDefinition, e.getMessage());

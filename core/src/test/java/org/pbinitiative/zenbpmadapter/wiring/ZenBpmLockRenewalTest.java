@@ -348,6 +348,22 @@ class ZenBpmLockRenewalTest {
     }
 
     @Test
+    @DisplayName("A parked job's lock is counted to end one window after the extension was sent, on the application's clock, also where the engine answers an earlier end")
+    void aParkedLockIsCountedOnTheApplicationsClock() {
+        engine.answers("POST", EXTEND, granting(Duration.ofMinutes(10)));
+
+        try (var renewal = lockRenewal.start(job(JOB_TIMEOUT), JOB_TIMEOUT, "ship")) {
+            final var before = Instant.now();
+            final var lockedUntil = renewal.park(Duration.ofHours(1), retryOf(renewal));
+            final var after = Instant.now();
+
+            assertAll(
+                    () -> assertFalse(lockedUntil.isBefore(before.plus(Duration.ofHours(1))), lockedUntil::toString),
+                    () -> assertFalse(lockedUntil.isAfter(after.plus(Duration.ofHours(1))), lockedUntil::toString));
+        }
+    }
+
+    @Test
     @DisplayName("A job is parked only once the extension of its running handler under way came back, which would shorten the window if it arrived later")
     void aParkingWaitsForTheExtensionUnderWay() {
         final var events = new CopyOnWriteArrayList<String>();

@@ -80,11 +80,11 @@ class ZenBpmOpenTaskProbeTest {
     }
 
     @Test
-    @DisplayName("A job the engine does not hold is gone")
-    void aJobTheEngineDoesNotHoldIsGone() {
+    @DisplayName("A job the engine does not know cannot say anything, because a lagging node does not know a job created a moment before")
+    void aJobTheEngineDoesNotKnowCannotSay() {
         engine.answers("GET", "/v1/jobs/42", 404, "{\"code\":\"NOT_FOUND\",\"message\":\"no job\"}");
 
-        assertEquals(TaskExistence.GONE, probe.stillExists("100", "42", "ship"));
+        assertEquals(TaskExistence.CANNOT_SAY, probe.stillExists("100", "42", "ship"));
     }
 
     @Test

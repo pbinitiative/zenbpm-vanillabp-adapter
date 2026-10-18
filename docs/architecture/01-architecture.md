@@ -296,8 +296,8 @@ The core routes a delivery by the task definition AND the element id (platform d
 (platform decision 69). The retries a job starts with come from the model's `zenbpm:taskDefinition
 retries` or the engine's `jobs.defaultRetries`. After the outcome was sent, the core asks the
 `ZenBpmOpenTaskProbe` (S6.1.3) about the other tasks it believes open in that workflow: `GET
-/v1/jobs/{key}`, 404 or `completed`/`terminated` = GONE, `active`/`failed` = STILL_THERE, anything
-else CANNOT_SAY. That is how `@TaskEvent CANCELED` reaches a service task the engine dropped.
+/v1/jobs/{key}`, `completed`/`terminated` = GONE, `active`/`failed` = STILL_THERE, anything
+else CANNOT_SAY, a `404` included (a lagging node, GAPS 20). That is how `@TaskEvent CANCELED` reaches a service task the engine dropped.
 
 Every handler runs `load -> invoke -> save -> commit -> report`, at least once. `deliversTasksAtLeastOnce()`
 is `true`, and the delivery id is the job key. A second delivery while a handler still runs happens

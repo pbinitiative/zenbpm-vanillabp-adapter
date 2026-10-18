@@ -5,6 +5,7 @@
 package org.pbinitiative.zenbpmadapter.wiring;
 
 import java.time.Duration;
+import java.time.Instant;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -23,6 +24,7 @@ import org.pbinitiative.zenbpmadapter.client.ZenBpmAdapterConfiguration.AsyncTas
 import org.pbinitiative.zenbpmadapter.client.ZenBpmClientFactory;
 import org.pbinitiative.zenbpmadapter.client.ZenBpmCommandRetry;
 import org.pbinitiative.zenbpmadapter.client.ZenBpmErrors;
+import org.pbinitiative.zenbpmadapter.client.ZenBpmJobStream;
 import org.pbinitiative.zenbpmadapter.client.ZenBpmRestClient;
 import org.pbinitiative.zenbpmadapter.client.api.JobFailure;
 import org.pbinitiative.zenbpmadapter.client.api.JobRef;
@@ -113,6 +115,8 @@ public final class ZenBpmJobHandler {
 
     private final ZenBpmRestClient rest;
 
+    private final ZenBpmJobStream stream;
+
     private final ZenBpmDeployedProcesses deployedProcesses;
 
     private final String clientId;
@@ -158,6 +162,7 @@ public final class ZenBpmJobHandler {
         this.scoping = collaborators.scoping();
         this.instances = factory.instances();
         this.rest = factory.rest();
+        this.stream = factory.stream();
         this.deployedProcesses = factory.deployedProcesses();
         this.clientId = factory.clientId();
         this.asyncTaskLockRenewal = factory
@@ -476,8 +481,9 @@ public final class ZenBpmJobHandler {
             failAsOverdue(received, aggregate, outcome.openFor(), delivery);
             return false;
         }
+        final Instant lockedUntil;
         try {
-            renewal.park(asyncTaskLockRenewal, delivery.retry());
+            lockedUntil = renewal.park(asyncTaskLockRenewal, delivery.retry());
         } catch (final RuntimeException e) {
             if (!ZenBpmErrors.lockLost(e) && !ZenBpmErrors.isGoneJob(e)) {
                 throw e;
@@ -488,6 +494,10 @@ public final class ZenBpmJobHandler {
                     adapterId, jobKey, delivery.taskDefinition(), e.getMessage());
             return false;
         }
+        // the parked job holds a slot of its type at the engine until its lock lapses
+        stream.parked(received
+                .job()
+                .getType(), jobKey, lockedUntil);
         log.debug("ZenBPM[{}]: job {} (task '{}') stays open for its asynchronous completion, locked for {}",
                 adapterId, jobKey, delivery.taskDefinition(), asyncTaskLockRenewal);
         return true;

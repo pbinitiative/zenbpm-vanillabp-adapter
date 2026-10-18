@@ -7,6 +7,7 @@ package org.pbinitiative.zenbpmadapter.client;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
+import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -26,6 +27,7 @@ import org.pbinitiative.zenbpmadapter.client.grpc.Zenbpm.ErrorResult;
 import org.pbinitiative.zenbpmadapter.client.grpc.Zenbpm.JobStreamRequest;
 import org.pbinitiative.zenbpmadapter.client.grpc.Zenbpm.JobStreamResponse;
 import org.pbinitiative.zenbpmadapter.client.grpc.Zenbpm.StreamSubscriptionRequest;
+import org.pbinitiative.zenbpmadapter.client.grpc.Zenbpm.WaitingJob;
 
 import io.grpc.Grpc;
 import io.grpc.InsecureChannelCredentials;
@@ -106,6 +108,12 @@ public class ZenBpmJobStream implements AutoCloseable {
      */
     static final Duration CLOSE_TIMEOUT = Duration.ofSeconds(5);
 
+    /**
+     * The most active jobs per client and job type an engine takes where its
+     * <code>JOB_MANAGER_MAX_ACTIVE_JOBS_CAP</code> is not set. It lowers a larger cap to it.
+     */
+    static final int ENGINE_DEFAULT_MAX_ACTIVE_JOBS_CAP = 1000;
+
     private final String adapterId;
 
     private final String clientId;
@@ -147,6 +155,8 @@ public class ZenBpmJobStream implements AutoCloseable {
     private Outage outage;
 
     private boolean closed;
+
+    private boolean capAboveTheEnginesReported;
 
     /**
      * A job stream to the engine a configuration names. Contacts nothing.
@@ -250,7 +260,7 @@ public class ZenBpmJobStream implements AutoCloseable {
             subscription.subscribers.add(subscriber);
             subscriptions.put(jobType, subscription);
             if (call != null) {
-                call.send(subscribeRequest(jobType, settings));
+                call.send(subscribeRequest(jobType, subscription));
             } else if ((reopening == null) && (outage == null)) {
                 open();
             }
@@ -286,6 +296,32 @@ public class ZenBpmJobStream implements AutoCloseable {
                             .setType(StreamSubscriptionRequest.Type.TYPE_UNSUBSCRIBE))
                     .build());
         }
+    }
+
+    /**
+     * Counts a job whose handler returned while its task stays open, locked to this stream until a
+     * moment. The engine counts such a job against its type's cap of active jobs until the lock
+     * lapses, so without a raise the parked jobs of a type would take every slot of it, and no
+     * new job of the type would arrive. The type is subscribed again with its cap raised by the
+     * number of its jobs parked under a live lock, see decision 37 in the repository's
+     * DECISIONS.md. The raise of a job goes once the job arrives again or its lock lapsed; a lapsed
+     * one is forgotten at the next job of the type which is parked or arrives. A type subscribed
+     * with the engine's default cap, or not subscribed, is left as it is.
+     *
+     * @param jobType The job's type
+     * @param jobKey The job
+     * @param lockedUntil When its lock ends, on the application's clock
+     */
+    public synchronized void parked(
+        final String jobType,
+        final long jobKey,
+        final Instant lockedUntil
+    ) {
+        final var subscribed = subscriptions.get(jobType);
+        if ((subscribed == null) || (subscribed.settings.maxActiveJobs() == 0)) {
+            return;
+        }
+        recount(jobType, subscribed, () -> subscribed.parked.put(jobKey, lockedUntil));
     }
 
     /**
@@ -397,7 +433,7 @@ public class ZenBpmJobStream implements AutoCloseable {
 
     private static JobStreamRequest subscribeRequest(
         final String jobType,
-        final Settings settings
+        final Subscription subscription
     ) {
         return JobStreamRequest
                 .newBuilder()
@@ -405,8 +441,8 @@ public class ZenBpmJobStream implements AutoCloseable {
                         .newBuilder()
                         .setJobType(jobType)
                         .setType(StreamSubscriptionRequest.Type.TYPE_SUBSCRIBE)
-                        .setLockDurationMs(settings.lockDurationMs())
-                        .setMaxActiveJobs(settings.maxActiveJobs()))
+                        .setLockDurationMs(subscription.settings.lockDurationMs())
+                        .setMaxActiveJobs(subscription.maxActiveJobs()))
                 .build();
     }
 
@@ -451,8 +487,7 @@ public class ZenBpmJobStream implements AutoCloseable {
         stub.jobStream(opened);
         subscriptions.forEach((
             jobType,
-            subscription) -> opened.send(subscribeRequest(jobType,
-                    subscription.settings)));
+            subscription) -> opened.send(subscribeRequest(jobType, subscription)));
         schedule(() -> notReadyInTime(opened), pacing.readyWithin());
     }
 
@@ -521,6 +556,9 @@ public class ZenBpmJobStream implements AutoCloseable {
             if (outage != null) {
                 back();
             }
+            if (!response.hasError() && response.hasJob()) {
+                cameBack(response.getJob());
+            }
         }
         if (response.hasError()) {
             log.warn("""
@@ -542,6 +580,53 @@ public class ZenBpmJobStream implements AutoCloseable {
             handOver(from, new ReceivedJob(response.getJob(), Instant.now()));
         } else {
             log.debug("ZenBPM[{}]: the job stream received a frame it never asked for: {}", adapterId, response);
+        }
+    }
+
+    /**
+     * Ends the count of a parked job which the engine hands out again. Called holding
+     * <code>this</code>.
+     */
+    private void cameBack(final WaitingJob job) {
+        final var subscribed = subscriptions.get(job.getType());
+        if (subscribed == null) {
+            return;
+        }
+        recount(job.getType(), subscribed, () -> subscribed.parked.remove(job.getKey()));
+    }
+
+    /**
+     * Changes the parked jobs of a type, forgets those whose lock lapsed, and subscribes the type
+     * again where its cap changed. Called holding <code>this</code>. Every change of the parked
+     * jobs goes through here, so the cap before the change is the one the engine was sent.
+     */
+    private void recount(
+        final String jobType,
+        final Subscription subscribed,
+        final Runnable change
+    ) {
+        final var sent = subscribed.maxActiveJobs();
+        change.run();
+        final var now = Instant.now();
+        subscribed.parked
+                .values()
+                .removeIf(lockedUntil -> !lockedUntil.isAfter(now));
+        final var raised = subscribed.maxActiveJobs();
+        if (raised == sent) {
+            return;
+        }
+        if ((raised > ENGINE_DEFAULT_MAX_ACTIVE_JOBS_CAP) && !capAboveTheEnginesReported) {
+            capAboveTheEnginesReported = true;
+            log.warn("""
+                    ZenBPM[{}]: {} jobs of type '{}' are parked for their asynchronous completion, so the job \
+                    stream asks the engine for up to {} active jobs of the type. The engine lowers that to its \
+                    JOB_MANAGER_MAX_ACTIVE_JOBS_CAP, {} unless it is set, and beyond it a new job of the type waits \
+                    until the lock of a parked one lapses. Raise JOB_MANAGER_MAX_ACTIVE_JOBS_CAP at the engine, or \
+                    shorten {}.{}.async-task-lock-renewal.""", adapterId, subscribed.parked.size(), jobType, raised,
+                    ENGINE_DEFAULT_MAX_ACTIVE_JOBS_CAP, ZenBpmAdapterConfiguration.CONFIGURATION_PREFIX, adapterId);
+        }
+        if (call != null) {
+            call.send(subscribeRequest(jobType, subscribed));
         }
     }
 
@@ -791,8 +876,20 @@ public class ZenBpmJobStream implements AutoCloseable {
 
         private final Set<String> subscribers = new LinkedHashSet<>();
 
+        /**
+         * The jobs of the type parked for their asynchronous completion, each with the moment its
+         * lock ends.
+         */
+        private final Map<Long, Instant> parked = new HashMap<>();
+
         private Subscription(final Settings settings) {
             this.settings = settings;
+        }
+
+        // the engine counts a parked job against the cap until its lock lapses, although no
+        // handler runs for it, see decision 37 in the repository's DECISIONS.md
+        private int maxActiveJobs() {
+            return settings.maxActiveJobs() + parked.size();
         }
 
     }

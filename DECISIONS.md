@@ -56,6 +56,9 @@ error and opens its call again, which subscribes every job type it still holds a
 of the partition leader, which forgets every lock; the second delivery which follows is the
 at-least-once residual.
 
+*"`max_active_jobs` = the handler slots" is superseded in part by decision 37: the cap of a job type
+is raised by the number of its jobs parked for their asynchronous completion.*
+
 ### 10. What the engine did is read from status codes, not from message text
 
 The engine writes its reasons as prose, and any version of it may reword them. So what a failed call
@@ -537,3 +540,37 @@ the same client again, an extension for the earlier delivery is answered `409` i
 the later delivery's lock (measured against the pinned image, `ZenBpmJobLockIT`), so the handler of
 the earlier delivery learns that a second delivery may run beside it, and does not keep the later
 one's lock for it.
+
+### 37. The cap of active jobs of a type is raised by its jobs parked for their asynchronous completion
+
+Decided by the implementation pipeline in place of the maintainers, as their policy for the
+autonomous run asks. It supersedes in part decision 9, whose cap of active jobs was the number of
+handler slots.
+
+A task the application completes later is parked: its handler returns, and the job's lock is
+extended by `async-task-lock-renewal`, an hour by default. The engine counts every job whose lock
+has not lapsed against the cap of active jobs of its client and job type, a parked one included,
+although no handler runs for it (`capacityLocked` in `internal/cluster/jobmanager/server.go` at the
+pinned commit `bdd795a3`). With a cap of the handler slots, as many tasks left open of one type as
+there are slots would stop every further job of that type for as long as they stay open: after a
+lock lapses, the engine hands out the oldest job first, which is the parked one again. Both reviews
+of the story measured it against the pinned engine, the second job of a type never arrived while
+the first was parked under one handler slot.
+
+So the job stream keeps the jobs it parked, each with the moment its lock ends on the application's
+clock (decision 36), and subscribes their type again with its cap raised by the number of them
+whose lock has not lapsed. The engine replaces the settings of a client which subscribes a type it
+already subscribed (`subscribeClient` at the same commit). A parked job stops counting when it
+arrives again or its lock lapsed; one completed or taken away meanwhile counts until
+its lock would have lapsed, which lets in at most one job too many per such task, and that job
+waits for a free slot like any other. A reconnect sends the raised cap. The handler slots still
+bound how many handlers run.
+
+The engine lowers a cap above its `JOB_MANAGER_MAX_ACTIVE_JOBS_CAP` (1000 by default) to it, so past
+that number of parked jobs of one type a new job waits again until a parked lock lapses. The stream
+WARNs once where it asks for more, naming that setting and `async-task-lock-renewal`; the adapter
+cannot read the engine's setting. GAPS 28 records the cause.
+
+Subscribing every type with the engine's largest cap instead was rejected: it lets one node of the
+application take every waiting job of a type, while the other nodes stay idle and the jobs wait in
+front of its busy slots.
