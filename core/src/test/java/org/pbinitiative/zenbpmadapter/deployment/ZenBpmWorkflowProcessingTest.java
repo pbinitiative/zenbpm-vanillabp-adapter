@@ -251,6 +251,33 @@ class ZenBpmWorkflowProcessingTest {
     }
 
     @Test
+    @DisplayName("A start holds its module from the factory's hook to the last subscription, so a stop by the closing factory finds all of it started or nothing of it")
+    void aStartIsOneStepForAStopWhichRacesIt() throws Exception {
+        final var deploymentService = deploymentService(TestWiring.claiming());
+        final var context = withJobTypes("shop", "charge");
+        final var factory = registry.getFactory(ADAPTER_ID);
+        final var starting = new Thread(() -> deploymentService.startWorkflowProcessing("shop", context));
+
+        final Set<String> whileTheContextIsHeld;
+        synchronized (context) {
+            starting.start();
+            LockSupport.parkNanos(Duration
+                    .ofMillis(300)
+                    .toNanos());
+            whileTheContextIsHeld = factory.getOpenWorkflowModules();
+        }
+        starting.join(DELIVERY_TIMEOUT.toMillis());
+
+        assertAll(
+                () -> assertEquals(Set.of(), whileTheContextIsHeld),
+                () -> assertFalse(starting.isAlive()),
+                () -> assertEquals(Set.of("shop"), factory.getOpenWorkflowModules()),
+                () -> assertEquals(List.of("TYPE_SUBSCRIBE charge"), described(engine
+                        .call(0)
+                        .subscriptions(1))));
+    }
+
+    @Test
     @DisplayName("A module cannot start once its factory closes, and subscribes nothing")
     void aModuleCannotStartOnAClosedFactory() {
         final var deploymentService = deploymentService(TestWiring.claiming());

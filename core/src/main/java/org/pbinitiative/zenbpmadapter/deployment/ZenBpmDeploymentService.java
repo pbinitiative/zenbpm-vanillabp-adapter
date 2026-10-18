@@ -688,23 +688,28 @@ public class ZenBpmDeploymentService implements AdapterDeploymentService<ZenBpmB
         final var stream = factory.stream();
         final var dispatcher = dispatcher();
         final var handler = new ZenBpmJobHandler(adapterId, factory, collaborators, context, retryBackoffs);
-        context.processingStarted(new StartedProcessing(jobTypes, factory.workflowModuleStarted(workflowModuleId,
-                () -> stopWorkflowProcessing(workflowModuleId, context))));
-        // only a module the closing factory did not refuse counts as running, or the stop of the
-        // others would wait for it forever and so never wait for any handler
-        drainsOfRunningModules.put(workflowModuleId, handler.drain());
-        dispatcher.register(handler);
         final var slots = factory
                 .executor()
                 .getSlots();
         final var jobTimeoutsOfTheTypes = context.jobTimeouts();
-        try {
-            jobTimeoutsOfTheTypes.forEach((
-                jobType,
-                jobTimeout) -> stream.subscribe(workflowModuleId, jobType, jobTimeout, slots));
-        } catch (final RuntimeException e) {
-            stopWorkflowProcessing(workflowModuleId, context);
-            throw e;
+        // the closing factory runs the module's hook on its own thread, which may be at once; the
+        // hook's stop asks the context what started, so holding the context until the last
+        // subscription lets that stop find all of the start or nothing of it
+        synchronized (context) {
+            context.processingStarted(new StartedProcessing(jobTypes, factory.workflowModuleStarted(
+                    workflowModuleId, () -> stopWorkflowProcessing(workflowModuleId, context))));
+            // only a module the closing factory did not refuse counts as running, or the stop of
+            // the others would wait for it forever and so never wait for any handler
+            drainsOfRunningModules.put(workflowModuleId, handler.drain());
+            dispatcher.register(handler);
+            try {
+                jobTimeoutsOfTheTypes.forEach((
+                    jobType,
+                    jobTimeout) -> stream.subscribe(workflowModuleId, jobType, jobTimeout, slots));
+            } catch (final RuntimeException e) {
+                stopWorkflowProcessing(workflowModuleId, context);
+                throw e;
+            }
         }
         log.info("ZenBPM[{}]: workflow module '{}' subscribed the job type(s) {}, each with at most {} active job(s)",
                 adapterId, workflowModuleId, jobTimeoutsOfTheTypes

@@ -1188,6 +1188,17 @@ Quarkus runtime 10, Quarkus deployment 51, Quarkus integration tests 3, coverage
 measures 100 % of 22,952 instructions for Spring Boot and 100 % of 22,826 for Quarkus, and
 `bin/check-deploy-safety.sh` passes (13 files on a green build, nothing after a red gate).
 
+CodeRabbit's review of pull request #46 had one comment, valid: the closing factory runs a
+module's hook on its own thread, and that hook could stop a module while it was starting. Between
+the start's `processingStarted` and the drain's registration (an order the answer to Claude 3
+made), the stop added no drain, and the shutdown's wait then failed with a
+`NullPointerException`. Before `processingStarted`, the stop found nothing to stop. The start now
+holds its context from the factory's hook to the last subscription, so the hook's stop finds all of
+the start or nothing of it (`ZenBpmWorkflowProcessingTest#aStartIsOneStepForAStopWhichRacesIt`,
+seen to fail without the lock). Nothing that holds the factory's or the stream's monitor waits for
+the context, so the lock cannot deadlock. The full build ran again green, none skipped (core 906 unit tests; 100 % of 22,959 and 22,833
+instructions), and `bin/check-deploy-safety.sh` passes.
+
 ## F6.3 Asynchronous tasks
 
 ### S6.3.1 `COMPLETE_TASK` and `CANCEL_TASK`
