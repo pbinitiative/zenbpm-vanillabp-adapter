@@ -110,7 +110,7 @@ declared on the root once.
 `prepareBpmn` rewrites the document ONCE per file (the context remembers the filename), because the
 scoping is not idempotent (a second pass would prefix twice); every boot rewrites the file as it was
 read, so the same file gives the same deployment, and no rewrite overwrites what the modeller wrote
-(draft decision 4):
+(draft decision 4). Step 4 runs in `wireBpmn`, the other steps in `prepareBpmn`:
 
 1. **Scoping** (`ZenBpmScoping`, from `PeaScoping`): under `use-prefix` rewrite `process@id` (and
    the `participant@processRef` and `BPMNPlane@bpmnElement` pointing at it), `message@name`,
@@ -136,19 +136,25 @@ read, so the same file gives the same deployment, and no rewrite overwrites what
    every multi-instance sub-process around it; an element maps in the items of the multi-instance
    elements around it, never its own or those of the elements inside it, and the targets the
    modeller maps are left out. A job anywhere else gets a copy of its scope's variables from the engine and needs none.
-4. **Marker tasks** (decision 26), only in a process a workflow service claims
-   (`isClaimedByAWorkflowService`). Where `workflowEndedHandlerExists` for the process (it also
-   answers `true` when `release-on-workflow-end` is on), a service task
-   `id="vanillabp__ended__<endEventId>"`, `zenbpm:taskDefinition type="<scoped vanillabp__ended>"`,
-   is inserted in front of every end event of the TOP-LEVEL process (none, error, message,
-   terminate), redirecting the end event's incoming flows to the task and adding one flow task ->
-   end event. Where the process starts a workflow of its own (`startsAWorkflowOfItsOwn`), a service
-   task `vanillabp__started__<startEventId>` with type `<scoped vanillabp__started>` is inserted
-   right after EVERY start event of the top-level process: none, message and timer. Sub-processes
-   and event sub-processes get no marker, because ZenBPM runs them as child instances, and a called
-   process gets neither marker. Both types are per PROCESS (they carry the process id, so one worker
-   per process). Marker elements are drawn with a `bpmndi:BPMNShape` copied from their neighbour so
-   the engine's diagram interchange stays valid.
+4. **Marker tasks** (decisions 26 and 44, `ZenBpmMarkerTasks`), only in a process a workflow service
+   claims (`isClaimedByAWorkflowService`), and written in `wireBpmn` right after
+   `validateTaskWiring`, not while preparing: the core answers `startsAWorkflowOfItsOwn` correctly
+   only once the wiring of the process was validated. Where the process starts a workflow of its own
+   (`startsAWorkflowOfItsOwn`), a service task `vanillabp__started__<startEventId>` with the type
+   `vanillabp__started__<scoped process id>` (one type per process, the same in every
+   name-clash-avoidance mode) is inserted right after EVERY start event of the top-level process:
+   none, message and timer. It takes over the flows leaving the start event, those of the event's
+   `outgoing` references, which the engine follows, and those whose `sourceRef` names it, and one
+   new flow `<marker id>__flow` leads from the event to it. Where `workflowEndedHandlerExists` for
+   the process (it also answers `true` when `release-on-workflow-end` is on), a service task
+   `vanillabp__ended__<endEventId>` is to go in front of every end event of the TOP-LEVEL process
+   (none, error, message, terminate), redirecting the end event's incoming flows to the task and
+   adding one flow task -> end event; it is written in the same change as the handler of its job.
+   Sub-processes and event sub-processes get no marker, because ZenBPM runs them as child
+   instances, and a called process gets neither marker. A marker is drawn as a `bpmndi:BPMNShape` of
+   60 x 40, its left edge 80 points right of its start event's left edge, with a
+   `bpmndi:BPMNEdge` for the new flow; nothing else of the diagram moves. Where an element of the
+   marker's id exists already, nothing is written, so a second rewrite of a document writes nothing.
 5. **Unsupported constructs** are refused BEFORE deployment with a message naming file, process and
    element: signal events, conditional events, escalation events, script tasks, an instantiating
    receive task, a file with more than one executable process.
@@ -378,18 +384,31 @@ user-task types the read finds are named at startup, which is where the poller c
 
 Both arrive as ordinary jobs of the marker tasks (section 3, step 4), served by two dedicated handlers:
 
-- `ZenBpmWorkflowEndedHandler`: kind COMPLETED, `endEventId` from the marker's id, `workflowId` =
+- `ZenBpmWorkflowEndedHandler`, which comes with the end marker: kind COMPLETED, `endEventId` from the marker's id, `workflowId` =
   the root instance key (decision 28) and the business key; the core cancels the tasks it still
   believes open in that workflow before `@WorkflowEnded` runs (platform decision 73). Then complete
   the job so the instance ends. A canceled instance runs no marker, so kind CANCELED is never
   reported.
-- `ZenBpmBpmsInitiatedStartHandler` (decision 25): the context carries the job's variables,
-  `nativeInstanceId` = the root instance key, the version, sync mode FULL and the instance's
-  business key where it has one; there is no start time and nothing derives an id.
+- `ZenBpmBpmsInitiatedStartHandler` (decisions 25 and 46), which the module's `ZenBpmJobHandler`
+  hands the job of a start marker, inside the module's drain and under the renewal of its lock: the
+  context carries the start event and its kind (remembered per process while wiring), the job's
+  variables with the id variable the instance holds now (the engine hands a job out with the
+  variables it was created with, so an id written later is read from the instance through the
+  instance cache), `nativeInstanceId` = the job's instance, which is the workflow's root because a
+  marker sits in the process itself, the version, sync mode FULL and the instance's business key
+  where it has a non-empty one; there is no start time and nothing derives an id.
   `startWorkflowByBpms` builds the aggregate through the application's `@WorkflowStartedByBpms`
-  method, which names it; the handler writes `result.variables()` back with `PATCH
-  /v1/process-instances/{key}/variables` and completes the marker job. A redelivery, and the marker
-  of a workflow the application started itself, answer `created() == false`.
+  method where the instance carries no name, and writes the start row with the instance key in every
+  case but a refusal. Wherever the instance does not carry the result's id under its name, the
+  handler writes `result.variables()` with `PATCH /v1/process-instances/{key}/variables`, then
+  completes the marker job without variables. A redelivery after the update, and the marker of a
+  workflow the application started itself, find the id and write nothing; a read a lagging node
+  answers before it saw the update is the one way left to a second aggregate (decision 46). A
+  refusal or a method which threw fails the job like a task's handler (decision 27), with the
+  `retry-backoff` resolved for the name `vanillabp__started`. A call activity which calls a process
+  of the module on an aggregate of its own gets `zenbpm:in businessKey=""` and an input mapping
+  `=null` of the called process's id variable while deploying, so the called process starts without
+  the caller's name (decision 45).
 
 ### 4.8 Shutdown
 

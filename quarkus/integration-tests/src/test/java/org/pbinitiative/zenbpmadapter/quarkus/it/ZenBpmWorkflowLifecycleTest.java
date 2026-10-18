@@ -256,10 +256,14 @@ class ZenBpmWorkflowLifecycleTest {
                 () -> assertEquals(1, parcel.get("ratings"), parcel::toString),
                 () -> assertEquals(1, parcel.get("packings"), parcel::toString),
                 () -> assertEquals(true, parcel.get("packed"), parcel::toString),
-                () -> assertEquals(List.of("COMPLETED", "COMPLETED", "COMPLETED"), jobs
+                () -> assertEquals(List.of("COMPLETED", "COMPLETED", "COMPLETED", "COMPLETED"), jobs
                         .stream()
                         .map(job -> job.get("state"))
-                        .toList(), jobs::toString));
+                        .toList(), jobs::toString),
+                // the first job is the start marker's, which the application's own start passes
+                () -> assertEquals("vanillabp__started__Start", jobs
+                        .getFirst()
+                        .get("elementId"), jobs::toString));
     }
 
     @Test
@@ -398,13 +402,23 @@ class ZenBpmWorkflowLifecycleTest {
         return instances.getFirst();
     }
 
+    // the job of the instance's task: the job of its start marker, which comes first, is left out
     private static String awaitTheJobOf(final Object instanceKey) {
-        await(() -> !jobsOf(instanceKey).isEmpty(), "a job of instance %s".formatted(instanceKey));
-        final var jobs = jobsOf(instanceKey);
+        await(() -> !tasksOf(instanceKey).isEmpty(), "a job of a task of instance %s".formatted(instanceKey));
+        final var jobs = tasksOf(instanceKey);
         assertEquals(1, jobs.size(), jobs::toString);
         return (String) jobs
                 .getFirst()
                 .get("key");
+    }
+
+    private static List<Map<String, Object>> tasksOf(final Object instanceKey) {
+        return jobsOf(instanceKey)
+                .stream()
+                .filter(job -> !String
+                        .valueOf(job.get("elementId"))
+                        .startsWith("vanillabp__started__"))
+                .toList();
     }
 
     private static String stateOfJob(

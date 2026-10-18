@@ -302,6 +302,41 @@ finds the id and answers `created() == false`. A crash between the commit of the
 deterministic; Camunda 8 has the same window. Until then, a workflow the engine starts gets no
 aggregate.
 
+*The planned paragraph is built: the handler of the start marker is decision 26 and decision 46,
+and it writes the variables only where the instance does not carry the id yet.*
+
+### 26. Lifecycle notifications are marker service tasks after every start event and before every end event
+
+The engine has no execution listeners and no event stream (GAPS 8), so the adapter learns about the
+start and the end of a workflow from service tasks of its own which it writes into the model. Their
+jobs are ordinary jobs, delivered at least once, and completing them is what lets the workflow go on
+or end. VanillaBP expects to hear about EVERY start of a workflow, plain and message starts
+included, because a workflow somebody started past VanillaBP needs an aggregate as much as one a
+timer started. So a start marker follows every start event (none, message, timer) of the top-level
+process, wherever `startsAWorkflowOfItsOwn` says the process starts a workflow of its own.
+Sub-processes and event sub-processes get none, because the engine runs them as instances of their
+own, and a called process gets neither marker. An end marker goes in front of every end event of the
+top-level process wherever `workflowEndedHandlerExists` answers yes, which it also does when
+`vanillabp.delivery.release-on-workflow-end` is on. Every start event is reported to
+`validateBpmsInitiatedStarts`, those of called processes included, so the core can refuse a start
+the engine fires by itself where no aggregate could be built. A workflow ends `COMPLETED` or
+`CANCELED`; a cancelled instance passes no marker (GAPS 9). For the application's own start the
+marker finds the name there already, and `created() == false` is the normal answer. The cost is one
+job and one transaction per started workflow, the price VanillaBP names for Camunda 8.
+
+What markers cannot report: a workflow of a version deployed before the markers existed passes
+none, so it gets no `@WorkflowEnded` and writes no start row. Polling the states of the instances
+was rejected, because it grows with the number of instances and cannot name the end event, and so
+was reading the engine's database, a schema of another product.
+
+The plan drafted decision 5 for markers at timer starts and ends only. This entry replaced it
+before any code relied on it, so decision 5 never entered this log.
+
+*Decided by the implementation pipeline in place of the maintainers:* the end marker is written in
+the same change as the handler which serves its job. A marker nobody serves stops every workflow in
+front of its end event, so until that change no end marker is written, and an application is told
+nothing about the end of a workflow.
+
 ### 27. A failed handler is failed at the engine, with retries and backoff
 
 Since the engine counts retries and waits a backoff (engine commit `bc3384b3`, contained in the
@@ -810,3 +845,104 @@ and where the workflow, after the incident was resolved, waits for the same mess
 key within that window, a repetition is received a second time. A contract test of the client holds
 the engine's answer, so a version of the engine which answers otherwise is noticed when the pin
 moves.
+
+### 44. The start markers are written while wiring, under a job type which names the process
+
+Decided by the implementation pipeline in place of the maintainers, as their policy for the
+autonomous run asks.
+
+The markers of decision 26 are written in `wireBpmn`, right after `validateTaskWiring` of the
+process, and not while preparing, as the plan had it. The core answers `startsAWorkflowOfItsOwn`
+by whether the wiring of the process was validated (`isACalledProcess` of the platform's
+`WorkflowTaskRegistry`), so asked in `prepareBpmn` it answers yes for a called process as well, and
+the called process would get a start marker which hands the core a name its aggregate does not
+know. The Camunda 8 adapter writes its start listener at the same point. A process nobody claims is
+not wired, so it gets no marker.
+
+The job type of the start markers of a process is `vanillabp__started__` followed by the id under
+which the engine holds the process, one type per process and the same in every mode of
+name-clash avoidance. `scopedTaskDefinition` would give every process the plain type
+`vanillabp__started` under `none`, so the markers of every application which deploys to the engine
+under `none` would share one type, and the job of another application's marker would wait out its
+lock at a node which cannot serve it. The listener types of the Camunda 8 adapter carry the process
+id for the same reason.
+
+What is written carries ids which start with `vanillabp__`: a marker is
+`vanillabp__started__<start event id>`, the flow from the start event to it the marker's id
+followed by `__flow`. Where an element of the marker's id exists, nothing is written, so a model
+which carries its markers is left as it is. The marker takes over every flow which left the start
+event, those named by the event's `outgoing`, which the engine follows, and those whose `sourceRef`
+names it. It is drawn as a shape of 60 by 40 points, its left edge 80 points right of the start
+event's left edge and its middle on the start event's middle, and the edge which left the start
+event leaves the marker. Nothing else of the diagram is moved, so a marker may cover an element the
+modeller put closer than that; the plan's architecture had the shape copied from its neighbour,
+which would cover the neighbour whole. A model without a shape for the start event gets none for
+its marker.
+
+### 45. A process called on an aggregate of its own is started without the caller's name
+
+Decided by the implementation pipeline in place of the maintainers, as their policy for the
+autonomous run asks.
+
+The engine starts a called instance with the caller's business key and a copy of the caller's
+variables, whatever the called process is (pinned commit `bdd795a3`: `resolveChildBusinessKey` and
+`createCallActivity` of `pkg/bpmn/sub_process.go`). A process which is a workflow of its own, on an
+aggregate of its own, would so hand the core its caller's name at its start marker, and the core
+refuses a name no aggregate of the called process's class carries; the marker's job would end in an
+incident. So where a claimed process calls a process of the same workflow module which the
+platform answers `startsAWorkflowOfItsOwn` for, and which does not share the caller's aggregate
+(`workflowsShareTheWorkflowAggregate`), its call activity gets `zenbpm:in businessKey=""`, which
+the engine takes as an empty key, and an input mapping `source="=null"` of the called process's
+aggregate id variable, which hides the caller's variable of that name in the called instance. The
+called process's `@WorkflowStartedByBpms` method then builds its aggregate, as on Camunda 7, whose
+call activity hands on no business key. The engine copies back only the outputs a call activity
+maps (`PropagateOnlyMappedOutputs`), so the caller keeps its own id. The models are changed in
+`deployResources`, once every process of the workflow module is wired, because the core answers
+`startsAWorkflowOfItsOwn` correctly only for a process whose wiring it validated.
+
+A call activity is left as the modeller wrote it where the modeller wrote a `zenbpm:in` of their
+own, where it names its process by an expression or not at all, and where the called process
+belongs to another workflow module or application, which the boot cannot judge; a mapping of the
+id variable the modeller wrote stays as well. Camunda 8 hands on the caller's variables too and does
+nothing about it.
+
+### 46. The start marker writes the name only where the instance does not carry it
+
+Decided by the implementation pipeline in place of the maintainers, as their policy for the
+autonomous run asks.
+
+The plan wrote the variables of `startWorkflowByBpms`'s result into the instance where `created()`
+is true. But the core answers `created() == false` also where the instance carries a business key
+and no id variable, and where the application's method named the workflow after an aggregate which
+exists; in both cases the instance would go on without the variable its tasks and correlation keys
+read the aggregate by. So the handler writes `result.variables()` with `PATCH
+/v1/process-instances/{key}/variables` wherever the instance does not carry the result's id under
+its name, and completes the job without variables. The application's own start carries the id, so
+it costs the job and one transaction and no update.
+
+Whether the instance carries the id is read from the instance, not from the job. The engine stores
+the variables of a job when it creates the job and hands those out on every delivery (pinned commit
+`bdd795a3`: `InputVariables` in `pkg/bpmn/jobs.go`, sent as stored by
+`internal/cluster/jobmanager/server.go`); an update of the instance does not change them. So the
+context handed to the core carries the job's variables with the id variable the instance holds now,
+which the instance cache reads again wherever it did not hold the id. A second delivery after the
+update, after a completion which did not reach the engine or a lock which was lost, therefore finds
+the id and builds nothing, and writes nothing. It builds a second aggregate only where a node which
+lags behind (GAPS 20) answers that read before it has seen the update, unless the application's id
+is deterministic; like the window between the aggregate's commit and the update, which decision 25
+names, this is what at-least-once delivery leaves over.
+
+The marker's job is otherwise served like the job of a task: inside the module's drain, under the
+renewal of its lock, with its commands repeated within the lock. A refusal or a method which threw
+fails the job as decision 27 says, with the `retry-backoff` resolved for the task name
+`vanillabp__started`, and not while the module shuts down; the job type is subscribed with the
+`job-timeout` resolved for that name. The marker's job runs in the workflow's root instance,
+because a marker is written into the process itself, so that instance's key is the
+`nativeInstanceId`. A start event the deployed model does not hold, of an older version of the
+process, is reported as a plain one. A process the module declares without a model, such as the
+old id of a renamed process, subscribes the type of its start markers where a model the engine
+holds under the id carries one, with the start events of the held models which carry them: a
+workflow started right before the rename may still wait at its marker. A start marker needs no task
+definition, so the held models are read for it also where every method serving the id is wired by
+element id. Where no held model carries one, or where the platform hands no invoker of starts and
+nothing could answer the marker's job, nothing of the kind is subscribed.

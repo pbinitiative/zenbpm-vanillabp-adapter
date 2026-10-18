@@ -1,0 +1,64 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL"
+    xmlns:zenbpm="http://zenbpm.pbinitiative.org/1.0" id="delivering" targetNamespace="http://bpmn.io/schema/bpmn"
+    xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI"
+    xmlns:dc="http://www.omg.org/spec/DD/20100524/DC"
+    xmlns:di="http://www.omg.org/spec/DD/20100524/DI">
+  <bpmn:process id="Delivering" isExecutable="true">
+    <bpmn:startEvent id="Ordered" name="Ordered">
+      <bpmn:outgoing>Flow_ToDeliver</bpmn:outgoing>
+    </bpmn:startEvent>
+    <bpmn:serviceTask id="Deliver" name="Deliver">
+      <bpmn:extensionElements>
+        <zenbpm:taskDefinition type="deliver" />
+      </bpmn:extensionElements>
+      <bpmn:incoming>Flow_ToDeliver</bpmn:incoming>
+      <bpmn:outgoing>Flow_ToInvoice</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:callActivity id="Invoice" name="Invoice">
+      <bpmn:extensionElements>
+        <zenbpm:calledElement processId="Invoicing" />
+      </bpmn:extensionElements>
+      <bpmn:incoming>Flow_ToInvoice</bpmn:incoming>
+      <bpmn:outgoing>Flow_ToEnd</bpmn:outgoing>
+    </bpmn:callActivity>
+    <bpmn:endEvent id="Delivered" name="Delivered">
+      <bpmn:incoming>Flow_ToEnd</bpmn:incoming>
+    </bpmn:endEvent>
+    <bpmn:sequenceFlow id="Flow_ToDeliver" sourceRef="Ordered" targetRef="Deliver" />
+    <bpmn:sequenceFlow id="Flow_ToInvoice" sourceRef="Deliver" targetRef="Invoice" />
+    <bpmn:sequenceFlow id="Flow_ToEnd" sourceRef="Invoice" targetRef="Delivered" />
+  </bpmn:process>
+  <bpmndi:BPMNDiagram id="BPMNDiagram_1">
+    <bpmndi:BPMNPlane id="BPMNPlane_1" bpmnElement="Delivering">
+      <bpmndi:BPMNShape id="Ordered_di" bpmnElement="Ordered">
+        <dc:Bounds x="160" y="80" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Deliver_di" bpmnElement="Deliver">
+        <dc:Bounds x="256" y="80" width="100" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Invoice_di" bpmnElement="Invoice">
+        <dc:Bounds x="416" y="80" width="100" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Delivered_di" bpmnElement="Delivered">
+        <dc:Bounds x="576" y="80" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNEdge id="Flow_ToDeliver_di" bpmnElement="Flow_ToDeliver">
+        <di:waypoint x="196" y="98" />
+        <di:waypoint x="226" y="98" />
+        <di:waypoint x="226" y="120" />
+        <di:waypoint x="256" y="120" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_ToInvoice_di" bpmnElement="Flow_ToInvoice">
+        <di:waypoint x="356" y="120" />
+        <di:waypoint x="416" y="120" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_ToEnd_di" bpmnElement="Flow_ToEnd">
+        <di:waypoint x="516" y="120" />
+        <di:waypoint x="546" y="120" />
+        <di:waypoint x="546" y="98" />
+        <di:waypoint x="576" y="98" />
+      </bpmndi:BPMNEdge>
+    </bpmndi:BPMNPlane>
+  </bpmndi:BPMNDiagram>
+</bpmn:definitions>

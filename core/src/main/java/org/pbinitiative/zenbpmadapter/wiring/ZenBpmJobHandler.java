@@ -28,6 +28,7 @@ import org.pbinitiative.zenbpmadapter.client.ZenBpmJobStream;
 import org.pbinitiative.zenbpmadapter.client.ZenBpmRestClient;
 import org.pbinitiative.zenbpmadapter.client.api.JobFailure;
 import org.pbinitiative.zenbpmadapter.client.api.JobRef;
+import org.pbinitiative.zenbpmadapter.model.ZenBpmMarkerTasks;
 import org.pbinitiative.zenbpmadapter.processservice.ZenBpmSharedValues;
 
 import io.vanillabp.integration.adapter.spi.AdapterCollaborators;
@@ -91,6 +92,10 @@ import lombok.extern.slf4j.Slf4j;
  * has is the model's, else the engine's default, see decision 38 in the repository's
  * DECISIONS.md.</li>
  * </ul>
+ * <b>The start of a workflow.</b> The job of a start marker is handed to the
+ * {@link ZenBpmBpmsInitiatedStartHandler} of the module, inside the same drain, see decision 26 in
+ * the repository's DECISIONS.md.
+ * <p>
  * <b>The tasks the engine took away.</b> The engine tells nobody about a job it ended, as an
  * interrupting boundary event or a cancelled instance does. So once the outcome of a delivery
  * reached the engine (a completion, a BPMN error, a parked task), the core is handed a
@@ -152,6 +157,12 @@ public final class ZenBpmJobHandler {
     private final ZenBpmDrain drain;
 
     /**
+     * What serves the jobs of the start markers, <code>null</code> where the platform hands no
+     * invoker of starts, which writes no start marker either.
+     */
+    private final ZenBpmBpmsInitiatedStartHandler starts;
+
+    /**
      * The handler of a workflow module whose processing starts.
      *
      * @param adapterId The adapter id
@@ -190,6 +201,10 @@ public final class ZenBpmJobHandler {
                 .asyncTaskMaxAgeActionInUse();
         this.retryBackoffs = retryBackoffs;
         this.drain = new ZenBpmDrain(adapterId, workflowModuleId);
+        this.starts = collaborators
+                .bpmsInitiatedStartInvoker()
+                .map(invoker -> new ZenBpmBpmsInitiatedStartHandler(adapterId, workflowModuleId, invoker, rest, clientId, retryBackoffs))
+                .orElse(null);
         // the core names a task by the definition it was reported under, which is the plain one
         processes
                 .values()
@@ -227,7 +242,7 @@ public final class ZenBpmJobHandler {
      * @param scopedProcessId The process of the job's instance, as the engine knows it
      * @param jobType The job's type
      * @return The process, empty where the module holds no such process or serves no such job type
-     *         in it
+     *         in it, the type of its start markers included
      */
     public Optional<WiredProcess> processServing(
         final String scopedProcessId,
@@ -237,7 +252,7 @@ public final class ZenBpmJobHandler {
                 .ofNullable(processes.get(scopedProcessId))
                 .filter(process -> process
                         .jobTypes()
-                        .contains(jobType));
+                        .contains(jobType) || isStartMarker(process, jobType));
     }
 
     /**
@@ -299,8 +314,9 @@ public final class ZenBpmJobHandler {
     ) {
         final var job = received.job();
         final var plainProcessId = process.bpmnProcessId();
-        final var taskDefinition = scoping.plainTaskDefinition(workflowModuleId, plainProcessId, job.getType(),
-                adapterId);
+        final var startMarker = isStartMarker(process, job.getType());
+        final var taskDefinition = startMarker ? ZenBpmMarkerTasks.START_MARKER_TASK
+                : scoping.plainTaskDefinition(workflowModuleId, plainProcessId, job.getType(), adapterId);
         final var delivery = new Delivery(job.getKey(), taskDefinition, plainProcessId, new ZenBpmCommandRetry(
                 adapterId, job.getKey(), taskDefinition, renewal::lockEnd, this::isStopping));
         // entered before the module's state is read, and the stop sets the state before it looks
@@ -312,6 +328,10 @@ public final class ZenBpmJobHandler {
                         ZenBPM[{}]: job {} (task '{}') arrived while workflow module '{}' shuts down, so it is not \
                         started; the closing job stream releases its lock""", adapterId, job.getKey(), taskDefinition,
                         workflowModuleId);
+                return;
+            }
+            if (startMarker) {
+                starts.handle(received, facts, process, delivery.retry(), drain::isStopping);
                 return;
             }
             run(received, facts, delivery, renewal, entered);
@@ -740,6 +760,16 @@ public final class ZenBpmJobHandler {
                     the engine handed it out again and the newer delivery decides, or its element or workflow ended \
                     meanwhile""", adapterId, job.getKey(), delivery.taskDefinition(), aggregate.id());
         }
+    }
+
+    private static boolean isStartMarker(
+        final WiredProcess process,
+        final String jobType
+    ) {
+        return process
+                .startMarkerJobType()
+                .filter(jobType::equals)
+                .isPresent();
     }
 
     private static String thrownAsText(final RuntimeException thrown) {

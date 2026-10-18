@@ -136,7 +136,12 @@ class ZenBpmDeploymentServiceIT {
     @Test
     @DisplayName("A version-1 model which carries every key the adapter would write reaches the engine byte for byte under none")
     void aVersion1ModelDeploysByteForByte() {
-        final var deploymentService = deploymentService(NameClashAvoidance.NONE, TestWiring.claiming("Version1"));
+        // a process which starts a workflow of its own gets start markers, which the file does not
+        // carry, so the process is a called one here
+        final var deploymentService = deploymentService(NameClashAvoidance.NONE, TestWiring.claiming("Version1"),
+                TestStarts
+                        .everyProcessStartingAWorkflow()
+                        .called("Version1"));
         final var context = prepared(deploymentService, "version-1-it", "version-1.bpmn", "Version1");
 
         deploymentService.deployResources("version-1-it", context);
@@ -170,6 +175,7 @@ class ZenBpmDeploymentServiceIT {
                 "customers", List.of("c-1"),
                 "parcelWeight", 3,
                 "parcels", List.of(Map.of("address", "Main Street 1", "items", List.of("i-1")))), null));
+        complete(activeJob("vanillabp__started__params-it__Orders"));
         complete(activeJob("params-it__Orders__charge"));
         final var notify = activeJob("params-it__Orders__notify");
         complete(notify);
@@ -208,7 +214,9 @@ class ZenBpmDeploymentServiceIT {
         final var wiring = TestWiring
                 .claiming("Shipping", "Tracking")
                 .sharingTheAggregateWith("Tracking");
-        final var deploymentService = deploymentService(NameClashAvoidance.USE_PREFIX, wiring);
+        final var deploymentService = deploymentService(NameClashAvoidance.USE_PREFIX, wiring, TestStarts
+                .everyProcessStartingAWorkflow()
+                .called("Tracking"));
         final var context = prepared(deploymentService, "carry-it", "call-in-a-body.bpmn", "Shipping");
         prepared(deploymentService, context, "carry-it", "called-in-a-body.bpmn", "Tracking");
         deploymentService.deployResources("carry-it", context);
@@ -216,6 +224,7 @@ class ZenBpmDeploymentServiceIT {
         rest.createInstance(new CreateInstanceRequest("carry-it__Shipping", null, "order-2", Map.of(
                 "orderId", "order-2",
                 "parcels", List.of("p-1")), null));
+        complete(activeJob("vanillabp__started__carry-it__Shipping"));
         final var track = activeJob("carry-it__Tracking__track");
 
         assertEquals("order-2", track
@@ -453,8 +462,16 @@ class ZenBpmDeploymentServiceIT {
         final NameClashAvoidance mode,
         final TestWiring wiring
     ) {
+        return deploymentService(mode, wiring, TestStarts.everyProcessStartingAWorkflow());
+    }
+
+    private static ZenBpmDeploymentService deploymentService(
+        final NameClashAvoidance mode,
+        final TestWiring wiring,
+        final TestStarts starts
+    ) {
         return new ZenBpmDeploymentService(ADAPTER_ID, registry, TestCollaborators.of(ADAPTER_ID, TestScoping.of(mode),
-                wiring.wiring(), TestStarts.everyProcessStartingAWorkflow()));
+                wiring.wiring(), starts));
     }
 
     private static ZenBpmProcessingContext prepared(

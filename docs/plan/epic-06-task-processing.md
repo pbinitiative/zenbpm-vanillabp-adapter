@@ -286,6 +286,12 @@ costs one request and makes the instance visible as an incident.
   failure for its own application. `ZenBpmJobHandlerTest#aJobOfAWorkflowNobodyOwnsHereIsFailedWithTheCoresMessage`
   pins the request: the core's message, `retries: 0`, the delivery token and the stream's client id,
   and a WARN without stack trace.
+  *Since the start markers (S9.1.1, S9.3.1), 2026-10-18:* every claimed top-level process refuses
+  such a start at its start marker, before any task, so the IT starts `ParcelRating` instead, a
+  process called on the parcel's aggregate, which passes no marker, and its incident is on `Rate`
+  with the same message; the refusal at the marker is
+  `#aWorkflowStartedUnderTheNameOfAStrangerEndsInAnIncidentAtItsStartMarker`, and
+  `ZenBpmDeploymentIT#aStartedModuleSubscribesItsJobTypeAndStopsFirst` sees that refusal.
 
 **Implemented 2026-10-17.** Core: `wiring/ZenBpmJobDispatcher`, `wiring/ZenBpmJobHandler`,
 `wiring/ZenBpmLockRenewal`, `wiring/ZenBpmJobTimeoutResolver`, `client/ZenBpmCommandRetry`,

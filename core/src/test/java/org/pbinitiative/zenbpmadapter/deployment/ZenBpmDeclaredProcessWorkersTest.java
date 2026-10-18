@@ -16,6 +16,7 @@ import java.io.UncheckedIOException;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.regex.Pattern;
@@ -44,6 +45,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import io.vanillabp.integration.adapter.spi.NameClashAvoidance;
 import io.vanillabp.integration.test.utils.CapturedOutput;
 import io.vanillabp.integration.test.utils.SuppressOutputExtension;
+import io.vanillabp.spi.service.BpmsStartTrigger;
 
 /**
  * The workflows of a BPMN process a workflow module declares without bringing a model for it, the
@@ -92,7 +94,7 @@ class ZenBpmDeclaredProcessWorkersTest {
 
         final var subscribed = stream
                 .call(0)
-                .subscriptions(5);
+                .subscriptions(6);
         final var handler = new ZenBpmJobHandler(ADAPTER_ID, factory(), collaborators(NameClashAvoidance.USE_PREFIX,
                 TestWiring
                         .claiming("Orders")
@@ -103,6 +105,8 @@ class ZenBpmDeclaredProcessWorkersTest {
                         "shop__Orders__charge",
                         "shop__Orders__ship",
                         "shop__Orders__pack",
+                        // the start markers of the claimed process, which starts a workflow of its own
+                        "vanillabp__started__shop__Orders",
                         "shop__OrdersBeforeTheRename__charge",
                         "shop__OrdersBeforeTheRename__refund"),
                         subscribed
@@ -110,7 +114,7 @@ class ZenBpmDeclaredProcessWorkersTest {
                                 .map(StreamSubscriptionRequest::getJobType)
                                 .toList()),
                 () -> assertEquals(42_000L, subscribed
-                        .get(3)
+                        .get(4)
                         .getLockDurationMs()),
                 () -> assertEquals(Set.of("shop__OrdersBeforeTheRename__charge",
                         "shop__OrdersBeforeTheRename__refund"),
@@ -162,18 +166,18 @@ class ZenBpmDeclaredProcessWorkersTest {
 
         final var subscribed = stream
                 .call(0)
-                .subscriptions(3);
+                .subscriptions(4);
         final var handler = new ZenBpmJobHandler(ADAPTER_ID, factory(), collaborators(NameClashAvoidance.NONE,
                 TestWiring
                         .claiming("Orders")
                         .servedElsewhere("Notify")
                         .wiring()), context, ZenBpmRetryBackoffResolver.NONE);
         assertAll(
-                () -> assertEquals(List.of("charge", "ship", "pack"), subscribed
+                () -> assertEquals(List.of("charge", "ship", "pack", "vanillabp__started__Orders"), subscribed
                         .stream()
                         .map(StreamSubscriptionRequest::getJobType)
                         .toList()),
-                () -> assertEquals(3, stream
+                () -> assertEquals(4, stream
                         .call(0)
                         .subscriptions()
                         .size()),
@@ -287,8 +291,10 @@ class ZenBpmDeclaredProcessWorkersTest {
     }
 
     @Test
-    @DisplayName("A declared process id whose methods are all wired by element id is named with both ways out, and the engine is not asked")
-    void aDeclaredIdWiredByElementIdIsNamedWithBothWaysOut(final CapturedOutput output) {
+    @DisplayName("A declared process id whose methods are all wired by element id is named with both ways out, and the engine is asked only for the start markers of the models it holds, of which none carries one here")
+    void aDeclaredIdWiredByElementIdIsNamedWithBothWaysOut(final CapturedOutput output) throws Exception {
+        final var held = "shop__%s".formatted(DECLARED);
+        theEngineHolds(held, model(held, "shop__%s__charge".formatted(DECLARED), null));
         final var deploymentService = deploymentService(NameClashAvoidance.USE_PREFIX, TestWiring
                 .claiming("Orders")
                 .servedElsewhere("Notify")
@@ -298,11 +304,24 @@ class ZenBpmDeclaredProcessWorkersTest {
         deploymentService.startWorkflowProcessing("shop", context);
 
         assertAll(
-                () -> assertEquals(3, stream
+                () -> assertEquals(4, stream
                         .call(0)
-                        .subscriptions(3)
+                        .subscriptions(4)
                         .size()),
-                () -> assertEquals(List.of(), rest.requests()),
+                () -> assertTrue(rest
+                        .requests()
+                        .stream()
+                        .allMatch(request -> "GET".equals(request.method())),
+                        () -> rest
+                                .requests()
+                                .toString()),
+                () -> assertTrue(output
+                        .getOutOfThisTest()
+                        .contains(
+                                """
+                                        The start markers of the models the engine holds under that id are served all the same, \
+                                        because they need no task definition."""),
+                        output::getOutOfThisTest),
                 () -> assertFalse(context
                         .wiredProcesses()
                         .containsKey(DECLARED)),
@@ -322,6 +341,128 @@ class ZenBpmDeclaredProcessWorkersTest {
     }
 
     @Test
+    @DisplayName("The start markers of a held model are served where every method serving the declared id is wired by element id, because a start marker needs no task definition")
+    void theStartMarkersOfAnIdWiredByElementIdAreServed() throws Exception {
+        final var held = "shop__%s".formatted(DECLARED);
+        theEngineHolds(held, modelWithStartMarkers(held));
+        final var deploymentService = deploymentService(NameClashAvoidance.USE_PREFIX, TestWiring
+                .claiming("Orders")
+                .servedElsewhere("Notify")
+                .declaringWithoutAModel(DECLARED));
+        final var context = wired(deploymentService);
+
+        deploymentService.startWorkflowProcessing("shop", context);
+
+        final var subscribed = stream
+                .call(0)
+                .subscriptions(5);
+        assertAll(
+                () -> assertEquals(Map.of("Placed", BpmsStartTrigger.Kind.NONE), context
+                        .wiredProcesses()
+                        .get(DECLARED)
+                        .startMarkers()),
+                () -> assertEquals(Set.of(), context
+                        .wiredProcesses()
+                        .get(DECLARED)
+                        .jobTypes()),
+                () -> assertEquals("vanillabp__started__shop__OrdersBeforeTheRename", subscribed
+                        .getLast()
+                        .getJobType()));
+    }
+
+    @Test
+    @DisplayName("The held models of a declared process id whose methods are all wired by element id which cannot be read leave its start markers unserved, which a WARN says")
+    void theStartMarkersOfAnIdWiredByElementIdWhoseModelsCannotBeReadAreAWarn(final CapturedOutput output) {
+        rest.answers("GET", "/v1/process-definitions", 503, null);
+        final var deploymentService = deploymentService(NameClashAvoidance.USE_PREFIX, TestWiring
+                .claiming("Orders")
+                .servedElsewhere("Notify")
+                .declaringWithoutAModel(DECLARED));
+        final var context = wired(deploymentService);
+
+        deploymentService.startWorkflowProcessing("shop", context);
+
+        assertAll(
+                () -> assertFalse(context
+                        .wiredProcesses()
+                        .containsKey(DECLARED)),
+                () -> assertTrue(output
+                        .getOutOfThisTest()
+                        .contains("""
+                                ZenBPM[orders]: the models the engine holds as 'shop__OrdersBeforeTheRename' could not \
+                                be read ("""), output::getOutOfThisTest),
+                () -> assertTrue(output
+                        .getOutOfThisTest()
+                        .contains("""
+                                so the start markers they may carry are not served. The next start of the application \
+                                reads them again."""), output::getOutOfThisTest));
+    }
+
+    @Test
+    @DisplayName("Where the platform hands no invoker of starts, neither a declared process id with task definitions nor one without serves the start markers of its held models, because nothing could answer their jobs")
+    void withoutAnInvokerOfStartsNoStartMarkerIsServed(final CapturedOutput output) throws Exception {
+        final var held = "shop__%s".formatted(DECLARED);
+        theEngineHolds(held, modelWithStartMarkers(held));
+        final var wiring = TestWiring
+                .claiming("Orders")
+                .servedElsewhere("Notify")
+                .declaringWithoutAModel(DECLARED, "charge");
+        final var deploymentService = new ZenBpmDeploymentService(ADAPTER_ID, registry, TestCollaborators
+                .withoutLifecycleInvokers(ADAPTER_ID, TestScoping.of(NameClashAvoidance.USE_PREFIX), wiring.wiring()), (
+                    workflowModuleId,
+                    bpmnProcessId,
+                    taskDefinition) -> Duration.ofMinutes(5), ZenBpmRetryBackoffResolver.NONE);
+        final var context = wired(deploymentService);
+
+        deploymentService.startWorkflowProcessing("shop", context);
+
+        assertAll(
+                () -> assertEquals(Map.of(), context
+                        .wiredProcesses()
+                        .get(DECLARED)
+                        .startMarkers()),
+                () -> assertTrue(stream
+                        .call(0)
+                        .subscriptions(4)
+                        .stream()
+                        .noneMatch(subscription -> subscription
+                                .getJobType()
+                                .startsWith("vanillabp__started__"))),
+                () -> assertFalse(output
+                        .getOutOfThisTest()
+                        .contains("of the start markers of"), output::getOutOfThisTest));
+    }
+
+    @Test
+    @DisplayName("Where the platform hands no invoker of starts, a declared process id whose methods are all wired by element id asks the engine nothing, and its WARN promises no start marker")
+    void withoutAnInvokerOfStartsAnIdWiredByElementIdAsksTheEngineNothing(final CapturedOutput output) {
+        final var wiring = TestWiring
+                .claiming("Orders")
+                .servedElsewhere("Notify")
+                .declaringWithoutAModel(DECLARED);
+        final var deploymentService = new ZenBpmDeploymentService(ADAPTER_ID, registry, TestCollaborators
+                .withoutLifecycleInvokers(ADAPTER_ID, TestScoping.of(NameClashAvoidance.USE_PREFIX), wiring.wiring()), (
+                    workflowModuleId,
+                    bpmnProcessId,
+                    taskDefinition) -> Duration.ofMinutes(5), ZenBpmRetryBackoffResolver.NONE);
+        final var context = wired(deploymentService);
+
+        deploymentService.startWorkflowProcessing("shop", context);
+
+        assertAll(
+                () -> assertEquals(List.of(), rest.requests()),
+                () -> assertFalse(context
+                        .wiredProcesses()
+                        .containsKey(DECLARED)),
+                () -> assertTrue(output
+                        .getOutOfThisTest()
+                        .contains("until those workflows have ended.\n"), output::getOutOfThisTest),
+                () -> assertFalse(output
+                        .getOutOfThisTest()
+                        .contains("The start markers of the models the engine holds"), output::getOutOfThisTest));
+    }
+
+    @Test
     @DisplayName("A declared process id whose models the engine does not hand out is not served, because a task definition alone cannot tell a task from a user task, which the start's line says")
     void aDeclaredIdWhoseModelsCannotBeReadIsNotServed(final CapturedOutput output) {
         rest.answers("GET", "/v1/process-definitions", 503, null);
@@ -334,9 +475,9 @@ class ZenBpmDeclaredProcessWorkersTest {
         deploymentService.startWorkflowProcessing("shop", context);
 
         assertAll(
-                () -> assertEquals(3, stream
+                () -> assertEquals(4, stream
                         .call(0)
-                        .subscriptions(3)
+                        .subscriptions(4)
                         .size()),
                 () -> assertFalse(context
                         .wiredProcesses()
@@ -373,7 +514,7 @@ class ZenBpmDeclaredProcessWorkersTest {
 
         final var subscribed = stream
                 .call(0)
-                .subscriptions(4);
+                .subscriptions(5);
         assertAll(
                 () -> assertEquals("shop__OrdersBeforeTheRename__refund", subscribed
                         .getLast()
@@ -387,6 +528,70 @@ class ZenBpmDeclaredProcessWorkersTest {
                         .contains("""
                                 Not served: the task definition(s) [charge], which a user task of a model held under \
                                 that id carries"""), output::getOutOfThisTest));
+    }
+
+    @Test
+    @DisplayName("The start markers a held model carries are served, with the start events of the held models which carry them, so a workflow started right before the rename passes its marker; a held model without markers adds none")
+    void theStartMarkersOfAHeldModelAreServed() throws Exception {
+        final var held = "shop__%s".formatted(DECLARED);
+        theEngineHolds(held, model(held, "shop__%s__charge".formatted(DECLARED), null), modelWithStartMarkers(
+                held));
+        final var deploymentService = deploymentService(NameClashAvoidance.USE_PREFIX, TestWiring
+                .claiming("Orders")
+                .servedElsewhere("Notify")
+                .declaringWithoutAModel(DECLARED, "charge"));
+        final var context = wired(deploymentService);
+
+        deploymentService.startWorkflowProcessing("shop", context);
+
+        final var subscribed = stream
+                .call(0)
+                .subscriptions(6);
+        assertAll(
+                () -> assertEquals(Map.of("Placed", BpmsStartTrigger.Kind.NONE), context
+                        .wiredProcesses()
+                        .get(DECLARED)
+                        .startMarkers()),
+                () -> assertEquals("vanillabp__started__shop__OrdersBeforeTheRename", subscribed
+                        .getLast()
+                        .getJobType()));
+    }
+
+    @Test
+    @DisplayName("The start markers of a held model are served also where none of the task definitions the methods name is served")
+    void theStartMarkersAreServedWithoutATaskTypeOfTheId(final CapturedOutput output) throws Exception {
+        final var held = "shop__%s".formatted(DECLARED);
+        theEngineHolds(held, modelWithStartMarkers(held));
+        final var deploymentService = deploymentService(NameClashAvoidance.USE_PREFIX, TestWiring
+                .claiming("Orders")
+                .servedElsewhere("Notify")
+                .declaringWithoutAModel(DECLARED, "legacy"));
+        final var context = wired(deploymentService);
+
+        deploymentService.startWorkflowProcessing("shop", context);
+
+        final var subscribed = stream
+                .call(0)
+                .subscriptions(5);
+        assertAll(
+                () -> assertEquals(Set.of(), context
+                        .wiredProcesses()
+                        .get(DECLARED)
+                        .jobTypes()),
+                () -> assertEquals("vanillabp__started__shop__OrdersBeforeTheRename", subscribed
+                        .getLast()
+                        .getJobType()),
+                () -> assertTrue(output
+                        .getOutOfThisTest()
+                        .contains(
+                                """
+                                        WARN  o.p.z.d.ZenBpmDeclaredProcessWorkers - ZenBPM[orders]: workflow module 'shop' declares \
+                                        BPMN process 'OrdersBeforeTheRename' without deploying a model under it, and the engine holds it \
+                                        as 'shop__OrdersBeforeTheRename': its workflows are served by the job type \
+                                        'vanillabp__started__shop__OrdersBeforeTheRename' of the start markers of [Placed]. Not served: \
+                                        the task definition(s) [legacy], which no model held under that id names.
+                                        """),
+                        output::getOutOfThisTest));
     }
 
     @Test
@@ -448,9 +653,9 @@ class ZenBpmDeclaredProcessWorkersTest {
         deploymentService.startWorkflowProcessing("shop", context);
 
         assertAll(
-                () -> assertEquals(3, stream
+                () -> assertEquals(4, stream
                         .call(0)
-                        .subscriptions(3)
+                        .subscriptions(4)
                         .size()),
                 () -> assertEquals(List.of(), rest.requests()));
     }
@@ -506,8 +711,9 @@ class ZenBpmDeclaredProcessWorkersTest {
                 models.length));
     }
 
-    // a version of the process held under the declared id: a service task, without a task
-    // definition where no type is given for it, and a user task where a type is given for one
+    // a version of the process held under the declared id, without start markers: a start event, a
+    // service task, without a task definition where no type is given for it, and a user task where
+    // a type is given for one
     private static String model(
         final String scopedProcessId,
         final String serviceTaskType,
@@ -522,6 +728,7 @@ class ZenBpmDeclaredProcessWorkersTest {
                 <bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL"
                     xmlns:zenbpm="http://zenbpm.pbinitiative.org/1.0" id="held" targetNamespace="test">
                   <bpmn:process id="%s" isExecutable="true">
+                    <bpmn:startEvent id="Old" />
                     <bpmn:serviceTask id="Work">%s</bpmn:serviceTask>
                     %s
                   </bpmn:process>
@@ -530,6 +737,27 @@ class ZenBpmDeclaredProcessWorkersTest {
                 : "<bpmn:extensionElements><zenbpm:taskDefinition type=\"%s\" /></bpmn:extensionElements>"
                         .formatted(serviceTaskType),
                 userTask);
+    }
+
+    // a version of the process held under the declared id which an earlier version of this adapter
+    // gave a start marker
+    private static String modelWithStartMarkers(final String held) {
+        return """
+                <?xml version="1.0" encoding="UTF-8"?>
+                <bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL"
+                    xmlns:zenbpm="http://zenbpm.pbinitiative.org/1.0" id="held" targetNamespace="test">
+                  <bpmn:process id="%s" isExecutable="true">
+                    <bpmn:startEvent id="Placed" />
+                    <bpmn:serviceTask id="vanillabp__started__Placed">
+                      <bpmn:extensionElements><zenbpm:taskDefinition type="vanillabp__started__%s" /></bpmn:extensionElements>
+                    </bpmn:serviceTask>
+                    <bpmn:serviceTask id="Work">
+                      <bpmn:extensionElements><zenbpm:taskDefinition type="shop__%s__charge" /></bpmn:extensionElements>
+                    </bpmn:serviceTask>
+                  </bpmn:process>
+                </bpmn:definitions>
+                """
+                .formatted(held, held, DECLARED);
     }
 
     private static ZenBpmProcessingContext wired(final ZenBpmDeploymentService deploymentService) {

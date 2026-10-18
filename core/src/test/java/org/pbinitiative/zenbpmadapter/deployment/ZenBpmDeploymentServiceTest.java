@@ -735,7 +735,8 @@ class ZenBpmDeploymentServiceTest {
     private static ZenBpmProcessingContext withAJobType() {
         final var context = new ZenBpmProcessingContext("shop");
         context.recordWiring(
-                new ZenBpmProcessingContext.WiredProcess("Order", "Order", java.util.Set.of("charge"), true, false));
+                new ZenBpmProcessingContext.WiredProcess("Order", "Order", java.util.Set
+                        .of("charge"), true, false, java.util.Map.of()));
         return context;
     }
 

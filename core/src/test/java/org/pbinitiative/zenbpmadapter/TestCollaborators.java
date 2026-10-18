@@ -194,6 +194,34 @@ public final class TestCollaborators {
     }
 
     /**
+     * A complete set of collaborators, of which only the scoping, the invoker of tasks and the
+     * invoker of starts may be called: what the handlers of a workflow module's jobs meet.
+     *
+     * @param adapterId The adapter id they are handed to
+     * @param scoping The platform's name-clash scoping, as the test wants it to answer
+     * @param workflowTaskInvoker The platform's core as a job handler calls it
+     * @param bpmsInitiatedStartInvoker The platform's core as the handler of a start marker calls it
+     * @return The collaborators
+     */
+    public static AdapterCollaborators withInvokers(
+        final String adapterId,
+        final NameClashAvoidanceSupport scoping,
+        final WorkflowTaskInvoker workflowTaskInvoker,
+        final BpmsInitiatedStartInvoker bpmsInitiatedStartInvoker
+    ) {
+        return AdapterCollaborators
+                .forAdapter(adapterId)
+                .workflowTaskWiring(unused(WorkflowTaskWiring.class))
+                .workflowTaskInvoker(workflowTaskInvoker)
+                .scoping(scoping)
+                .workflowAggregateSync(unused(WorkflowAggregateSync.class))
+                .preCommitRegistrar(unused(PreCommitRegistrar.class))
+                .workflowEndedInvoker(unused(WorkflowEndedInvoker.class))
+                .bpmsInitiatedStartInvoker(bpmsInitiatedStartInvoker)
+                .build();
+    }
+
+    /**
      * A complete set of collaborators, of which the scoping, the sync of aggregates and the hook
      * before a commit may be called: what the handlers of a task meet.
      *

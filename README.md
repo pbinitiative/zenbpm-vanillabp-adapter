@@ -142,7 +142,28 @@ knows no locks (see [`GAPS.md`](./GAPS.md)), or after the application restarted.
 delivery committed, the method does not run again: the platform answers the delivery from its
 record of deliveries, and the adapter sends the recorded outcome to the engine. Two deliveries which
 run at the same time both run; the adapter names the lock it could not keep, and the platform names
-the second run. A message is correlated in two phases. Phase one never asks the engine whether
+the second run.
+
+A claimed process which starts a workflow of its own gets a start marker behind every start event of
+its own: a service task whose job tells the platform that a workflow started (decisions 26 and 44 in
+[`DECISIONS.md`](./DECISIONS.md)). A workflow a timer started, or one somebody started past
+VanillaBP without a business key, gets the aggregate the application's `@WorkflowStartedByBpms`
+method builds and names. Its id is written into the instance before the workflow goes on, and the
+workflow is found later through the instance key of its start. A second delivery of the marker reads
+that id from the instance, because the engine hands a job out with the variables it was created
+with, and builds nothing; it builds a second aggregate only where a node which has not seen the
+update yet answers that read (decision 46). A workflow the application started itself passes its
+marker at the cost of one job and one transaction, without an update of its variables. A start the
+platform refuses, one under a business key no aggregate carries for example, fails the marker's job
+like a handler which threw. A call activity which starts a process of the same workflow module on an
+aggregate of its own starts it without the caller's business key and id, so the called process's own
+method builds its aggregate (decision 45). A call activity is left as the modeller wrote it where
+they wrote a `zenbpm:in` of their own or a mapping of the called process's id variable, and where
+the called process belongs to another workflow module or application, which the boot cannot judge:
+there the model hands on whatever name the called workflow is to start with. No end of a workflow is
+reported yet.
+
+A message is correlated in two phases. Phase one never asks the engine whether
 something waits. It refuses where the application calls a message which no version the engine holds
 of the workflow module's processes waits for, and one which the newest version of a process starts
 it with, also where an older version waits for it, naming `startWorkflowByMessage`, because ZenBPM
