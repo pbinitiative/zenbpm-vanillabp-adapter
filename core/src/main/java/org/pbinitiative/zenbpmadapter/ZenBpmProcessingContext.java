@@ -240,7 +240,9 @@ public final class ZenBpmProcessingContext {
 
     /**
      * The claimed processes of the workflow module as far as they were wired, by their plain ids,
-     * in the order they were wired. A process nobody claims is not wired and not among them.
+     * in the order they were wired, followed by the process ids it declares without a model once its
+     * processing started and found something to serve them with. A process nobody claims is not
+     * wired and not among them.
      *
      * @return What wiring found out about each of them
      */
@@ -249,8 +251,8 @@ public final class ZenBpmProcessingContext {
     }
 
     /**
-     * The job types of the workflow module's claimed processes, each once, in the order the
-     * processes were wired.
+     * The job types of the workflow module's claimed processes, and of the process ids it declares
+     * without a model, each once, in the order the processes were wired.
      *
      * @return The job types as the engine knows them
      */
@@ -370,7 +372,8 @@ public final class ZenBpmProcessingContext {
     }
 
     /**
-     * What wiring found out about one claimed process.
+     * What wiring found out about one claimed process, or what serves the workflows of a process id
+     * a workflow service declares without bringing a model for it.
      *
      * @param bpmnProcessId The id of the process as the modeller wrote it
      * @param scopedBpmnProcessId The id under which the engine holds it

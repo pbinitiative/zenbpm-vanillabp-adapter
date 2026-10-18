@@ -701,3 +701,47 @@ engine counts it. On any other node nothing is counted: there the holder's count
 lets in at most one job too many per such task until the lock would have lapsed, which waits for a
 free slot like any other, as decision 37 allows; a cancellation sent from another node leaves the
 engine's lock and the holder's count alike.
+
+### 41. A process id the application declares without a model is served where a model the engine holds makes its task definitions tasks
+
+Decided by the implementation pipeline in place of the maintainers, as their policy for the
+autonomous run asks.
+
+A workflow module may declare a BPMN process id under which it deploys nothing, which is how a
+renamed process keeps being served: the workflows started before the rename still run in the
+engine, on the models an earlier version of the application deployed under the old id. Under
+`use-prefix` a job type carries the process it was deployed with, so the jobs of those workflows
+carry names no subscription of the deployed processes asks for, and nobody notices, because a job
+nobody takes has not failed. The platform names, per such id, what the application's methods serve
+(`taskWiringOfProcessesNobodyDeployed`): today the task definition of every method, and nothing for
+a method wired by element id. The adapter composes a job type from each, scoped by the id as the
+deployment of the id scoped it, which is the shape of the Camunda 8 adapter (its decision 19).
+
+Composing alone is not enough on this engine. At the pinned commit `bdd795a3` the engine creates a
+user task as a job like any other (`createUserTask` calls `createInternalTask` in
+`pkg/bpmn/usertasks.go`), typed by its `zenbpm:taskDefinition`, which the deployment scoped like the
+type of a task, and the job stream hands out every job of a subscribed type. So a type composed from
+the task definition of a method serving a user task is that user task's type, and the job stream
+would hand the user task to a handler, which would run it and complete it like a service task: a
+task meant for a person done by nobody. Camunda 8 opens both kinds of subscription and lets the
+wrong one stay idle, because there a user task is no job.
+
+So the adapter reads the models the engine holds under the id, every version, because the
+workflows still running may run on any of them: one request for the versions and one per version.
+A composed type is subscribed only where one of those models gives it to an element which creates a
+job for a worker. One they give to a user task only is named at startup and left to the handling of
+user tasks, which reads it from the same models; one they give to no element is named as well and
+subscribes nothing, because no job of those workflows carries it. Where the models cannot be read,
+nothing is subscribed for the id and a WARN says so, because a guess could serve a user task as a
+service task; the next start of the application serves those workflows. The models are read while
+the workflow module starts its processing, right after its deployment reached the engine.
+
+A method wired by element id names no task definition, so no job type can be composed for it, and
+its workflows stand still; the start says so and names both ways out, as Camunda 8 does: wire the
+method by task definition, or keep deploying the old model under its old id until its workflows
+ended. Where a composed type is one a deployed process subscribes already, under `none` or under
+`use-prefix` without per-process task definitions, nothing is subscribed twice, but the declared id
+is recorded with its types all the same, because a job goes to the workflow module which serves the
+process of its instance. A job of those workflows carries the variables of its scope, and inside a
+multi-instance body only what the model held maps into it, which the version of the application
+that deployed it wrote for the names its methods read then.

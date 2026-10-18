@@ -58,6 +58,14 @@ tasks of instruction 1 to `WiredProcess`, or beside it.
 An interval above zero but below one second polls the engine almost without pause: WARN at startup
 naming the key, as the configuration refuses only negative values.
 
+*Note from S6.4.1, 2026-10-18.* A process id a workflow module declares without a model (the old id
+of a renamed process) has user tasks as well, and only the models the engine holds under that id
+say which types they have. `deployment/ZenBpmDeclaredProcessWorkers` reads those models already
+(every version) and names the user-task types it found in the start's line; decision 41 keeps them
+off the job stream. Poll the user-task types of a declared id from the same read (Camunda 8's
+decision 19 reads its user-task listeners from the held models for the same reason), so a user task
+created in a workflow of the old id after the rename is notified.
+
 *Note from S2.4.2, 2026-10-15.* The poller runs on a timing thread, so it hands a notification to a
 handler slot with `ZenBpmExecutor.tryExecute`, which never waits, and not with `execute`, which
 waits for a slot and would hold the timing thread for as long as a handler runs. A notification

@@ -7,8 +7,10 @@ package org.pbinitiative.zenbpmadapter;
 import java.lang.reflect.Proxy;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collection;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -21,8 +23,8 @@ import io.vanillabp.integration.adapter.spi.workflowtask.WorkflowTaskWiring;
  * The platform's wiring, as far as preparing, wiring and deploying a file ask it, for a test which
  * builds a service of this adapter by hand: which processes a workflow service claims, the name of
  * the aggregate id, the names and the items the methods serving a task read, which tasks something
- * else serves, which called processes share the aggregate, and whether the check of the tasks
- * refuses. It writes down every call, so a test can read what the adapter asked and reported; any
+ * else serves, which called processes share the aggregate, which processes a workflow service
+ * declares without a model, and whether the check of the tasks refuses. It writes down every call, so a test can read what the adapter asked and reported; any
  * other call fails the test.
  */
 public final class TestWiring {
@@ -38,6 +40,8 @@ public final class TestWiring {
     private final Set<String> tasksServedElsewhere = new HashSet<>();
 
     private final Set<String> processesSharingTheAggregate = new HashSet<>();
+
+    private final Map<String, Collection<String>> declaredWithoutAModel = new LinkedHashMap<>();
 
     private String taskWiringRefusal;
 
@@ -126,6 +130,23 @@ public final class TestWiring {
     }
 
     /**
+     * Lets a workflow service declare a process without bringing a model for it, such as the old id
+     * of a renamed process, with what its methods serve for it.
+     *
+     * @param bpmnProcessId The process the workflow service declares
+     * @param taskDefinitions The task definitions its methods name for the process; none where
+     *            every method is wired by element id
+     * @return This wiring
+     */
+    public TestWiring declaringWithoutAModel(
+        final String bpmnProcessId,
+        final String... taskDefinitions
+    ) {
+        declaredWithoutAModel.put(bpmnProcessId, List.of(taskDefinitions));
+        return this;
+    }
+
+    /**
      * Lets the check of the tasks refuse, as the platform does where a task has no method.
      *
      * @param message The message of the refusal
@@ -183,6 +204,7 @@ public final class TestWiring {
                 case "workflowsShareTheWorkflowAggregate" -> processesSharingTheAggregate.contains(
                         (String) arguments[2]);
                 case "validateTaskWiring" -> refuseTheTasksWhereAsked();
+                case "taskWiringOfProcessesNobodyDeployed" -> Map.copyOf(declaredWithoutAModel);
                 case "reportModelExpressions", "reportConcurrentTokenElements", "registerDeployedVersion" -> null;
                 default -> throw new AssertionError("WorkflowTaskWiring.%s is not expected to be called".formatted(
                         method.getName()));

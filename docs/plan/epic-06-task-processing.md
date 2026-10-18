@@ -1419,7 +1419,7 @@ the next run.
 
 ### S6.4.1 Workers for declared process ids
 
-- [ ] **Depends on:** S6.1.1.
+- [x] **Depends on:** S6.1.1.
 
 **Instructions**
 
@@ -1437,7 +1437,102 @@ secondary with model B, the old workflow's task is served).
 
 **Acceptance criteria**
 
-- [ ] A workflow of a renamed process finishes after the rename under `use-prefix`.
+- [x] A workflow of a renamed process finishes after the rename under `use-prefix`.
+  `ZenBpmRenamedProcessIT#aWorkflowOfARenamedProcessFinishesAfterTheRename`: the version of the
+  application before the rename deploys `Shipping`, starts a workflow of it which waits at a timer,
+  and stops; the version after it deploys `Dispatch`, declares `Shipping` beside it, and its start
+  line says that `deploy-it__Shipping__ship` is subscribed for it. The workflow's instance of
+  `deploy-it__Shipping` ends `COMPLETED`, the shipment was shipped by the version after the rename,
+  and its `@TaskParam` `destination` was bound from the job of the old model. With the declared id
+  not served at all the workflow never ends (mutant, against the engine).
+  `ZenBpmDeclaredProcessWorkersTest#aDeclaredIdIsServedByTheTaskTypesTheEngineHolds` pins which
+  types: the task's type of every version the engine holds is subscribed with its job-timeout and
+  routed to the module, a user task's type is not, and the start's line names both and the task
+  definition no held model names.
+
+*Fit check, 2026-10-18, decided by the Implementor.* Checked against `main` with S6.3.1 on the
+branch, `ADAPTER-AUTHORS.md` (3.2: "Serving those workflows is a second matter, and that one IS
+yours"; 3.3: a declared id answers `true` to both lifecycle questions), the platform as the adapter
+resolves it (`WorkflowTaskWiring#taskWiringOfProcessesNobodyDeployed(String)` answering
+`Map<String, Collection<String>>`, a method wired by element id contributing nothing), Camunda 8's
+`Camunda8DeploymentService` (`openTheWorkersOfTheProcessesNobodyDeployed`,
+`reportWhatADeclaredIdIsServedWith`, `Camunda8ProcessVersions#predatesDeployedVersion`), its decision
+19 and `Camunda8RenamedProcessIT`, and the engine at the pin `bdd795a3` (`createUserTask` in
+`pkg/bpmn/usertasks.go`, the distribution by type in `internal/cluster/jobmanager/server.go`; the
+image run by `ZenBpmRenamedProcessIT`). What did not fit, and what was decided:
+
+1. **Names and places.** `deployment/ZenBpmDeclaredProcessWorkers`, the name the architecture's
+   layout gave it; `startWorkflowProcessing` asks it before it subscribes and records what it found
+   like the wiring of a claimed process (`WiredProcess` and the job-timeout of each type in the
+   module's context), so the types are subscribed, routed to the module, probed and unsubscribed
+   with the others, and no code of the job stream, the dispatcher or the handler changed.
+2. **User tasks are jobs at this engine** (brief question 8). The story's premise that a composed
+   type "cannot know user-task types" and so subscribes nothing for them does not hold: the engine
+   creates a user task as a job of its `zenbpm:taskDefinition` type, which the deployment scoped
+   like a task's, and the job stream hands out any job of a subscribed type. A method serving a
+   user task of the old model by task definition would compose that user task's type, and the
+   handler would complete the user task like a service task. So the models the engine holds under
+   the id are read (every version), and a composed type is subscribed only where a held model gives
+   it to an element which creates a job for a worker; a user task's type and a type no held model
+   names are named in the start's line. Where the models cannot be read, nothing is subscribed for
+   the id and a WARN says so. Decision 41 (new), because it shapes what E8 builds on: the user tasks
+   of a renamed process are read from the same models (a note under S8.1.1 says so).
+3. **The start's line** (brief question 7). One INFO per declared id names the module, the id, the
+   id the engine holds it under, the types subscribed for it, the types the deployed processes
+   subscribe already, the user tasks and the task definitions no held model names. An id whose
+   methods are all wired by element id gets the WARN of Camunda 8's decision 19 with both ways out.
+   What a job of such a workflow carries, checked at the pin and in this repository: the adapter
+   writes input mappings only into multi-instance bodies (`ZenBpmTaskParameters`); outside one a job
+   carries the variables of its scope from the engine. So the line says that, instead of the story's
+   "fetches no input mappings". `ZenBpmRenamedProcessIT` binds the `@TaskParam` `destination` of the
+   version after the rename from a job of the model the version before deployed.
+4. **Routing and the probe** (brief question 9). The declared id is recorded as a process the
+   module serves (`WiredProcess`, and `ZenBpmDeployedProcesses#recordServed`, which the check of
+   S6.3.1 reads), so the dispatcher hands a job of its instances to the module, the open-task probe
+   of the handler answers for its types (no user-task type), and a task of it can be completed
+   through the process service. Under `none` the composed type is the deployed process's type, so
+   nothing new is subscribed, and the jobs are still routed
+   (`ZenBpmDeclaredProcessWorkersTest#underNoneADeclaredIdSubscribesNoTypeOfItsOwn`).
+5. **Job-timeouts.** A composed type is subscribed with the `job-timeout` resolved for the declared
+   id and the task definition, and the rule that a type shared by two modules has one job-timeout
+   holds for it too; the conflict ends the start of the processing, since the declared ids are
+   known only after the module deployed.
+6. **`predatesDeployedVersion`** of a job of a declared id stays `false`, because nothing of this
+   start was deployed under the id, as Camunda 8's `predatesDeployedVersion` answers it.
+7. **Where the IT lives** (brief question 10). `ZenBpmRenamedProcessIT` in `springboot/it` boots
+   two applications one after the other on one named in-memory database (`it/renamed/before`,
+   deploying `Shipping` from `renamed-it/before/shipping.bpmn`, and `it/renamed/after`, deploying
+   `Dispatch` from `renamed-it/after/dispatch.bpmn` and declaring `Shipping`), both models with
+   their diagrams. The workflow waits at a timer of eight seconds, so the version before the rename
+   is closed before the task is due. The Quarkus side needs nothing beyond the core's tests, which
+   count for its report.
+
+**Implemented 2026-10-18.** Core: `deployment/ZenBpmDeclaredProcessWorkers`;
+`ZenBpmDeploymentService#startWorkflowProcessing` serves the declared ids before it subscribes
+(recorded like a claimed process: `WiredProcess`, job-timeouts, the served process of S6.3.1), and
+the two lifecycle flags of a process are read by one helper each. Decision 41 (new). README status,
+the architecture's section on user tasks, the SPI mapping, a note under S8.1.1.
+
+New tests: `ZenBpmDeclaredProcessWorkersTest` (8); Spring Boot `ZenBpmRenamedProcessIT` (1)
+with the applications `it/renamed/before` and `it/renamed/after`, the aggregate `Shipment`, the
+models `renamed-it/before/shipping.bpmn` and `renamed-it/after/dispatch.bpmn` and
+`renamed-it.yaml`. `TestWiring` answers the declared ids.
+
+Seen to fail, each restored afterwards (12 of 12 mutants, against green unmutated runs): every
+composed type served, a user task's included; a user task's type taken for one no model holds; an
+id wired by element id reading the engine; models which cannot be read serving nothing without a
+word; a failed read taken as models without tasks; a declared id not recorded as served; not routed
+to its module; its types subscribed with the default job-timeout; a type shared with another
+module not checked; a restart counting the declared types as the deployed ones; an adapter id
+without clients asking the wiring; nothing of a declared id served (against the engine:
+`ZenBpmRenamedProcessIT` waits for the workflow in vain).
+
+`TZ=Etc/UTC mvn clean install` on OpenJDK 25.0.2 builds green with every integration test run and
+none skipped (engine test support 12 unit and 3 integration tests, core 947 unit and 77 integration
+tests, Spring Boot 11 unit and 32 integration tests, smoke test 37, Quarkus runtime 10, Quarkus
+deployment 51, Quarkus integration tests 3, coverage gate 37). The gate measures 100 % of 24,501
+instructions for Spring Boot and 100 % of 24,375 for Quarkus, and `bin/check-deploy-safety.sh`
+passes (13 files on a green build, nothing after a red gate). No flake was hit.
 
 ## F6.5 Idempotency and restarts on both platforms
 

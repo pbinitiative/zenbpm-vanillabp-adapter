@@ -109,7 +109,13 @@ transaction back with an `IllegalStateException` naming the reason. After the co
 values are written as for a completed task, and the job is completed, or failed with the error code
 as the deployed model carries it, so an error boundary event takes over; a task which ended
 meanwhile costs a WARN and nothing else. The engine takes both from any node of the application,
-without the delivery which left the task open (decision 40). A method which throws is failed at the engine without an error code, so the
+without the delivery which left the task open (decision 40). A process id a workflow service
+declares without bringing a model for it, such as the old id of a renamed process, keeps its
+workflows served: the methods' task definitions are scoped by that id, and each one a model the
+engine holds under the id gives to a task is subscribed and routed to the module; one a held model
+gives to a user task is not, because the engine hands a user task out as a job of the same kind,
+and the start's line names it, as it names a method wired by element id, whose workflows stand
+still (decision 41). A method which throws is failed at the engine without an error code, so the
 engine spends one attempt of the task, hands the job out again after the backoff, and after the
 last attempt raises an incident which names the attempts, the task, the aggregate and the
 exception (decision 27); a failure sent again for the same delivery counts once. How many attempts

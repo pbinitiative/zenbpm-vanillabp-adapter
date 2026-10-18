@@ -353,6 +353,13 @@ the whole life of a user task, and a terminated job is never delivered, so polli
 every canceled user task, the open-task probe of section 4.3 answers CANNOT_SAY for user-task
 definitions: the platform's contract forbids a second source for the same cancellation.
 
+A process id a workflow service declares without a model (the old id of a renamed process) is
+served by `ZenBpmDeclaredProcessWorkers` (S6.4.1) when its module starts processing: the methods'
+task definitions (`taskWiringOfProcessesNobodyDeployed`) are scoped by the id, the models the engine
+holds under the id are read, every version, and a composed type is subscribed only where a held
+model gives it to a task, so the stream never takes a user task of the old id (decision 41). The
+user-task types the read finds are named at startup, which is where the poller can take them from.
+
 ### 4.7 Workflow ended and BPMS-initiated start
 
 Both arrive as ordinary jobs of the marker tasks (section 3, step 4), served by two dedicated handlers:

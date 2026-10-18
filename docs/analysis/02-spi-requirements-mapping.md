@@ -108,7 +108,7 @@ ZenBPM offers for it, the verdict and the design the adapter takes. The verdicts
 | `tasksOfVersion` | `GET .../{key}` returns `bpmnData` | SUPPORTED | same extraction as `wireBpmn` |
 | `activeInstanceCountOf` | `GET /v1/process-definitions/statistics` or instance search `totalCount` | SUPPORTED | one request per version, never a page transfer |
 | `processVersionCatalogOf` (renamed process) | search by the scoped old id | SUPPORTED | |
-| `taskWiringOfProcessesNobodyDeployed` | job types are plain strings; under `use-prefix` they carry the process id | SUPPORTED | subscribe the composed types (Camunda 8 decision 19 shape) |
+| `taskWiringOfProcessesNobodyDeployed` | job types are plain strings; under `use-prefix` they carry the process id; a user task is a job of the same kind | SUPPORTED | subscribe the composed types (Camunda 8 decision 19 shape) which a model the engine holds under the id gives to a task, never a user task's (decision 41); a method wired by element id named at startup |
 | `whatOlderVersionsMiss` | the adapter writes into the model | SUPPORTED | names the injected markers and mappings older versions lack |
 | `getProcessDefinitions` / `getBpmnXml` / `getWorkflowHistory` | deployment memory + `GET /v1/process-definitions/{key}` + `GET .../history` + `.../child-processes` | SUPPORTED | native definition id = `processDefinitionKey`; history context = child instance key |
 
