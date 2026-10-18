@@ -59,7 +59,6 @@ class ZenBpmOverlayResolutionTest {
             .overrideConfigKey(WORKFLOW
                     + ".tasks.ship.adapters.zenbpm.job-timeout", "PT1M")
             .overrideConfigKey("vanillabp.adapters.zenbpm.retry-backoff", "PT4S")
-            .overrideConfigKey("vanillabp.adapters.zenbpm.max-redeliveries", "4")
             .overrideConfigKey("vanillabp.adapters.zenbpm.history-time-to-live", "PT4H")
             .overrideConfigKey("vanillabp.adapters.zenbpm.accept-unscoped-identifiers", "true")
             .overrideConfigKey(MODULE
@@ -67,19 +66,13 @@ class ZenBpmOverlayResolutionTest {
             .overrideConfigKey(MODULE
                     + ".adapters.zenbpm.retry-backoff", "PT3S")
             .overrideConfigKey(MODULE
-                    + ".adapters.zenbpm.max-redeliveries", "3")
-            .overrideConfigKey(MODULE
                     + ".adapters.zenbpm.history-time-to-live", "PT3H")
             .overrideConfigKey(WORKFLOW
                     + ".adapters.zenbpm.retry-backoff", "PT2S")
             .overrideConfigKey(WORKFLOW
-                    + ".adapters.zenbpm.max-redeliveries", "2")
-            .overrideConfigKey(WORKFLOW
                     + ".adapters.zenbpm.history-time-to-live", "PT2H")
             .overrideConfigKey(WORKFLOW
-                    + ".tasks.ship.adapters.zenbpm.retry-backoff", "PT1S")
-            .overrideConfigKey(WORKFLOW
-                    + ".tasks.ship.adapters.zenbpm.max-redeliveries", "1");
+                    + ".tasks.ship.adapters.zenbpm.retry-backoff", "PT1S");
 
     @Inject
     @Any
@@ -114,38 +107,27 @@ class ZenBpmOverlayResolutionTest {
     }
 
     @Test
-    @DisplayName("retry-backoff is read from the most specific of the four levels which sets it")
+    @DisplayName("retry-backoff is read from the most specific of the four levels which sets it, nothing where no level sets it, and the deployment service resolves a task's the same way")
     void retryBackoffThroughTheFourLevels() {
         final var overlay = overlay();
+        final ZenBpmDeploymentService deploymentService = SmokeApplication.only(deploymentServices,
+                ZenBpmDeploymentService.class);
 
         assertAll(
-                () -> assertEquals(Duration.ofSeconds(1), overlay.retryBackoffFor("smoke-app",
+                () -> assertEquals(Optional.of(Duration.ofSeconds(1)), overlay.retryBackoffFor("smoke-app",
                         "SampleWorkflowService", "ship", "zenbpm")),
-                () -> assertEquals(Duration.ofSeconds(2), overlay.retryBackoffFor("smoke-app",
+                () -> assertEquals(Optional.of(Duration.ofSeconds(2)), overlay.retryBackoffFor("smoke-app",
                         "SampleWorkflowService", "pack", "zenbpm")),
-                () -> assertEquals(Duration.ofSeconds(3), overlay.retryBackoffFor("smoke-app", "OtherWorkflow",
-                        "ship", "zenbpm")),
-                () -> assertEquals(Duration.ofSeconds(4), overlay.retryBackoffFor("other-module",
+                () -> assertEquals(Optional.of(Duration.ofSeconds(3)), overlay.retryBackoffFor("smoke-app",
+                        "OtherWorkflow", "ship", "zenbpm")),
+                () -> assertEquals(Optional.of(Duration.ofSeconds(4)), overlay.retryBackoffFor("other-module",
                         "SampleWorkflowService", "ship", "zenbpm")),
-                () -> assertEquals(ZenBpmAdapterConfiguration.DEFAULT_RETRY_BACKOFF, overlay.retryBackoffFor(
-                        "smoke-app", "SampleWorkflowService", "ship", "other")));
-    }
-
-    @Test
-    @DisplayName("max-redeliveries is read from the most specific of the four levels which sets it")
-    void maxRedeliveriesThroughTheFourLevels() {
-        final var overlay = overlay();
-
-        assertAll(
-                () -> assertEquals(1, overlay.maxRedeliveriesFor("smoke-app", "SampleWorkflowService", "ship",
-                        "zenbpm")),
-                () -> assertEquals(2, overlay.maxRedeliveriesFor("smoke-app", "SampleWorkflowService", "pack",
-                        "zenbpm")),
-                () -> assertEquals(3, overlay.maxRedeliveriesFor("smoke-app", "OtherWorkflow", "ship", "zenbpm")),
-                () -> assertEquals(4, overlay.maxRedeliveriesFor("other-module", "SampleWorkflowService", "ship",
-                        "zenbpm")),
-                () -> assertEquals(ZenBpmAdapterConfiguration.DEFAULT_MAX_REDELIVERIES, overlay
-                        .maxRedeliveriesFor("smoke-app", "SampleWorkflowService", "ship", "other")));
+                () -> assertEquals(Optional.empty(), overlay.retryBackoffFor("smoke-app", "SampleWorkflowService",
+                        "ship", "other")),
+                () -> assertEquals(Optional.of(Duration.ofSeconds(1)), deploymentService.retryBackoffOf("smoke-app",
+                        "SampleWorkflowService", "ship")),
+                () -> assertEquals(Optional.of(Duration.ofSeconds(4)), deploymentService.retryBackoffOf(
+                        "other-module", "SampleWorkflowService", "ship")));
     }
 
     @Test
@@ -198,7 +180,6 @@ class ZenBpmOverlayResolutionTest {
         assertAll(
                 () -> assertEquals(Duration.ofMinutes(4), configuration.getJobTimeout()),
                 () -> assertEquals(Duration.ofSeconds(4), configuration.getRetryBackoff()),
-                () -> assertEquals(4, configuration.getMaxRedeliveries()),
                 () -> assertEquals(Duration.ofHours(4), configuration.getHistoryTimeToLive()),
                 () -> assertEquals(ZenBpmAdapterConfiguration.ValidationResult.Kind.COMPLETE, configuration
                         .validate("zenbpm", false, false)

@@ -33,6 +33,7 @@ import org.pbinitiative.zenbpmadapter.client.ZenBpmAdapterConfiguration;
 import org.pbinitiative.zenbpmadapter.client.ZenBpmClientFactory;
 import org.pbinitiative.zenbpmadapter.client.ZenBpmClientRegistry;
 import org.pbinitiative.zenbpmadapter.model.ZenBpmBpmnModel;
+import org.pbinitiative.zenbpmadapter.wiring.ZenBpmRetryBackoffResolver;
 import org.w3c.dom.Element;
 
 import io.vanillabp.integration.adapter.spi.AdapterCollaborators;
@@ -501,11 +502,12 @@ class ZenBpmDeploymentWiringTest {
         final var conflicting = new ZenBpmDeploymentService(ADAPTER_ID, registry, collaborators, (
             workflowModuleId,
             bpmnProcessId,
-            taskDefinition) -> "Returns".equals(bpmnProcessId) ? Duration.ofMinutes(2) : Duration.ofMinutes(1));
+            taskDefinition) -> "Returns".equals(bpmnProcessId) ? Duration.ofMinutes(2)
+                    : Duration.ofMinutes(1), ZenBpmRetryBackoffResolver.NONE);
         final var agreeing = new ZenBpmDeploymentService(ADAPTER_ID, registry, collaborators, (
             workflowModuleId,
             bpmnProcessId,
-            taskDefinition) -> Duration.ofMinutes(1));
+            taskDefinition) -> Duration.ofMinutes(1), ZenBpmRetryBackoffResolver.NONE);
 
         final var refusal = assertThrows(IllegalStateException.class, () -> wireBoth(conflicting));
         final var context = wireBoth(agreeing);
@@ -533,11 +535,12 @@ class ZenBpmDeploymentWiringTest {
         final var conflicting = new ZenBpmDeploymentService(ADAPTER_ID, registry, collaborators, (
             workflowModuleId,
             bpmnProcessId,
-            taskDefinition) -> "billing".equals(workflowModuleId) ? Duration.ofMinutes(2) : Duration.ofMinutes(1));
+            taskDefinition) -> "billing".equals(workflowModuleId) ? Duration.ofMinutes(2)
+                    : Duration.ofMinutes(1), ZenBpmRetryBackoffResolver.NONE);
         final var agreeing = new ZenBpmDeploymentService(ADAPTER_ID, registry, collaborators, (
             workflowModuleId,
             bpmnProcessId,
-            taskDefinition) -> Duration.ofMinutes(1));
+            taskDefinition) -> Duration.ofMinutes(1), ZenBpmRetryBackoffResolver.NONE);
 
         wireInModule(conflicting, "shop", "Packing");
         final var refusal = assertThrows(IllegalStateException.class, () -> wireInModule(conflicting, "billing",

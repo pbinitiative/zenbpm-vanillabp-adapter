@@ -100,12 +100,27 @@ it is locked once more without running the method again. The engine counts a loc
 its type's cap of active jobs, so the adapter raises the cap by every task it keeps open, and the
 next task of the type still arrives (decision 37). With `async-task-max-age-action: incident` a
 task open longer than `vanillabp.delivery.max-task-age` is failed without retries instead, so an
-incident names it. A method which throws is not carried out yet: the job is left to its lock, after
-which the engine hands it out again. Once the outcome of a delivery reached the engine, the
+incident names it. A method which throws is failed at the engine without an error code, so the
+engine spends one attempt of the task, hands the job out again after the backoff, and after the
+last attempt raises an incident which names the attempts, the task, the aggregate and the
+exception (decision 27); a failure sent again for the same delivery counts once. How many attempts
+a task has is its model's `zenbpm:taskDefinition retries`. A model without it gets the engine's
+`JOBS_DEFAULT_RETRIES`, one attempt by default, so the first exception raises an incident: set
+`retries` in the model, or `JOBS_DEFAULT_RETRIES=3` at the engine for the default of Camunda 8
+(decision 38). The backoff is `retry-backoff` (set per adapter id, workflow module, workflow or
+task, in whole seconds) where a level sets it; where none does, the failure carries none and the
+engine decides. Once the outcome of a delivery reached the engine, the
 platform asks the adapter about the other tasks it believes open in the same workflow: a task the
 engine took away, as an interrupting boundary event does, is reported to the application as
 `CANCELED`, once; only a task served by a job of the job stream is asked about, and an engine which
-cannot be asked or does not know the job, or a job of another workflow, reports nothing. What is
+cannot be asked or does not know the job, or a job of another workflow, reports nothing. A shutdown
+unsubscribes the job types of each workflow module and then waits for the handlers which still run,
+those of every module of an adapter id together, at most `shutdown-grace` (`PT20S` by default;
+above thirty seconds the start warns that the runtime's shutdown budget has to grow with it), and
+names each handler it gave up on with its job, task and aggregate. While a module stops, an outcome
+a handler reached is still reported, but a handler which threw is not failed at the engine, so its
+job keeps its retries; the job stream closes last, which releases every lock the application held,
+so another node gets those jobs at once instead of after their `job-timeout` (decision 39). What is
 built next, and in which order, is the implementation plan in [`docs/`](docs/README.md).
 
 ## Modules

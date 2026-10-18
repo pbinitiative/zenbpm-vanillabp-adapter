@@ -79,8 +79,6 @@ class VanillaBpZenBpmPropertiesTest {
             Map.entry(ADAPTER
                     + "retry-backoff", "PT4S"),
             Map.entry(ADAPTER
-                    + "max-redeliveries", "3"),
-            Map.entry(ADAPTER
                     + "shutdown-grace", "PT5S"),
             Map.entry(ADAPTER
                     + "workflow-visibility-timeout", "PT6S"),
@@ -120,7 +118,6 @@ class VanillaBpZenBpmPropertiesTest {
                 () -> assertEquals(Duration.ofMinutes(20), configuration.getAsyncTaskLockRenewal()),
                 () -> assertEquals("incident", configuration.getAsyncTaskMaxAgeAction()),
                 () -> assertEquals(Duration.ofSeconds(4), configuration.getRetryBackoff()),
-                () -> assertEquals(3, configuration.getMaxRedeliveries()),
                 () -> assertEquals(Duration.ofSeconds(5), configuration.getShutdownGrace()),
                 () -> assertEquals(Duration.ofSeconds(6), configuration.getWorkflowVisibilityTimeout()),
                 () -> assertEquals(Duration.ofSeconds(7), configuration.getUserTaskPollInterval()),
@@ -172,7 +169,7 @@ class VanillaBpZenBpmPropertiesTest {
     }
 
     @Test
-    @DisplayName("retry-backoff and max-redeliveries of a task come from the most specific level which sets them")
+    @DisplayName("retry-backoff of a task comes from the most specific level which sets it, and from none where no level sets it")
     void theMostSpecificLevelWinsForATask() {
         final var levels = Map.of(
                 ADAPTER
@@ -186,34 +183,19 @@ class VanillaBpZenBpmPropertiesTest {
                 "PT3S",
                 TASK
                         + "adapters.orders.retry-backoff",
-                "PT4S",
-                ADAPTER
-                        + "max-redeliveries",
-                "1",
-                MODULE
-                        + "adapters.orders.max-redeliveries",
-                "2",
-                WORKFLOW
-                        + "adapters.orders.max-redeliveries",
-                "3",
-                TASK
-                        + "adapters.orders.max-redeliveries",
-                "4");
+                "PT4S");
         final var overlay = bind(levels);
 
         assertAll(
-                () -> assertEquals(Duration.ofSeconds(4), overlay.retryBackoffFor("shop", "Order", "ship", "orders")),
-                () -> assertEquals(Duration.ofSeconds(3), overlay.retryBackoffFor("shop", "Order", "pack", "orders")),
-                () -> assertEquals(Duration.ofSeconds(2), overlay.retryBackoffFor("shop", "Invoice", "send", "orders")),
-                () -> assertEquals(Duration.ofSeconds(1), overlay.retryBackoffFor("crm", "Order", "ship", "orders")),
-                () -> assertEquals(ZenBpmAdapterConfiguration.DEFAULT_RETRY_BACKOFF, overlay.retryBackoffFor("shop",
-                        "Order", "ship", "billing")),
-                () -> assertEquals(4, overlay.maxRedeliveriesFor("shop", "Order", "ship", "orders")),
-                () -> assertEquals(3, overlay.maxRedeliveriesFor("shop", "Order", "pack", "orders")),
-                () -> assertEquals(2, overlay.maxRedeliveriesFor("shop", "Invoice", "send", "orders")),
-                () -> assertEquals(1, overlay.maxRedeliveriesFor("crm", "Order", "ship", "orders")),
-                () -> assertEquals(ZenBpmAdapterConfiguration.DEFAULT_MAX_REDELIVERIES, overlay.maxRedeliveriesFor(
-                        "shop", "Order", "ship", "billing")));
+                () -> assertEquals(Optional.of(Duration.ofSeconds(4)),
+                        overlay.retryBackoffFor("shop", "Order", "ship", "orders")),
+                () -> assertEquals(Optional.of(Duration.ofSeconds(3)),
+                        overlay.retryBackoffFor("shop", "Order", "pack", "orders")),
+                () -> assertEquals(Optional.of(Duration.ofSeconds(2)),
+                        overlay.retryBackoffFor("shop", "Invoice", "send", "orders")),
+                () -> assertEquals(Optional.of(Duration.ofSeconds(1)),
+                        overlay.retryBackoffFor("crm", "Order", "ship", "orders")),
+                () -> assertEquals(Optional.empty(), overlay.retryBackoffFor("shop", "Order", "ship", "billing")));
     }
 
     @Test
@@ -250,13 +232,15 @@ class VanillaBpZenBpmPropertiesTest {
                         + "adapters.orders.retry-backoff",
                 "PT2S",
                 TASK
-                        + "adapters.orders.max-redeliveries",
-                "4"));
+                        + "adapters.orders.job-timeout",
+                "PT4M"));
 
         assertAll(
-                () -> assertEquals(Duration.ofSeconds(2), overlay.retryBackoffFor("shop", "Order", "ship", "orders")),
-                () -> assertEquals(ZenBpmAdapterConfiguration.DEFAULT_MAX_REDELIVERIES, overlay.maxRedeliveriesFor(
-                        "shop", "Order", "pack", "orders")));
+                () -> assertEquals(Optional.of(Duration.ofSeconds(2)),
+                        overlay.retryBackoffFor("shop", "Order", "ship", "orders")),
+                () -> assertEquals(ZenBpmAdapterConfiguration.DEFAULT_JOB_TIMEOUT,
+                        overlay.jobTimeoutFor("shop", "Order",
+                                "pack", "orders")));
     }
 
     @Test
@@ -320,14 +304,14 @@ class VanillaBpZenBpmPropertiesTest {
                         + "adapters.orders.history-time-to-live",
                 "-P3D",
                 TASK
-                        + "adapters.orders.max-redeliveries",
-                "-4",
+                        + "adapters.orders.retry-backoff",
+                "PT1.5S",
                 TASK
                         + "adapters.orders.job-timeout",
                 "PT0S",
                 TASK
-                        + "adapters.billing.max-redeliveries",
-                "-5"))
+                        + "adapters.billing.retry-backoff",
+                "-PT5S"))
                 .configurationOf("orders")
                 .validate("orders", false, false);
 
@@ -345,7 +329,7 @@ class VanillaBpZenBpmPropertiesTest {
                 () -> assertTrue(validation
                         .message()
                         .contains(
-                                "vanillabp.workflow-modules.shop.workflows.Order.tasks.ship.adapters.orders.max-redeliveries is -4"),
+                                "vanillabp.workflow-modules.shop.workflows.Order.tasks.ship.adapters.orders.retry-backoff is PT1.5S, but the engine takes a backoff in whole seconds"),
                         validation.message()),
                 () -> assertTrue(validation
                         .message()

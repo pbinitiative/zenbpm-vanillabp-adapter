@@ -1,0 +1,103 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" id="drain-it-drain"
+    xmlns:zenbpm="http://zenbpm.pbinitiative.org/1.0" targetNamespace="http://bpmn.io/schema/bpmn"
+    xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI"
+    xmlns:dc="http://www.omg.org/spec/DD/20100524/DC"
+    xmlns:di="http://www.omg.org/spec/DD/20100524/DI">
+  <bpmn:process id="Drain" isExecutable="true">
+    <bpmn:startEvent id="Start">
+      <bpmn:outgoing>Flow_ToFork</bpmn:outgoing>
+    </bpmn:startEvent>
+    <bpmn:parallelGateway id="Fork">
+      <bpmn:incoming>Flow_ToFork</bpmn:incoming>
+      <bpmn:outgoing>Flow_ToPack</bpmn:outgoing>
+      <bpmn:outgoing>Flow_ToLabel</bpmn:outgoing>
+    </bpmn:parallelGateway>
+    <bpmn:serviceTask id="Pack" name="Pack the parcel">
+      <bpmn:extensionElements>
+        <zenbpm:taskDefinition type="pack" retries="3" />
+      </bpmn:extensionElements>
+      <bpmn:incoming>Flow_ToPack</bpmn:incoming>
+      <bpmn:outgoing>Flow_PackToJoin</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:serviceTask id="Label" name="Label the parcel">
+      <bpmn:extensionElements>
+        <zenbpm:taskDefinition type="label" retries="3" />
+      </bpmn:extensionElements>
+      <bpmn:incoming>Flow_ToLabel</bpmn:incoming>
+      <bpmn:outgoing>Flow_LabelToJoin</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:parallelGateway id="Join">
+      <bpmn:incoming>Flow_PackToJoin</bpmn:incoming>
+      <bpmn:incoming>Flow_LabelToJoin</bpmn:incoming>
+      <bpmn:outgoing>Flow_ToShipped</bpmn:outgoing>
+    </bpmn:parallelGateway>
+    <bpmn:endEvent id="Shipped">
+      <bpmn:incoming>Flow_ToShipped</bpmn:incoming>
+    </bpmn:endEvent>
+    <bpmn:sequenceFlow id="Flow_ToFork" sourceRef="Start" targetRef="Fork" />
+    <bpmn:sequenceFlow id="Flow_ToPack" sourceRef="Fork" targetRef="Pack" />
+    <bpmn:sequenceFlow id="Flow_ToLabel" sourceRef="Fork" targetRef="Label" />
+    <bpmn:sequenceFlow id="Flow_PackToJoin" sourceRef="Pack" targetRef="Join" />
+    <bpmn:sequenceFlow id="Flow_LabelToJoin" sourceRef="Label" targetRef="Join" />
+    <bpmn:sequenceFlow id="Flow_ToShipped" sourceRef="Join" targetRef="Shipped" />
+  </bpmn:process>
+  <bpmndi:BPMNDiagram id="BPMNDiagram_1">
+    <bpmndi:BPMNPlane id="BPMNPlane_1" bpmnElement="Drain">
+      <bpmndi:BPMNShape id="Start_di" bpmnElement="Start">
+        <dc:Bounds x="160" y="80" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Fork_di" bpmnElement="Fork">
+        <dc:Bounds x="256" y="80" width="50" height="50" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Pack_di" bpmnElement="Pack">
+        <dc:Bounds x="366" y="80" width="100" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Label_di" bpmnElement="Label">
+        <dc:Bounds x="366" y="210" width="100" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Join_di" bpmnElement="Join">
+        <dc:Bounds x="526" y="80" width="50" height="50" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Shipped_di" bpmnElement="Shipped">
+        <dc:Bounds x="636" y="80" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNEdge id="Flow_ToFork_di" bpmnElement="Flow_ToFork">
+        <di:waypoint x="196" y="98" />
+        <di:waypoint x="226" y="98" />
+        <di:waypoint x="226" y="105" />
+        <di:waypoint x="256" y="105" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_ToPack_di" bpmnElement="Flow_ToPack">
+        <di:waypoint x="306" y="105" />
+        <di:waypoint x="336" y="105" />
+        <di:waypoint x="336" y="120" />
+        <di:waypoint x="366" y="120" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_ToLabel_di" bpmnElement="Flow_ToLabel">
+        <di:waypoint x="306" y="105" />
+        <di:waypoint x="336" y="105" />
+        <di:waypoint x="336" y="250" />
+        <di:waypoint x="366" y="250" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_PackToJoin_di" bpmnElement="Flow_PackToJoin">
+        <di:waypoint x="466" y="120" />
+        <di:waypoint x="496" y="120" />
+        <di:waypoint x="496" y="105" />
+        <di:waypoint x="526" y="105" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_LabelToJoin_di" bpmnElement="Flow_LabelToJoin">
+        <di:waypoint x="466" y="250" />
+        <di:waypoint x="496" y="250" />
+        <di:waypoint x="496" y="105" />
+        <di:waypoint x="526" y="105" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_ToShipped_di" bpmnElement="Flow_ToShipped">
+        <di:waypoint x="576" y="105" />
+        <di:waypoint x="606" y="105" />
+        <di:waypoint x="606" y="98" />
+        <di:waypoint x="636" y="98" />
+      </bpmndi:BPMNEdge>
+    </bpmndi:BPMNPlane>
+  </bpmndi:BPMNDiagram>
+</bpmn:definitions>

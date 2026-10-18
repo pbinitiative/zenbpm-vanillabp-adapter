@@ -819,7 +819,7 @@ as well):
 
 ### S6.2.1 A failed handler is failed at the engine, with retries and backoff
 
-- [ ] **Depends on:** S6.1.1, and the engine's job retries (E13.3, in the pinned engine since
+- [x] **Depends on:** S6.1.1, and the engine's job retries (E13.3, in the pinned engine since
   `bdd795a3`).
 
 This story is the adapter twin of E13.3 and replaces the local retry the plan had before the engine
@@ -865,6 +865,84 @@ with `failJob`, a failure of a delivery the engine already handed out again is a
 it, and the newer delivery decides. Without the token, a failure repeated after its answer was lost
 counts twice (`JobFailByKey` in the engine's `pkg/bpmn/jobs_api.go`).
 
+*Fit check, 2026-10-18, decided by the Implementor.* Checked against `main` (`31fc5de`),
+`ADAPTER-AUTHORS.md` (3.3: an exception the core throws means a rolled-back transaction, apply the
+BPMS' retry rules; 5: the shutdown policy is written down), the platform's
+`WorkflowTaskHandler` (a `RuntimeException` of the method reaches the adapter unwrapped), Camunda 8's
+`Camunda8JobHandler` (its failure branch), `Camunda8RetryBackoffResolver`,
+`Camunda8RetryBackoffHeader` and `Camunda8Errors#incidentMessage`, and the engine at the pin
+`bdd795a3` (source exported with `git archive`: `pkg/bpmn/jobs_api.go`, `pkg/bpmn/job_retries.go`,
+`pkg/bpmn/model/extensions/retries.go`, `internal/rest/server.go`,
+`internal/cluster/jobmanager/server.go`, the proto's `WaitingJob`; image run by
+`ZenBpmTaskProcessingIT`). What did not fit, and what was decided:
+
+1. **The default of `retries`** (open point 5, brief question 1): the adapter writes none into a
+   model and sends none with a failure. How many attempts a job has is the model's
+   `zenbpm:taskDefinition retries`, else the engine's `JOBS_DEFAULT_RETRIES` (1 at the pin). The
+   Camunda 8 adapter writes none either, decision 4 of the plan's drafts never writes over the
+   modeller, and the engine has the setting. The README says what a model without `retries` costs
+   and the two ways out: decision 38 (new), pinned by
+   `ZenBpmTaskProcessingIT#aModelWithoutRetriesEndsInAnIncidentAtTheFirstThrow`.
+2. **The default of `retry-backoff`** (brief question 2): gone. It was `PT10S`; the engine prefers a
+   backoff the failure carries over the model's policy (`backoffForAttempt`), so a default would
+   override every `retryBackoff` a modeller wrote. Unset at every level, the failure carries none
+   (`ZenBpmRetryBackoffResolver` answers empty). This differs from Camunda 8, which always sends ten
+   seconds: Camunda 8 has no backoff of the engine to fall back to. Decision 38. With the default
+   gone the key is one "set only by somebody who configures this adapter", so the comment of
+   `ZenBpmAdapterConfiguration#validate` stays true by counting `retry-backoff`, at the adapter
+   level and below it, as a started configuration (`job-timeout` below the adapter level still
+   falls back to a default and does not count).
+3. **What `WaitingJob` carries** (brief question 3): `retries`, "attempts left: failures without an
+   error code the job may still report; the one which leaves none creates an incident", so the count
+   before this failure, and `attempt`, 1 for the first delivery. The WARN names
+   `max(0, retries - 1)` and `attempt`, and says at zero that the engine raises an incident.
+4. **`clientId`** (brief question 4). The plan and the API description say a failure without
+   `clientId` leaves the lock standing. At the pin that holds only for a failure which names no
+   delivery: one which names its `deliveryToken` releases that delivery's lock whoever reports it
+   (`releaseLockOfFailedDelivery`). The code decides: both are sent, the client id for a leader
+   which issues no tokens. Measured: a handler's failure without the client id came back as fast as
+   with it (the mutant survives, an equivalent one), without both it came back only when the
+   job-timeout of thirty seconds lapsed (the mutant is killed by
+   `#theBackoffDecidesWhenTheJobComesBack`). Decision 27 says so.
+5. **The message.** "Task '<task>' of workflow aggregate '<id>' threw <type>: <message>", the type
+   alone where the message is empty, so the incident names the aggregate (the acceptance criterion)
+   and the type (the story). The engine appends "(job <key>: <n> attempts, retries exhausted)".
+6. **Whole seconds.** The engine reads `retryBackoff` with an ISO-8601 parser which takes whole
+   numbers only (`ParseBackoffDuration` on `github.com/senseyeio/duration`), so `PT1.5S` is answered
+   `400`. A `retry-backoff` with a fraction of a second ends the start at every level, as
+   `history-time-to-live` does, and the REST client refuses one before it sends anything; it writes
+   `PT<seconds>S`. No WARN about a large backoff (instruction 4): the engine caps it at
+   `JOBS_MAX_RETRY_BACKOFF`, a day by default.
+7. **A failure repeated after a lost answer** (brief question 5): the engine answers it like the
+   first, with `204`, and records it once ("a repeat of a failure the job recorded changes nothing
+   and returns nil"). Measured through the client in `#aFailureRepeatedAfterALostAnswerCountsOnce`:
+   retries 3 before, 2 after both, one failure record. A failure of a delivery the engine handed out
+   again is answered `409` (`ErrDeliverySuperseded`), which `isGoneJob` reads as a gone job: WARN,
+   nothing else (`ZenBpmJobFailureTest#aSupersededFailureIsAWarnAndNothingElse`).
+8. **How soon after the backoff** (brief question 4): the engine's distribution loop at the pin
+   pauses at most a second between two rounds which find nothing (`distributeJobs`), so a job due
+   again is handed out within about a second of its `retryAt`. The IT accepts a redelivery from the
+   backoff of two seconds up to ten seconds, against a job-timeout of thirty.
+9. **Parked jobs** (advice of the previous batch): nothing in the failure path calls
+   `ZenBpmJobStream#parked`; a parked job stops counting when the engine hands it out again
+   (`ZenBpmJobStream`, the end of a parked job's count at its receipt), so one which fails at a
+   later delivery no longer counts by then.
+10. **Names and places.** `wiring/ZenBpmRetryBackoffResolver` beside `ZenBpmJobTimeoutResolver`;
+   the deployment service takes it and answers `retryBackoffOf` as it answers `jobTimeoutOf`, which
+   the Quarkus extension test calls to prove the producer's resolver. `JobRef` gained no field: the
+   stream's `WaitingJob` carries what the failure needs. `ZenBpmLocalRetry` never existed, so only
+   the key, its validation, both platforms' binding and their tests went.
+11. **ITs** (brief question 9): Spring, in `ZenBpmTaskProcessingIT` with the process
+   `TaskFailures` of `task-it/task-failures.bpmn` (diagram added by `bin/add-bpmn-diagram.py`) and
+   the aggregate `Payment`; the attempts are recorded outside the handler's transaction, which a
+   throw rolls back. On Quarkus the removal and the new meaning are proven by extension tests
+   (`ZenBpmRemovedKeyTest`: the key ends the start with `SRCFG00050`;
+   `ZenBpmRetryBackoffFractionTest`; `ZenBpmOverlayResolutionTest#retryBackoffThroughTheFourLevels`);
+   the Quarkus twins of the ITs belong to S6.5.1.
+12. **README.** It has no table of keys; the status paragraph says what a thrown handler costs and
+   how many attempts a task has. The architecture's key table already gave `retry-backoff` this
+   meaning. A thrown handler during a shutdown is still failed here; S6.2.2 changes that.
+
 **Tests**: `ZenBpmJobFailureTest` (fake server: the request's fields, retries counted down from
 the job's, `retryBackoff` left out where no level sets it, `409` tolerated);
 `ZenBpmTaskProcessingIT#aThrowingHandlerEndsInAnIncidentAfterItsRetries` (a model with `retries="2"`
@@ -875,12 +953,67 @@ with the same `deliveryToken`).
 
 **Acceptance criteria**
 
-- [ ] A thrown handler spends exactly one attempt per delivery; the incident names the aggregate.
-- [ ] No local retry state and no `max-redeliveries` key remain in the adapter.
+- [x] A thrown handler spends exactly one attempt per delivery; the incident names the aggregate.
+  `ZenBpmTaskProcessingIT#aThrowingHandlerEndsInAnIncidentAfterItsRetries`: the task `Charge`
+  (`retries="2"`, the workflow's `retry-backoff: PT1S`) whose handler always throws is delivered
+  twice, at least a second apart, the job has two failure records and is `FAILED`, and the incident
+  reads "Task 'charge' of workflow aggregate '<id>' threw java.lang.IllegalStateException: the card
+  was declined (job <key>: 2 attempts, retries exhausted)"; the delivery log holds no record of the
+  rolled-back attempts. `#aModelWithoutRetriesEndsInAnIncidentAtTheFirstThrow`: one attempt, then
+  an incident ending in "1 attempt, retries exhausted)". `#theBackoffDecidesWhenTheJobComesBack`:
+  a handler failing once is delivered again not before the task's `retry-backoff` of two seconds
+  and before ten seconds, against a job-timeout of thirty, completes, and its job has 2 of 3 retries
+  left. `#aFailureRepeatedAfterALostAnswerCountsOnce`: the same failure sent twice through the
+  client with one delivery token is answered `204` twice, leaves 2 of 3 retries and one failure
+  record. `ZenBpmJobFailureTest` pins the request: no `retries`, no `errorCode`, `retryBackoff`
+  `PT7S` where configured and absent where no level sets one, the message, delivery token 7 and the
+  stream's client id; the WARN names the type, the attempt and the retries left; `409` is a WARN
+  and nothing else; another refusal leaves the job to its lock.
+- [x] No local retry state and no `max-redeliveries` key remain in the adapter.
+  `max-redeliveries` is gone from `ZenBpmAdapterConfiguration`, both overlays, both properties tests
+  and the Quarkus resolution test (`git grep -i max-redeliveries -- '*.java'` finds only
+  `ZenBpmRemovedKeyTest`); on Quarkus the key now ends the start like any key the overlay does not model (`ZenBpmRemovedKeyTest`,
+  `SRCFG00050`). The handler keeps no state per job: a failure carries nothing but what the job and
+  the configuration say.
+
+**Implemented 2026-10-18.** Core: `wiring/ZenBpmRetryBackoffResolver`, the failure of a thrown
+handler in `ZenBpmJobHandler` (`failAThrownHandler`), `JobFailure#retryBackoff` and
+`#withRetryBackoff`, `retryBackoff` on the wire of `ZenBpmRestClient#failJob` in whole seconds,
+`ZenBpmDeploymentService#retryBackoffOf` and its constructor with the resolver;
+`ZenBpmAdapterConfiguration` without `max-redeliveries` and without a default of `retry-backoff`,
+which is refused with a fraction of a second and counts as a started configuration. Spring Boot and
+Quarkus: `max-redeliveries` gone, `retryBackoffFor` answers an `Optional`, the resolver handed to
+the deployment service. Decisions 27 (the plan's number, first relied on here) and 38 (new). README
+status; deviations 6 of `docs/architecture/03-deviations-and-gaps.md`, open questions 3 and 14,
+the E13.1 and E13.3 twins of epic 13, the note under S2.1.1 in epic 2.
+
+New tests: `ZenBpmJobFailureTest` (7), cases in `ZenBpmAdapterConfigurationTest`,
+`ZenBpmRestClientTest` (3), both platforms' `VanillaBpZenBpmPropertiesTest`,
+`ZenBpmOverlayResolutionTest#retryBackoffThroughTheFourLevels`; Quarkus `ZenBpmRemovedKeyTest` (1),
+`ZenBpmRetryBackoffFractionTest` (1); Spring Boot `ZenBpmTaskProcessingIT` (4 new: the four above)
+with the process `TaskFailures` of `task-it/task-failures.bpmn`, the aggregate `Payment` and
+`PaymentAttempts`. `ZenBpmJobHandlerTest#aThrowingHandlerIsLeftToItsLock` is gone.
+
+Seen to fail, each restored afterwards (16 of 17 mutants, against green unmutated runs): the
+failure without its backoff (also against the engine: the job came back at once); without its
+delivery token; without the client id (unit); a gone job not tolerated; the last attempt not named
+as one; a blank message named `null`; the thrown handler not failed at all; a refused failure
+swallowed; a fraction of a second accepted at the adapter level and below it; a negative
+`retry-backoff` accepted; `retry-backoff` not counted as a started configuration, at the adapter
+level and below it; the REST client sending a fraction. The one which survived, the failure without
+the client id against the engine, is equivalent at the pin (fit-check item 4); without the token
+and the client id together the job came back only after its job-timeout of thirty seconds.
+
+`TZ=Etc/UTC mvn clean install` on OpenJDK 25.0.2 builds green with every integration test run and
+none skipped (engine test support 12 unit and 3 integration tests, core 889 unit and 74 integration
+tests, Spring Boot 11 unit and 23 integration tests, smoke test 36, Quarkus runtime 10, Quarkus
+deployment 50, Quarkus integration tests 3, coverage gate 37). The gate measures 100 % of 22,391
+instructions for Spring Boot and 100 % of 22,265 for Quarkus, and `bin/check-deploy-safety.sh`
+passes (13 files on a green build, nothing after a red gate). No flake was hit.
 
 ### S6.2.2 Drain and shutdown
 
-- [ ] **Depends on:** S6.2.1.
+- [x] **Depends on:** S6.2.1.
 
 **Instructions**
 
@@ -897,6 +1030,61 @@ queue and the ones a cut-off handler held go to another node immediately instead
 `job-timeout`. A `shutdown-grace` above 30 s warns at startup that Spring's and Kubernetes' budgets
 have to be raised with it.
 
+*Fit check, 2026-10-18, decided by the Implementor.* Checked against `main` with S6.2.1
+(`afeac31`), `ADAPTER-AUTHORS.md` (5: `stopWorkflowProcessing` races the handlers, the policy is
+written down in the README), the platform's `SpringBootDeploymentService` (a `SmartLifecycle` with
+the synchronous `stop()` only; what bounds it is corrected in the answers to the reviews below),
+Camunda 8's `Camunda8Drain`,
+`Camunda8DeploymentService#stopWorkflowProcessing` and its decisions 6 and 51, and the engine at
+the pin `bdd795a3` (`removeClient` and `releaseLockOfFailedDelivery` in
+`internal/cluster/jobmanager/server.go`; the image run by `ZenBpmShutdownDrainIT`). What did not
+fit, and what was decided:
+
+1. **One wait per adapter id, not per module** (beyond the story). The platform stops the modules
+   one after another, so a wait in each stop would spend `shutdown-grace` once per module. As in
+   Camunda 8 (its decision 51), each stop unsubscribes and marks its module, and the stop of the
+   last running module waits for the handlers of every stopped module together:
+   `ZenBpmDrain#awaitEveryModuleQuiet`, decision 39 (new).
+   `ZenBpmWorkflowProcessingTest#modulesWhichStopAreWaitedForOnce`,
+   `ZenBpmDrainTest#severalModulesAreOneWait`. Camunda 8's second half, waiting until the cluster
+   released the workers, has no counterpart: closing the stream drops every lock of the client at
+   once (`removeClient`).
+2. **When the state is read** (brief question 6): after the handler returned, so a handler which
+   started before the stop and threw during it is not failed
+   (`ZenBpmJobHandlerTest#aHandlerWhichThrowsWhileTheModuleStopsIsNotFailed`,
+   `ZenBpmShutdownDrainIT#aCutOffHandlerCostsNoFailure`). Besides, a job which reaches the handler
+   once its module stops is not started at all: the dispatcher may have found the handler just
+   before the stop, and its handler would start after the wait looked
+   (`#aJobWhichArrivesWhileTheModuleStopsIsNotStarted`). A handler enters the drain before it reads
+   the state, and the stop sets the state before it looks at the drain, so one of the two sees the
+   other.
+3. **What is still sent while a module stops.** An outcome a handler reached (completion, BPMN
+   error, a parked task) and the failure without retries of a job whose workflow this application
+   does not own or whose instance names no aggregate (decision 33): those answer the job, they are
+   not caused by the shutdown. The acceptance criterion's "no `fail` command" is read as no failure
+   of a thrown handler.
+4. **`shutdown-grace` stays at the adapter level** (brief question 7): it is bound there only on both
+   platforms, and only the whole shutdown has a budget to compare it with (decision 39). The WARN
+   above thirty seconds goes through a new list of warnings of the validation, which both platforms
+   write into the block at the end of the start at WARN (`ZenBpmStartupValidationBootTest`,
+   Quarkus `ZenBpmLongShutdownGraceTest`).
+5. **Another node gets the jobs at once** (brief question 8): measured, node b ran the packing whose
+   handler node a had cut off and the labelling which waited for node a's one handler slot within
+   65 and 112 ms of node a's close (two runs), against a job-timeout of sixty seconds. The engine
+   at the pin drops the locks of a client whose stream closed, so no gap was found. With the
+   factory not closing the stream, the case fails after its thirty seconds.
+6. **The factory's `close()`** needed no change: its backstop already stopped every module which
+   never stopped, with a WARN, before it closes the stream, and that stop now waits as the last one;
+   `close()` does not wait the grace again (the note from S2.4.2 under S2.4.1). The executor does
+   not interrupt a handler it was shut down under; such a handler which throws later is left to its
+   lock as well.
+7. **The IT** (brief question 9): `ZenBpmShutdownDrainIT` boots its own application `it/drain`
+   (`DrainItApplication`, the process `Drain` of `drain-it/drain.bpmn` with its diagram: the packing
+   and the labelling in parallel) once per node with `SpringApplicationBuilder`, both nodes on one
+   named in-memory database, with one handler slot and a job-timeout of a minute. It has the
+   story's three cases and `#aHandlerAfterTheGraceIsNamed`, which keeps the handler running past a
+   grace of a second. The Quarkus twin belongs to S6.5.1.
+
 **Tests**: `ZenBpmDrainTest`, `ZenBpmShutdownDrainIT#aHandlerWithinTheGraceFinishes`,
 `#aCutOffHandlerCostsNoFailure` (the job is still `active` afterwards, no incident),
 `#anotherNodeGetsTheOpenJobsAtOnce` (a second application context receives the queued jobs of the
@@ -904,8 +1092,112 @@ stopped one within a second, not after `job-timeout`).
 
 **Acceptance criteria**
 
-- [ ] No `fail` command leaves the adapter while a module shuts down; the job's retries are
+- [x] No `fail` command leaves the adapter while a module shuts down; the job's retries are
   unchanged afterwards.
+  `ZenBpmShutdownDrainIT#aCutOffHandlerCostsNoFailure`: the handler of `Pack` (`retries="3"`)
+  which started before node a closed throws while the module stops; afterwards the job is `ACTIVE`
+  with 3 retries, has no failure record and its instance no incident, and the log says that it is
+  not failed and keeps its retries. `#aHandlerAfterTheGraceIsNamed`: a handler still running after a
+  grace of one second is named with job key, task, aggregate and module, the close takes at least
+  the grace, and the job keeps its 3 retries. `#aHandlerWithinTheGraceFinishes`: a handler released
+  during the stop completes its job while the module stops, and the module drains.
+  `#anotherNodeGetsTheOpenJobsAtOnce`: node b ran the cut-off packing and the labelling which waited
+  for node a's slot within 65 and 112 ms of node a's close (two runs; job-timeout sixty seconds).
+  `ZenBpmJobHandlerTest` pins the stop races (a throw during the stop sends nothing; an outcome
+  reached during it is sent; a job reaching the handler after the stop is not started; the drain
+  holds a handler with its task and aggregate while it runs), `ZenBpmDrainTest` the wait (until the
+  last handler leaves, the grace once for several modules, a WARN per cut-off handler, a grace of
+  zero, an interrupted wait), `ZenBpmWorkflowProcessingTest#modulesWhichStopAreWaitedForOnce` that
+  the stop of the last running module waits for all of them.
+
+**Implemented 2026-10-18.** Core: `wiring/ZenBpmDrain` (per module, held by its handler);
+`ZenBpmJobHandler` enters and leaves the drain, starts no job and fails no thrown handler while the
+module stops; `ZenBpmDeploymentService#stopWorkflowProcessing` lets the stop of the last running
+module of the adapter id wait for every stopped module within one `shutdown-grace`;
+`ZenBpmAdapterConfiguration.ValidationResult#warnings` with the WARN about a `shutdown-grace` above
+thirty seconds (`LONGEST_SHUTDOWN_GRACE_WITHIN_THE_USUAL_BUDGETS`), which `ZenBpmStartupValidation`
+reports at WARN on both platforms. Decision 39 (new). README: the shutdown policy.
+
+New tests: `ZenBpmDrainTest` (7), four cases in `ZenBpmJobHandlerTest`,
+`ZenBpmWorkflowProcessingTest#modulesWhichStopAreWaitedForOnce`,
+`ZenBpmAdapterConfigurationTest#aLongShutdownGraceIsWarnedAbout`,
+`ZenBpmStartupValidationTest#warningsAreWarnings`, the smoke test's
+`ZenBpmStartupValidationBootTest#aLongShutdownGraceIsWarnedAboutInTheBlock`, Quarkus
+`ZenBpmLongShutdownGraceTest` (1), and Spring Boot `ZenBpmShutdownDrainIT` (4) with the application
+`it/drain` and `drain-it/drain.bpmn`.
+
+Seen to fail, each restored afterwards (12 of 12 mutants, against green unmutated runs): a thrown
+handler failed while its module stops (also against the engine: the job lost a retry); a job
+started after the stop; the drain not left, not told the aggregate; the wait not waiting, ignoring
+an interrupt; every module waiting on its own; the WARN at thirty seconds; the warnings logged as
+notices; against the engine, the stop not waiting at all (the completion never reached the engine)
+and the factory not closing the stream (node b got nothing within thirty seconds). A mutant written
+as `while (false)` did not compile and was written again as a condition.
+
+`TZ=Etc/UTC mvn clean install` on OpenJDK 25.0.2 builds green with every integration test run and
+none skipped (engine test support 12 unit and 3 integration tests, core 903 unit and 74 integration
+tests, Spring Boot 11 unit and 27 integration tests, smoke test 37, Quarkus runtime 10, Quarkus
+deployment 51, Quarkus integration tests 3, coverage gate 37). The gate measures 100 % of 22,908
+instructions for Spring Boot and 100 % of 22,782 for Quarkus, and `bin/check-deploy-safety.sh`
+passes (13 files on a green build, nothing after a red gate). No flake was hit.
+
+**Answers to two reviews of S6.2.1 and S6.2.2, 2026-10-18** (one by Claude, approve, 2 Minor and
+2 Nit; one by Copilot, request changes, 1 Major, the same as Claude's fourth). Every claim was
+checked in the code of the branch, in Spring Framework 7.0.9's sources and in the platform jar the
+build resolves. All four findings were valid and are fixed; none was about S6.2.1.
+
+- **A second delivery of one job hid the first from the drain** (Copilot 1, Major; Claude 4,
+  Nit). `ZenBpmDrain` kept one entry per job key, so of two runs of one job on one node, the one
+  which returned first removed the other's entry, and the shutdown neither waited for it nor named
+  it. Copilot reproduced it with the real dispatcher and handler (two delivery tokens of job 42;
+  the drain reported quiet after 0 ms with one handler held). The engine hands a job out again
+  once its lock lapsed (`capacityLocked`), to the same client too
+  (`ZenBpmJobLockIT#anExtensionOfALapsedDeliveryLeavesTheNextOneAlone`). Now `enter` returns a
+  handle per run, which `describe` and `leave` take
+  (`ZenBpmDrainTest#twoDeliveriesOfOneJobAreTwoHandlers`); decision 39 says every run is waited
+  for on its own. Camunda 8's `Camunda8Drain` has the same shape; it is not changed (policy).
+- **`spring.lifecycle.timeout-per-shutdown-phase` does not bound the drain** (Claude 1, Minor).
+  The platform's `SpringBootDeploymentService` implements only the synchronous
+  `SmartLifecycle#stop()`; Spring's `stop(Runnable)` runs it to its end on the shutdown thread
+  (`DefaultLifecycleProcessor#doStop`) before it counts the timeout. So the startup WARN, the
+  WARN about a cut-off handler and the constant's javadoc name only Kubernetes'
+  `terminationGracePeriodSeconds` (or whatever else stops the application) as the budget to raise.
+  Decision 39, written in this batch and not merged before, was corrected in place, and so was the
+  fit check above. The story's sentence ("Spring's and Kubernetes' budgets") is answered here.
+- **A job whose module stopped during the read of its instance was logged as a `use-prefix`
+  clash** (Claude 2, Minor). The dispatcher reads the instance's facts on the handler thread and
+  then looks for the module serving it; `unregister` had removed the module by then, and the WARN
+  sent an operator after a configuration problem which does not exist. The dispatcher now keeps
+  the handlers of stopped modules (put there before the module leaves the running ones) and hands
+  such a job to its module's handler, which starts nothing and logs that the module shuts down
+  (`ZenBpmJobDispatcherTest#aJobWhoseModuleStopsWhileItsInstanceIsReadIsNotStarted`, which stops
+  the module inside the engine's answer to the read).
+- **A module a closing factory refused stayed among the running modules** (Claude 3, Nit). Its
+  drain was put among them before the factory refused the start, so every later stop would have
+  waited for it and so for no handler at all. It is now put there after the start was accepted. A
+  reordering, not a guard; the reviewer and I found no path on the platforms which reaches it.
+
+Seen to fail, each restored afterwards (3 of 3 mutants, against green unmutated runs): the
+dispatcher without the fall-back to stopped modules; `unregister` without keeping the stopped
+handler; `leave` removing every run of the job key.
+
+`TZ=Etc/UTC mvn clean install` on OpenJDK 25.0.2 builds green after the fixes with every
+integration test run and none skipped (engine test support 12 unit and 3 integration tests, core
+905 unit and 74 integration tests, Spring Boot 11 unit and 27 integration tests, smoke test 37,
+Quarkus runtime 10, Quarkus deployment 51, Quarkus integration tests 3, coverage gate 37). The gate
+measures 100 % of 22,952 instructions for Spring Boot and 100 % of 22,826 for Quarkus, and
+`bin/check-deploy-safety.sh` passes (13 files on a green build, nothing after a red gate).
+
+CodeRabbit's review of pull request #46 had one comment, valid: the closing factory runs a
+module's hook on its own thread, and that hook could stop a module while it was starting. Between
+the start's `processingStarted` and the drain's registration (an order the answer to Claude 3
+made), the stop added no drain, and the shutdown's wait then failed with a
+`NullPointerException`. Before `processingStarted`, the stop found nothing to stop. The start now
+holds its context from the factory's hook to the last subscription, so the hook's stop finds all of
+the start or nothing of it (`ZenBpmWorkflowProcessingTest#aStartIsOneStepForAStopWhichRacesIt`,
+seen to fail without the lock). Nothing that holds the factory's or the stream's monitor waits for
+the context, so the lock cannot deadlock. The full build ran again green, none skipped (core 906 unit tests; 100 % of 22,959 and 22,833
+instructions), and `bin/check-deploy-safety.sh` passes.
 
 ## F6.3 Asynchronous tasks
 

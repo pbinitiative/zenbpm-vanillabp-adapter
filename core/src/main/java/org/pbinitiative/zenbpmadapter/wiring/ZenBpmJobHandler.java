@@ -81,8 +81,15 @@ import lombok.extern.slf4j.Slf4j;
  * drives the renewal, and no timer of the adapter's does. Where the task waited longer than the
  * platform's maximum age and <code>async-task-max-age-action</code> is <code>incident</code>, the
  * job is failed without retries instead, so an incident names the aggregate and the age.</li>
- * <li><b>A handler which threw</b> is not carried out yet: logged at WARN, and the job is left to
- * its lock, after which the engine hands it out again.</li>
+ * <li><b>A handler which threw.</b> The core rolled its transaction back, and the job is failed
+ * without an error code, so the engine spends one of its retries: while retries remain it hands the
+ * job out again after the backoff, to whichever node has a slot, and at the last one it raises an
+ * incident naming the attempts and the message. The failure carries the exception's type and
+ * message, the configured <code>retry-backoff</code> where a level sets one, the delivery's token,
+ * so a repeat after a lost answer counts once, and the job stream's client id, which releases the
+ * lock for the backoff, see decision 27 in the repository's DECISIONS.md. How many retries a job
+ * has is the model's, else the engine's default, see decision 38 in the repository's
+ * DECISIONS.md.</li>
  * </ul>
  * <b>The tasks the engine took away.</b> The engine tells nobody about a job it ended, as an
  * interrupting boundary event or a cancelled instance does. So once the outcome of a delivery
@@ -92,6 +99,11 @@ import lombok.extern.slf4j.Slf4j;
  * delivery the handler refused, nor after one whose outcome did not reach the engine.
  * Every command goes through a {@link ZenBpmCommandRetry}, bounded by the job's lock and stopped at
  * once while the module shuts down. A command which fails all the same leaves the job to its lock.
+ * <p>
+ * <b>The shutdown.</b> Every handler enters the module's {@link ZenBpmDrain} with its job and leaves
+ * it when it returns, so the module's stop can wait for it. While the module stops, a job which
+ * arrives is not started, an outcome a handler reached is still reported, and a handler which threw
+ * is not failed at the engine, so its job keeps its retries.
  */
 @Slf4j
 public final class ZenBpmJobHandler {
@@ -125,6 +137,8 @@ public final class ZenBpmJobHandler {
 
     private final AsyncTaskMaxAgeAction asyncTaskMaxAgeAction;
 
+    private final ZenBpmRetryBackoffResolver retryBackoffs;
+
     /**
      * What the core asks about the other open tasks of a workflow, by plain process id.
      */
@@ -135,7 +149,7 @@ public final class ZenBpmJobHandler {
      */
     private final Map<String, String> idVariableNames = new ConcurrentHashMap<>();
 
-    private volatile boolean stopping;
+    private final ZenBpmDrain drain;
 
     /**
      * The handler of a workflow module whose processing starts.
@@ -144,12 +158,15 @@ public final class ZenBpmJobHandler {
      * @param factory The clients of the adapter id
      * @param collaborators What the platform hands to the adapter id
      * @param context What the deployment of the module collected
+     * @param retryBackoffs The <code>retry-backoff</code> of each task, resolved over the four
+     *            levels of the configuration
      */
     public ZenBpmJobHandler(
         final String adapterId,
         final ZenBpmClientFactory factory,
         final AdapterCollaborators collaborators,
-        final ZenBpmProcessingContext context
+        final ZenBpmProcessingContext context,
+        final ZenBpmRetryBackoffResolver retryBackoffs
     ) {
         this.adapterId = adapterId;
         this.workflowModuleId = context.workflowModuleId();
@@ -171,6 +188,8 @@ public final class ZenBpmJobHandler {
         this.asyncTaskMaxAgeAction = factory
                 .configuration()
                 .asyncTaskMaxAgeActionInUse();
+        this.retryBackoffs = retryBackoffs;
+        this.drain = new ZenBpmDrain(adapterId, workflowModuleId);
         // the core names a task by the definition it was reported under, which is the plain one
         processes
                 .values()
@@ -238,10 +257,11 @@ public final class ZenBpmJobHandler {
 
     /**
      * Marks the module as shutting down: a command which fails is not repeated any more, so the
-     * shutdown is not held up by it.
+     * shutdown is not held up by it, a job which arrives now is not started, and a handler which
+     * throws from now on is not failed at the engine.
      */
     public void stopping() {
-        stopping = true;
+        drain.stopping();
     }
 
     /**
@@ -250,7 +270,16 @@ public final class ZenBpmJobHandler {
      * @return <code>true</code> once {@link #stopping()} was called
      */
     public boolean isStopping() {
-        return stopping;
+        return drain.isStopping();
+    }
+
+    /**
+     * What the module's handlers run, which its shutdown waits for.
+     *
+     * @return The drain of the module
+     */
+    public ZenBpmDrain drain() {
+        return drain;
     }
 
     /**
@@ -274,13 +303,22 @@ public final class ZenBpmJobHandler {
                 adapterId);
         final var delivery = new Delivery(job.getKey(), taskDefinition, plainProcessId, new ZenBpmCommandRetry(
                 adapterId, job.getKey(), taskDefinition, renewal::lockEnd, this::isStopping));
+        // entered before the module's state is read, and the stop sets the state before it looks
+        // at what entered: so either the stop waits for this handler or this handler sees the stop
+        final var entered = drain.enter(job.getKey(), taskDefinition);
         try {
-            run(received, facts, delivery, renewal);
+            if (drain.isStopping()) {
+                log.info("""
+                        ZenBPM[{}]: job {} (task '{}') arrived while workflow module '{}' shuts down, so it is not \
+                        started; the closing job stream releases its lock""", adapterId, job.getKey(), taskDefinition,
+                        workflowModuleId);
+                return;
+            }
+            run(received, facts, delivery, renewal, entered);
         } catch (final RuntimeException e) {
             // what reaches here failed on its way to the engine after its repetitions; the
             // invocation itself is answered in run
-            final var stoppingNow = stopping;
-            if (stoppingNow) {
+            if (drain.isStopping()) {
                 log.info(
                         "ZenBPM[{}]: job {} (task '{}') could not be answered while workflow module '{}' shuts down; it is left to its lock: {}",
                         adapterId, job.getKey(), taskDefinition, workflowModuleId, e.getMessage());
@@ -289,6 +327,8 @@ public final class ZenBpmJobHandler {
             log.warn(
                     "ZenBPM[{}]: job {} (task '{}') could not be answered to the engine; it is left to its lock, after which the engine hands it out again",
                     adapterId, job.getKey(), taskDefinition, e);
+        } finally {
+            drain.leave(entered);
         }
     }
 
@@ -296,7 +336,8 @@ public final class ZenBpmJobHandler {
         final ReceivedJob received,
         final InstanceFacts facts,
         final Delivery delivery,
-        final ZenBpmLockRenewal.Renewal renewal
+        final ZenBpmLockRenewal.Renewal renewal,
+        final ZenBpmDrain.Entered entered
     ) {
         final var job = received.job();
         final var idVariableName = idVariableNameOf(facts.scopedProcessId());
@@ -319,6 +360,7 @@ public final class ZenBpmJobHandler {
         }
         final var aggregate = named.get();
         renewal.describeAggregate(aggregate.id());
+        drain.describe(entered, aggregate.id());
         final var context = new Invocation(adapterId, received, delivery.taskDefinition(), aggregate, workflowId, facts
                 .version(), deployedProcesses
                         .versionOf(workflowModuleId, delivery.plainProcessId())
@@ -331,7 +373,7 @@ public final class ZenBpmJobHandler {
             failAsAWorkflowNobodyOwnsHere(received, e, delivery);
             return;
         } catch (final RuntimeException e) {
-            leaveAThrownHandlerToItsLock(delivery, aggregate, e);
+            failAThrownHandler(received, aggregate, e, delivery);
             return;
         }
         final var reachedTheEngine = switch (outcome.kind()) {
@@ -636,17 +678,78 @@ public final class ZenBpmJobHandler {
         }
     }
 
-    private void leaveAThrownHandlerToItsLock(
-        final Delivery delivery,
+    // see decision 27 in the repository's DECISIONS.md: the engine counts the attempts and waits the
+    // backoff, so the failure names no retries, and it names the delivery and the stream's client
+    // id, so a repeat after a lost answer counts once and the lock is released for the backoff
+    private void failAThrownHandler(
+        final ReceivedJob received,
         final Aggregate aggregate,
-        final RuntimeException thrown
+        final RuntimeException thrown,
+        final Delivery delivery
     ) {
-        log.warn(
-                """
-                        ZenBPM[{}]: the handler of job {} (task '{}', workflow aggregate '{}') threw, and this adapter does not \
-                        fail a job at the engine yet; the job is left to its lock, after which the engine hands it out \
-                        again""",
-                adapterId, delivery.jobKey(), delivery.taskDefinition(), aggregate.id(), thrown);
+        final var job = received.job();
+        // read after the handler returned: one which started before the stop and threw during it
+        // was cut off by the shutdown, and a failure would spend a retry for that
+        if (drain.isStopping()) {
+            log.info("""
+                    ZenBPM[{}]: the handler of job {} (task '{}', workflow aggregate '{}') threw while workflow \
+                    module '{}' shuts down, so the job is not failed and keeps its retries; the closing job stream \
+                    releases its lock, and the engine hands it to another node: {}""", adapterId, job.getKey(),
+                    delivery.taskDefinition(), aggregate.id(), workflowModuleId, thrownAsText(thrown));
+            return;
+        }
+        final var retryBackoff = retryBackoffs.retryBackoffFor(workflowModuleId, delivery.plainProcessId(), delivery
+                .taskDefinition());
+        final var retriesLeft = Math.max(0, job.getRetries() - 1);
+        // the type belongs into the incident as much as the message: a NullPointerException says
+        // nothing else
+        final var message = "Task '%s' of workflow aggregate '%s' threw %s".formatted(delivery.taskDefinition(),
+                aggregate.id(), thrownAsText(thrown));
+        if (retriesLeft == 0) {
+            log.warn(
+                    "ZenBPM[{}]: the handler of job {} (task '{}', workflow aggregate '{}') threw {} at attempt {}, which leaves no retries; the job is failed, and the engine raises an incident",
+                    adapterId, job.getKey(), delivery.taskDefinition(), aggregate.id(), thrown
+                            .getClass()
+                            .getName(),
+                    job.getAttempt(), thrown);
+        } else {
+            log.warn(
+                    "ZenBPM[{}]: the handler of job {} (task '{}', workflow aggregate '{}') threw {} at attempt {}; the job is failed with {} retries left, and the engine hands it out again after {}",
+                    adapterId, job.getKey(), delivery.taskDefinition(), aggregate.id(), thrown
+                            .getClass()
+                            .getName(),
+                    job.getAttempt(), retriesLeft, retryBackoff
+                            .map(Duration::toString)
+                            .orElse("the retryBackoff of the task's model, else the engine's default"),
+                    thrown);
+        }
+        final var failure = JobFailure
+                .withMessage(message)
+                .withRetryBackoff(retryBackoff.orElse(null))
+                .ofTheDelivery(job.getDeliveryToken(), clientId);
+        try {
+            delivery.retry().send("failure", () -> rest.failJob(job.getKey(), failure));
+        } catch (final RuntimeException e) {
+            if (!ZenBpmErrors.isGoneJob(e)) {
+                throw e;
+            }
+            log.warn("""
+                    ZenBPM[{}]: job {} (task '{}', workflow aggregate '{}') was gone when its failure was to be sent: \
+                    the engine handed it out again and the newer delivery decides, or its element or workflow ended \
+                    meanwhile""", adapterId, job.getKey(), delivery.taskDefinition(), aggregate.id());
+        }
+    }
+
+    private static String thrownAsText(final RuntimeException thrown) {
+        final var message = thrown.getMessage();
+        if ((message == null) || message.isBlank()) {
+            return thrown
+                    .getClass()
+                    .getName();
+        }
+        return "%s: %s".formatted(thrown
+                .getClass()
+                .getName(), message);
     }
 
     /**

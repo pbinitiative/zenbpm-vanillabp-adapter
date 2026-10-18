@@ -685,6 +685,42 @@ class ZenBpmRestClientTest {
     }
 
     @Test
+    @DisplayName("A failure's backoff is sent in whole seconds, PT0S included, and a failure without one sends none")
+    void aFailureSendsItsBackoffInWholeSeconds() throws Exception {
+        engine.answers("POST", "/v1/jobs/1/fail", 204, null);
+
+        client.failJob(1, JobFailure
+                .withMessage("threw")
+                .withRetryBackoff(Duration.ofMinutes(90)));
+        client.failJob(1, JobFailure
+                .withMessage("threw")
+                .withRetryBackoff(Duration.ZERO));
+        client.failJob(1, JobFailure
+                .withMessage("threw")
+                .withRetryBackoff(null));
+
+        assertEquals(List.of(JSON.readTree("""
+                {"message": "threw", "retryBackoff": "PT5400S"}"""), JSON.readTree("""
+                {"message": "threw", "retryBackoff": "PT0S"}"""), JSON.readTree("""
+                {"message": "threw"}""")), bodies());
+    }
+
+    @ParameterizedTest(name = "{0}")
+    @ValueSource(strings = {
+            "PT1.5S", "PT-1S"
+    })
+    @DisplayName("A backoff which the engine refuses, of a fraction of a second or negative, is refused before anything is sent")
+    void aBackoffTheEngineRefusesIsRefused(final String backoff) {
+        final var failure = assertThrows(IllegalArgumentException.class, () -> client.failJob(1, JobFailure
+                .withMessage("threw")
+                .withRetryBackoff(Duration.parse(backoff))));
+
+        assertEquals("The engine waits a backoff of whole seconds, but %s was asked for".formatted(backoff), failure
+                .getMessage());
+        assertEquals(List.of(), engine.requests());
+    }
+
+    @Test
     @DisplayName("A message is published with its name, its correlation key and its variables")
     void aMessageIsPublished() throws Exception {
         engine.answers("POST", "/v1/messages", 201, null);

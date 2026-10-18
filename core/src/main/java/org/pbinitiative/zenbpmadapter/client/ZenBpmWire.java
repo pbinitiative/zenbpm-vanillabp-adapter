@@ -173,6 +173,7 @@ final class ZenBpmWire {
         String message,
         Map<String, Object> variables,
         Integer retries,
+        String retryBackoff,
         Long deliveryToken,
         String clientId
     ) {

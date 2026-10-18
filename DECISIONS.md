@@ -302,6 +302,36 @@ finds the id and answers `created() == false`. A crash between the commit of the
 deterministic; Camunda 8 has the same window. Until then, a workflow the engine starts gets no
 aggregate.
 
+### 27. A failed handler is failed at the engine, with retries and backoff
+
+Since the engine counts retries and waits a backoff (engine commit `bc3384b3`, contained in the
+pinned `bdd795a3`), the adapter does what the Camunda 8 adapter does: a `@WorkflowTask` method which
+threw, after the core rolled its transaction back, is reported with `POST /v1/jobs/{key}/fail`
+without an error code. The plan's draft of decision 8, which left such a job to its lock and counted
+the attempts in the adapter, never entered this log, and neither did its local retry or its key
+`max-redeliveries`.
+
+The failure carries no `retries`: the engine reads an absent value as one less than now, and with
+retries left it keeps the job active and hands it out again after the backoff, to whichever node
+has a slot; at the last one it raises an incident naming the attempts and the message. The message
+names the task, the aggregate and the exception's type and message, because a
+`NullPointerException` alone says nothing. The failure names its delivery (`deliveryToken`), so a
+failure repeated after its answer was lost counts once and the engine answers it like the first,
+and a failure of a delivery the engine handed out again is answered `409` and changes nothing: the
+newer delivery decides. It names the job stream's client id as well. At the pinned commit a failure
+which names its delivery releases that delivery's lock whoever reports it, and one which names none
+releases it only where the client id is the lock's holder (`releaseLockOfFailedDelivery` in
+`internal/cluster/jobmanager/server.go`); without both the lock stands until it lapses, whatever the
+backoff says (measured: the job came back after its job-timeout of thirty seconds). `retryBackoff`
+is sent where a level of the configuration sets `retry-backoff`, in whole seconds; decision 38 says
+why there is no default.
+
+The adapter keeps no state per job. A delivery for a workflow this application does not own
+(`DeliveryOfAnUnknownWorkflowException`) is failed with `retries: 0` and the exception's message,
+and logged as a WARN without a stack trace: an operator sees an incident naming the reason at once.
+That is stricter than Camunda 8, which counts such a job down like any other failure, and it is
+chosen on purpose, because no retry can make the workflow known.
+
 ### 28. The workflow id is the key of the root instance of the task's own process
 
 The adapter names one workflow by one id wherever it names it: `reportStartedWorkflow` after a
@@ -574,3 +604,61 @@ cannot read the engine's setting. GAPS 28 records the cause.
 Subscribing every type with the engine's largest cap instead was rejected: it lets one node of the
 application take every waiting job of a type, while the other nodes stay idle and the jobs wait in
 front of its busy slots.
+
+### 38. The adapter writes no default of retries into a model and sends a backoff only where one is configured
+
+Decided by the implementation pipeline in place of the maintainers, as their policy for the
+autonomous run asks.
+
+How many attempts a job has is the model's (`zenbpm:taskDefinition retries`), else the engine
+operator's (`JOBS_DEFAULT_RETRIES`, 1 by default at the pinned commit). The adapter neither writes a
+default `retries` into a task definition while it rewrites the model nor sends a number with a
+failure. The Camunda 8 adapter writes none either and leaves the count to the model and Zeebe;
+decision 4 of the plan's drafts never writes over what the modeller wrote; and the engine has a
+setting for exactly this. The price is the engine's default of one attempt: a model without
+`retries` on an engine left at its default raises an incident at the first handler which throws.
+The README says so, with the two ways out: `retries` in the model, or `JOBS_DEFAULT_RETRIES=3` at
+the engine for Zeebe's default.
+
+`retry-backoff` has no default either. Where no level of the configuration sets it, the failure
+carries no `retryBackoff`, and the engine applies the `retryBackoff` of the task's definition, else
+its `JOBS_DEFAULT_RETRY_BACKOFF`. The engine prefers a backoff the failure carries over the model's
+(`backoffForAttempt` in `pkg/bpmn/job_retries.go`), so an adapter default would replace every
+policy a modeller wrote, a list of growing waits included. The Camunda 8 adapter sends a default of
+ten seconds, because Camunda 8 has no backoff in the model to fall back to. So `retry-backoff`, like
+`history-time-to-live`, is a key set only by somebody who configures this adapter: written without
+`rest-address`, it means a configuration which was started and has to be finished. The engine caps
+any backoff at its `JOBS_MAX_RETRY_BACKOFF` (a day by default), so the adapter warns about no upper
+bound, and it refuses a fraction of a second while the application starts, which the engine would
+refuse with `400`.
+
+### 39. A shutdown waits once for the handlers of every workflow module, and fails no job it cut off
+
+Decided by the implementation pipeline in place of the maintainers, as their policy for the
+autonomous run asks; the Camunda 8 adapter decided the same (its decisions 6 and 51).
+
+The platform stops the workflow modules one after another. Each stop unsubscribes the module's job
+types and marks the module as stopping; the stop of the last running module of an adapter id then
+waits for the handlers of every module which stopped, all together, at most `shutdown-grace`, and
+names each handler which still runs after it with its job key, task and workflow aggregate. A wait
+per module would spend the grace once per module, and only the whole shutdown has a budget the
+application can compare the number with: the time the runtime grants the application to stop
+before it kills it, Kubernetes' `terminationGracePeriodSeconds`, thirty seconds by default. Spring
+Boot's `spring.lifecycle.timeout-per-shutdown-phase` is not such a budget here: the platform's
+deployment service implements only the synchronous `SmartLifecycle#stop()`, which Spring runs to
+its end before it starts to count that timeout (`DefaultLifecycleProcessor#doStop`, Spring
+Framework 7.0.9). So `shutdown-grace` stays at the adapter level and is not resolved over the four
+levels, and one above thirty seconds is warned about at startup. Every run of a handler is waited
+for on its own: a delivery of a job whose lock lapsed may run beside the earlier one on the same
+node, and the one which returns first does not end the wait for the other.
+
+While a module stops, a job which reaches its handler is not started, an outcome a handler reached
+is still reported, because its work is committed, and a handler which threw is not failed at the
+engine: the failure would spend one of the job's retries (decision 27) for a cause which is the
+shutdown, not the job. The module's state is read after the handler returned, so a handler which
+started before the stop and threw during it costs no retry either. The client factory closes the job
+stream after the wait, and the engine then drops every lock of the adapter's client
+(`removeClient` in `internal/cluster/jobmanager/server.go` at the pinned commit `bdd795a3`): the
+jobs a cut-off handler held and the ones which waited for a handler slot go to another node at once
+(measured: within about a tenth of a second, against a job-timeout of a minute), with their retries
+untouched. The delivery record of the platform decides whether the work runs again.

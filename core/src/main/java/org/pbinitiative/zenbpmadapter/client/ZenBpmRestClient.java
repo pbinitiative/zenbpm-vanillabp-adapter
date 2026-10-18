@@ -500,6 +500,8 @@ public class ZenBpmRestClient implements AutoCloseable {
      *
      * @param key The job key
      * @param failure The failure
+     * @throws IllegalArgumentException Where the backoff is negative or not whole seconds, which the
+     *             engine refuses, before anything is sent
      * @throws ZenBpmApiException With status 404 where the engine knows no such job, 409 where the
      *             job no longer waits or another delivery of it decides, 400 where the engine does
      *             not take a value of the failure, such as a delivery token it never handed out
@@ -510,7 +512,9 @@ public class ZenBpmRestClient implements AutoCloseable {
     ) {
         final var call = new Call(POST, "/v1/jobs/%d/fail".formatted(key));
         call.send(JSON, call.jsonBody(new ZenBpmWire.FailJob(failure.errorCode(), failure.message(), failure
-                .variables(), failure.retries(), failure.deliveryToken(), failure.clientId())), SUCCESS);
+                .variables(), failure
+                        .retries(), retryBackoff(failure.retryBackoff()), failure.deliveryToken(), failure.clientId())),
+                SUCCESS);
     }
 
     /**
@@ -745,6 +749,18 @@ public class ZenBpmRestClient implements AutoCloseable {
         }
         final var seconds = duration.getSeconds() + ((duration.getNano() > 0) ? 1 : 0);
         return "PT%dS".formatted(seconds);
+    }
+
+    // the engine reads ISO-8601 with whole numbers only, so PT1.5S would be refused with 400
+    private static String retryBackoff(final Duration backoff) {
+        if (backoff == null) {
+            return null;
+        }
+        if (backoff.isNegative() || (backoff.getNano() != 0)) {
+            throw new IllegalArgumentException("The engine waits a backoff of whole seconds, but %s was asked for"
+                    .formatted(backoff));
+        }
+        return "PT%dS".formatted(backoff.getSeconds());
     }
 
     private static ProcessDefinitionRef processDefinitionRef(final ZenBpmWire.ProcessDefinition definition) {

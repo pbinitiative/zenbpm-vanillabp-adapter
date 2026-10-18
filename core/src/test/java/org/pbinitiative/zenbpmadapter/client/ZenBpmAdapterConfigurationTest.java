@@ -91,8 +91,7 @@ class ZenBpmAdapterConfigurationTest {
         assertEquals("4", configuration.getWorkerThreads());
         assertNull(configuration.getWorkerThreadsBound());
         assertEquals(4, configuration.workerThreadsBoundInUse());
-        assertEquals(Duration.ofSeconds(10), configuration.getRetryBackoff());
-        assertEquals(10, configuration.getMaxRedeliveries());
+        assertNull(configuration.getRetryBackoff());
         assertEquals(Duration.ofSeconds(20), configuration.getShutdownGrace());
         assertEquals(Duration.ofSeconds(2), configuration.getWorkflowVisibilityTimeout());
         assertEquals(Duration.ofSeconds(5), configuration.getUserTaskPollInterval());
@@ -117,7 +116,6 @@ class ZenBpmAdapterConfigurationTest {
         configuration.setAsyncTaskLockRenewal(Duration.ofMinutes(10));
         configuration.setAsyncTaskMaxAgeAction(" Incident ");
         configuration.setRetryBackoff(Duration.ofSeconds(1));
-        configuration.setMaxRedeliveries(0);
         configuration.setShutdownGrace(Duration.ZERO);
         configuration.setWorkflowVisibilityTimeout(Duration.ofSeconds(5));
         configuration.setUserTaskPollInterval(Duration.ZERO);
@@ -143,7 +141,6 @@ class ZenBpmAdapterConfigurationTest {
         assertEquals(" Incident ", configuration.getAsyncTaskMaxAgeAction());
         assertEquals(AsyncTaskMaxAgeAction.INCIDENT, configuration.asyncTaskMaxAgeActionInUse());
         assertEquals(Duration.ofSeconds(1), configuration.getRetryBackoff());
-        assertEquals(0, configuration.getMaxRedeliveries());
         assertEquals(Duration.ZERO, configuration.getShutdownGrace());
         assertEquals(Duration.ofSeconds(5), configuration.getWorkflowVisibilityTimeout());
         assertEquals(Duration.ZERO, configuration.getUserTaskPollInterval());
@@ -161,7 +158,6 @@ class ZenBpmAdapterConfigurationTest {
         configuration.setAsyncTaskLockRenewal(null);
         configuration.setAsyncTaskMaxAgeAction(null);
         configuration.setRetryBackoff(null);
-        configuration.setMaxRedeliveries(null);
         configuration.setShutdownGrace(null);
         configuration.setWorkflowVisibilityTimeout(null);
         configuration.setUserTaskPollInterval(null);
@@ -178,8 +174,7 @@ class ZenBpmAdapterConfigurationTest {
         assertEquals(ZenBpmAdapterConfiguration.DEFAULT_JOB_TIMEOUT, configuration.getJobTimeout());
         assertEquals(Duration.ofHours(1), configuration.getAsyncTaskLockRenewal());
         assertEquals(AsyncTaskMaxAgeAction.REPORT, configuration.asyncTaskMaxAgeActionInUse());
-        assertEquals(defaults.getRetryBackoff(), configuration.getRetryBackoff());
-        assertEquals(defaults.getMaxRedeliveries(), configuration.getMaxRedeliveries());
+        assertNull(configuration.getRetryBackoff());
         assertEquals(defaults.getShutdownGrace(), configuration.getShutdownGrace());
         assertEquals(defaults.getWorkflowVisibilityTimeout(), configuration.getWorkflowVisibilityTimeout());
         assertEquals(defaults.getUserTaskPollInterval(), configuration.getUserTaskPollInterval());
@@ -537,6 +532,25 @@ class ZenBpmAdapterConfigurationTest {
     }
 
     @Test
+    @DisplayName("A shutdown-grace above thirty seconds is warned about, naming the budgets of the runtime to raise with it; thirty seconds are not")
+    void aLongShutdownGraceIsWarnedAbout() {
+        final var longGrace = configured("http://zenbpm:8080");
+        longGrace.setShutdownGrace(Duration.ofSeconds(31));
+        final var usualGrace = configured("http://zenbpm:8080");
+        usualGrace.setShutdownGrace(Duration.ofSeconds(30));
+
+        final var warned = longGrace.validate(ADAPTER_ID, false, false);
+        final var quiet = usualGrace.validate(ADAPTER_ID, false, false);
+
+        assertAll(
+                () -> assertEquals(Kind.COMPLETE, warned.kind()),
+                () -> assertEquals(List.of(
+                        "vanillabp.adapters.orders.shutdown-grace is PT31S, above the PT30S which Kubernetes grants a pod to stop by default: raise terminationGracePeriodSeconds, or the stop timeout of whatever else runs the application, with it, or the application is killed before the handlers had their grace"),
+                        warned.warnings()),
+                () -> assertEquals(List.of(), quiet.warnings()));
+    }
+
+    @Test
     @DisplayName("The engine's address is the REST address normalised, without '/v1'")
     void theEngineAddressLeavesTheApiVersionOut() {
         assertEquals(URI.create("http://zenbpm:8080"), configured("http://zenbpm:8080/v1/").engineAddress());
@@ -658,14 +672,18 @@ class ZenBpmAdapterConfigurationTest {
     }
 
     @Test
-    @DisplayName("The notices of a validation cannot be changed afterwards")
+    @DisplayName("The notices and the warnings of a validation cannot be changed afterwards")
     void theNoticesAreACopy() {
         final var notices = new ArrayList<String>();
         notices.add("one");
-        final var validation = new ZenBpmAdapterConfiguration.ValidationResult(Kind.COMPLETE, "", false, notices);
+        final var warnings = new ArrayList<String>();
+        warnings.add("four");
+        final var validation = new ZenBpmAdapterConfiguration.ValidationResult(Kind.COMPLETE, "", false, notices, warnings);
         notices.add("two");
+        warnings.add("five");
 
         assertEquals(List.of("one"), validation.notices());
+        assertEquals(List.of("four"), validation.warnings());
         assertThrows(UnsupportedOperationException.class, () -> validation
                 .notices()
                 .add("three"));
@@ -678,7 +696,8 @@ class ZenBpmAdapterConfigurationTest {
         configuration.addScopedValue("vanillabp.workflow-modules.shop.adapters.orders.retry-backoff",
                 Duration.ofSeconds(-1));
         configuration.addScopedValue(
-                "vanillabp.workflow-modules.shop.workflows.Order.tasks.ship.adapters.orders.max-redeliveries", -1);
+                "vanillabp.workflow-modules.shop.workflows.Order.tasks.ship.adapters.orders.job-timeout", Duration
+                        .ofSeconds(-1));
 
         final var validation = configuration.validate(ADAPTER_ID, true, true);
 
@@ -688,7 +707,7 @@ class ZenBpmAdapterConfigurationTest {
                 .message()
                 .contains(
                         "  - vanillabp.workflow-modules.shop.adapters.orders.retry-backoff is PT-1S and must not be negative; without the key the level above applies\n"
-                                + "  - vanillabp.workflow-modules.shop.workflows.Order.tasks.ship.adapters.orders.max-redeliveries is -1 and must not be negative; without the key the level above applies\n"),
+                                + "  - vanillabp.workflow-modules.shop.workflows.Order.tasks.ship.adapters.orders.job-timeout is PT-1S and must not be negative; without the key the level above applies\n"),
                 validation.message());
     }
 
@@ -718,7 +737,7 @@ class ZenBpmAdapterConfigurationTest {
     }
 
     @Test
-    @DisplayName("A history-time-to-live below the adapter level which the engine would change ends the boot naming its full key; a fraction of another key does not")
+    @DisplayName("A history-time-to-live below the adapter level which the engine would change ends the boot naming its full key; a fraction of a job-timeout does not")
     void aScopedTimeToLiveTheEngineWouldChangeIsAValueDefect() {
         final var configuration = configured("http://localhost:8080");
         configuration.addScopedValue("vanillabp.workflow-modules.shop.adapters.orders.history-time-to-live",
@@ -727,7 +746,7 @@ class ZenBpmAdapterConfigurationTest {
                 "vanillabp.workflow-modules.shop.workflows.Order.adapters.orders.history-time-to-live", Duration
                         .ofMillis(500));
         configuration.addScopedValue(
-                "vanillabp.workflow-modules.shop.workflows.Order.tasks.ship.adapters.orders.retry-backoff", Duration
+                "vanillabp.workflow-modules.shop.workflows.Order.tasks.ship.adapters.orders.job-timeout", Duration
                         .ofMillis(500));
 
         final var validation = configuration.validate(ADAPTER_ID, true, true);
@@ -737,6 +756,29 @@ class ZenBpmAdapterConfigurationTest {
         assertEquals(List.of(
                 "  - vanillabp.workflow-modules.shop.adapters.orders.history-time-to-live is PT2562047H47M17S, but the engine takes at most PT2562047H47M16S, about 292 years; write a shorter time, or remove the key, so the level above applies",
                 "  - vanillabp.workflow-modules.shop.workflows.Order.adapters.orders.history-time-to-live is PT0.5S, but the engine keeps whole seconds and would keep PT0S; write whole seconds, or remove the key, so the level above applies"),
+                validation
+                        .message()
+                        .lines()
+                        .filter(line -> line.startsWith("  - "))
+                        .toList());
+    }
+
+    @Test
+    @DisplayName("A retry-backoff below the adapter level with a fraction of a second ends the boot naming its full key, and a negative one is named once, as negative")
+    void aScopedRetryBackoffOfAFractionIsAValueDefect() {
+        final var configuration = configured("http://localhost:8080");
+        configuration.addScopedValue(
+                "vanillabp.workflow-modules.shop.workflows.Order.tasks.ship.adapters.orders.retry-backoff", Duration
+                        .ofMillis(1500));
+        configuration.addScopedValue("vanillabp.workflow-modules.shop.adapters.orders.retry-backoff", Duration
+                .ofMillis(-500));
+
+        final var validation = configuration.validate(ADAPTER_ID, true, true);
+
+        assertTrue(validation.endsTheBoot());
+        assertEquals(List.of(
+                "  - vanillabp.workflow-modules.shop.workflows.Order.tasks.ship.adapters.orders.retry-backoff is PT1.5S, but the engine takes a backoff in whole seconds; write whole seconds, or remove the key, so the level above applies",
+                "  - vanillabp.workflow-modules.shop.adapters.orders.retry-backoff is PT-0.5S and must not be negative; without the key the level above applies"),
                 validation
                         .message()
                         .lines()
@@ -776,14 +818,12 @@ class ZenBpmAdapterConfigurationTest {
     }
 
     @Test
-    @DisplayName("A retry-backoff or max-redeliveries below the adapter level, without a REST address, leaves the adapter id not configured yet: both fall back to a default")
+    @DisplayName("A job-timeout below the adapter level, without a REST address, leaves the adapter id not configured yet: it falls back to a default")
     void aScopedKeyWithADefaultDoesNotStartTheConfiguration() {
         final var configuration = new ZenBpmAdapterConfiguration();
         configuration.addScopedValue(
-                "vanillabp.workflow-modules.shop.workflows.Order.tasks.ship.adapters.orders.retry-backoff",
+                "vanillabp.workflow-modules.shop.workflows.Order.tasks.ship.adapters.orders.job-timeout",
                 Duration.ofSeconds(5));
-        configuration.addScopedValue(
-                "vanillabp.workflow-modules.shop.workflows.Order.tasks.ship.adapters.orders.max-redeliveries", 3);
 
         final var validation = configuration.validate(ADAPTER_ID, false, false);
 
@@ -795,13 +835,11 @@ class ZenBpmAdapterConfigurationTest {
     @DisplayName("A level which does not set a key, or sets zero, is no defect")
     void anUnsetOrZeroScopedValueIsNoDefect() {
         final var configuration = configured("http://localhost:8080");
-        configuration.addScopedValue("vanillabp.workflow-modules.shop.adapters.orders.retry-backoff", (Duration) null);
-        configuration.addScopedValue("vanillabp.workflow-modules.shop.adapters.orders.max-redeliveries",
-                (Integer) null);
+        configuration.addScopedValue("vanillabp.workflow-modules.shop.adapters.orders.retry-backoff", null);
         configuration.addScopedValue(
                 "vanillabp.workflow-modules.shop.workflows.Order.adapters.orders.history-time-to-live", Duration.ZERO);
-        configuration.addScopedValue("vanillabp.workflow-modules.shop.workflows.Order.adapters.orders.max-redeliveries",
-                0);
+        configuration.addScopedValue("vanillabp.workflow-modules.shop.workflows.Order.adapters.orders.retry-backoff",
+                Duration.ZERO);
 
         assertEquals(Kind.COMPLETE, configuration
                 .validate(ADAPTER_ID, false, false)
@@ -921,8 +959,12 @@ class ZenBpmAdapterConfigurationTest {
                 defect("async-task-max-age-action", "a value which names no action",
                         "is 'fail'; it is 'report', the default, or 'incident'",
                         c -> c.setAsyncTaskMaxAgeAction(" fail ")),
-                defect("retry-backoff", "a negative duration", "must not be negative; the default is PT10S",
+                defect("retry-backoff", "a negative duration",
+                        "is PT-1S and must not be negative; without the key the retryBackoff of the task's model applies, else the engine's own default",
                         c -> c.setRetryBackoff(Duration.ofSeconds(-1))),
+                defect("retry-backoff", "a second and a half",
+                        "is PT1.5S, but the engine takes a backoff in whole seconds; write whole seconds, or remove the key, so the retryBackoff of the task's model applies, else the engine's own default",
+                        c -> c.setRetryBackoff(Duration.ofMillis(1500))),
                 defect("shutdown-grace", "a negative duration", "must not be negative; the default is PT20S",
                         c -> c.setShutdownGrace(Duration.ofSeconds(-1))),
                 defect("workflow-visibility-timeout", "a negative duration",
@@ -942,9 +984,6 @@ class ZenBpmAdapterConfigurationTest {
                 defect("history-time-to-live", "a second more than the engine takes",
                         "is PT2562047H47M17S, but the engine takes at most PT2562047H47M16S, about 292 years; write a shorter time, or remove the key",
                         c -> c.setHistoryTimeToLive(ZenBpmTimeToLive.LONGEST.plusSeconds(1))),
-                defect("max-redeliveries", "a negative number",
-                        "0 turns the first failure into an incident, the default is 10",
-                        c -> c.setMaxRedeliveries(-1)),
                 defect("instance-cache-max-entries", "a negative number", "must not be negative; the default is 10000",
                         c -> c.setInstanceCacheMaxEntries(-1)));
     }
@@ -963,7 +1002,13 @@ class ZenBpmAdapterConfigurationTest {
                 Arguments.of("history-time-to-live of a workflow",
                         (Consumer<ZenBpmAdapterConfiguration>) c -> c.addScopedValue(
                                 "vanillabp.workflow-modules.shop.workflows.Order.adapters.orders.history-time-to-live",
-                                Duration.ofDays(30))));
+                                Duration.ofDays(30))),
+                Arguments.of("retry-backoff",
+                        (Consumer<ZenBpmAdapterConfiguration>) c -> c.setRetryBackoff(Duration.ofSeconds(5))),
+                Arguments.of("retry-backoff of a task",
+                        (Consumer<ZenBpmAdapterConfiguration>) c -> c.addScopedValue(
+                                "vanillabp.workflow-modules.shop.workflows.Order.tasks.ship.adapters.orders.retry-backoff",
+                                Duration.ofSeconds(5))));
     }
 
     static Stream<Arguments> connectionDefects() {

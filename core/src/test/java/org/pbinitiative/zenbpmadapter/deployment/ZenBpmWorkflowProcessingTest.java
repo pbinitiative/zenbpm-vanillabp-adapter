@@ -6,6 +6,7 @@ package org.pbinitiative.zenbpmadapter.deployment;
 
 import static org.junit.jupiter.api.Assertions.assertAll;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -38,6 +39,7 @@ import org.pbinitiative.zenbpmadapter.client.ZenBpmClientRegistry;
 import org.pbinitiative.zenbpmadapter.client.grpc.Zenbpm.JobStreamResponse;
 import org.pbinitiative.zenbpmadapter.client.grpc.Zenbpm.StreamSubscriptionRequest;
 import org.pbinitiative.zenbpmadapter.client.grpc.Zenbpm.WaitingJob;
+import org.pbinitiative.zenbpmadapter.wiring.ZenBpmRetryBackoffResolver;
 
 import io.vanillabp.integration.adapter.spi.NameClashAvoidance;
 import io.vanillabp.integration.test.utils.CapturedOutput;
@@ -103,7 +105,7 @@ class ZenBpmWorkflowProcessingTest {
                     workflowModuleId,
                     bpmnProcessId,
                     taskDefinition) -> "ship".equals(taskDefinition) ? Duration.ofSeconds(90)
-                            : Duration.ofMinutes(5));
+                            : Duration.ofMinutes(5), ZenBpmRetryBackoffResolver.NONE);
         final var context = wired(deploymentService, "wiring.bpmn", fixture("wiring.bpmn"), null);
         wired(deploymentService, "partner.bpmn", PARTNER, context);
         final var factory = registry.getFactory(ADAPTER_ID);
@@ -196,6 +198,34 @@ class ZenBpmWorkflowProcessingTest {
     }
 
     @Test
+    @DisplayName("Modules which stop one after another are waited for once, by the stop of the last running one, within one shutdown-grace")
+    void modulesWhichStopAreWaitedForOnce(final CapturedOutput output) {
+        final var deploymentService = deploymentService(TestWiring.claiming());
+        final var shop = withJobTypes("shop", "charge");
+        final var billing = withJobTypes("billing", "invoice");
+        deploymentService.startWorkflowProcessing("shop", shop);
+        deploymentService.startWorkflowProcessing("billing", billing);
+
+        deploymentService.stopWorkflowProcessing("shop", shop);
+        final var afterTheFirst = output.getAllOfThisTest();
+        deploymentService.stopWorkflowProcessing("billing", billing);
+        deploymentService.stopWorkflowProcessing("billing", billing);
+
+        final var log = output.getAllOfThisTest();
+        assertAll(
+                () -> assertFalse(afterTheFirst.contains("drained after"), afterTheFirst),
+                () -> assertTrue(log.contains(
+                        "ZenBPM[orders]: the handlers of 2 workflow modules are waited for together, within one vanillabp.adapters.orders.shutdown-grace of PT20S"),
+                        log),
+                () -> assertTrue(log.contains("workflow module 'shop' drained after"), log),
+                () -> assertTrue(log.contains("workflow module 'billing' drained after"), log),
+                () -> assertEquals(1, log
+                        .lines()
+                        .filter(line -> line.contains("workflow module 'billing' drained after"))
+                        .count(), log));
+    }
+
+    @Test
     @DisplayName("A module the platform did not stop is stopped by the closing factory, which says so")
     void theClosingFactoryStopsAModuleThePlatformDidNotStop(final CapturedOutput output) {
         final var deploymentService = deploymentService(TestWiring.claiming());
@@ -218,6 +248,33 @@ class ZenBpmWorkflowProcessingTest {
                 () -> assertTrue(context
                         .processingStopped()
                         .isEmpty()));
+    }
+
+    @Test
+    @DisplayName("A start holds its module from the factory's hook to the last subscription, so a stop by the closing factory finds all of it started or nothing of it")
+    void aStartIsOneStepForAStopWhichRacesIt() throws Exception {
+        final var deploymentService = deploymentService(TestWiring.claiming());
+        final var context = withJobTypes("shop", "charge");
+        final var factory = registry.getFactory(ADAPTER_ID);
+        final var starting = new Thread(() -> deploymentService.startWorkflowProcessing("shop", context));
+
+        final Set<String> whileTheContextIsHeld;
+        synchronized (context) {
+            starting.start();
+            LockSupport.parkNanos(Duration
+                    .ofMillis(300)
+                    .toNanos());
+            whileTheContextIsHeld = factory.getOpenWorkflowModules();
+        }
+        starting.join(DELIVERY_TIMEOUT.toMillis());
+
+        assertAll(
+                () -> assertEquals(Set.of(), whileTheContextIsHeld),
+                () -> assertFalse(starting.isAlive()),
+                () -> assertEquals(Set.of("shop"), factory.getOpenWorkflowModules()),
+                () -> assertEquals(List.of("TYPE_SUBSCRIBE charge"), described(engine
+                        .call(0)
+                        .subscriptions(1))));
     }
 
     @Test

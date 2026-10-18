@@ -9,7 +9,10 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
+import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.locks.LockSupport;
 import java.util.function.BooleanSupplier;
 import java.util.function.Consumer;
@@ -49,9 +52,21 @@ final class JobRunning implements AutoCloseable {
 
     final TestInvoker invoker = new TestInvoker();
 
+    /**
+     * The <code>retry-backoff</code> the configuration resolves, by
+     * <code>module/process/task definition</code> as the handler asks for it, plain; a task which is
+     * not here has none.
+     */
+    final Map<String, Duration> retryBackoffs = new ConcurrentHashMap<>();
+
     final ZenBpmClientFactory factory;
 
     final ZenBpmJobDispatcher dispatcher;
+
+    /**
+     * The handler of the workflow module <code>shop</code>, registered with the dispatcher.
+     */
+    final ZenBpmJobHandler handler;
 
     /**
      * The adapter id with one handler slot per worker thread.
@@ -80,8 +95,9 @@ final class JobRunning implements AutoCloseable {
         keys.accept(configuration);
         factory = new ZenBpmClientFactory("orders", configuration, () -> "shop");
         dispatcher = new ZenBpmJobDispatcher("orders", factory);
-        dispatcher.register(handlerOf("shop", NameClashAvoidance.USE_PREFIX,
-                new WiredProcess("Order", "shop__Order", Set.of(JOB_TYPE), true, false)));
+        handler = handlerOf("shop", NameClashAvoidance.USE_PREFIX, new WiredProcess("Order", "shop__Order", Set.of(
+                JOB_TYPE), true, false));
+        dispatcher.register(handler);
     }
 
     /**
@@ -103,7 +119,11 @@ final class JobRunning implements AutoCloseable {
             context.recordWiring(process);
         }
         return new ZenBpmJobHandler("orders", factory, TestCollaborators.withInvoker("orders", TestScoping.of(mode),
-                invoker), context);
+                invoker), context, (
+                    module,
+                    process,
+                    taskDefinition) -> Optional.ofNullable(retryBackoffs.get("%s/%s/%s".formatted(module, process,
+                            taskDefinition))));
     }
 
     /**
@@ -218,6 +238,29 @@ final class JobRunning implements AutoCloseable {
                 .setDeliveryToken(deliveryToken)
                 .setInputVariables(ByteString.copyFromUtf8("{\"amount\": 12, \"note\": \"gift\"}"))
                 .build(), lockUntil.minus(JOB_TIMEOUT));
+    }
+
+    /**
+     * Job 42 of the module's type in an instance, as {@link #job(long)} delivers it, with the
+     * retries the engine says it has left and the attempt this delivery is.
+     *
+     * @param instanceKey The instance of the job
+     * @param retries The retries the job has before this attempt fails
+     * @param attempt The attempt, 1 for the first delivery
+     * @return The job
+     */
+    static ReceivedJob job(
+        final long instanceKey,
+        final int retries,
+        final int attempt
+    ) {
+        final var plain = job(instanceKey);
+        return new ReceivedJob(plain
+                .job()
+                .toBuilder()
+                .setRetries(retries)
+                .setAttempt(attempt)
+                .build(), plain.receivedAt());
     }
 
     /**

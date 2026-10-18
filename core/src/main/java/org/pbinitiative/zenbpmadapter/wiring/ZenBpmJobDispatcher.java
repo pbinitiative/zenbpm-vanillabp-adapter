@@ -67,6 +67,13 @@ public final class ZenBpmJobDispatcher implements Consumer<ReceivedJob> {
     private final Map<String, ZenBpmJobHandler> handlers = new ConcurrentHashMap<>();
 
     /**
+     * The handlers of the workflow modules which stopped, by workflow module id: a job handed over
+     * before its module stopped, whose instance was still being read, finds its module here and
+     * is told about the shutdown instead of being taken for a job nobody serves.
+     */
+    private final Map<String, ZenBpmJobHandler> stoppedHandlers = new ConcurrentHashMap<>();
+
+    /**
      * The dispatcher of an adapter id, which is told by the executor of the adapter id whenever a
      * slot comes free. Contacts nothing.
      *
@@ -103,19 +110,26 @@ public final class ZenBpmJobDispatcher implements Consumer<ReceivedJob> {
      */
     public void register(final ZenBpmJobHandler handler) {
         handlers.put(handler.workflowModuleId(), handler);
+        stoppedHandlers.remove(handler.workflowModuleId());
     }
 
     /**
      * Hands no more jobs to a workflow module, and tells its handler that the module shuts down.
-     * A job of the module which still waits for a slot is left to its lock once it would start.
+     * A job of the module which still waits for a slot is left to its lock once it would start; one
+     * whose instance is being read goes to the handler, which does not start it either.
      *
      * @param workflowModuleId The workflow module
      */
     public void unregister(final String workflowModuleId) {
-        final var handler = handlers.remove(workflowModuleId);
-        if (handler != null) {
-            handler.stopping();
+        final var handler = handlers.get(workflowModuleId);
+        if (handler == null) {
+            return;
         }
+        // kept among the stopped ones before it leaves the running ones, so a job on its way to
+        // the module finds it in one of them
+        stoppedHandlers.put(workflowModuleId, handler);
+        handler.stopping();
+        handlers.remove(workflowModuleId, handler);
     }
 
     /**
@@ -208,9 +222,13 @@ public final class ZenBpmJobDispatcher implements Consumer<ReceivedJob> {
                         adapterId, job.getInstanceKey(), job.getKey(), job.getType());
                 return;
             }
-            final var served = served(facts
+            final var scopedProcessId = facts
                     .get()
-                    .scopedProcessId(), job.getType());
+                    .scopedProcessId();
+            // a module which stopped meanwhile still takes the job, and says that it does not
+            // start it because the module shuts down
+            final var served = served(handlers, scopedProcessId, job.getType()).or(() -> served(stoppedHandlers,
+                    scopedProcessId, job.getType()));
             if (served.isEmpty()) {
                 log.warn("""
                         ZenBPM[{}]: job {} of type '{}' belongs to instance {} of process '{}', which no workflow \
@@ -253,11 +271,12 @@ public final class ZenBpmJobDispatcher implements Consumer<ReceivedJob> {
                 .orElse(null);
     }
 
-    private Optional<Served> served(
+    private static Optional<Served> served(
+        final Map<String, ZenBpmJobHandler> among,
         final String scopedProcessId,
         final String jobType
     ) {
-        return handlers
+        return among
                 .values()
                 .stream()
                 .flatMap(handler -> handler
