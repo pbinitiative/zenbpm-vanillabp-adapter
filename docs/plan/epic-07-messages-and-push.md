@@ -62,7 +62,11 @@ the timer), `aCorrelationIdSelectsTheWaitingOccurrence` (two receive tasks with 
   those fifteen seconds passed.
 - [x] Phase one never calls the engine. Every case of `ZenBpmMessageDeclarationTest` runs against a
   fake engine and ends with its request list empty; the models are read while deploying
-  (`ZenBpmDeployingTest#theMessagesOfEveryHeldVersionAreRemembered`).
+  (`ZenBpmDeployingTest#theMessagesOfEveryHeldVersionAreRemembered`). *Narrowed by the answers to
+  the two reviews below:* phase one never asks the engine whether something waits; on its way to a
+  refusal, and only then, it reads the models again, as Camunda 8 does (decision 42).
+  `ZenBpmMessageDeclarationTest#aRefusalRestsOnTheModelsReadAgain` counts the readings: none where
+  a name passes.
 
 *Fit check, 2026-10-18, decided by the Implementor.* Checked against `main` (`825c0ac`),
 `ADAPTER-AUTHORS.md` (3.3 and 4.1), the platform as the adapter resolves it
@@ -121,7 +125,10 @@ what was decided:
 6. **"Throw it only while nothing reached the engine."** At the pin a `404` comes from the two
    subscription lookups (`FindActiveMessageSubscriptionPointer`, and `FindMessageSubscriptionByKey`
    on the partition's leader when a pointer named a subscription which ended meanwhile), both before
-   anything is published. The pointer is read from the database of the node asked, so a follower
+   anything is published. *Corrected by the answers to the two reviews below:* it also comes after a
+   publication which correlated, where the workflow fails right behind the waiting element on a
+   not-found (GAPS 29, decision 43), so a `404` does not guarantee that nothing reached the engine.
+   The pointer is read from the database of the node asked, so a follower
    which lags behind answers `404` for a subscription just created as well; the repetition covers it.
 7. **Deduplication** (story item 3). The engine deduplicates nothing. The platform's idempotency key
    of a correlation exists only with a correlation id (module, process, aggregate, message,
@@ -188,6 +195,70 @@ tests, Spring Boot 11 unit and 42 integration tests, smoke test 37, Quarkus runt
 deployment 51, Quarkus integration tests 10, coverage gate 37). The gate measures 100 % of 25,472
 instructions for Spring Boot and 100 % of 25,346 for Quarkus, and `bin/check-deploy-safety.sh`
 passes (13 files on a green build, nothing after a red gate).
+
+**Answers to two reviews of S7.1.1, 2026-10-18.** Claude (approve after one fix of the
+documentation: 1 Major, 2 Minor, 1 Nit) and Copilot (changes requested: 3 Major) reviewed `131240e`
+in their own worktrees; both built it green, and both probed the pinned image. Every finding was
+checked against the engine at the pin, the resolved platform and the Camunda 8 adapter. Six
+distinct findings, all valid:
+
+1. **A `404` after a correlation** (Claude 1, Copilot 2, Major). Valid: `PublishMessageOnToken` of
+   `pkg/bpmn/events_api.go` flushes the correlated tokens and then runs the instance on, and
+   `Server.PublishMessage` of `internal/cluster/server/server.go` turns any error which wraps
+   `storage.ErrNotFound` into `NotFound`; both reviewers saw a receive task completed, an incident on
+   a call activity of a process nobody deployed, and a `404`. The status cannot tell it from a
+   message nothing waits for (decision 30), and a counted failure would block the main case, a
+   message published before its workflow waits, after a few attempts without removing the second
+   receipt. So the `404` stays a retry-later (decision 43), and what it costs is said: GAPS 29
+   entered, GAPS 5's evidence, item 6 above, the class's javadoc and comment, architecture 4.4 and
+   the README corrected, and the retry-later's message names an incident behind the waiting element
+   as the other reading. `ZenBpmRestClientContractIT#aMessageWhichWasReceivedIsA404WhereTheWorkflowFailsBehindIt`
+   (fixture `contract-received.bpmn`) holds the engine's answer, so an engine which answers otherwise
+   is noticed when the pin moves.
+2. **A name an older version waits for and the newest version starts with passed** (Copilot 1,
+   Major). Valid: only the newest version holds start subscriptions (`ImportProcessDefinition` of
+   `pkg/bpmn/definition_import.go` removes those of the version before), and
+   `publishCorrelatedMessageByName` falls back to them ignoring the key, so such a correlation made
+   before the workflow waits starts a second workflow, which Copilot reproduced. `ModuleMessages#starting`
+   now holds only the newest version's start messages, and a name in it is refused also where a
+   model waits for it, naming the clash. Tests: `ZenBpmMessageDeclarationTest#aMessageTheNewestVersionStartsWithIsRefusedAlthoughAModelWaitsForIt`,
+   `ZenBpmDeploymentServiceIT#aMessageTheNewestVersionStartsWithIsRefused` (against the engine),
+   `ZenBpmDeployingTest#theMessagesOfEveryHeldVersionAreRemembered` (an older version's start no
+   longer counts).
+3. **The picture read at boot refused a name a version deployed later by another node waits for**
+   (Copilot 3, Major). Valid by the counterpart's code: `Camunda8ProcessService#validateMessageIsDeclared`
+   reads the cluster's models again before it refuses ("A refusal may only rest on models read
+   now"). Phase one now does the same through `ZenBpmDeployedProcesses#messagesReadAgain`
+   (`ZenBpmHeldMessages#again`: every version the engine holds now, the newest one's start
+   messages), remembers what it read, and says nothing where the reading is incomplete. A name which
+   passes reads nothing. Decision 42 says so (it is not merged yet, so it was corrected in place).
+   Tests: `ZenBpmMessageDeclarationTest#aRefusalRestsOnTheModelsReadAgain`, the new silent case of
+   `#theCheckSaysNothingWhereAModelIsUnknown`, `ZenBpmDeployingTest#readAgainEveryVersionTheEngineHoldsNowIsRead`,
+   `#versionsWhichCannotBeReadAgainAreNamed`, `ZenBpmDeployedProcessesTest`, and against the engine
+   `ZenBpmDeploymentServiceIT#aVersionAnotherNodeDeployedLaterIsReadBeforeARefusal`. What stays: a
+   name which passes on the kept picture is not read again, so a newer version deployed by another
+   node which starts with an awaited name is seen only at the next refusal or start.
+4. **"A correlation without one is never deduplicated" had no test** (Claude 2, Minor). Valid.
+   `ZenBpmMessageIT#aCorrelationWithoutAnIdIsNeverDeduplicated` plans two entries while the first
+   waits.
+5. **Every start reads every held version** (Claude 3, Minor). Valid as a cost, not a defect:
+   decision 42 now says that the requests grow with the versions of each process.
+6. **A javadoc line of 128 characters** in `ZenBpmProcessService` (Claude 4, Nit). Reflowed.
+
+Seen to fail, each restored afterwards (10 of 10 mutants of the fixes, against green unmutated
+runs, a kill counted only where a test failed): a name the newest version starts with passing where
+a model waits for it (unit, and against the engine: `ZenBpmDeploymentServiceIT`); a refusal on the
+picture kept from the start, without reading again (unit, and against the engine); a reading again
+where the kept picture passes; an incomplete reading again which refuses; the clash of start and
+wait worded as a start-only message; every version's start messages counted when read again; an
+older version's start messages counted while deploying; a reading again which is not remembered.
+
+`TZ=Etc/UTC mvn clean install` on OpenJDK 25.0.2 after the fixes builds green with every
+integration test run and none skipped (engine test support 12 unit and 5 integration tests, core 976
+unit and 82 integration tests, Spring Boot 11 unit and 43 integration tests, smoke test 37, Quarkus
+runtime 10, Quarkus deployment 51, Quarkus integration tests 10, coverage gate 37). The gate
+measures 100 % of 25,730 instructions for Spring Boot and 100 % of 25,604 for Quarkus, and
+`bin/check-deploy-safety.sh` passes.
 
 ### S7.1.2 `START_WORKFLOW_BY_MESSAGE` and `message-start-lookup` (engine-gated)
 

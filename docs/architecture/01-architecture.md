@@ -318,20 +318,26 @@ aggregate, and the core names and counts the concurrent delivery.
 
 ### 4.4 Messages
 
-`CORRELATE_MESSAGE` phase one, without an engine call: a model of the module waits for the message,
-compared by its scoped name with every version the engine holds of the processes the module
-deployed, which the deployment read once it took every file (decision 42); a name only a start event
-of those models carries fails naming `startWorkflowByMessage`, a name nowhere fails naming the
-processes read and their messages. The check is silent where the module deployed nothing, a version
-could not be read, or the module serves a process it brought no model for. Phase two: `POST
-/v1/messages {messageName: scoped, correlationKey: correlationId ?? aggregateId, variables: shared
-values + id var}`. 404 -> `PhaseTwoRetryLater(workflow-visibility-timeout)`, thrown only because
-nothing reached the engine: the outbox is the buffer the engine does not have. A retry-later counts
-no attempt; the entry is blocked after `vanillabp.outbox.wait-for-visibility-at-most`. A zero
-`workflow-visibility-timeout` makes the 404 an ordinary failure with the outbox's own backoff, as
-the platform treats a zero window. A correlation to a workflow which ended is skipped by the core's
-own probe before either phase; one to a workflow which passed the waiting element is answered 404
-like one which has not reached it, and so repeated until the window ran out (GAPS 5). `START_WORKFLOW_BY_MESSAGE`
+`CORRELATE_MESSAGE` phase one never asks the engine whether something waits: a model of the module
+waits for the message, compared by its scoped name with every version the engine holds of the
+processes the module deployed, which the deployment read once it took every file, and the newest
+version of none starts with it (decision 42). A name the newest version starts with fails, also
+where an older version waits for it, because the engine hands a message nothing waits for under its
+key to the newest version's start event (GAPS 4); a name nowhere fails naming the processes read and
+their messages. Before it refuses, phase one reads every version from the engine again, because
+another node may have deployed a newer one since. The check is silent where the module deployed
+nothing, a version could not be read, or the module serves a process it brought no model for.
+Phase two: `POST /v1/messages {messageName: scoped, correlationKey: correlationId ?? aggregateId,
+variables: shared values + id var}`. 404 -> `PhaseTwoRetryLater(workflow-visibility-timeout)`: the
+outbox is the buffer the engine does not have. A retry-later counts no attempt; the entry is blocked
+after `vanillabp.outbox.wait-for-visibility-at-most`. The engine answers the same 404 where the
+message was received and the workflow failed right behind the waiting element on something it does
+not find (GAPS 29); the status cannot tell the two apart, so that publication is repeated as well
+(decision 43). A zero `workflow-visibility-timeout` makes the 404 an ordinary failure with the
+outbox's own backoff, as the platform treats a zero window. A correlation to a workflow which ended
+is skipped by the core's own probe before either phase; one to a workflow which passed the waiting
+element is answered 404 like one which has not reached it, and so repeated until the window ran out
+(GAPS 5). `START_WORKFLOW_BY_MESSAGE`
 publishes without a key and with the id variable; `POST /v1/messages` returns no instance key, so
 phase two reports none. The `vanillabp__started` marker after the message start event (decision 26)
 reports the instance key to the core, which writes it into the start row. The instance itself has no

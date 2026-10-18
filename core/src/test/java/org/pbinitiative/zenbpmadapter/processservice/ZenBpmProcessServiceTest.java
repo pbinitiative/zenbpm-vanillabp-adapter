@@ -426,7 +426,7 @@ class ZenBpmProcessServiceTest {
     }
 
     @Test
-    @DisplayName("A publication nothing waits for is handed back to the outbox for workflow-visibility-timeout, naming module, process, aggregate, message, key and the outbox's bound, and stays repeatable with the engine's answer as its cause")
+    @DisplayName("A publication nothing waits for is handed back to the outbox for workflow-visibility-timeout, naming module, process, aggregate, message, key, the outbox's bound and the incident a 404 may stand for, and stays repeatable with the engine's answer as its cause")
     void nobodyWaitsIsRetryLater() {
         engine.answers("POST", "/v1/messages", 404, NOBODY_WAITS);
 
@@ -455,7 +455,11 @@ class ZenBpmProcessServiceTest {
                                     planned, and then its entry is blocked. The workflow may not have reached the element which \
                                     waits for the message yet; where it passed that element, or waits under another key, the \
                                     repetitions cannot help: the key the waiting element evaluates has to be the correlation id \
-                                    passed to correlateMessage, or the aggregate id where none was passed.""",
+                                    passed to correlateMessage, or the aggregate id where none was passed. ZenBPM answers the \
+                                    same where the message reached the element which waits for it and the workflow failed right \
+                                    behind it on something it could not find, such as a called process which is not deployed: \
+                                    where the workflow shows such an incident, the message was received, and the repetitions \
+                                    cannot help either.""",
                             retryLater
                                     .getMessage()),
                     () -> assertEquals(404, assertInstanceOf(ZenBpmApiException.class, retryLater.getCause())

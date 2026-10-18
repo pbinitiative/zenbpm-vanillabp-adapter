@@ -205,6 +205,25 @@ class ZenBpmMessageIT {
     }
 
     @Test
+    @DisplayName("A correlation without a correlation id is never deduplicated: a second one is planned while the first still waits in the outbox")
+    void aCorrelationWithoutAnIdIsNeverDeduplicated() {
+        final var letterId = uniqueLetterId();
+        final var instance = start(letterId, Letter.DELAY);
+
+        correlate(letterId, letter -> processService.correlateMessage(letter, "goAhead"));
+        correlate(letterId, letter -> processService.correlateMessage(letter, "goAhead"));
+        final var plannedWhileWaiting = statesOfTheCorrelationsOf(letterId);
+        final var ended = awaitTheEndOf(instance);
+
+        assertAll(
+                () -> assertEquals(List.of(PhaseTwoOutboxReader.State.WAITING, PhaseTwoOutboxReader.State.WAITING),
+                        plannedWhileWaiting),
+                () -> assertEquals(ProcessInstanceRef.State.COMPLETED, ended.state()),
+                () -> assertTrue(statesOfTheCorrelationsOf(letterId).contains(PhaseTwoOutboxReader.State.DISPATCHED),
+                        () -> statesOfTheCorrelationsOf(letterId).toString()));
+    }
+
+    @Test
     @DisplayName("A publication nothing ever waits for, a correlation id no waiting element evaluates, is repeated until wait-for-visibility-at-most ran out, and then its entry is blocked; the workflow keeps waiting")
     void aPublicationNothingEverWaitsForIsBlockedOnceTheWindowRanOut(final CapturedOutput output) {
         final var letterId = uniqueLetterId();

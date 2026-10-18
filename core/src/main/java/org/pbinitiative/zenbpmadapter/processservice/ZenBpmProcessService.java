@@ -58,9 +58,9 @@ import lombok.extern.slf4j.Slf4j;
  * left open, correlates messages, answers every probe, counts the open tasks of a process and says
  * what the engine does with the values a workflow carries. It serves every operation the core
  * requires of each adapter, so the core accepts it while the application starts. Every other
- * handler and every method of the viewer/history API throw: where the adapter id has no clients, the message of its validation,
- * which names the keys to set; otherwise an {@link UnsupportedOperationException} which says that
- * the call is not built yet. Nothing pretends to have done the work. The operations a BPMS may
+ * handler and every method of the viewer/history API throw: where the adapter id has no clients,
+ * the message of its validation, which names the keys to set; otherwise an
+ * {@link UnsupportedOperationException} which says that the call is not built yet. Nothing pretends to have done the work. The operations a BPMS may
  * lack, sending a signal and telling the BPMS about a changed aggregate, are left out, so the core
  * answers them as not supported. A probe of an adapter id without clients throws the message of
  * its validation as well.

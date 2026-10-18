@@ -644,10 +644,12 @@ public class ZenBpmDeploymentService implements AdapterDeploymentService<ZenBpmB
                     .record(version);
         });
         if (!versions.isEmpty()) {
+            final var heldMessages = new ZenBpmHeldMessages(adapterId, factory);
+            final var messages = heldMessages.of(workflowModuleId, versions);
             factory
                     .deployedProcesses()
-                    .recordMessages(workflowModuleId, new ZenBpmHeldMessages(adapterId, factory).of(workflowModuleId,
-                            versions));
+                    .recordMessages(workflowModuleId, messages, () -> heldMessages.again(workflowModuleId, messages
+                            .scopedBpmnProcessIds()));
         }
         log.info("ZenBPM[{}]: workflow module '{}' is deployed to the engine at {}:\n  {}", adapterId,
                 workflowModuleId, factory

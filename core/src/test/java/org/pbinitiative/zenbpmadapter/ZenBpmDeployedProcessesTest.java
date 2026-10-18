@@ -86,7 +86,7 @@ class ZenBpmDeployedProcessesTest {
 
 
     @Test
-    @DisplayName("A workflow module serves a process it deployed no model for only where it serves an id it deployed nothing under; another module's ids do not count; the messages of a module are remembered per module")
+    @DisplayName("A workflow module serves a process it deployed no model for only where it serves an id it deployed nothing under; another module's ids do not count; the messages of a module are remembered per module and replaced by those read again")
     void aModuleServesAProcessWithoutAModelOnlyForAnIdItDidNotDeploy() {
         final var deployed = new ZenBpmDeployedProcesses();
         deployed.record(new DeployedProcess("shop", "Order", "shop__Order", 11, 1, null, "<order/>"));
@@ -95,14 +95,20 @@ class ZenBpmDeployedProcessesTest {
         final var servedWithModelsOnly = deployed.servesAProcessItDeployedNoModelFor("shop");
         deployed.recordServed("shop", "shop__OrderBeforeTheRename");
         final var messages = new ModuleMessages(List.of("shop__Order"), Set.of("shop__paid"), Set.of(), List.of());
-        deployed.recordMessages("shop", messages);
+        final var readAgain = new ModuleMessages(List.of("shop__Order"), Set.of("shop__paid", "shop__settled"), Set
+                .of(), List.of());
+        deployed.recordMessages("shop", messages, () -> readAgain);
+        final var keptBeforeReadingAgain = deployed.messagesOf("shop");
 
         assertAll(
                 () -> assertFalse(servedWithModelsOnly),
                 () -> assertTrue(deployed.servesAProcessItDeployedNoModelFor("shop")),
                 () -> assertTrue(deployed.servesAProcessItDeployedNoModelFor("billing")),
                 () -> assertFalse(deployed.servesAProcessItDeployedNoModelFor("crm")),
-                () -> assertEquals(Optional.of(messages), deployed.messagesOf("shop")),
+                () -> assertEquals(Optional.of(messages), keptBeforeReadingAgain),
+                () -> assertEquals(Optional.of(readAgain), deployed.messagesReadAgain("shop")),
+                () -> assertEquals(Optional.of(readAgain), deployed.messagesOf("shop")),
+                () -> assertEquals(Optional.empty(), deployed.messagesReadAgain("billing")),
                 () -> assertEquals(Optional.empty(), deployed.messagesOf("billing")));
     }
 

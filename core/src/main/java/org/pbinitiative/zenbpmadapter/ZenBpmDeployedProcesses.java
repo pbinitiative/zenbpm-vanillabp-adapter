@@ -9,6 +9,7 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.function.Supplier;
 
 /**
  * What the deployments of this start brought to the engine of one adapter id: per process the
@@ -39,7 +40,7 @@ public final class ZenBpmDeployedProcesses {
      */
     private final Map<String, String> servingModules = new ConcurrentHashMap<>();
 
-    private final Map<String, ModuleMessages> messagesOfModules = new ConcurrentHashMap<>();
+    private final Map<String, KeptMessages> messagesOfModules = new ConcurrentHashMap<>();
 
     /**
      * Nothing deployed yet: the client factory of an adapter id builds one.
@@ -162,27 +163,53 @@ public final class ZenBpmDeployedProcesses {
 
     /**
      * Remembers the messages of the models the engine holds for the processes a workflow module
-     * deployed in this start, replacing what was remembered for the module.
+     * deployed in this start, replacing what was remembered for the module, and how to read them
+     * again.
      *
      * @param workflowModuleId The workflow module
      * @param messages The messages
+     * @param readAgain Reads the messages of the same processes from the engine once more
      */
     public void recordMessages(
         final String workflowModuleId,
-        final ModuleMessages messages
+        final ModuleMessages messages,
+        final Supplier<ModuleMessages> readAgain
     ) {
-        messagesOfModules.put(workflowModuleId, messages);
+        messagesOfModules.put(workflowModuleId, new KeptMessages(messages, readAgain));
     }
 
     /**
      * The messages of the models the engine holds for the processes a workflow module deployed in
-     * this start.
+     * this start, as they were read last.
      *
      * @param workflowModuleId The workflow module
      * @return The messages, empty where the module deployed nothing
      */
     public Optional<ModuleMessages> messagesOf(final String workflowModuleId) {
-        return Optional.ofNullable(messagesOfModules.get(workflowModuleId));
+        return Optional
+                .ofNullable(messagesOfModules.get(workflowModuleId))
+                .map(KeptMessages::messages);
+    }
+
+    /**
+     * Reads the messages of the processes a workflow module deployed in this start from the engine
+     * once more and remembers them in place of those read before: another node may have deployed a
+     * newer version since.
+     *
+     * @param workflowModuleId The workflow module
+     * @return The messages, empty where the module deployed nothing
+     */
+    public Optional<ModuleMessages> messagesReadAgain(final String workflowModuleId) {
+        final var kept = messagesOfModules.get(workflowModuleId);
+        if (kept == null) {
+            return Optional.empty();
+        }
+        // read outside the map, because a read of the engine takes its time
+        final var messages = kept
+                .readAgain()
+                .get();
+        messagesOfModules.put(workflowModuleId, new KeptMessages(messages, kept.readAgain()));
+        return Optional.of(messages);
     }
 
     /**
@@ -234,13 +261,15 @@ public final class ZenBpmDeployedProcesses {
 
     /**
      * The messages of the models the engine holds for the processes one workflow module deployed in
-     * this start, every version of each, with the names as the engine holds them.
+     * this start, with the names as the engine holds them: those every version waits for, and those
+     * the newest version starts with.
      *
      * @param scopedBpmnProcessIds The ids, as the engine knows them, of the processes whose models
      *            were read
      * @param awaited The names of the messages a model waits for: in intermediate catch events,
      *            boundary events, receive tasks and the start events of event sub-processes
-     * @param starting The names of the messages a model starts its process with
+     * @param starting The names of the messages the newest version of a process starts it with:
+     *            the engine hands a message to the start events of the newest version only
      * @param unread What could not be read, each with the reason; empty where every model was read
      */
     public record ModuleMessages(
@@ -260,6 +289,12 @@ public final class ZenBpmDeployedProcesses {
             unread = List.copyOf(unread);
         }
 
+    }
+
+    private record KeptMessages(
+        ModuleMessages messages,
+        Supplier<ModuleMessages> readAgain
+    ) {
     }
 
     private record ProcessOfModule(

@@ -760,10 +760,12 @@ The engine keeps no message nothing waits for: it answers `404` and drops it (pi
 So a message name no model waits for, a typo or a renamed message, would make phase two repeat its
 publication for as long as `vanillabp.outbox.wait-for-visibility-at-most` allows, about four hours
 by default, before the entry is blocked. Phase one refuses such a name where the application called,
-and a name a model only starts its process with as well, naming `startWorkflowByMessage`, because
-the engine hands a message no workflow waits for to a start event of the same name, so the
-correlation would start a new workflow. It never asks the engine: a subscription may not exist yet,
-and phase one runs inside the caller's transaction.
+and a name the newest version of a process starts it with as well, naming `startWorkflowByMessage`,
+also where an older version waits for it: the engine hands a message no workflow waits for under its
+key to a start event of the same name, and only the newest version of a process holds start
+subscriptions (`ImportProcessDefinition` of `pkg/bpmn/definition_import.go` removes those of the
+version before), so a correlation which comes before its workflow waits would start a new workflow.
+It never asks the engine whether something waits: a subscription may not exist yet.
 
 Which models count decides whether a correct correlation is refused. A workflow still running may
 run on an older version of its process and wait for a message the deployed version renamed or
@@ -771,11 +773,40 @@ dropped, so the models of this start alone would refuse a correlation its workfl
 deployment reads, once it took every file, the messages of every version the engine holds of each
 process it deployed: the deployed version from the answer the deployment got back, and every other
 version with one request for the list and one per version; the engine counts versions from one, so a
-first version asks nothing more. That is the answer of the Camunda 8 adapter, which judges the name by
-the models its cluster holds (its decision 19), read here while deploying instead of in phase one.
-Where the picture is not complete the check says nothing, because a check which cannot see every
-model that may carry the name must never refuse: the workflow module deployed no process in this
-start, a version could not be read (a WARN names it, and the next start reads it again), or the
-module serves a process it brought no model for, such as the old id of a renamed process (decision
-41), whose models this reading does not cover. A message the models declare under the plain name is
-compared by the name the engine holds, the one phase two publishes.
+first version asks nothing more. So every start of the application costs one request per version of
+each deployed process, a number which grows with every deployment of a changed model. That is the
+answer of the Camunda 8 adapter, which judges the name by the models its cluster holds (its decision
+19), read here while deploying. Another node, of a newer version of the application, may deploy a
+newer version later, which waits for a message the picture of this start does not know. So, as on
+Camunda 8, a refusal rests only on models read when it is made: before phase one refuses a name, it
+reads every version the engine holds of the module's processes again, which is the only request
+phase one makes, and only on its way to a refusal. Where the picture is not complete the check says
+nothing, because a check which cannot see every model that may carry the name must never refuse: the
+workflow module deployed no process in this start, a version could not be read (a WARN names it, and
+the next start reads it again), or the module serves a process it brought no model for, such as the
+old id of a renamed process (decision 41), whose models this reading does not cover. A message the
+models declare under the plain name is compared by the name the engine holds, the one phase two
+publishes.
+
+### 43. A `404` on publishing a message is handed back without counting, although the engine also answers it after a correlation
+
+Decided by the implementation pipeline in place of the maintainers, as their policy for the
+autonomous run asks.
+
+At the pinned engine a `404` from `POST /v1/messages` has two causes. Mostly nothing waits for the
+message under its key yet, and nothing was published. But where the message reached the waiting
+element and the workflow failed right behind it on something the engine does not find, a called
+process which is not deployed for example, the engine answers the same `404` for a publication
+which correlated (GAPS 29). Decision 30 reads a failure from status, method and path alone, and the
+two answers differ only in the engine's prose, so the adapter cannot tell them apart.
+
+The publication is handed back as a `PhaseTwoRetryLater` in both cases. A counted failure instead
+would block the entry after a few attempts and so lose the message published before its workflow
+waits for it, which is what the outbox stands in for while the engine keeps no message (GAPS 5).
+It would not remove the second receipt either, because a counted failure is repeated too. What the
+second cause costs instead: the entry is repeated, with a message which names an incident behind the
+waiting element as the other reading, until `vanillabp.outbox.wait-for-visibility-at-most` passed,
+and where the workflow, after the incident was resolved, waits for the same message under the same
+key within that window, a repetition is received a second time. A contract test of the client holds
+the engine's answer, so a version of the engine which answers otherwise is noticed when the pin
+moves.
