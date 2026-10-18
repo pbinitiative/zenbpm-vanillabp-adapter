@@ -554,9 +554,7 @@ public class ZenBpmDeploymentService implements AdapterDeploymentService<ZenBpmB
         final var scopedProcessId = scoping.scopedProcessId(workflowModuleId, bpmnProcessId, adapterId);
         context.recordWiring(new WiredProcess(bpmnProcessId, scopedProcessId, jobTypes, reportsItsStart(
                 workflowModuleId, bpmnProcessId), reportsItsEnd(workflowModuleId, bpmnProcessId)));
-        factory
-                .deployedProcesses()
-                .recordServed(workflowModuleId, scopedProcessId);
+        recordServed(workflowModuleId, bpmnProcessId, scopedProcessId);
         log.info(
                 "ZenBPM[{}]: wired {} task(s) and {} user task(s) of BPMN process '{}' (file '{}', workflow module '{}')",
                 adapterId, model
@@ -792,6 +790,32 @@ public class ZenBpmDeploymentService implements AdapterDeploymentService<ZenBpmB
         ZenBpmDrain.awaitEveryModuleQuiet(stopped, grace);
     }
 
+    // a job goes to the workflow module which serves the process of its instance, so a process the
+    // engine knows under one id is served by one module: under none a module which declares a
+    // process without a model may name the process another module claims, which the check of the
+    // deployed ids does not see
+    private void recordServed(
+        final String workflowModuleId,
+        final String bpmnProcessId,
+        final String scopedProcessId
+    ) {
+        factory
+                .deployedProcesses()
+                .recordServed(workflowModuleId, scopedProcessId)
+                .ifPresent(other -> {
+                    throw new IllegalStateException("""
+                            Workflow modules '%s' and '%s' both serve the workflows of BPMN process '%s', which \
+                            ZenBPM (adapter '%s') knows as '%s', so whose task a job of them is cannot be said. One \
+                            of them declares the process without bringing a model for it, under name-clash-avoidance \
+                            'none'. Let one workflow module only serve that process, or keep the modules' ids apart \
+                            with vanillabp.adapters.%s.name-clash-avoidance: use-prefix (or \
+                            vanillabp.workflow-modules.%s.adapters.%s.name-clash-avoidance) before any workflow of \
+                            them runs: changing it later is a BPMS migration."""
+                            .formatted(other, workflowModuleId, bpmnProcessId, adapterId, scopedProcessId, adapterId,
+                                    workflowModuleId, adapterId));
+                });
+    }
+
     // the job types are recorded like those of a claimed process, so they are subscribed, routed to
     // the module and unsubscribed with the others
     private void serveTheProcessesNobodyDeployed(
@@ -822,9 +846,7 @@ public class ZenBpmDeploymentService implements AdapterDeploymentService<ZenBpmB
         final ZenBpmProcessingContext context
     ) {
         final var bpmnProcessId = declared.bpmnProcessId();
-        factory
-                .deployedProcesses()
-                .recordServed(workflowModuleId, declared.scopedBpmnProcessId());
+        recordServed(workflowModuleId, bpmnProcessId, declared.scopedBpmnProcessId());
         if (declared
                 .jobTypes()
                 .isEmpty()) {

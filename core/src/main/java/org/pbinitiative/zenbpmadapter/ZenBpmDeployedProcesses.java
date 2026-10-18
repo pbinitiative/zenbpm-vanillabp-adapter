@@ -127,16 +127,20 @@ public final class ZenBpmDeployedProcesses {
 
     /**
      * Remembers that a workflow module serves the instances of a process: one a workflow service
-     * claims, or one it declares without bringing a model for it.
+     * claims, or one it declares without bringing a model for it. A process another workflow
+     * module serves already stays that module's, and the caller learns which one it is.
      *
      * @param workflowModuleId The workflow module
      * @param scopedBpmnProcessId The process id as the engine knows it
+     * @return The other workflow module which serves the process already, empty where none does
      */
-    public void recordServed(
+    public Optional<String> recordServed(
         final String workflowModuleId,
         final String scopedBpmnProcessId
     ) {
-        servingModules.put(scopedBpmnProcessId, workflowModuleId);
+        return Optional
+                .ofNullable(servingModules.putIfAbsent(scopedBpmnProcessId, workflowModuleId))
+                .filter(before -> !before.equals(workflowModuleId));
     }
 
     /**

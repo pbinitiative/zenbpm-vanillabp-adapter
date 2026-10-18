@@ -66,4 +66,20 @@ class ZenBpmDeployedProcessesTest {
                 () -> assertEquals(List.of(), deployed.scopedIdsOf("shop")));
     }
 
+    @Test
+    @DisplayName("A process a workflow module serves stays that module's when another module records it, which learns who serves it; the same module may record it again")
+    void aProcessServedByOneModuleStaysThatModules() {
+        final var deployed = new ZenBpmDeployedProcesses();
+
+        final var first = deployed.recordServed("shop", "Order");
+        final var again = deployed.recordServed("shop", "Order");
+        final var other = deployed.recordServed("billing", "Order");
+
+        assertAll(
+                () -> assertEquals(Optional.empty(), first),
+                () -> assertEquals(Optional.empty(), again),
+                () -> assertEquals(Optional.of("shop"), other),
+                () -> assertEquals(Optional.of("shop"), deployed.moduleServing("Order")));
+    }
+
 }

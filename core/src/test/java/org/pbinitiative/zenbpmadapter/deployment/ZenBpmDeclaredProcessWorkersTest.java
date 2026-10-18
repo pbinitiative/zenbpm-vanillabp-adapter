@@ -236,6 +236,36 @@ class ZenBpmDeclaredProcessWorkersTest {
     }
 
     @Test
+    @DisplayName("Under none a process id one module declares without a model and another module claims is refused at the start, naming both modules and the keys, and stays the claiming module's")
+    void aDeclaredIdAnotherModuleClaimsIsRefused() throws Exception {
+        theEngineHolds("Orders", model("Orders", "charge", null));
+        wired(deploymentService(NameClashAvoidance.NONE, TestWiring
+                .claiming("Orders")
+                .servedElsewhere("Notify")));
+        final var billing = deploymentService(NameClashAvoidance.NONE, TestWiring
+                .claiming("Invoices")
+                .declaringWithoutAModel("Orders", "charge"));
+
+        final var refused = assertThrows(IllegalStateException.class, () -> billing.startWorkflowProcessing(
+                "billing", new ZenBpmProcessingContext("billing")));
+
+        assertAll(
+                () -> assertEquals(
+                        """
+                                Workflow modules 'shop' and 'billing' both serve the workflows of BPMN process 'Orders', which \
+                                ZenBPM (adapter 'orders') knows as 'Orders', so whose task a job of them is cannot be said. One \
+                                of them declares the process without bringing a model for it, under name-clash-avoidance \
+                                'none'. Let one workflow module only serve that process, or keep the modules' ids apart with \
+                                vanillabp.adapters.orders.name-clash-avoidance: use-prefix (or \
+                                vanillabp.workflow-modules.billing.adapters.orders.name-clash-avoidance) before any workflow of \
+                                them runs: changing it later is a BPMS migration.""",
+                        refused.getMessage()),
+                () -> assertEquals(Optional.of("shop"), factory()
+                        .deployedProcesses()
+                        .moduleServing("Orders")));
+    }
+
+    @Test
     @DisplayName("A module which starts again names the types of a declared process id as it did the first time")
     void aRestartNamesTheSameTypes(final CapturedOutput output) throws Exception {
         final var held = "shop__%s".formatted(DECLARED);

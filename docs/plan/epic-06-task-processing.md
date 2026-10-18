@@ -1599,6 +1599,18 @@ measures 100 % of 24,685 instructions for Spring Boot and 100 % of 24,559 for Qu
 `bin/check-deploy-safety.sh` passes (13 files on a green build, nothing after a red gate). No flake
 was hit.
 
+CodeRabbit's review of pull request #49 had one comment, valid: `ZenBpmDeployedProcesses` let the
+last workflow module which recorded a process win. The check of colliding process ids sees only
+the deployed ones, and the platform names a declared id per module, so under `none` a module which
+declares `Orders` without a model took the process over from the module which claims it, and the
+check before the commit then refused that module's own tasks. A process now stays the first
+module's, and the start of the second ends with a message naming both modules and the
+`name-clash-avoidance` keys (`ZenBpmDeclaredProcessWorkersTest#aDeclaredIdAnotherModuleClaimsIsRefused`,
+`ZenBpmDeployedProcessesTest#aProcessServedByOneModuleStaysThatModules`; 3 of 3 mutants killed:
+the old `put`, the same module refused on a restart, no refusal). The full build ran
+again green, none skipped (core 955 unit and 78 integration tests; 100 % of 24,751 and 24,625
+instructions), and `bin/check-deploy-safety.sh` passes.
+
 ## F6.5 Idempotency and restarts on both platforms
 
 ### S6.5.1 Inbound idempotency, restart delivery, Quarkus twins
