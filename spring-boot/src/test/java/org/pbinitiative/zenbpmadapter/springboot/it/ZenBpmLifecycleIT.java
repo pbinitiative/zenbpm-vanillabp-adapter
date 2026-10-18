@@ -19,6 +19,8 @@ import java.util.UUID;
 import java.util.concurrent.locks.LockSupport;
 import java.util.function.Supplier;
 
+import org.junit.jupiter.api.AfterAll;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -55,12 +57,17 @@ import io.vanillabp.spi.process.ProcessService;
  * built and named, and is found through the instance key of its start afterwards, which is what a
  * correlation needs, because the workflow has no business key. So does a workflow somebody started
  * over the engine's REST API without a business key. A workflow the application started itself
- * passes its marker without a second aggregate. And a process called on an aggregate of its own
- * starts without the caller's name, so its own method builds its aggregate.
+ * passes its marker without a second aggregate, and so does a second delivery of a marker whose
+ * completion the engine did not take, because the id written before is read from the instance. And
+ * a process called on an aggregate of its own starts without the caller's name, so its own method
+ * builds its aggregate.
  * <p>
- * The application {@link LifecycleItApplication} runs with <code>lifecycle-it.yaml</code>. Its
- * process <code>Ticking</code> is started once by its timer, two seconds after it was deployed;
- * every other case starts workflows of its own.
+ * The application {@link LifecycleItApplication} runs with <code>lifecycle-it.yaml</code>, which
+ * gives the start marker of <code>Delivering</code> a job-timeout of two seconds. It reaches the
+ * engine's REST API through a {@link RefusingEngineProxy}, which refuses a completion where a case
+ * asks for it; the job stream goes to the engine directly. Its process <code>Ticking</code> is
+ * started once by its timer, two seconds after it was deployed; every other case starts workflows
+ * of its own.
  */
 @ExtendWith(SuppressOutputExtension.class)
 @Testcontainers(disabledWithoutDocker = true)
@@ -77,6 +84,8 @@ class ZenBpmLifecycleIT {
 
     @Container
     private static final EngineUnderTest ENGINE = new EngineUnderTest();
+
+    private static final RefusingEngineProxy PROXY = new RefusingEngineProxy(ENGINE::restAddress);
 
     @Autowired
     private ProcessService<Tick> tickProcessService;
@@ -101,6 +110,16 @@ class ZenBpmLifecycleIT {
 
     @Autowired
     private ZenBpmClientRegistry clients;
+
+    @AfterEach
+    void startTheProxyAfresh() {
+        PROXY.startAfresh();
+    }
+
+    @AfterAll
+    static void stopTheProxy() {
+        PROXY.close();
+    }
 
     @Test
     @DisplayName("A workflow its timer started gets the aggregate the application's method built and named: the id variable holds it, the task behind the start ran on it, and a correlation on it reaches the workflow through the instance key of its start")
@@ -148,6 +167,44 @@ class ZenBpmLifecycleIT {
                 () -> assertNull(started.businessKey()),
                 () -> assertEquals(orderRef, delivery.getOrderRef()),
                 () -> assertEquals(1, Collections.frequency(deliveryWorkflow.builtFor(), orderRef)),
+                () -> assertEquals(delivery.getId(), ended
+                        .variables()
+                        .get("id")),
+                () -> assertEquals(ProcessInstanceRef.State.COMPLETED, ended.state()));
+    }
+
+    @Test
+    @DisplayName("A start marker the engine hands out again after its id was written, because its completion did not reach the engine, finds the id in the instance: the method is not called a second time, and the instance keeps the first id")
+    void aSecondDeliveryOfTheMarkerBuildsNothing() {
+        // the timer's workflow completes a task once after the boot, which must not take the
+        // refusal meant for the marker
+        eventually(() -> ticks
+                .findAll()
+                .stream()
+                .filter(Tick::isTicked)
+                .findFirst());
+        final var orderRef = uniqueOrderRef();
+
+        // a 500 gives the completion up at once and leaves the job to its lock of two seconds,
+        // after which the engine hands the marker out again with the variables it was created with
+        PROXY.refuse(RefusingEngineProxy.COMPLETION, 500, 1);
+        final var started = startPastVanillaBp(orderRef);
+        final var delivery = eventually(() -> deliveries
+                .findById("delivery-%s".formatted(orderRef))
+                .filter(Delivery::isDelivered));
+        final var ended = awaitTheEndOf(started.key());
+
+        assertAll(
+                () -> assertEquals(1, PROXY
+                        .refused()
+                        .size(),
+                        () -> PROXY
+                                .refused()
+                                .toString()),
+                () -> assertEquals(1, Collections.frequency(deliveryWorkflow.builtFor(), orderRef),
+                        () -> deliveryWorkflow
+                                .builtFor()
+                                .toString()),
                 () -> assertEquals(delivery.getId(), ended
                         .variables()
                         .get("id")),
@@ -229,8 +286,8 @@ class ZenBpmLifecycleIT {
     }
 
     @DynamicPropertySource
-    static void theEngine(final DynamicPropertyRegistry registry) {
-        registry.add("vanillabp.adapters.zenbpm.rest-address", ENGINE::restAddress);
+    static void theEngineBehindTheProxy(final DynamicPropertyRegistry registry) {
+        registry.add("vanillabp.adapters.zenbpm.rest-address", PROXY::address);
         registry.add("vanillabp.adapters.zenbpm.grpc-address", ENGINE::grpcAddress);
     }
 

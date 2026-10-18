@@ -75,7 +75,8 @@ import io.vanillabp.spi.process.TaskNotFoundException;
  * because the adapter writes the shared values into the engine before it completes the job. A
  * parameter the model maps into a task is bound, a workflow somebody started past VanillaBP with
  * nothing but a business key is served by that key, the job of a workflow whose aggregate this
- * application does not hold ends in an incident whose message is the platform's, and the
+ * application does not hold ends in an incident whose message is the platform's, as does the start
+ * marker of a workflow started under such a name, and the
  * job-timeout of a task is resolved from the most specific level of the configuration. A BPMN error
  * is routed by the error boundary event which catches its code, or ends in an incident where none
  * does, and a task left open for its asynchronous completion is parked, and parked again whenever
@@ -93,7 +94,9 @@ import io.vanillabp.spi.process.TaskNotFoundException;
  * the process <code>TaskMatrix</code> of <code>task-it/task-matrix.bpmn</code> and the process
  * <code>TaskOutcomes</code> of <code>task-it/task-outcomes.bpmn</code> and the process
  * <code>TaskTakenAway</code> of <code>task-it/task-taken-away.bpmn</code> and the process
- * <code>TaskFailures</code> of <code>task-it/task-failures.bpmn</code>, configured by
+ * <code>TaskFailures</code> of <code>task-it/task-failures.bpmn</code>, and the process
+ * <code>ParcelRating</code> of <code>task-it/parcel-rating.bpmn</code>, which runs on the parcel's
+ * aggregate as a called process, configured by
  * <code>task-it.yaml</code>. It is started once for the class, against an engine of its own.
  */
 @ExtendWith(SuppressOutputExtension.class)
@@ -262,8 +265,41 @@ class ZenBpmTaskProcessingIT {
     }
 
     @Test
-    @DisplayName("A workflow started under the name of an aggregate this application does not hold ends in an incident at its start marker at once, whose message is the platform's, before any task runs")
+    @DisplayName("The job of a workflow whose aggregate this application does not hold ends in an incident at once, whose message is the platform's: a process called on the parcel's aggregate, which passes no start marker, started under the name of a parcel nobody stored")
     void aJobOfAWorkflowThisApplicationDoesNotOwnEndsInAnIncident() {
+        final var strangerId = uniqueParcelId();
+
+        final var started = rest().createInstance(CreateInstanceRequest
+                .latestVersionOf("deploy-it__ParcelRating")
+                .withBusinessKey(strangerId));
+        final var incident = eventually(() -> incidentsOf(started.key()).findFirst());
+        final var rate = rest()
+                .jobs(JobFilter
+                        .anyJob()
+                        .withProcessInstanceKey(started.key()))
+                .items()
+                .getFirst();
+
+        assertAll(
+                () -> assertEquals("Rate", incident
+                        .get("elementId")
+                        .asText()),
+                () -> assertTrue(incident
+                        .get("message")
+                        .asText()
+                        .contains("This application was given a task of a workflow it does not own."),
+                        incident::toString),
+                () -> assertTrue(incident
+                        .get("message")
+                        .asText()
+                        .contains("'%s'".formatted(strangerId)), incident::toString),
+                () -> assertEquals(JobRef.State.FAILED, rate.state()),
+                () -> assertEquals(List.of(), deliveriesOf(strangerId)));
+    }
+
+    @Test
+    @DisplayName("A workflow started under the name of an aggregate this application does not hold ends in an incident at its start marker at once, whose message is the platform's, before any task runs")
+    void aWorkflowStartedUnderTheNameOfAStrangerEndsInAnIncidentAtItsStartMarker() {
         final var strangerId = uniqueParcelId();
 
         final var started = rest().createInstance(CreateInstanceRequest

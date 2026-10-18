@@ -344,6 +344,85 @@ the instance key to the probe), `#aWorkflowStartedPastVanillaBpGetsAnAggregate` 
   cut without its empty business key, the cut without its empty id variable, each failing
   `#aProcessCalledOnAnAggregateOfItsOwnBuildsItsOwn`).
 
+**Answers to two reviews of S9.1.1 and S9.3.1, 2026-10-18** (one by Claude, changes requested, 1
+Major, 2 Minor and 2 Nits; one by Copilot, changes requested, 2 Major and 1 Minor). Every claim was
+checked in the code of the branch and, for the engine, at the pin. Two findings were raised by both,
+so six distinct findings remain; all six were valid and are fixed. Decision 46, new on this branch,
+was corrected in place before the merge; no new decision was needed.
+
+- **A second delivery of the start marker after its update built a second aggregate** (Claude 1,
+  Copilot 1, Major). The handler judged whether the instance carries the id by the job's variables.
+  But the engine stores a job's variables when it creates the job and hands those out on every
+  delivery (`InputVariables` in `pkg/bpmn/jobs.go` and `internal/cluster/jobmanager/server.go:712`
+  at `bdd795a3`); `PATCH /v1/process-instances/{key}/variables` changes the instance only. Both
+  reviewers probed the pinned image, and Copilot reproduced two aggregates for one instance with
+  this branch's application. So after a completion which did not reach the engine, or a lost lock,
+  the next delivery handed the core no name, and the method built again. The unit test passed
+  only because its fake handed the id back in the job. The context now carries the job's variables
+  with the id variable the instance holds now, from the facts the dispatcher reads (the instance
+  cache reads an instance again where it did not hold the id). Decision 46, the handler's javadoc,
+  section 4.7 of the architecture and the README say so, and name the one way left to a second
+  aggregate: a read a lagging node answers before it has seen the update (GAPS 20). Decision 25's
+  "a second delivery finds the id" holds again as written. Tests:
+  `ZenBpmBpmsInitiatedStartHandlerTest#aRedeliveryFindsTheNameWrittenBefore` now hands a job
+  without the id and an instance with it, as the engine does, and
+  `ZenBpmLifecycleIT#aSecondDeliveryOfTheMarkerBuildsNothing` refuses the marker's first completion
+  through a `RefusingEngineProxy`, so the engine hands the marker out again after its lock of two
+  seconds, and asserts that the method ran once and the instance keeps the first id.
+- **The task-level refusal of a workflow this application does not own lost its IT** (Claude 2,
+  Minor). Every claimed top-level process now refuses such a start at its marker, so the E6 case
+  had been turned into a test of the marker. The path is still reachable where no marker runs (a
+  called process, a version deployed before the markers). The task-it application now holds
+  `ParcelRating` (`task-it/parcel-rating.bpmn`), a process called on the parcel's aggregate, and
+  `ZenBpmTaskProcessingIT#aJobOfAWorkflowThisApplicationDoesNotOwnEndsInAnIncident` starts it
+  under a stranger's business key: the incident is on its task `Rate`, with the core's "does not
+  own" message, as before. The marker's refusal is
+  `#aWorkflowStartedUnderTheNameOfAStrangerEndsInAnIncidentAtItsStartMarker`. The E6 evidence says
+  so.
+- **A declared process whose methods are all wired by element id served no start marker** (Claude
+  3, Minor; Copilot 2, Major). `ZenBpmDeclaredProcessWorkers` returned before it read the held
+  models where the methods name no task definition, so a workflow started right before the rename
+  waited at its marker for good, and the start line said "nothing serves its workflows" where only
+  markers were served. A start marker needs no task definition: the held models are now read for
+  their markers in that case too, the WARN says that they are served, a read which fails is a WARN
+  of its own, and the start line names the marker's job type among what serves the workflows.
+  Tests: `ZenBpmDeclaredProcessWorkersTest#theStartMarkersOfAnIdWiredByElementIdAreServed`,
+  `#theStartMarkersOfAnIdWiredByElementIdWhoseModelsCannotBeReadAreAWarn`, the WARN asserted in
+  `#theStartMarkersAreServedWithoutATaskTypeOfTheId`, and
+  `#aDeclaredIdWiredByElementIdIsNamedWithBothWaysOut`, which now sees the engine asked.
+- **A declared process served its start markers where the platform hands no invoker of starts**
+  (Claude 4, Nit). The marker's job would have met no handler. The declared process now looks for
+  start markers only where the platform hears a start of its workflows (`startsAWorkflowOfItsOwn`
+  through the invoker, `false` without one), as a claimed process does, and does not ask the
+  engine for them. `#withoutAnInvokerOfStartsNoStartMarkerIsServed`,
+  `#withoutAnInvokerOfStartsAnIdWiredByElementIdAsksTheEngineNothing`.
+- **The README's start-marker text was one line of 1,169 characters in the middle of another
+  paragraph** (Claude 5, Nit). It is a paragraph of its own now, wrapped like the rest.
+- **The README promised the cut of the caller's name without its limits** (Copilot 3, Minor). It
+  now says that a call activity is left as the modeller wrote it where they wrote a `zenbpm:in` of
+  their own or a mapping of the called process's id variable, and where the called process belongs
+  to another workflow module or application; `ZenBpmCallActivitiesTest#everyOtherCallIsLeftAlone`
+  and `#theModellersMappingOfTheIdStays` hold it.
+
+Seen to fail, each restored afterwards (7 of 7 mutants killed, against green unmutated runs): the
+id of the instance left out of the context (`#aRedeliveryFindsTheNameWrittenBefore`, and against
+the pinned engine `ZenBpmLifecycleIT#aSecondDeliveryOfTheMarkerBuildsNothing`); the held models
+not read for markers where no task definition is named
+(`#theStartMarkersOfAnIdWiredByElementIdAreServed`,
+`#theStartMarkersOfAnIdWiredByElementIdWhoseModelsCannotBeReadAreAWarn`); starts taken as heard
+without an invoker, and the gate in the reading of the held models dropped (each
+`#withoutAnInvokerOfStartsNoStartMarkerIsServed`); the marker's job type left out of the start
+line (`#theStartMarkersAreServedWithoutATaskTypeOfTheId`); the held models read, and the WARN
+promising their markers, without an invoker of starts (each
+`#withoutAnInvokerOfStartsAnIdWiredByElementIdAsksTheEngineNothing`).
+
+`TZ=Etc/UTC mvn clean install` on OpenJDK 25.0.2 builds green after the fixes with every
+integration test run and none skipped (engine test support 12 unit and 5 integration tests, core
+1,011 unit and 84 integration tests, Spring Boot 11 unit and 50 integration tests, smoke test 37,
+Quarkus runtime 10, Quarkus deployment 51, Quarkus integration tests 10, coverage gate 37). The gate
+measures 100 % of 27,401 instructions for Spring Boot and 100 % of 27,275 for Quarkus, and
+`bin/check-deploy-safety.sh` passes. No flake was hit.
+
 ## F9.4 Multi-instance
 
 ### S9.4.1 `ZenBpmMultiInstance` (engine-gated)

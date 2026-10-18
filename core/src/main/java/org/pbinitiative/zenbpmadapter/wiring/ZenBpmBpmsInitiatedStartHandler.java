@@ -4,6 +4,8 @@
  */
 package org.pbinitiative.zenbpmadapter.wiring;
 
+import java.util.Collections;
+import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.function.BooleanSupplier;
 
@@ -37,7 +39,9 @@ import lombok.extern.slf4j.Slf4j;
  * past VanillaBP. The application's <code>&#64;WorkflowStartedByBpms</code> method builds the
  * aggregate and names it, and the id and the values it shares are written into the instance before
  * the job is completed, so a second delivery finds the name, see decision 25 in the repository's
- * DECISIONS.md.</li>
+ * DECISIONS.md. It finds it in the instance and not in the job: the engine hands out a job with the
+ * variables its instance had when the job was created, on every delivery, so the id is read from
+ * the facts of the instance, which the instance cache reads again where it did not hold the id.</li>
  * <li><b>The workflow carries a name no aggregate has</b>: the core refuses the start, and the job
  * is failed like the job of a handler which threw, see decision 27 in the repository's
  * DECISIONS.md.</li>
@@ -47,7 +51,9 @@ import lombok.extern.slf4j.Slf4j;
  * is the workflow's root, because a marker is written into the process itself and never into a
  * sub-process. A crash after the aggregate's commit and before its id reached the instance lets the
  * next delivery build a second aggregate, unless the application's id is deterministic; the
- * Camunda 8 adapter has the same window.
+ * Camunda 8 adapter has the same window. So does a next delivery whose read of the instance a node
+ * answers which lags behind and has not seen the update yet, see decision 46 in the repository's
+ * DECISIONS.md.
  */
 @Slf4j
 final class ZenBpmBpmsInitiatedStartHandler {
@@ -131,7 +137,7 @@ final class ZenBpmBpmsInitiatedStartHandler {
     }
 
     // the instance carries the id where the application started it, or where an earlier delivery
-    // of this marker wrote it
+    // of this marker wrote it; the variables are the job's with the id the instance holds now
     private static boolean carriesTheName(
         final Map<String, Object> variables,
         final BpmsInitiatedStartResult result
@@ -263,7 +269,11 @@ final class ZenBpmBpmsInitiatedStartHandler {
             this.kind = process
                     .startMarkers()
                     .getOrDefault(startEventId, BpmsStartTrigger.Kind.NONE);
-            this.variables = received.inputVariables();
+            // the job's variables are those of the instance when the job was created, so the id
+            // an earlier delivery wrote is taken from the instance
+            final var variables = new LinkedHashMap<>(received.inputVariables());
+            variables.putAll(facts.variables());
+            this.variables = Collections.unmodifiableMap(variables);
             this.instanceKey = job.getInstanceKey();
             this.version = facts.version();
             // a called instance whose call activity cut the caller's key carries an empty one

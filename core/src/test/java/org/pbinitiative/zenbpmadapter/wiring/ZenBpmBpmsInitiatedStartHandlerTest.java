@@ -123,17 +123,23 @@ class ZenBpmBpmsInitiatedStartHandlerTest {
     }
 
     @Test
-    @DisplayName("A second delivery after the id was written finds it in the job's variables: the core builds nothing, and nothing is written again")
+    @DisplayName("A second delivery after the id was written finds it in the instance, although the engine hands the job out with the variables it had when it was created: the core builds nothing, and nothing is written again")
     void aRedeliveryFindsTheNameWrittenBefore() {
-        jobs.holds(ROOT, "default", null, null, "\"id\": \"order-1\"");
+        jobs.holds(ROOT, "default", null, null, "\"id\": \"order-1\", \"orderRef\": \"o-1\"");
         jobs.takesTheCommands(ROOT);
         jobs.starts.answers(context -> context
                 .getVariables()
                 .containsKey("id") ? TestStartInvoker.found("order-1") : TestStartInvoker.built("order-1"));
 
-        jobs.runs(JobRunning.startMarkerJob(ROOT, "vanillabp__started__Placed", "{\"id\": \"order-1\"}"));
+        jobs.runs(JobRunning.startMarkerJob(ROOT, "vanillabp__started__Placed", "{\"orderRef\": \"o-1\"}"));
 
-        assertEquals(List.of("POST /v1/jobs/42/complete"), jobs.commands());
+        assertAll(
+                () -> assertEquals(List.of("POST /v1/jobs/42/complete"), jobs.commands()),
+                () -> assertEquals(Map.of("id", "order-1", "orderRef", "o-1"), jobs.starts
+                        .starts()
+                        .getFirst()
+                        .context()
+                        .getVariables()));
     }
 
     @Test

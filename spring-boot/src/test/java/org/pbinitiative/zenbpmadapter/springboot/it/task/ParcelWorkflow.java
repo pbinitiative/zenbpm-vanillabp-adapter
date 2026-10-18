@@ -14,10 +14,13 @@ import io.vanillabp.spi.service.WorkflowTask;
 /**
  * The workflow of the task matrix: a service task, a send task and a business rule task served by a
  * job, and a service task inside an embedded sub-process. Each handler writes down on the parcel
- * that it ran, and two of them set what a gateway behind them decides on.
+ * that it ran, and two of them set what a gateway behind them decides on. The process
+ * <code>ParcelRating</code> runs on the parcel's aggregate as a called process, so it gets no start
+ * marker, and its task is the rating's.
  */
 @Service
-@WorkflowService(workflowAggregateClass = Parcel.class, bpmnProcess = @BpmnProcess(bpmnProcessId = "TaskMatrix"))
+@WorkflowService(workflowAggregateClass = Parcel.class, bpmnProcess = @BpmnProcess(bpmnProcessId = "TaskMatrix"),
+        secondaryBpmnProcesses = @BpmnProcess(bpmnProcessId = "ParcelRating"))
 public class ParcelWorkflow {
 
     /**

@@ -916,10 +916,21 @@ is true. But the core answers `created() == false` also where the instance carri
 and no id variable, and where the application's method named the workflow after an aggregate which
 exists; in both cases the instance would go on without the variable its tasks and correlation keys
 read the aggregate by. So the handler writes `result.variables()` with `PATCH
-/v1/process-instances/{key}/variables` wherever the job's variables do not carry the result's id
-under its name, and completes the job without variables. The application's own start carries the
-id, so it costs the job and one transaction and no update, and a second delivery after the update
-finds the id and writes nothing.
+/v1/process-instances/{key}/variables` wherever the instance does not carry the result's id under
+its name, and completes the job without variables. The application's own start carries the id, so
+it costs the job and one transaction and no update.
+
+Whether the instance carries the id is read from the instance, not from the job. The engine stores
+the variables of a job when it creates the job and hands those out on every delivery (pinned commit
+`bdd795a3`: `InputVariables` in `pkg/bpmn/jobs.go`, sent as stored by
+`internal/cluster/jobmanager/server.go`); an update of the instance does not change them. So the
+context handed to the core carries the job's variables with the id variable the instance holds now,
+which the instance cache reads again wherever it did not hold the id. A second delivery after the
+update, after a completion which did not reach the engine or a lock which was lost, therefore finds
+the id and builds nothing, and writes nothing. It builds a second aggregate only where a node which
+lags behind (GAPS 20) answers that read before it has seen the update, unless the application's id
+is deterministic; like the window between the aggregate's commit and the update, which decision 25
+names, this is what at-least-once delivery leaves over.
 
 The marker's job is otherwise served like the job of a task: inside the module's drain, under the
 renewal of its lock, with its commands repeated within the lock. A refusal or a method which threw
@@ -931,5 +942,7 @@ because a marker is written into the process itself, so that instance's key is t
 process, is reported as a plain one. A process the module declares without a model, such as the
 old id of a renamed process, subscribes the type of its start markers where a model the engine
 holds under the id carries one, with the start events of the held models which carry them: a
-workflow started right before the rename may still wait at its marker. Where no held model carries
-one, nothing of the kind is subscribed.
+workflow started right before the rename may still wait at its marker. A start marker needs no task
+definition, so the held models are read for it also where every method serving the id is wired by
+element id. Where no held model carries one, or where the platform hands no invoker of starts and
+nothing could answer the marker's job, nothing of the kind is subscribed.

@@ -13,3 +13,12 @@ vanillabp:
     wait-for-visibility-at-most: PT15S
     housekeeping:
       zone: UTC
+  workflow-modules:
+    deploy-it:
+      workflows:
+        Delivering:
+          tasks:
+            vanillabp__started:
+              adapters:
+                zenbpm:
+                  job-timeout: PT2S
