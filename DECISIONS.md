@@ -729,9 +729,12 @@ wrong one stay idle, because there a user task is no job.
 So the adapter reads the models the engine holds under the id, every version, because the
 workflows still running may run on any of them: one request for the versions and one per version.
 A composed type is subscribed only where one of those models gives it to an element which creates a
-job for a worker. One they give to a user task only is named at startup and left to the handling of
-user tasks, which reads it from the same models; one they give to no element is named as well and
-subscribes nothing, because no job of those workflows carries it. Where the models cannot be read,
+job for a worker and none of them gives it to a user task: where one version gives a type to a task
+and another to a user task, a job of that type cannot be told apart by its type, so the type is not
+subscribed and the workflows of the version with the task stand still at it. One they give to a
+user task is named at startup and left to the handling of user tasks, which reads it from the same
+models; one they give to no element is named as well and subscribes nothing, because no job of
+those workflows carries it. A task served elsewhere names no task definition and gives no type. Where the models cannot be read,
 nothing is subscribed for the id and a WARN says so, because a guess could serve a user task as a
 service task; the next start of the application serves those workflows. The models are read while
 the workflow module starts its processing, right after its deployment reached the engine.

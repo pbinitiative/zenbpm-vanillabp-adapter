@@ -1351,8 +1351,9 @@ did not fit, and what was decided:
    message now says to set the key back to `report` (or raise the maximum age) and resolve the
    incident first, after which the next delivery leaves the task open again and the application can
    end it (`ZenBpmJobHandlerTest#anOverdueTaskWithTheIncidentActionIsFailedWithoutRetries`).
-9. **Phase two of a job which ended.** A job read as anything but `active` is a WARN and nothing is
-   sent: a node which lags behind answers an earlier state, never a later one. A `404` or `409` of
+9. **Phase two of a job which ended.** A job read as `completed` or `terminated` is a WARN and
+   nothing is sent: a node which lags behind answers an earlier state, never a later one (a
+   `failed` one is repeated, see the answers to the reviews below). A `404` or `409` of
    the command is a WARN too, and so is a `409` of the `PATCH` (decision 34). Measured end to end:
    the platform probes the task before it dispatches an entry and skips one whose task ended, with a
    WARN of its own ("Skipped phase two of canceling task ... it has ended already; the entry is
@@ -1533,6 +1534,70 @@ tests, Spring Boot 11 unit and 32 integration tests, smoke test 37, Quarkus runt
 deployment 51, Quarkus integration tests 3, coverage gate 37). The gate measures 100 % of 24,501
 instructions for Spring Boot and 100 % of 24,375 for Quarkus, and `bin/check-deploy-safety.sh`
 passes (13 files on a green build, nothing after a red gate). No flake was hit.
+
+**Answers to two reviews of S6.3.1 and S6.4.1, 2026-10-18** (one by Claude, approve after the
+Minor ones, 2 Minor and 3 Nit; one by Copilot, request changes, 2 Major). Every claim was checked
+in the code of the branch and in the engine at the pin `bdd795a3`. All seven findings were valid
+and are fixed.
+
+- **A type a held model gives to a task in one version and to a user task in another was served**
+  (Copilot 1, Major). `ZenBpmDeclaredProcessWorkers#compose` looked for the type among the held
+  tasks first, so such a type was subscribed, and the user task's job was run and completed like a
+  service task's (the handler reports every job as a task). Copilot reproduced it against the
+  pinned image. A user task is never taken from the stream (E8 polls user tasks), and the job's type
+  cannot tell the two apart, so a type any held version gives to a user task is now never
+  subscribed, even where another version gives it to a task, and the start's line names it; the
+  workflows of the version with the task stand still at it. Decision 41, written in this batch and
+  not merged before, was corrected in place. Copilot suggested guarding by the delivered element
+  type instead; that would leave the user task's job locked to the stream and handed out again at
+  every lapse, so it was not taken.
+- **A held model with a task served elsewhere made every version unreadable** (Copilot 2, Major).
+  `ZenBpmModelReader` gives such a task no task definition, and adding `null` to the set of types
+  threw; the catch read it as models which cannot be read, so nothing of the id was served, at
+  every start. A task without a task definition now gives no type, as in the deployment.
+- **Phase two dropped the outcome of a task which carries an incident** (Claude 1, Minor). A
+  `failed` job was read as ended, a WARN, and the outbox entry was done, although resolving the
+  incident makes the job wait again, and the probes and the check call it still there. Phase two
+  now throws a repeatable `IllegalStateException` for it (naming `async-task-max-age-action`), and
+  after a `409` of the command it reads the job once more and throws the same where it is `failed`,
+  so the outbox repeats the completion or cancellation until the incident is resolved. A
+  cancellation nothing catches raises such an incident itself; where its answer was lost, the
+  repeat waits for that incident's resolution too, and then cancels again, which is what the
+  application asked.
+- **A failed read of the task's instance in the check named no key** (Claude 2, Minor). The
+  instance read now ends the transaction with the job read's message, naming `rest-address` and
+  `request-timeout`.
+- **The WARN about held models which cannot be read named no cause** (Claude 3, Nit). It now carries
+  the read's failure, and says that the next start reads them again.
+- **No test against the engine for the user-task half of decision 41** (Claude 4, Nit).
+  `ZenBpmDeploymentServiceIT#aDeclaredIdIsServedOnlyByTypesNoHeldUserTaskCarries` deploys two
+  versions under a declared id to the pinned engine: one with a task of `ship` and a task without a
+  task definition, one with a user task of `ship` and a task of `pack`; only `pack` is served.
+- **The start's line printed empty lists** (Claude 5, Nit). A clause without names is left out,
+  and a declared id nothing serves is a WARN.
+
+New tests: `ZenBpmTaskOutcomesTest#aTaskWhichCarriesAnIncidentIsRepeated`,
+`#aCommandRefusedForAJobWhichCarriesAnIncidentIsRepeated`,
+`#aJobWhichCannotBeReadAfterARefusalIsRepeated`,
+`#anEngineWhichDoesNotAnswerForTheInstanceRollsTheTransactionBack`;
+`ZenBpmDeclaredProcessWorkersTest#aTypeAUserTaskOfAnyVersionCarriesIsNotServed`,
+`#aTaskWithoutATaskDefinitionInAHeldModelIsPassedOver`, `#aDeclaredIdNothingServesIsAWarn`; the IT
+above. `#aTaskWhichEndedMeanwhileIsAWarnedNoOp` no longer counts `failed` among the ended states.
+
+Seen to fail, each restored afterwards (9 of 9 mutants, against green unmutated runs, two of them
+also against the engine): the user tasks' types looked at after the tasks' (also against the
+engine); a task without a task definition not passed over (also against the engine); phase two
+without the check for a `failed` job; the read after a refused completion left out, and after a
+refused cancellation; the instance read of the check not wrapped; the refusal not kept with a
+failed read after it; a declared id nothing serves logged at INFO; an empty clause printed.
+
+`TZ=Etc/UTC mvn clean install` on OpenJDK 25.0.2 builds green after the fixes with every
+integration test run and none skipped (engine test support 12 unit and 3 integration tests, core
+953 unit and 78 integration tests, Spring Boot 11 unit and 32 integration tests, smoke test 37,
+Quarkus runtime 10, Quarkus deployment 51, Quarkus integration tests 3, coverage gate 37). The gate
+measures 100 % of 24,685 instructions for Spring Boot and 100 % of 24,559 for Quarkus, and
+`bin/check-deploy-safety.sh` passes (13 files on a green build, nothing after a red gate). No flake
+was hit.
 
 ## F6.5 Idempotency and restarts on both platforms
 

@@ -11,7 +11,7 @@ import java.util.Collection;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Optional;
+import java.util.Objects;
 import java.util.Set;
 import java.util.TreeSet;
 
@@ -36,10 +36,10 @@ import lombok.extern.slf4j.Slf4j;
  * definition may as well be a user task's, which the job stream must never take: a handler would run
  * and complete it as if it were a service task. So the models the engine holds under the id are
  * read, every version, and a composed type is served only where one of them gives it to a task which
- * creates a job for a worker, see decision 41 in the repository's DECISIONS.md. A type they give to
- * a user task only, or to no element at all, is named in the line the start writes, and so is every
- * reason why the workflows of the id may stand still: a method wired by element id, which names no
- * task definition, and models which cannot be read.
+ * creates a job for a worker and none gives it to a user task, see decision 41 in the repository's
+ * DECISIONS.md. A type one of them gives to a user task, or none gives to any element, is named in
+ * the line the start writes, and so is every reason why the workflows of the id may stand still: a
+ * method wired by element id, which names no task definition, and models which cannot be read.
  * <p>
  * Its tasks are served with what their jobs carry: the variables of their scope, and inside a
  * multi-instance body only what the model held maps into it, which the version of the application
@@ -114,33 +114,39 @@ final class ZenBpmDeclaredProcessWorkers {
                     adapterId, workflowModuleId, bpmnProcessId);
             return new DeclaredProcess(bpmnProcessId, scopedProcessId, Map.of());
         }
-        final var held = heldTypes(workflowModuleId, scopedProcessId);
-        if (held.isEmpty()) {
+        final HeldTypes types;
+        try {
+            types = heldTypes(workflowModuleId, scopedProcessId);
+        } catch (final RuntimeException e) {
+            log.debug("ZenBPM[{}]: the models the engine holds as '{}' could not be read", adapterId, scopedProcessId,
+                    e);
             log.warn("""
                     ZenBPM[{}]: workflow module '{}' declares BPMN process '{}' without deploying a model under it, \
-                    and the models the engine holds as '{}' could not be read, so nothing serves the workflows still \
-                    running under that id until the application starts again: a task definition alone cannot tell \
-                    the job of a task from a user task, which the engine hands out alike.""", adapterId,
-                    workflowModuleId, bpmnProcessId, scopedProcessId);
+                    and the models the engine holds as '{}' could not be read ({}), so nothing serves the workflows \
+                    still running under that id: a task definition alone cannot tell the job of a task from a user \
+                    task, which the engine hands out alike. The next start of the application reads them again.""",
+                    adapterId, workflowModuleId, bpmnProcessId, scopedProcessId, Objects.requireNonNullElse(e
+                            .getMessage(), e.toString()));
             return new DeclaredProcess(bpmnProcessId, scopedProcessId, Map.of());
         }
         final var served = new LinkedHashMap<String, String>();
         final var userTasks = new TreeSet<String>();
         final var heldNowhere = new TreeSet<String>();
-        final var types = held.get();
         for (final var taskDefinition : new TreeSet<>(taskDefinitions)) {
             final var jobType = scoping.scopedTaskDefinition(workflowModuleId, bpmnProcessId, taskDefinition,
                     adapterId);
-            if (types
-                    .taskTypes()
-                    .contains(jobType)) {
-                served.put(taskDefinition, jobType);
-                continue;
-            }
+            // a type a user task carries in any version is never taken from the job stream, where
+            // its job cannot be told from a task's, even where a task of another version carries it
             if (types
                     .userTaskTypes()
                     .contains(jobType)) {
                 userTasks.add(taskDefinition);
+                continue;
+            }
+            if (types
+                    .taskTypes()
+                    .contains(jobType)) {
+                served.put(taskDefinition, jobType);
                 continue;
             }
             heldNowhere.add(taskDefinition);
@@ -150,41 +156,39 @@ final class ZenBpmDeclaredProcessWorkers {
         return new DeclaredProcess(bpmnProcessId, scopedProcessId, served);
     }
 
-    // every version, because the workflows still running under the id run on old ones as well
-    private Optional<HeldTypes> heldTypes(
+    // every version, because the workflows still running under the id run on old ones as well; a
+    // task which names no task definition is served elsewhere and gives no type
+    private HeldTypes heldTypes(
         final String workflowModuleId,
         final String scopedProcessId
     ) {
         final var taskTypes = new TreeSet<String>();
         final var userTaskTypes = new TreeSet<String>();
-        try {
-            final var rest = factory.rest();
-            for (final var version : rest.processDefinitions(scopedProcessId, false)) {
-                final var bpmn = rest
-                        .processDefinition(version.key())
-                        .bpmnData();
-                ZenBpmModelReader
-                        .read(workflowModuleId, "version %d of process '%s'".formatted(version.version(),
-                                scopedProcessId), new ByteArrayInputStream(bpmn.getBytes(StandardCharsets.UTF_8)))
-                        .forEach(model -> {
-                            model
-                                    .tasks()
-                                    .stream()
-                                    .map(BpmnTaskSpec::taskDefinition)
-                                    .forEach(taskTypes::add);
-                            model
-                                    .userTasks()
-                                    .stream()
-                                    .map(BpmnTaskSpec::taskDefinition)
-                                    .forEach(userTaskTypes::add);
-                        });
-            }
-        } catch (final RuntimeException e) {
-            log.debug("ZenBPM[{}]: the models the engine holds as '{}' could not be read", adapterId, scopedProcessId,
-                    e);
-            return Optional.empty();
+        final var rest = factory.rest();
+        for (final var version : rest.processDefinitions(scopedProcessId, false)) {
+            final var bpmn = rest
+                    .processDefinition(version.key())
+                    .bpmnData();
+            ZenBpmModelReader
+                    .read(workflowModuleId, "version %d of process '%s'".formatted(version.version(),
+                            scopedProcessId), new ByteArrayInputStream(bpmn.getBytes(StandardCharsets.UTF_8)))
+                    .forEach(model -> {
+                        typesOf(model.tasks(), taskTypes);
+                        typesOf(model.userTasks(), userTaskTypes);
+                    });
         }
-        return Optional.of(new HeldTypes(taskTypes, userTaskTypes));
+        return new HeldTypes(taskTypes, userTaskTypes);
+    }
+
+    private static void typesOf(
+        final Collection<BpmnTaskSpec> tasks,
+        final Set<String> types
+    ) {
+        tasks
+                .stream()
+                .map(BpmnTaskSpec::taskDefinition)
+                .filter(Objects::nonNull)
+                .forEach(types::add);
     }
 
     private void report(
@@ -201,14 +205,37 @@ final class ZenBpmDeclaredProcessWorkers {
         served
                 .values()
                 .forEach(jobType -> (subscribedBefore.contains(jobType) ? sharing : subscribed).add(jobType));
+        final var servedBy = new ArrayList<String>();
+        if (!subscribed.isEmpty()) {
+            servedBy.add("the job types %s subscribed for it".formatted(subscribed));
+        }
+        if (!sharing.isEmpty()) {
+            servedBy.add("the job types %s which the deployed processes subscribe".formatted(sharing));
+        }
+        final var notServed = new ArrayList<String>();
+        if (!userTasks.isEmpty()) {
+            notServed.add("""
+                    the task definition(s) %s, which a user task of a model held under that id carries, and the job \
+                    stream cannot tell its job from a task's""".formatted(userTasks));
+        }
+        if (!heldNowhere.isEmpty()) {
+            notServed.add("the task definition(s) %s, which no model held under that id names".formatted(
+                    heldNowhere));
+        }
+        final var line = """
+                workflow module '%s' declares BPMN process '%s' without deploying a model under it, and the engine \
+                holds it as '%s': %s.%s""".formatted(workflowModuleId, bpmnProcessId, scopedProcessId, servedBy
+                .isEmpty() ? "nothing serves its workflows"
+                        : "its workflows are served by %s".formatted(String.join(" and ", servedBy)),
+                notServed
+                        .isEmpty() ? "" : " Not served: %s.".formatted(String.join("; ", notServed)));
+        if (served.isEmpty()) {
+            log.warn("ZenBPM[{}]: {}", adapterId, line);
+            return;
+        }
         log.info("""
-                ZenBPM[{}]: workflow module '{}' declares BPMN process '{}' without deploying a model under it, and \
-                the engine holds it as '{}': its workflows are served by the job types {} subscribed for it and {} \
-                which the deployed processes subscribe. Not served: the user task(s) {}, which a user task of a \
-                model held under that id serves, and the task definition(s) {}, which no model held under that id \
-                names. A job of those workflows carries the variables of its scope, and inside a multi-instance \
-                body only what the model held maps into it.""", adapterId, workflowModuleId, bpmnProcessId,
-                scopedProcessId, subscribed, sharing, userTasks, heldNowhere);
+                ZenBPM[{}]: {} A job of those workflows carries the variables of its scope, and inside a \
+                multi-instance body only what the model held maps into it.""", adapterId, line);
     }
 
     /**

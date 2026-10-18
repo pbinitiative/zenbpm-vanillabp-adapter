@@ -141,8 +141,8 @@ class ZenBpmDeclaredProcessWorkersTest {
                                 without deploying a model under it, and the engine holds it as \
                                 'shop__OrdersBeforeTheRename': its workflows are served by the job types \
                                 [shop__OrdersBeforeTheRename__charge, shop__OrdersBeforeTheRename__refund] subscribed \
-                                for it and [] which the deployed processes subscribe. Not served: the user task(s) \
-                                [review], which a user task of a model held under that id serves, and the task \
+                                for it. Not served: the task definition(s) [review], which a user task of a model held \
+                                under that id carries, and the job stream cannot tell its job from a task's; the task \
                                 definition(s) [legacy], which no model held under that id names. A job of those \
                                 workflows carries the variables of its scope, and inside a multi-instance body only \
                                 what the model held maps into it."""), output::getOutOfThisTest));
@@ -183,7 +183,7 @@ class ZenBpmDeclaredProcessWorkersTest {
                 () -> assertTrue(output
                         .getOutOfThisTest()
                         .contains(
-                                "served by the job types [] subscribed for it and [charge] which the deployed processes subscribe"),
+                                "its workflows are served by the job types [charge] which the deployed processes subscribe. A job"),
                         output::getOutOfThisTest));
     }
 
@@ -245,7 +245,7 @@ class ZenBpmDeclaredProcessWorkersTest {
                 .servedElsewhere("Notify")
                 .declaringWithoutAModel(DECLARED, "charge"));
         final var context = wired(deploymentService);
-        final var line = "its workflows are served by the job types [shop__OrdersBeforeTheRename__charge] subscribed for it and []";
+        final var line = "its workflows are served by the job types [shop__OrdersBeforeTheRename__charge] subscribed for it.";
 
         deploymentService.startWorkflowProcessing("shop", context);
         deploymentService.stopWorkflowProcessing("shop", context);
@@ -313,10 +313,98 @@ class ZenBpmDeclaredProcessWorkersTest {
                         .containsKey(DECLARED)),
                 () -> assertTrue(output
                         .getOutOfThisTest()
+                        .contains(
+                                """
+                                        and the models the engine holds as 'shop__OrdersBeforeTheRename' could not be read \
+                                        (ZenBPM adapter 'orders': GET /v1/process-definitions was answered with status 503), so \
+                                        nothing serves"""),
+                        output::getOutOfThisTest),
+                () -> assertTrue(output
+                        .getOutOfThisTest()
                         .contains("""
-                                and the models the engine holds as 'shop__OrdersBeforeTheRename' could not be read, so \
-                                nothing serves the workflows still running under that id until the application starts \
-                                again"""), output::getOutOfThisTest));
+                                so nothing serves the workflows still running under that id: a task definition alone \
+                                cannot tell the job of a task from a user task, which the engine hands out alike. The \
+                                next start of the application reads them again."""), output::getOutOfThisTest));
+    }
+
+    @Test
+    @DisplayName("A type a held model gives to a user task is not served, although another version gives it to a task, because the job stream cannot tell the two jobs apart")
+    void aTypeAUserTaskOfAnyVersionCarriesIsNotServed(final CapturedOutput output) throws Exception {
+        final var held = "shop__%s".formatted(DECLARED);
+        theEngineHolds(held, model(held, "shop__%s__charge".formatted(DECLARED), null), model(held,
+                "shop__%s__refund".formatted(DECLARED), "shop__%s__charge".formatted(DECLARED)));
+        final var deploymentService = deploymentService(NameClashAvoidance.USE_PREFIX, TestWiring
+                .claiming("Orders")
+                .servedElsewhere("Notify")
+                .declaringWithoutAModel(DECLARED, "charge", "refund"));
+        final var context = wired(deploymentService);
+
+        deploymentService.startWorkflowProcessing("shop", context);
+
+        final var subscribed = stream
+                .call(0)
+                .subscriptions(4);
+        assertAll(
+                () -> assertEquals("shop__OrdersBeforeTheRename__refund", subscribed
+                        .getLast()
+                        .getJobType()),
+                () -> assertEquals(Set.of("shop__OrdersBeforeTheRename__refund"), context
+                        .wiredProcesses()
+                        .get(DECLARED)
+                        .jobTypes()),
+                () -> assertTrue(output
+                        .getOutOfThisTest()
+                        .contains("""
+                                Not served: the task definition(s) [charge], which a user task of a model held under \
+                                that id carries"""), output::getOutOfThisTest));
+    }
+
+    @Test
+    @DisplayName("A held model with a task served elsewhere, which names no task definition, is read all the same, and the types of the other tasks are served")
+    void aTaskWithoutATaskDefinitionInAHeldModelIsPassedOver(final CapturedOutput output) throws Exception {
+        final var held = "shop__%s".formatted(DECLARED);
+        theEngineHolds(held, model(held, null, null), model(held, "shop__%s__charge".formatted(DECLARED), null));
+        final var deploymentService = deploymentService(NameClashAvoidance.USE_PREFIX, TestWiring
+                .claiming("Orders")
+                .servedElsewhere("Notify")
+                .declaringWithoutAModel(DECLARED, "charge"));
+        final var context = wired(deploymentService);
+
+        deploymentService.startWorkflowProcessing("shop", context);
+
+        assertAll(
+                () -> assertEquals(Set.of("shop__OrdersBeforeTheRename__charge"), context
+                        .wiredProcesses()
+                        .get(DECLARED)
+                        .jobTypes()),
+                () -> assertFalse(output
+                        .getOutOfThisTest()
+                        .contains("could not be read"), output::getOutOfThisTest));
+    }
+
+    @Test
+    @DisplayName("A declared process id none of whose task definitions a held model gives to a task is named in a WARN which says that nothing serves its workflows")
+    void aDeclaredIdNothingServesIsAWarn(final CapturedOutput output) throws Exception {
+        final var held = "shop__%s".formatted(DECLARED);
+        theEngineHolds(held, model(held, "shop__%s__charge".formatted(DECLARED), null));
+        final var deploymentService = deploymentService(NameClashAvoidance.USE_PREFIX, TestWiring
+                .claiming("Orders")
+                .servedElsewhere("Notify")
+                .declaringWithoutAModel(DECLARED, "legacy"));
+        final var context = wired(deploymentService);
+
+        deploymentService.startWorkflowProcessing("shop", context);
+
+        assertTrue(output
+                .getOutOfThisTest()
+                .contains(
+                        """
+                                WARN  o.p.z.d.ZenBpmDeclaredProcessWorkers - ZenBPM[orders]: workflow module 'shop' declares \
+                                BPMN process 'OrdersBeforeTheRename' without deploying a model under it, and the engine holds it \
+                                as 'shop__OrdersBeforeTheRename': nothing serves its workflows. Not served: the task \
+                                definition(s) [legacy], which no model held under that id names.
+                                """),
+                output::getOutOfThisTest);
     }
 
     @Test
@@ -388,8 +476,8 @@ class ZenBpmDeclaredProcessWorkersTest {
                 models.length));
     }
 
-    // a version of the process held under the declared id: a service task, and a user task where a
-    // type is given for one
+    // a version of the process held under the declared id: a service task, without a task
+    // definition where no type is given for it, and a user task where a type is given for one
     private static String model(
         final String scopedProcessId,
         final String serviceTaskType,
@@ -404,13 +492,14 @@ class ZenBpmDeclaredProcessWorkersTest {
                 <bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL"
                     xmlns:zenbpm="http://zenbpm.pbinitiative.org/1.0" id="held" targetNamespace="test">
                   <bpmn:process id="%s" isExecutable="true">
-                    <bpmn:serviceTask id="Work">
-                      <bpmn:extensionElements><zenbpm:taskDefinition type="%s" /></bpmn:extensionElements>
-                    </bpmn:serviceTask>
+                    <bpmn:serviceTask id="Work">%s</bpmn:serviceTask>
                     %s
                   </bpmn:process>
                 </bpmn:definitions>
-                """.formatted(scopedProcessId, serviceTaskType, userTask);
+                """.formatted(scopedProcessId, serviceTaskType == null ? ""
+                : "<bpmn:extensionElements><zenbpm:taskDefinition type=\"%s\" /></bpmn:extensionElements>"
+                        .formatted(serviceTaskType),
+                userTask);
     }
 
     private static ZenBpmProcessingContext wired(final ZenBpmDeploymentService deploymentService) {

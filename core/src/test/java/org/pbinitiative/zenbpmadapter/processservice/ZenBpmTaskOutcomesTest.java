@@ -267,6 +267,23 @@ class ZenBpmTaskOutcomesTest {
     }
 
     @Test
+    @DisplayName("An engine which does not answer for the task's instance rolls the transaction back with the same message, its answer the cause")
+    void anEngineWhichDoesNotAnswerForTheInstanceRollsTheTransactionBack() {
+        engine.answers("GET", JOB_PATH, 200, job("active"));
+        engine.answers("GET", INSTANCE_PATH, 503, null);
+
+        final var refused = assertThrows(IllegalStateException.class, () -> check(PhaseOperation.CANCEL_TASK));
+
+        assertAll(
+                () -> assertEquals("""
+                        ZenBPM adapter 'orders' could not ask the engine whether task '%d' still waits, so the \
+                        transaction which cancels it is rolled back. Try again once the engine at \
+                        vanillabp.adapters.orders.rest-address answers within \
+                        vanillabp.adapters.orders.request-timeout.""".formatted(JOB), refused.getMessage()),
+                () -> assertTrue(refused.getCause() != null));
+    }
+
+    @Test
     @DisplayName("A task which carries an incident cannot be completed or cancelled until the incident is resolved, which the message says with the key of the incident action")
     void aTaskWithAnIncidentCannotBeEnded() {
         engine.answers("GET", JOB_PATH, 200, job("failed"));
@@ -434,7 +451,7 @@ class ZenBpmTaskOutcomesTest {
 
     @ParameterizedTest(name = "{0}")
     @ValueSource(strings = {
-            "completed", "terminated", "failed"
+            "completed", "terminated"
     })
     @DisplayName("Phase two of a task whose job ended meanwhile is a WARN and nothing else, so the outbox entry is done")
     void aTaskWhichEndedMeanwhileIsAWarnedNoOp(
@@ -487,6 +504,96 @@ class ZenBpmTaskOutcomesTest {
                 () -> assertTrue(output
                         .getOutOfThisTest()
                         .contains("is not cancelled: it ended meanwhile"), output::getOutOfThisTest));
+    }
+
+    @Test
+    @DisplayName("Phase two of a task which meanwhile carries an incident is thrown, so the outbox repeats it once the incident is resolved, and nothing is sent")
+    void aTaskWhichCarriesAnIncidentIsRepeated() {
+        final var processService = processService();
+        engine.answers("GET", JOB_PATH, 200, job("failed"));
+
+        final var refusals = List
+                .of(PhaseOperation.COMPLETE_TASK, PhaseOperation.CANCEL_TASK)
+                .stream()
+                .map(operation -> assertThrows(IllegalStateException.class, () -> handler(operation).phaseTwo(
+                        request(String.valueOf(JOB), "withdrawn"))))
+                .toList();
+
+        assertAll(
+                () -> assertEquals(List.of(), commands()),
+                () -> assertEquals("""
+                        ZenBPM adapter 'orders': task %d carries an incident at the engine, which takes neither a \
+                        completion nor a cancellation of it until the incident is resolved, so it is not completed \
+                        now, and the outbox repeats it. Resolve the incident; where \
+                        vanillabp.adapters.orders.async-task-max-age-action raised it, set that key back to 'report' \
+                        before, or the next delivery of the task raises it again.""".formatted(JOB), refusals
+                        .getFirst()
+                        .getMessage()),
+                () -> assertTrue(refusals
+                        .getLast()
+                        .getMessage()
+                        .contains("so it is not cancelled now"),
+                        refusals
+                                .getLast()::getMessage),
+                () -> assertTrue(refusals
+                        .stream()
+                        .allMatch(processService::isPhaseTwoFailureRepeatable)));
+    }
+
+    @Test
+    @DisplayName("A completion or cancellation the engine refuses because the job meanwhile carries an incident is thrown, so the outbox repeats it")
+    void aCommandRefusedForAJobWhichCarriesAnIncidentIsRepeated(final CapturedOutput output) {
+        final var processService = processService();
+        final var refusals = new ArrayList<RuntimeException>();
+        for (final var operation : List.of("complete", "fail")) {
+            aJobWaitsInASubProcess();
+            engine.answers("POST", "%s/%s".formatted(JOB_PATH, operation), exchange -> {
+                engine.answers("GET", JOB_PATH, 200, job("failed"));
+                FakeEngine.respond(exchange, 409, "{\"code\":\"CONFLICT\",\"message\":\"job is failed\"}");
+            });
+            refusals.add(assertThrows(IllegalStateException.class, () -> handler("complete".equals(operation)
+                    ? PhaseOperation.COMPLETE_TASK
+                    : PhaseOperation.CANCEL_TASK).phaseTwo(request(String.valueOf(JOB), "withdrawn"))));
+        }
+
+        assertAll(
+                () -> assertTrue(refusals
+                        .getFirst()
+                        .getMessage()
+                        .contains("carries an incident at the engine"),
+                        refusals
+                                .getFirst()::getMessage),
+                () -> assertTrue(refusals
+                        .getLast()
+                        .getMessage()
+                        .contains("so it is not cancelled now"),
+                        refusals
+                                .getLast()::getMessage),
+                () -> assertTrue(refusals
+                        .stream()
+                        .allMatch(processService::isPhaseTwoFailureRepeatable)),
+                () -> assertFalse(output
+                        .getOutOfThisTest()
+                        .contains("ended meanwhile"), output::getOutOfThisTest));
+    }
+
+    @Test
+    @DisplayName("A job which cannot be read again after the engine refused a command for it is thrown with that read's failure, the refusal suppressed, so the outbox repeats it")
+    void aJobWhichCannotBeReadAfterARefusalIsRepeated() {
+        final var processService = processService();
+        aJobWaitsInASubProcess();
+        engine.answers("POST", JOB_PATH
+                + "/complete", exchange -> {
+                    engine.answers("GET", JOB_PATH, 503, null);
+                    FakeEngine.respond(exchange, 409, "{\"code\":\"CONFLICT\",\"message\":\"ended\"}");
+                });
+
+        final var failure = assertThrows(RuntimeException.class, () -> handler(PhaseOperation.COMPLETE_TASK)
+                .phaseTwo(request(String.valueOf(JOB), null)));
+
+        assertAll(
+                () -> assertEquals(1, failure.getSuppressed().length),
+                () -> assertTrue(processService.isPhaseTwoFailureRepeatable(failure), failure::toString));
     }
 
     @Test

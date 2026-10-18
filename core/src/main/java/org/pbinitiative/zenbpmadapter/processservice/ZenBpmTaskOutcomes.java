@@ -48,8 +48,10 @@ import lombok.extern.slf4j.Slf4j;
  * carries it and the same values, which an error boundary event or an error event sub-process of
  * the model takes over. A job which ended meanwhile, and a workflow which ended, are what
  * at-least-once delivery leaves over: a WARN, and nothing else, so the outbox entry is done. A
- * failure which may pass is thrown, so the outbox repeats phase two; a task id which is no number
- * never becomes one, which the classification reads as permanent.
+ * failure which may pass is thrown, so the outbox repeats phase two, and so is a job which carries
+ * an incident, because the engine takes no command for it until the incident is resolved, and then
+ * the job waits again; a task id which is no number never becomes one, which the classification
+ * reads as permanent.
  * <p>
  * Phase two names no delivery, because the application completes a task without one, on whichever
  * node it runs. The engine completes a job whoever asks, and fails one without a delivery token
@@ -151,6 +153,7 @@ final class ZenBpmTaskOutcomes<A> {
             if (!ZenBpmErrors.isGoneJob(e)) {
                 throw e;
             }
+            refuseAJobWhichCarriesAnIncident(rest, key, "completed", e);
             // the engine drops the lock of a job it refused a command for because it ended
             warnGone(key, request, "completed", "it ended meanwhile");
         }
@@ -199,6 +202,7 @@ final class ZenBpmTaskOutcomes<A> {
             if (!ZenBpmErrors.isGoneJob(e)) {
                 throw e;
             }
+            refuseAJobWhichCarriesAnIncident(rest, key, "cancelled", e);
             // the engine drops the lock of a job it refused a command for because it ended
             warnGone(key, request, "cancelled", "it ended meanwhile");
             endTheCountOfAParkedJob(job.get());
@@ -265,9 +269,14 @@ final class ZenBpmTaskOutcomes<A> {
         final String taskId,
         final String operation
     ) {
-        final var facts = withinTheVisibilityWindow(() -> factory
-                .instances()
-                .facts(job.instanceKey()));
+        final Optional<InstanceFacts> facts;
+        try {
+            facts = withinTheVisibilityWindow(() -> factory
+                    .instances()
+                    .facts(job.instanceKey()));
+        } catch (final RuntimeException e) {
+            throw notAnswered(taskId, operation, e);
+        }
         if (facts.isEmpty()) {
             throw new IllegalStateException("""
                     ZenBPM adapter '%s': the engine holds task '%s', but the node asked does not know its process \
@@ -310,15 +319,24 @@ final class ZenBpmTaskOutcomes<A> {
                 throw taskNotFound(taskId, operation, "it names partition %d, which the engine does not have"
                         .formatted(ZenBpmKeys.partitionOf(key)));
             }
-            throw new IllegalStateException("""
-                    ZenBPM adapter '%s' could not ask the engine whether task '%s' still waits, so the transaction \
-                    which %s it is rolled back. Try again once the engine at %s answers within %s."""
-                    .formatted(adapterId, taskId, operation, ZenBpmAdapterConfiguration.propertyKey(adapterId,
-                            "rest-address"), ZenBpmAdapterConfiguration.propertyKey(adapterId, "request-timeout")), e);
+            throw notAnswered(taskId, operation, e);
         }
         return job.orElseThrow(() -> taskNotFound(taskId, operation, """
                 the engine does not know it, not even after %s: it is no task this engine handed out, or its \
                 workflow ended and the engine removed its history""".formatted(workflowVisibilityTimeout())));
+    }
+
+    private IllegalStateException notAnswered(
+        final String taskId,
+        final String operation,
+        final RuntimeException failure
+    ) {
+        return new IllegalStateException("""
+                ZenBPM adapter '%s' could not ask the engine whether task '%s' still waits, so the transaction which \
+                %s it is rolled back. Try again once the engine at %s answers within %s."""
+                .formatted(adapterId, taskId, operation, ZenBpmAdapterConfiguration.propertyKey(adapterId,
+                        "rest-address"),
+                        ZenBpmAdapterConfiguration.propertyKey(adapterId, "request-timeout")), failure);
     }
 
     // a read is answered by a node of the engine which may lag behind, so what it does not know yet
@@ -362,7 +380,8 @@ final class ZenBpmTaskOutcomes<A> {
     }
 
     // a node which lags behind answers a job in an earlier state, never in a later one, so a job
-    // it answers as ended has ended; one it does not know yet is asked for again by the outbox
+    // it answers as ended has ended; one it does not know yet is asked for again by the outbox, and
+    // so is one which carries an incident, which a resolution makes wait again
     private Optional<JobRef> waitingJob(
         final ZenBpmRestClient rest,
         final long key,
@@ -377,6 +396,9 @@ final class ZenBpmTaskOutcomes<A> {
         if (job.state() == JobRef.State.ACTIVE) {
             return Optional.of(job);
         }
+        if (job.state() == JobRef.State.FAILED) {
+            throw carriesAnIncident(key, answer);
+        }
         // nothing is sent, so the engine keeps the lock of a job this node parked until it lapses,
         // and the count stays as long
         warnGone(key, request, answer, "the engine holds it as %s".formatted(job
@@ -384,6 +406,43 @@ final class ZenBpmTaskOutcomes<A> {
                 .name()
                 .toLowerCase()));
         return Optional.empty();
+    }
+
+    // the engine refuses a command for a job which carries an incident as it refuses one for a job
+    // which ended, so after such a refusal the job is read again: what a resolution of the incident
+    // makes wait again is not over, and the outbox repeats it
+    private void refuseAJobWhichCarriesAnIncident(
+        final ZenBpmRestClient rest,
+        final long key,
+        final String answer,
+        final RuntimeException refusal
+    ) {
+        final boolean failed;
+        try {
+            failed = rest
+                    .job(key)
+                    .map(JobRef::state)
+                    .filter(JobRef.State.FAILED::equals)
+                    .isPresent();
+        } catch (final RuntimeException e) {
+            e.addSuppressed(refusal);
+            throw e;
+        }
+        if (failed) {
+            throw carriesAnIncident(key, answer);
+        }
+    }
+
+    private IllegalStateException carriesAnIncident(
+        final long key,
+        final String answer
+    ) {
+        return new IllegalStateException("""
+                ZenBPM adapter '%s': task %d carries an incident at the engine, which takes neither a completion nor a \
+                cancellation of it until the incident is resolved, so it is not %s now, and the outbox repeats it. \
+                Resolve the incident; where %s raised it, set that key back to 'report' before, or the next delivery \
+                of the task raises it again.""".formatted(adapterId, key, answer, ZenBpmAdapterConfiguration
+                .propertyKey(adapterId, "async-task-max-age-action")));
     }
 
     // see decision 35 and decision 34 in the repository's DECISIONS.md: an update which finds no
