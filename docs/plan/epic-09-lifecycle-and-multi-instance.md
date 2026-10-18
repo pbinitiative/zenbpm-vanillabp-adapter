@@ -82,6 +82,63 @@ named by the caller's aggregate; its start marker has to cut that name, for exam
 `zenbpm:in businessKey=""` on the call activity, which replaces the inherited key, and an input
 mapping which empties the id variable, before the core reads the start.
 
+*Fit check, 2026-10-18, decided by the Implementor where it says so.* Checked against `main`
+(`0772183`), `ADAPTER-AUTHORS.md` (3.3, "A called process is not a workflow of its own"), the
+platform as the adapter resolves it (`2.0.0-20261015.045823-21`: `BpmsInitiatedStartInvoker`,
+`BpmsInitiatedStartSpec`; `WorkflowTaskRegistry#isACalledProcess`, `#startsAWorkflowOfItsOwn` and
+`#workflowEndedHandlerExists`, read at the commit the snapshot was built from), Camunda 8's
+`Camunda8DeploymentService#wireBpmn` and `Camunda8TaskWiring#listenerJobTypeOf`, and the engine at
+the pin `bdd795a3` (source exported with `git archive`: `TFlowNode` and `TSequenceFlow` of
+`pkg/bpmn/model/bpmn20/core.go`, `createInstance` of `pkg/bpmn/engine.go`, the timer start of
+`pkg/bpmn/engine.go` and `pkg/bpmn/timer_cycle.go`; the image run by the new IT). What did not fit,
+and what was decided:
+
+1. **Where the markers are written** (a contradiction, settled by the platform's code). The plan and
+   the note above say `prepareBpmn`. But the core answers `startsAWorkflowOfItsOwn` by
+   `isACalledProcess`, which is true only once `validateTaskWiring` of the process ran, so in
+   `prepareBpmn` it answers `true` for a called process too; `ADAPTER-AUTHORS.md` says the core can
+   answer both questions "after `validateTaskWiring` of that process", and Camunda 8 writes its start
+   listener in `wireBpmn` right after it. Options: `prepareBpmn` (a called process gets a marker and
+   hands the core its caller's name), `wireBpmn` after `validateTaskWiring`. Decided the second,
+   recorded as decision 44. `wireBpmn` already rewrites the model (`ZenBpmCallActivities`), and the
+   document it rewrites is the one `deployResources` writes out.
+2. **The end marker** (decided by the orchestrator, open question 1 of the brief). Instruction 1 and
+   its DI and fixtures move to S9.2.1, which lands with the handler serving the marker's job: a
+   marker nobody serves would stop every workflow of an application with a `@WorkflowEnded` method
+   in front of its end event. `ZenBpmMarkerTasks` holds the insertion, the drawing and the guard
+   against a second insertion, so the end marker joins it as a method of its own. Decision 26 is
+   entered whole, with a line that the end marker comes with its handler; a test of the wiring keeps
+   a process whose end is heard without any marker until then.
+3. **The commits of the batch** (decided by the Implementor, for the same reason). This story's
+   commit holds the rewrite, its tests and the IT on the engine. The call in `wireBpmn`, the
+   subscription of the marker type and the tests at the level of the wiring (a called process, a
+   process nobody claims, an end which is heard) land in the commit of S9.3.1, together with the
+   handler of the marker's job, so no commit leaves a workflow at a marker nobody serves. Both
+   stories are ticked with that commit.
+4. **The job type** (decided by the Implementor, decision 44). `scopedTaskDefinition(module, process,
+   'vanillabp__started')` is the plain `vanillabp__started` under `none`, one type for every process
+   of every application deploying under `none`, so a node would be handed the marker jobs of other
+   applications and leave them to their lock. The type is `vanillabp__started__<scoped process id>`
+   in every mode; Camunda 8's listener types carry the process id as well.
+5. **The diagram** (decided by the Implementor, decision 44). The story places the shape 80 px from
+   the start event, the architecture copies it from its neighbour, which would cover the neighbour
+   whole. Decided the story's rule: 60 x 40, its left edge 80 points right of the start event's left
+   edge, its middle on the event's middle; the edge which left the event now leaves the marker, and
+   nothing else moves. Section 3 of the architecture is corrected.
+6. **What the engine follows.** It walks a model by the `outgoing` references of a flow node
+   (`OutgoingAssociationsIDs` of `TFlowNode`), not by `sourceRef`. The marker takes over both: the
+   event's `outgoing` references move to the marker, every flow whose `sourceRef` names the event
+   leaves the marker, and the event gets one `outgoing` reference of the new flow.
+7. **The claims of instruction 2, proven at the pin** (`ZenBpmMarkerTasksIT`): the marker's job
+   carries the instance's variables; an instance started by a request without a business key, and
+   one started by a message, carry no business key; a variable written into the instance while it
+   waits at the marker reaches the task behind it. A timer start with a duration needs an instance
+   (`missing processInstanceKey for timer start event with duration`), so a timer which starts a
+   workflow uses `timeDate` or `timeCycle`; the IT of S9.3.1 uses `R1/PT2S`.
+8. **A process called on an aggregate of its own** (open question 2 of the brief): built with
+   S9.3.1, see its fit check.
+9. GAPS 8 is entered under the plan's number, marked *planned* until the commit of S9.3.1.
+
 **Tests**: `ZenBpmMarkerTasksTest` with fixtures: none/error/terminate end events, two end events,
 end and start events inside a sub-process and an event sub-process left alone, a none, a message and
 a timer start each getting a marker, a called process getting neither marker, a process nobody

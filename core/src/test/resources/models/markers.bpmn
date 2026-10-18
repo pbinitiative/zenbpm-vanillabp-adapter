@@ -1,0 +1,190 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL"
+    xmlns:zenbpm="http://zenbpm.pbinitiative.org/1.0" id="markers" targetNamespace="http://bpmn.io/schema/bpmn"
+    xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI"
+    xmlns:dc="http://www.omg.org/spec/DD/20100524/DC"
+    xmlns:di="http://www.omg.org/spec/DD/20100524/DI">
+  <bpmn:message id="Message_Ordered" name="ordered" />
+  <bpmn:message id="Message_Complaint" name="complaint">
+    <bpmn:extensionElements>
+      <zenbpm:subscription correlationKey="=orderId" />
+    </bpmn:extensionElements>
+  </bpmn:message>
+  <bpmn:error id="Error_Lost" name="Lost" errorCode="lost" />
+  <bpmn:process id="Orders" isExecutable="true">
+    <bpmn:startEvent id="Plain" name="Order placed">
+      <bpmn:outgoing>Flow_Plain</bpmn:outgoing>
+    </bpmn:startEvent>
+    <bpmn:startEvent id="ByMessage" name="Order received">
+      <bpmn:outgoing>Flow_ByMessage</bpmn:outgoing>
+      <bpmn:messageEventDefinition id="ByMessage_Definition" messageRef="Message_Ordered" />
+    </bpmn:startEvent>
+    <bpmn:startEvent id="ByTimer" name="Order due">
+      <bpmn:outgoing>Flow_ByTimer</bpmn:outgoing>
+      <bpmn:timerEventDefinition id="ByTimer_Definition">
+        <bpmn:timeDate>2099-01-01T00:00:00Z</bpmn:timeDate>
+      </bpmn:timerEventDefinition>
+    </bpmn:startEvent>
+    <bpmn:serviceTask id="Weigh" name="Weigh the parcel">
+      <bpmn:extensionElements>
+        <zenbpm:taskDefinition type="weigh" />
+      </bpmn:extensionElements>
+      <bpmn:incoming>Flow_Plain</bpmn:incoming>
+      <bpmn:incoming>Flow_ByMessage</bpmn:incoming>
+      <bpmn:incoming>Flow_ByTimer</bpmn:incoming>
+      <bpmn:outgoing>Flow_ToPacking</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:subProcess id="Packing" name="Packing">
+      <bpmn:incoming>Flow_ToPacking</bpmn:incoming>
+      <bpmn:outgoing>Flow_ToDecide</bpmn:outgoing>
+      <bpmn:startEvent id="Packing_Start">
+        <bpmn:outgoing>Flow_Packing</bpmn:outgoing>
+      </bpmn:startEvent>
+      <bpmn:endEvent id="Packing_End">
+        <bpmn:incoming>Flow_Packing</bpmn:incoming>
+      </bpmn:endEvent>
+      <bpmn:sequenceFlow id="Flow_Packing" sourceRef="Packing_Start" targetRef="Packing_End" />
+    </bpmn:subProcess>
+    <bpmn:exclusiveGateway id="Decide" default="Flow_ToShipped">
+      <bpmn:incoming>Flow_ToDecide</bpmn:incoming>
+      <bpmn:outgoing>Flow_ToShipped</bpmn:outgoing>
+      <bpmn:outgoing>Flow_ToRejected</bpmn:outgoing>
+      <bpmn:outgoing>Flow_ToLost</bpmn:outgoing>
+    </bpmn:exclusiveGateway>
+    <bpmn:endEvent id="Shipped" name="Shipped">
+      <bpmn:incoming>Flow_ToShipped</bpmn:incoming>
+    </bpmn:endEvent>
+    <bpmn:endEvent id="Rejected" name="Rejected">
+      <bpmn:incoming>Flow_ToRejected</bpmn:incoming>
+      <bpmn:terminateEventDefinition id="Rejected_Definition" />
+    </bpmn:endEvent>
+    <bpmn:endEvent id="Lost" name="Lost">
+      <bpmn:incoming>Flow_ToLost</bpmn:incoming>
+      <bpmn:errorEventDefinition id="Lost_Definition" errorRef="Error_Lost" />
+    </bpmn:endEvent>
+    <bpmn:subProcess id="Complaints" triggeredByEvent="true">
+      <bpmn:startEvent id="Complaint" isInterrupting="false">
+        <bpmn:outgoing>Flow_Complaint</bpmn:outgoing>
+        <bpmn:messageEventDefinition id="Complaint_Definition" messageRef="Message_Complaint" />
+      </bpmn:startEvent>
+      <bpmn:endEvent id="Complaint_End">
+        <bpmn:incoming>Flow_Complaint</bpmn:incoming>
+      </bpmn:endEvent>
+      <bpmn:sequenceFlow id="Flow_Complaint" sourceRef="Complaint" targetRef="Complaint_End" />
+    </bpmn:subProcess>
+    <bpmn:sequenceFlow id="Flow_Plain" sourceRef="Plain" targetRef="Weigh" />
+    <bpmn:sequenceFlow id="Flow_ByMessage" sourceRef="ByMessage" targetRef="Weigh" />
+    <bpmn:sequenceFlow id="Flow_ByTimer" sourceRef="ByTimer" targetRef="Weigh" />
+    <bpmn:sequenceFlow id="Flow_ToPacking" sourceRef="Weigh" targetRef="Packing" />
+    <bpmn:sequenceFlow id="Flow_ToDecide" sourceRef="Packing" targetRef="Decide" />
+    <bpmn:sequenceFlow id="Flow_ToShipped" sourceRef="Decide" targetRef="Shipped" />
+    <bpmn:sequenceFlow id="Flow_ToRejected" sourceRef="Decide" targetRef="Rejected">
+      <bpmn:conditionExpression>=rejected = true</bpmn:conditionExpression>
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="Flow_ToLost" sourceRef="Decide" targetRef="Lost">
+      <bpmn:conditionExpression>=lost = true</bpmn:conditionExpression>
+    </bpmn:sequenceFlow>
+  </bpmn:process>
+  <bpmndi:BPMNDiagram id="BPMNDiagram_1">
+    <bpmndi:BPMNPlane id="BPMNPlane_1" bpmnElement="Orders">
+      <bpmndi:BPMNShape id="Plain_di" bpmnElement="Plain">
+        <dc:Bounds x="160" y="80" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="ByMessage_di" bpmnElement="ByMessage">
+        <dc:Bounds x="160" y="166" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="ByTimer_di" bpmnElement="ByTimer">
+        <dc:Bounds x="160" y="252" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Weigh_di" bpmnElement="Weigh">
+        <dc:Bounds x="256" y="80" width="100" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Packing_di" bpmnElement="Packing" isExpanded="true">
+        <dc:Bounds x="416" y="80" width="200" height="120" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Packing_Start_di" bpmnElement="Packing_Start">
+        <dc:Bounds x="446" y="110" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Packing_End_di" bpmnElement="Packing_End">
+        <dc:Bounds x="542" y="110" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Decide_di" bpmnElement="Decide">
+        <dc:Bounds x="676" y="80" width="50" height="50" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Shipped_di" bpmnElement="Shipped">
+        <dc:Bounds x="786" y="80" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Rejected_di" bpmnElement="Rejected">
+        <dc:Bounds x="786" y="166" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Lost_di" bpmnElement="Lost">
+        <dc:Bounds x="786" y="252" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Complaints_di" bpmnElement="Complaints" isExpanded="true">
+        <dc:Bounds x="160" y="338" width="200" height="120" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Complaint_di" bpmnElement="Complaint">
+        <dc:Bounds x="190" y="368" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Complaint_End_di" bpmnElement="Complaint_End">
+        <dc:Bounds x="286" y="368" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNEdge id="Flow_Packing_di" bpmnElement="Flow_Packing">
+        <di:waypoint x="482" y="128" />
+        <di:waypoint x="542" y="128" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_Complaint_di" bpmnElement="Flow_Complaint">
+        <di:waypoint x="226" y="386" />
+        <di:waypoint x="286" y="386" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_Plain_di" bpmnElement="Flow_Plain">
+        <di:waypoint x="196" y="98" />
+        <di:waypoint x="226" y="98" />
+        <di:waypoint x="226" y="120" />
+        <di:waypoint x="256" y="120" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_ByMessage_di" bpmnElement="Flow_ByMessage">
+        <di:waypoint x="196" y="184" />
+        <di:waypoint x="226" y="184" />
+        <di:waypoint x="226" y="120" />
+        <di:waypoint x="256" y="120" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_ByTimer_di" bpmnElement="Flow_ByTimer">
+        <di:waypoint x="196" y="270" />
+        <di:waypoint x="226" y="270" />
+        <di:waypoint x="226" y="120" />
+        <di:waypoint x="256" y="120" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_ToPacking_di" bpmnElement="Flow_ToPacking">
+        <di:waypoint x="356" y="120" />
+        <di:waypoint x="386" y="120" />
+        <di:waypoint x="386" y="140" />
+        <di:waypoint x="416" y="140" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_ToDecide_di" bpmnElement="Flow_ToDecide">
+        <di:waypoint x="616" y="140" />
+        <di:waypoint x="646" y="140" />
+        <di:waypoint x="646" y="105" />
+        <di:waypoint x="676" y="105" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_ToShipped_di" bpmnElement="Flow_ToShipped">
+        <di:waypoint x="726" y="105" />
+        <di:waypoint x="756" y="105" />
+        <di:waypoint x="756" y="98" />
+        <di:waypoint x="786" y="98" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_ToRejected_di" bpmnElement="Flow_ToRejected">
+        <di:waypoint x="726" y="105" />
+        <di:waypoint x="756" y="105" />
+        <di:waypoint x="756" y="184" />
+        <di:waypoint x="786" y="184" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_ToLost_di" bpmnElement="Flow_ToLost">
+        <di:waypoint x="726" y="105" />
+        <di:waypoint x="756" y="105" />
+        <di:waypoint x="756" y="270" />
+        <di:waypoint x="786" y="270" />
+      </bpmndi:BPMNEdge>
+    </bpmndi:BPMNPlane>
+  </bpmndi:BPMNDiagram>
+</bpmn:definitions>

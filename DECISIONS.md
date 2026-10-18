@@ -302,6 +302,38 @@ finds the id and answers `created() == false`. A crash between the commit of the
 deterministic; Camunda 8 has the same window. Until then, a workflow the engine starts gets no
 aggregate.
 
+### 26. Lifecycle notifications are marker service tasks after every start event and before every end event
+
+The engine has no execution listeners and no event stream (GAPS 8), so the adapter learns about the
+start and the end of a workflow from service tasks of its own which it writes into the model. Their
+jobs are ordinary jobs, delivered at least once, and completing them is what lets the workflow go on
+or end. VanillaBP expects to hear about EVERY start of a workflow, plain and message starts
+included, because a workflow somebody started past VanillaBP needs an aggregate as much as one a
+timer started. So a start marker follows every start event (none, message, timer) of the top-level
+process, wherever `startsAWorkflowOfItsOwn` says the process starts a workflow of its own.
+Sub-processes and event sub-processes get none, because the engine runs them as instances of their
+own, and a called process gets neither marker. An end marker goes in front of every end event of the
+top-level process wherever `workflowEndedHandlerExists` answers yes, which it also does when
+`vanillabp.delivery.release-on-workflow-end` is on. Every start event is reported to
+`validateBpmsInitiatedStarts`, those of called processes included, so the core can refuse a start
+the engine fires by itself where no aggregate could be built. A workflow ends `COMPLETED` or
+`CANCELED`; a cancelled instance passes no marker (GAPS 9). For the application's own start the
+marker finds the name there already, and `created() == false` is the normal answer. The cost is one
+job and one transaction per started workflow, the price VanillaBP names for Camunda 8.
+
+What markers cannot report: a workflow of a version deployed before the markers existed passes
+none, so it gets no `@WorkflowEnded` and writes no start row. Polling the states of the instances
+was rejected, because it grows with the number of instances and cannot name the end event, and so
+was reading the engine's database, a schema of another product.
+
+The plan drafted decision 5 for markers at timer starts and ends only. This entry replaced it
+before any code relied on it, so decision 5 never entered this log.
+
+*Decided by the implementation pipeline in place of the maintainers:* the end marker is written in
+the same change as the handler which serves its job. A marker nobody serves stops every workflow in
+front of its end event, so until that change no end marker is written, and an application is told
+nothing about the end of a workflow.
+
 ### 27. A failed handler is failed at the engine, with retries and backoff
 
 Since the engine counts retries and waits a backoff (engine commit `bc3384b3`, contained in the
@@ -810,3 +842,36 @@ and where the workflow, after the incident was resolved, waits for the same mess
 key within that window, a repetition is received a second time. A contract test of the client holds
 the engine's answer, so a version of the engine which answers otherwise is noticed when the pin
 moves.
+
+### 44. The start markers are written while wiring, under a job type which names the process
+
+Decided by the implementation pipeline in place of the maintainers, as their policy for the
+autonomous run asks.
+
+The markers of decision 26 are written in `wireBpmn`, right after `validateTaskWiring` of the
+process, and not while preparing, as the plan had it. The core answers `startsAWorkflowOfItsOwn`
+by whether the wiring of the process was validated (`isACalledProcess` of the platform's
+`WorkflowTaskRegistry`), so asked in `prepareBpmn` it answers yes for a called process as well, and
+the called process would get a start marker which hands the core a name its aggregate does not
+know. The Camunda 8 adapter writes its start listener at the same point. A process nobody claims is
+not wired, so it gets no marker.
+
+The job type of the start markers of a process is `vanillabp__started__` followed by the id under
+which the engine holds the process, one type per process and the same in every mode of
+name-clash avoidance. `scopedTaskDefinition` would give every process the plain type
+`vanillabp__started` under `none`, so the markers of every application which deploys to the engine
+under `none` would share one type, and the job of another application's marker would wait out its
+lock at a node which cannot serve it. The listener types of the Camunda 8 adapter carry the process
+id for the same reason.
+
+What is written carries ids which start with `vanillabp__`: a marker is
+`vanillabp__started__<start event id>`, the flow from the start event to it the marker's id
+followed by `__flow`. Where an element of the marker's id exists, nothing is written, so a model
+which carries its markers is left as it is. The marker takes over every flow which left the start
+event, those named by the event's `outgoing`, which the engine follows, and those whose `sourceRef`
+names it. It is drawn as a shape of 60 by 40 points, its left edge 80 points right of the start
+event's left edge and its middle on the start event's middle, and the edge which left the start
+event leaves the marker. Nothing else of the diagram is moved, so a marker may cover an element the
+modeller put closer than that; the plan's architecture had the shape copied from its neighbour,
+which would cover the neighbour whole. A model without a shape for the start event gets none for
+its marker.
