@@ -264,8 +264,10 @@ fit, and what was decided:
    `result.variables()` where `created()`. The core also answers `created() == false` for an
    instance which carries only a business key, and where the application's method named the
    workflow after an aggregate which exists; both instances would go on without the id variable
-   their tasks and correlation keys read. So the handler writes wherever the job's variables do not
-   carry the result's id under its name, and completes the job without variables. The
+   their tasks and correlation keys read. So the handler writes wherever the instance does not
+   carry the result's id under its name, read from the instance and not from the job, whose
+   variables are those of its creation (corrected after the reviews, see their answers below), and
+   completes the job without variables. The
    application's own start carries the id and writes nothing (open question 4: the cost is the job
    and the transaction; the README says so, `ZenBpmBpmsInitiatedStartHandlerTest#theApplicationsOwnStartWritesNothing`
    holds it). Camunda 8 completes its listener job with the variables every time.

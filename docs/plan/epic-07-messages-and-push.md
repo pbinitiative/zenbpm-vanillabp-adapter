@@ -341,7 +341,8 @@ the core hands that key to every election about the workflow (decision 25).
 every start event of a process which starts a workflow of its own (decisions 26 and 44). Its job
 hands the core the job's instance key as `nativeInstanceId`, and the core writes it into the start
 row of the aggregate the instance names, or of the one the application's method built; the adapter
-writes the id into the instance only where the job's variables do not carry it (decision 46).
+writes the id into the instance only where the instance does not carry it yet, read from the
+instance and not from the job, whose variables are those of its creation (decision 46).
 Where this story's message carries the id variable, as the start by request does, the marker of
 such a start writes nothing, and the start row holds the instance key all the same.
 
