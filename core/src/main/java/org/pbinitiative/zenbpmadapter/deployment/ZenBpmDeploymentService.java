@@ -581,11 +581,12 @@ public class ZenBpmDeploymentService implements AdapterDeploymentService<ZenBpmB
      * deployment with the engine's reason, naming file, workflow module and process; any other
      * failure names file and engine address. The engine keeps the files it took before, because it
      * deploys one file per request. Only where it took every file are the versions registered with
-     * the platform and remembered in {@link ZenBpmClientFactory#deployedProcesses()}; the
-     * identifiers the files declare go to the platform, which warns where two workflow modules
-     * share one. Which of them the engine held before is not reported: a definition carries no
-     * owner, so this application's own earlier deployments could not be told from those of another
-     * application.
+     * the platform and remembered in {@link ZenBpmClientFactory#deployedProcesses()}, together
+     * with the messages every version the engine holds of those processes waits for and starts
+     * with, see {@link ZenBpmHeldMessages}; the identifiers the files declare go to the platform,
+     * which warns where two workflow modules share one. Which of them the engine held before is not
+     * reported: a definition carries no owner, so this application's own earlier deployments could
+     * not be told from those of another application.
      *
      * @param workflowModuleId The workflow module
      * @param context The context its files were prepared into
@@ -642,6 +643,14 @@ public class ZenBpmDeploymentService implements AdapterDeploymentService<ZenBpmB
                     .deployedProcesses()
                     .record(version);
         });
+        if (!versions.isEmpty()) {
+            final var heldMessages = new ZenBpmHeldMessages(adapterId, factory);
+            final var messages = heldMessages.of(workflowModuleId, versions);
+            factory
+                    .deployedProcesses()
+                    .recordMessages(workflowModuleId, messages, () -> heldMessages.again(workflowModuleId, messages
+                            .scopedBpmnProcessIds()));
+        }
         log.info("ZenBPM[{}]: workflow module '{}' is deployed to the engine at {}:\n  {}", adapterId,
                 workflowModuleId, factory
                         .configuration()

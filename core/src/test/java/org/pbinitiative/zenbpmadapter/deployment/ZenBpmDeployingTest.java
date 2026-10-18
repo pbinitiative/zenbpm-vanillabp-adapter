@@ -13,7 +13,9 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import java.io.ByteArrayInputStream;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import org.junit.jupiter.api.AfterEach;
@@ -26,12 +28,16 @@ import org.pbinitiative.zenbpmadapter.TestScoping;
 import org.pbinitiative.zenbpmadapter.TestStarts;
 import org.pbinitiative.zenbpmadapter.TestWiring;
 import org.pbinitiative.zenbpmadapter.ZenBpmDeployedProcesses;
+import org.pbinitiative.zenbpmadapter.ZenBpmDeployedProcesses.ModuleMessages;
 import org.pbinitiative.zenbpmadapter.ZenBpmProcessingContext;
 import org.pbinitiative.zenbpmadapter.client.FakeEngine;
 import org.pbinitiative.zenbpmadapter.client.ZenBpmAdapterConfiguration;
 import org.pbinitiative.zenbpmadapter.client.ZenBpmApiException;
 import org.pbinitiative.zenbpmadapter.client.ZenBpmClientFactory;
 import org.pbinitiative.zenbpmadapter.client.ZenBpmClientRegistry;
+
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
 
 import io.vanillabp.integration.adapter.spi.NameClashAvoidance;
 import io.vanillabp.integration.test.utils.CapturedOutput;
@@ -47,6 +53,8 @@ import io.vanillabp.integration.test.utils.SuppressOutputExtension;
 class ZenBpmDeployingTest {
 
     private static final String ADAPTER_ID = "orders";
+
+    private static final ObjectMapper JSON = new ObjectMapper();
 
     private static final String ORDER = """
             <?xml version="1.0" encoding="UTF-8"?>
@@ -277,6 +285,162 @@ class ZenBpmDeployingTest {
         }
     }
 
+    @Test
+    @DisplayName("The messages every version the engine holds of a deployed process waits for are remembered for the workflow module, as the engine holds them, and those the deployed version starts with, not those of an older one; the deployed version is read from the answer of the deployment")
+    void theMessagesOfEveryHeldVersionAreRemembered() throws Exception {
+        engine.answers("POST", "/v1/process-definitions", 201, "{\"processDefinitionKey\":11}");
+        engine.answers("GET", "/v1/process-definitions/11", 200, definition(11, 2, heldOrder("shop__paid")));
+        engine.answers("GET", "/v1/process-definitions", 200, """
+                {"items": [{"key": 9, "version": 1, "bpmnProcessId": "shop__Order"},
+                           {"key": 11, "version": 2, "bpmnProcessId": "shop__Order"}], "totalCount": 2}""");
+        engine.answers("GET", "/v1/process-definitions/9", 200, definition(9, 1, heldOrder("shop__settled")
+                .replace("<bpmn:process id=\"shop__Order\" isExecutable=\"true\">", """
+                        <bpmn:message id="Message_Ordered" name="shop__ordered" />
+                        <bpmn:process id="shop__Order" isExecutable="true">
+                          <bpmn:startEvent id="Ordered">
+                            <bpmn:messageEventDefinition messageRef="Message_Ordered" />
+                          </bpmn:startEvent>""")));
+
+        try (var registry = registry()) {
+            final var deploymentService = deploymentService(registry, TestScoping.of(NameClashAvoidance.USE_PREFIX),
+                    TestWiring.claiming("Order"));
+            deploymentService.deployResources("shop", prepared(deploymentService, ORDER));
+
+            assertAll(
+                    () -> assertEquals(Optional.of(new ModuleMessages(List.of("shop__Order"), Set.of("shop__paid",
+                            "shop__settled"), Set.of(), List.of())), deployedProcesses(registry)
+                                    .messagesOf("shop")),
+                    () -> assertEquals(List.of(
+                            "GET /v1/process-definitions/11",
+                            "GET /v1/process-definitions",
+                            "GET /v1/process-definitions/9"),
+                            engine
+                                    .requests()
+                                    .stream()
+                                    .map(request -> "%s %s".formatted(request.method(), request.path()))
+                                    .filter(request -> request.startsWith("GET /v1/process-definitions"))
+                                    .toList()));
+        }
+    }
+
+    @Test
+    @DisplayName("Read again, every version the engine holds now is read, a version another node deployed since included, and the newest one's start messages count, not those of the version this start deployed")
+    void readAgainEveryVersionTheEngineHoldsNowIsRead() throws Exception {
+        engine.answers("POST", "/v1/process-definitions", 201, "{\"processDefinitionKey\":11}");
+        engine.answers("GET", "/v1/process-definitions/11", 200, definition(11, 1, heldOrder("shop__paid")
+                .replace("<bpmn:process id=\"shop__Order\" isExecutable=\"true\">", """
+                        <bpmn:message id="Message_Ordered" name="shop__ordered" />
+                        <bpmn:process id="shop__Order" isExecutable="true">
+                          <bpmn:startEvent id="Ordered">
+                            <bpmn:messageEventDefinition messageRef="Message_Ordered" />
+                          </bpmn:startEvent>""")));
+
+        try (var registry = registry()) {
+            final var deploymentService = deploymentService(registry, TestScoping.of(NameClashAvoidance.USE_PREFIX),
+                    TestWiring.claiming("Order"));
+            deploymentService.deployResources("shop", prepared(deploymentService, ORDER));
+            final var keptWhileDeploying = deployedProcesses(registry).messagesOf("shop");
+            // another node deploys the next version
+            engine.answers("GET", "/v1/process-definitions", 200, """
+                    {"items": [{"key": 11, "version": 1, "bpmnProcessId": "shop__Order"},
+                               {"key": 12, "version": 2, "bpmnProcessId": "shop__Order"}], "totalCount": 2}""");
+            engine.answers("GET", "/v1/process-definitions/12", 200, definition(12, 2, heldOrder("shop__settled")
+                    .replace("<bpmn:process id=\"shop__Order\" isExecutable=\"true\">", """
+                            <bpmn:message id="Message_Returned" name="shop__returned" />
+                            <bpmn:process id="shop__Order" isExecutable="true">
+                              <bpmn:startEvent id="Returned">
+                                <bpmn:messageEventDefinition messageRef="Message_Returned" />
+                              </bpmn:startEvent>""")));
+
+            final var readAgain = deployedProcesses(registry).messagesReadAgain("shop");
+
+            assertAll(
+                    () -> assertEquals(Optional.of(new ModuleMessages(List.of("shop__Order"), Set.of("shop__paid"), Set
+                            .of("shop__ordered"), List.of())), keptWhileDeploying),
+                    () -> assertEquals(Optional.of(new ModuleMessages(List.of("shop__Order"), Set.of("shop__paid",
+                            "shop__settled"), Set.of("shop__returned"), List.of())), readAgain),
+                    () -> assertEquals(readAgain, deployedProcesses(registry).messagesOf("shop")));
+        }
+    }
+
+    @Test
+    @DisplayName("Read again, versions the engine does not hand out are named with the reason")
+    void versionsWhichCannotBeReadAgainAreNamed() throws Exception {
+        engine.answers("POST", "/v1/process-definitions", 201, "{\"processDefinitionKey\":11}");
+        engine.answers("GET", "/v1/process-definitions/11", 200, definition(11, 1, heldOrder("shop__paid")));
+
+        try (var registry = registry()) {
+            final var deploymentService = deploymentService(registry, TestScoping.of(NameClashAvoidance.USE_PREFIX),
+                    TestWiring.claiming("Order"));
+            deploymentService.deployResources("shop", prepared(deploymentService, ORDER));
+            engine.answers("GET", "/v1/process-definitions", 500, """
+                    {"code":"TECHNICAL_ERROR","message":"database is locked"}""");
+
+            assertEquals(Optional.of(new ModuleMessages(List.of("shop__Order"), Set.of(), Set.of(), List.of(
+                    "the versions of process 'shop__Order' (GET /v1/process-definitions was answered with status 500, TECHNICAL_ERROR: database is locked)"))),
+                    deployedProcesses(registry).messagesReadAgain("shop"));
+        }
+    }
+
+    @Test
+    @DisplayName("The first version of a process is the only one, so nothing more is asked; a module which deployed no process remembers no messages")
+    void aFirstVersionIsTheOnlyOne() throws Exception {
+        engine.answers("POST", "/v1/process-definitions", 201, "{\"processDefinitionKey\":11}");
+        engine.answers("GET", "/v1/process-definitions/11", 200, definition(11, 1, heldOrder("shop__paid")));
+        engine.answers("POST", "/v1/dmn-resource-definitions", 200, "{\"dmnResourceDefinitionKey\":21}");
+
+        try (var registry = registry()) {
+            final var deploymentService = deploymentService(registry, TestScoping.of(NameClashAvoidance.USE_PREFIX),
+                    TestWiring.claiming("Order"));
+            deploymentService.deployResources("shop", prepared(deploymentService, ORDER));
+            deploymentService.deployResources("rates", deploymentService.readDmn("rates", new ZenBpmProcessingContext(
+                    "rates"), "rating.dmn",
+                    new ByteArrayInputStream(DMN.getBytes(StandardCharsets.UTF_8))));
+
+            assertAll(
+                    () -> assertEquals(Optional.of(new ModuleMessages(List.of("shop__Order"), Set.of("shop__paid"), Set
+                            .of(), List.of())), deployedProcesses(registry).messagesOf("shop")),
+                    () -> assertEquals(Optional.empty(), deployedProcesses(registry).messagesOf("rates")),
+                    () -> assertTrue(engine
+                            .requests()
+                            .stream()
+                            .noneMatch(request -> "/v1/process-definitions".equals(request.path()) && "GET".equals(
+                                    request.method())),
+                            engine
+                                    .requests()::toString));
+        }
+    }
+
+    @Test
+    @DisplayName("Versions the engine does not hand out are named with the reason, in the result and in a WARN which says that correlations are not refused then; what was read counts all the same")
+    void versionsWhichCannotBeReadAreNamed(final CapturedOutput output) throws Exception {
+        engine.answers("POST", "/v1/process-definitions", 201, "{\"processDefinitionKey\":11}");
+        engine.answers("GET", "/v1/process-definitions/11", 200, definition(11, 2, heldOrder("shop__paid")));
+        engine.answers("GET", "/v1/process-definitions", 500, """
+                {"code":"TECHNICAL_ERROR","message":"database is locked"}""");
+
+        try (var registry = registry()) {
+            final var deploymentService = deploymentService(registry, TestScoping.of(NameClashAvoidance.USE_PREFIX),
+                    TestWiring.claiming("Order"));
+            deploymentService.deployResources("shop", prepared(deploymentService, ORDER));
+
+            final var unread = "the versions of process 'shop__Order' (GET /v1/process-definitions was answered with status 500, TECHNICAL_ERROR: database is locked)";
+            assertAll(
+                    () -> assertEquals(Optional.of(new ModuleMessages(List.of("shop__Order"), Set.of("shop__paid"), Set
+                            .of(), List.of(unread))), deployedProcesses(registry).messagesOf("shop")),
+                    () -> assertTrue(output
+                            .getAllOfThisTest()
+                            .contains(
+                                    """
+                                            ZenBPM[orders]: %s of workflow module 'shop' could not be read, so a correlation of a \
+                                            message which the models read do not wait for is not refused when the application \
+                                            calls: it is published, and the outbox repeats it for as long as nothing waits for \
+                                            it. The next start of the application reads them again."""
+                                            .formatted(unread)),
+                            output::getAllOfThisTest));
+        }
+    }
+
     private static ZenBpmDeployedProcesses deployedProcesses(final ZenBpmClientRegistry registry) {
         return registry
                 .getFactory(ADAPTER_ID)
@@ -296,6 +460,28 @@ class ZenBpmDeployingTest {
     ) {
         return new ZenBpmDeploymentService(ADAPTER_ID, registry, TestCollaborators.of(ADAPTER_ID, scoping, wiring
                 .wiring(), TestStarts.everyProcessStartingAWorkflow()));
+    }
+
+    private static String definition(
+        final long key,
+        final int version,
+        final String bpmn
+    ) throws JsonProcessingException {
+        return JSON.writeValueAsString(Map.of("key", key, "version", version, "bpmnProcessId", "shop__Order",
+                "bpmnData", bpmn));
+    }
+
+    // the process as the engine holds it after a deployment under use-prefix, waiting for one message
+    private static String heldOrder(final String messageName) {
+        return """
+                <?xml version="1.0" encoding="UTF-8"?>
+                <bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" id="order">
+                  <bpmn:message id="Message_Paid" name="%s" />
+                  <bpmn:process id="shop__Order" isExecutable="true">
+                    <bpmn:receiveTask id="AwaitPayment" messageRef="Message_Paid" />
+                  </bpmn:process>
+                </bpmn:definitions>
+                """.formatted(messageName);
     }
 
     private static ZenBpmProcessingContext prepared(

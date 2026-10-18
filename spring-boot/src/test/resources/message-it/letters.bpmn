@@ -1,0 +1,201 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" id="message-it-letters"
+    xmlns:zenbpm="http://zenbpm.pbinitiative.org/1.0" targetNamespace="http://bpmn.io/schema/bpmn"
+    xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI"
+    xmlns:dc="http://www.omg.org/spec/DD/20100524/DC"
+    xmlns:di="http://www.omg.org/spec/DD/20100524/DI">
+  <bpmn:message id="Message_GoAhead" name="goAhead" />
+  <bpmn:message id="Message_ReviewedByTheFirst" name="reviewed">
+    <bpmn:extensionElements>
+      <zenbpm:subscription correlationKey="=firstReviewer" />
+    </bpmn:extensionElements>
+  </bpmn:message>
+  <bpmn:message id="Message_ReviewedByTheSecond" name="reviewed">
+    <bpmn:extensionElements>
+      <zenbpm:subscription correlationKey="=secondReviewer" />
+    </bpmn:extensionElements>
+  </bpmn:message>
+  <bpmn:process id="Letters" isExecutable="true">
+    <bpmn:startEvent id="Written">
+      <bpmn:outgoing>Flow_ToScenario</bpmn:outgoing>
+    </bpmn:startEvent>
+    <bpmn:exclusiveGateway id="Scenario">
+      <bpmn:incoming>Flow_ToScenario</bpmn:incoming>
+      <bpmn:outgoing>Flow_ToAwaitGoAhead</bpmn:outgoing>
+      <bpmn:outgoing>Flow_ToWaitAWhile</bpmn:outgoing>
+      <bpmn:outgoing>Flow_ToSplit</bpmn:outgoing>
+    </bpmn:exclusiveGateway>
+    <bpmn:receiveTask id="AwaitGoAhead" name="Await the go-ahead" messageRef="Message_GoAhead">
+      <bpmn:incoming>Flow_ToAwaitGoAhead</bpmn:incoming>
+      <bpmn:outgoing>Flow_ToSent</bpmn:outgoing>
+    </bpmn:receiveTask>
+    <bpmn:endEvent id="Sent">
+      <bpmn:incoming>Flow_ToSent</bpmn:incoming>
+    </bpmn:endEvent>
+    <bpmn:intermediateCatchEvent id="WaitAWhile" name="Five seconds">
+      <bpmn:incoming>Flow_ToWaitAWhile</bpmn:incoming>
+      <bpmn:outgoing>Flow_ToAwaitGoAheadLater</bpmn:outgoing>
+      <bpmn:timerEventDefinition id="WaitAWhile_Definition">
+        <bpmn:timeDuration>PT5S</bpmn:timeDuration>
+      </bpmn:timerEventDefinition>
+    </bpmn:intermediateCatchEvent>
+    <bpmn:receiveTask id="AwaitGoAheadLater" name="Await the go-ahead later" messageRef="Message_GoAhead">
+      <bpmn:incoming>Flow_ToAwaitGoAheadLater</bpmn:incoming>
+      <bpmn:outgoing>Flow_ToSentLater</bpmn:outgoing>
+    </bpmn:receiveTask>
+    <bpmn:endEvent id="SentLater">
+      <bpmn:incoming>Flow_ToSentLater</bpmn:incoming>
+    </bpmn:endEvent>
+    <bpmn:parallelGateway id="Split">
+      <bpmn:incoming>Flow_ToSplit</bpmn:incoming>
+      <bpmn:outgoing>Flow_ToFirstReview</bpmn:outgoing>
+      <bpmn:outgoing>Flow_ToSecondReview</bpmn:outgoing>
+    </bpmn:parallelGateway>
+    <bpmn:receiveTask id="FirstReview" name="Await the first review" messageRef="Message_ReviewedByTheFirst">
+      <bpmn:incoming>Flow_ToFirstReview</bpmn:incoming>
+      <bpmn:outgoing>Flow_FromFirstReview</bpmn:outgoing>
+    </bpmn:receiveTask>
+    <bpmn:receiveTask id="SecondReview" name="Await the second review" messageRef="Message_ReviewedByTheSecond">
+      <bpmn:incoming>Flow_ToSecondReview</bpmn:incoming>
+      <bpmn:outgoing>Flow_FromSecondReview</bpmn:outgoing>
+    </bpmn:receiveTask>
+    <bpmn:parallelGateway id="Join">
+      <bpmn:incoming>Flow_FromFirstReview</bpmn:incoming>
+      <bpmn:incoming>Flow_FromSecondReview</bpmn:incoming>
+      <bpmn:outgoing>Flow_ToReviewed</bpmn:outgoing>
+    </bpmn:parallelGateway>
+    <bpmn:endEvent id="Reviewed">
+      <bpmn:incoming>Flow_ToReviewed</bpmn:incoming>
+    </bpmn:endEvent>
+    <bpmn:sequenceFlow id="Flow_ToScenario" sourceRef="Written" targetRef="Scenario" />
+    <bpmn:sequenceFlow id="Flow_ToAwaitGoAhead" sourceRef="Scenario" targetRef="AwaitGoAhead">
+      <bpmn:conditionExpression>=scenario = "await"</bpmn:conditionExpression>
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="Flow_ToWaitAWhile" sourceRef="Scenario" targetRef="WaitAWhile">
+      <bpmn:conditionExpression>=scenario = "delay"</bpmn:conditionExpression>
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="Flow_ToSplit" sourceRef="Scenario" targetRef="Split">
+      <bpmn:conditionExpression>=scenario = "review"</bpmn:conditionExpression>
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="Flow_ToSent" sourceRef="AwaitGoAhead" targetRef="Sent" />
+    <bpmn:sequenceFlow id="Flow_ToAwaitGoAheadLater" sourceRef="WaitAWhile" targetRef="AwaitGoAheadLater" />
+    <bpmn:sequenceFlow id="Flow_ToSentLater" sourceRef="AwaitGoAheadLater" targetRef="SentLater" />
+    <bpmn:sequenceFlow id="Flow_ToFirstReview" sourceRef="Split" targetRef="FirstReview" />
+    <bpmn:sequenceFlow id="Flow_ToSecondReview" sourceRef="Split" targetRef="SecondReview" />
+    <bpmn:sequenceFlow id="Flow_FromFirstReview" sourceRef="FirstReview" targetRef="Join" />
+    <bpmn:sequenceFlow id="Flow_FromSecondReview" sourceRef="SecondReview" targetRef="Join" />
+    <bpmn:sequenceFlow id="Flow_ToReviewed" sourceRef="Join" targetRef="Reviewed" />
+  </bpmn:process>
+  <bpmndi:BPMNDiagram id="BPMNDiagram_1">
+    <bpmndi:BPMNPlane id="BPMNPlane_1" bpmnElement="Letters">
+      <bpmndi:BPMNShape id="Written_di" bpmnElement="Written">
+        <dc:Bounds x="160" y="80" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Scenario_di" bpmnElement="Scenario">
+        <dc:Bounds x="256" y="80" width="50" height="50" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="AwaitGoAhead_di" bpmnElement="AwaitGoAhead">
+        <dc:Bounds x="366" y="80" width="100" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="WaitAWhile_di" bpmnElement="WaitAWhile">
+        <dc:Bounds x="398" y="210" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Split_di" bpmnElement="Split">
+        <dc:Bounds x="391" y="296" width="50" height="50" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Sent_di" bpmnElement="Sent">
+        <dc:Bounds x="558" y="80" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="AwaitGoAheadLater_di" bpmnElement="AwaitGoAheadLater">
+        <dc:Bounds x="526" y="166" width="100" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="FirstReview_di" bpmnElement="FirstReview">
+        <dc:Bounds x="526" y="296" width="100" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="SecondReview_di" bpmnElement="SecondReview">
+        <dc:Bounds x="526" y="426" width="100" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="SentLater_di" bpmnElement="SentLater">
+        <dc:Bounds x="693" y="80" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Join_di" bpmnElement="Join">
+        <dc:Bounds x="686" y="166" width="50" height="50" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Reviewed_di" bpmnElement="Reviewed">
+        <dc:Bounds x="796" y="80" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNEdge id="Flow_ToScenario_di" bpmnElement="Flow_ToScenario">
+        <di:waypoint x="196" y="98" />
+        <di:waypoint x="226" y="98" />
+        <di:waypoint x="226" y="105" />
+        <di:waypoint x="256" y="105" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_ToAwaitGoAhead_di" bpmnElement="Flow_ToAwaitGoAhead">
+        <di:waypoint x="306" y="105" />
+        <di:waypoint x="336" y="105" />
+        <di:waypoint x="336" y="120" />
+        <di:waypoint x="366" y="120" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_ToWaitAWhile_di" bpmnElement="Flow_ToWaitAWhile">
+        <di:waypoint x="306" y="105" />
+        <di:waypoint x="352" y="105" />
+        <di:waypoint x="352" y="228" />
+        <di:waypoint x="398" y="228" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_ToSplit_di" bpmnElement="Flow_ToSplit">
+        <di:waypoint x="306" y="105" />
+        <di:waypoint x="348" y="105" />
+        <di:waypoint x="348" y="321" />
+        <di:waypoint x="391" y="321" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_ToSent_di" bpmnElement="Flow_ToSent">
+        <di:waypoint x="466" y="120" />
+        <di:waypoint x="512" y="120" />
+        <di:waypoint x="512" y="98" />
+        <di:waypoint x="558" y="98" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_ToAwaitGoAheadLater_di" bpmnElement="Flow_ToAwaitGoAheadLater">
+        <di:waypoint x="434" y="228" />
+        <di:waypoint x="480" y="228" />
+        <di:waypoint x="480" y="206" />
+        <di:waypoint x="526" y="206" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_ToSentLater_di" bpmnElement="Flow_ToSentLater">
+        <di:waypoint x="626" y="206" />
+        <di:waypoint x="659" y="206" />
+        <di:waypoint x="659" y="98" />
+        <di:waypoint x="693" y="98" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_ToFirstReview_di" bpmnElement="Flow_ToFirstReview">
+        <di:waypoint x="441" y="321" />
+        <di:waypoint x="483" y="321" />
+        <di:waypoint x="483" y="336" />
+        <di:waypoint x="526" y="336" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_ToSecondReview_di" bpmnElement="Flow_ToSecondReview">
+        <di:waypoint x="441" y="321" />
+        <di:waypoint x="483" y="321" />
+        <di:waypoint x="483" y="466" />
+        <di:waypoint x="526" y="466" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_FromFirstReview_di" bpmnElement="Flow_FromFirstReview">
+        <di:waypoint x="626" y="336" />
+        <di:waypoint x="656" y="336" />
+        <di:waypoint x="656" y="191" />
+        <di:waypoint x="686" y="191" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_FromSecondReview_di" bpmnElement="Flow_FromSecondReview">
+        <di:waypoint x="626" y="466" />
+        <di:waypoint x="656" y="466" />
+        <di:waypoint x="656" y="191" />
+        <di:waypoint x="686" y="191" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_ToReviewed_di" bpmnElement="Flow_ToReviewed">
+        <di:waypoint x="736" y="191" />
+        <di:waypoint x="766" y="191" />
+        <di:waypoint x="766" y="98" />
+        <di:waypoint x="796" y="98" />
+      </bpmndi:BPMNEdge>
+    </bpmndi:BPMNPlane>
+  </bpmndi:BPMNDiagram>
+</bpmn:definitions>

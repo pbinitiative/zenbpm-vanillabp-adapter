@@ -93,6 +93,7 @@ class ZenBpmRestClientContractIT {
         task = client.deployBpmn(fixture("contract-task.bpmn"));
         client.deployBpmn(fixture("contract-parent.bpmn"));
         client.deployBpmn(fixture("contract-locked.bpmn"));
+        client.deployBpmn(fixture("contract-received.bpmn"));
         decision = client.deployDmn(fixture("contract-decision.dmn"));
     }
 
@@ -370,6 +371,33 @@ class ZenBpmRestClientContractIT {
                 () -> assertEquals(404, failure.getStatus()),
                 () -> assertEquals("POST", failure.getMethod()),
                 () -> assertEquals("/v1/messages", failure.getPath()));
+    }
+
+    @Test
+    @DisplayName("A message which reached the waiting element is answered 404 all the same where the workflow fails right behind it on a process the engine does not hold")
+    void aMessageWhichWasReceivedIsA404WhereTheWorkflowFailsBehindIt() {
+        final var businessKey = uniqueBusinessKey();
+        final var started = client.createInstance(CreateInstanceRequest
+                .latestVersionOf("contract-received")
+                .withBusinessKey(businessKey)
+                .withVariables(Map.of("orderId", businessKey)));
+
+        final var failure = assertThrows(ZenBpmApiException.class, () -> client.publishMessage("contract-taken",
+                businessKey, Map.of()));
+
+        // a 404 of a message nothing waits for would leave the instance waiting, never failed
+        final var failed = eventually(() -> client
+                .instance(started.key())
+                .filter(instance -> instance.state() == ProcessInstanceRef.State.FAILED));
+        final var history = client.history(failed.key(), 1);
+        assertAll(
+                () -> assertEquals(404, failure.getStatus()),
+                () -> assertTrue(ZenBpmErrors.nobodyWaits(failure)),
+                () -> assertTrue(history
+                        .items()
+                        .stream()
+                        .anyMatch(entry -> "Wait_Taken".equals(entry.elementId()) && entry.completedAt() != null),
+                        history::toString));
     }
 
     @Test

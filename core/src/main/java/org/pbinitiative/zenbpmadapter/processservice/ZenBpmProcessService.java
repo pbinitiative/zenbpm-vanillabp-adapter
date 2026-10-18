@@ -55,12 +55,12 @@ import lombok.extern.slf4j.Slf4j;
  * id, built by the platform modules.
  * <p>
  * This version of the adapter starts workflows, completes and cancels the tasks the application
- * left open, answers every probe, counts the open tasks of a process and says what the engine does
- * with the values a workflow carries. It serves every operation the core requires of each adapter,
- * so the core accepts it while the application starts. Every other handler and every method of the
- * viewer/history API throw: where the adapter id has no clients, the message of its validation,
- * which names the keys to set; otherwise an {@link UnsupportedOperationException} which says that
- * the call is not built yet. Nothing pretends to have done the work. The operations a BPMS may
+ * left open, correlates messages, answers every probe, counts the open tasks of a process and says
+ * what the engine does with the values a workflow carries. It serves every operation the core
+ * requires of each adapter, so the core accepts it while the application starts. Every other
+ * handler and every method of the viewer/history API throw: where the adapter id has no clients,
+ * the message of its validation, which names the keys to set; otherwise an
+ * {@link UnsupportedOperationException} which says that the call is not built yet. Nothing pretends to have done the work. The operations a BPMS may
  * lack, sending a signal and telling the BPMS about a changed aggregate, are left out, so the core
  * answers them as not supported. A probe of an adapter id without clients throws the message of
  * its validation as well.
@@ -75,6 +75,10 @@ import lombok.extern.slf4j.Slf4j;
  * A task the application completes or cancels is checked right before the caller's transaction
  * commits, and phase two writes the shared values into the engine before it completes the task's
  * job or fails it with the BPMN error the application named, see {@link ZenBpmTaskOutcomes}.
+ * <p>
+ * A message is checked against the models of the workflow module in phase one, without asking the
+ * engine, and published in phase two, where a publication nothing waits for yet is handed back to
+ * the outbox, see {@link ZenBpmMessageCorrelation}.
  * <p>
  * Each field has an accessor of its own and no Lombok getter on the class, see decision 13 in the
  * repository's DECISIONS.md.
@@ -149,6 +153,9 @@ public class ZenBpmProcessService<A> implements MigratableProcessService<A> {
                 tasks::complete));
         handlers.put(PhaseOperation.CANCEL_TASK, PhaseOperationHandler.of(tasks::checkBeforeTheCancellation,
                 tasks::cancel));
+        final var messages = new ZenBpmMessageCorrelation<A>(adapterId, factory, collaborators, this::variablesOf);
+        handlers.put(PhaseOperation.CORRELATE_MESSAGE, PhaseOperationHandler.of(messages::checkTheMessage,
+                messages::correlate));
         this.phaseOperations = Collections.unmodifiableMap(handlers);
     }
 
@@ -184,7 +191,8 @@ public class ZenBpmProcessService<A> implements MigratableProcessService<A> {
 
     /**
      * A handler for every operation the core requires of each adapter: the start of a workflow,
-     * the completion and the cancellation of a task, and a handler which throws for every other.
+     * the completion and the cancellation of a task, the correlation of a message, and a handler
+     * which throws for every other.
      *
      * @return The handlers, which cannot be changed
      */

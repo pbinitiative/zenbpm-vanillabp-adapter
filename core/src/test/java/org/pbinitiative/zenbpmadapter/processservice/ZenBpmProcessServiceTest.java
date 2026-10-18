@@ -49,6 +49,7 @@ import io.vanillabp.integration.adapter.spi.workflowstart.WorkflowStartReport;
 import io.vanillabp.integration.spi.AggregatePersistenceAware;
 import io.vanillabp.integration.spi.PhaseOperation;
 import io.vanillabp.integration.spi.PhaseTwoCall;
+import io.vanillabp.integration.spi.PhaseTwoRetryLater;
 import io.vanillabp.integration.test.utils.CapturedOutput;
 import io.vanillabp.integration.test.utils.SuppressOutputExtension;
 
@@ -66,7 +67,10 @@ class ZenBpmProcessServiceTest {
     private static final ObjectMapper JSON = new ObjectMapper();
 
     private static final Set<PhaseOperation> BUILT = Set.of(PhaseOperation.START_WORKFLOW,
-            PhaseOperation.COMPLETE_TASK, PhaseOperation.CANCEL_TASK);
+            PhaseOperation.COMPLETE_TASK, PhaseOperation.CANCEL_TASK, PhaseOperation.CORRELATE_MESSAGE);
+
+    private static final String NOBODY_WAITS = """
+            {"code":"NOT_FOUND","message":"no active message subscription found for name \\"shop__paid\\""}""";
 
     private static final String STARTED = """
             {
@@ -145,7 +149,7 @@ class ZenBpmProcessServiceTest {
     }
 
     @Test
-    @DisplayName("Every handler and viewer method refuses with the message of the validation where the adapter id has no clients, a start and the handlers of a task included")
+    @DisplayName("Every handler and viewer method refuses with the message of the validation where the adapter id has no clients, a start, the handlers of a task and a correlation included")
     void anAdapterIdWithoutClientsRefusesWithItsValidationMessage() {
         final var processService = startingProcessService(unconfigured("orders"), (
             module,
@@ -159,12 +163,16 @@ class ZenBpmProcessServiceTest {
         final var cancellation = processService
                 .phaseOperations()
                 .get(PhaseOperation.CANCEL_TASK);
+        final var correlation = processService
+                .phaseOperations()
+                .get(PhaseOperation.CORRELATE_MESSAGE);
         final var calls = Stream.concat(Stream.of(() -> start.phaseOne(null), () -> start.phaseTwo(startRequest(
                 new ArrayList<>())), () -> completion.phaseOne(taskRequest()), () -> completion.phaseTwo(
                         startRequest(
                                 new ArrayList<>())),
                 () -> cancellation.phaseOne(taskRequest()), () -> cancellation.phaseTwo(
-                        startRequest(new ArrayList<>()))),
+                        startRequest(new ArrayList<>())),
+                () -> correlation.phaseOne(taskRequest()), () -> correlation.phaseTwo(correlationRequest(null))),
                 notBuiltYet(processService));
 
         assertAll(calls.map(call -> () -> assertEquals(NOT_CONFIGURED, assertThrows(IllegalStateException.class,
@@ -173,7 +181,7 @@ class ZenBpmProcessServiceTest {
     }
 
     @Test
-    @DisplayName("Every handler but the start and those of a task, and the viewer methods, of a configured adapter id say that they are not built yet, and what they were asked to do")
+    @DisplayName("Every handler but the start, those of a task and the correlation, and the viewer methods, of a configured adapter id say that they are not built yet, and what they were asked to do")
     void aConfiguredAdapterIdSaysThatTheCallIsNotBuiltYet() {
         try (var factory = configured("http://localhost:8080")) {
             final var processService = startingProcessService(factory, (
@@ -372,6 +380,154 @@ class ZenBpmProcessServiceTest {
     }
 
     @Test
+    @DisplayName("Phase two of a correlation publishes the scoped message under the aggregate id as its key, with the shared values and the id, and asks the engine nothing else")
+    void phaseTwoPublishesTheMessageUnderTheAggregateId() throws Exception {
+        engine.answers("POST", "/v1/messages", 201, null);
+
+        try (var factory = configured(engine.address())) {
+            startingProcessService(factory, (
+                module,
+                process) -> null)
+                    .phaseOperations()
+                    .get(PhaseOperation.CORRELATE_MESSAGE)
+                    .phaseTwo(correlationRequest(null));
+        }
+
+        assertAll(
+                () -> assertEquals(1, engine
+                        .requests()
+                        .size(),
+                        engine
+                                .requests()::toString),
+                () -> assertEquals(JSON.readTree("""
+                        {"messageName": "shop__paid", "correlationKey": "order-1",
+                         "variables": {"amount": 1000, "orderId": "order-1"}}"""), JSON.readTree(onlyPublicationOf(
+                        engine).body())));
+    }
+
+    @Test
+    @DisplayName("A correlation id is the correlation key of the publication, in place of the aggregate id")
+    void aCorrelationIdIsTheCorrelationKey() throws Exception {
+        engine.answers("POST", "/v1/messages", 201, null);
+
+        try (var factory = configured(engine.address())) {
+            startingProcessService(factory, (
+                module,
+                process) -> null)
+                    .phaseOperations()
+                    .get(PhaseOperation.CORRELATE_MESSAGE)
+                    .phaseTwo(correlationRequest("second-review"));
+        }
+
+        assertEquals("second-review", JSON
+                .readTree(onlyPublicationOf(engine).body())
+                .get("correlationKey")
+                .asText());
+    }
+
+    @Test
+    @DisplayName("A publication nothing waits for is handed back to the outbox for workflow-visibility-timeout, naming module, process, aggregate, message, key, the outbox's bound and the incident a 404 may stand for, and stays repeatable with the engine's answer as its cause")
+    void nobodyWaitsIsRetryLater() {
+        engine.answers("POST", "/v1/messages", 404, NOBODY_WAITS);
+
+        try (var factory = configured(engine.address())) {
+            factory
+                    .configuration()
+                    .setWorkflowVisibilityTimeout(Duration.ofSeconds(3));
+            final var processService = startingProcessService(factory, (
+                module,
+                process) -> null);
+            final var retryLater = assertThrows(PhaseTwoRetryLater.class, () -> processService
+                    .phaseOperations()
+                    .get(PhaseOperation.CORRELATE_MESSAGE)
+                    .phaseTwo(correlationRequest(null)));
+
+            assertAll(
+                    () -> assertEquals(Duration.ofSeconds(3), retryLater.getRetryAfter()),
+                    () -> assertEquals(Duration.ofSeconds(3), PhaseTwoRetryLater.retryAfter(new RuntimeException(
+                            retryLater))),
+                    () -> assertEquals(
+                            """
+                                    ZenBPM adapter 'orders': nothing waits for message 'paid' (scoped: 'shop__paid') under \
+                                    correlation key 'order-1' yet, in workflow 'Order' of workflow module 'shop' for aggregate \
+                                    'order-1', and ZenBPM keeps no message nothing waits for. The publication is repeated every \
+                                    PT3S until 'vanillabp.outbox.wait-for-visibility-at-most' passed since the correlation was \
+                                    planned, and then its entry is blocked. The workflow may not have reached the element which \
+                                    waits for the message yet; where it passed that element, or waits under another key, the \
+                                    repetitions cannot help: the key the waiting element evaluates has to be the correlation id \
+                                    passed to correlateMessage, or the aggregate id where none was passed. ZenBPM answers the \
+                                    same where the message reached the element which waits for it and the workflow failed right \
+                                    behind it on something it could not find, such as a called process which is not deployed: \
+                                    where the workflow shows such an incident, the message was received, and the repetitions \
+                                    cannot help either.""",
+                            retryLater
+                                    .getMessage()),
+                    () -> assertEquals(404, assertInstanceOf(ZenBpmApiException.class, retryLater.getCause())
+                            .getStatus()),
+                    () -> assertTrue(processService.isPhaseTwoFailureRepeatable(retryLater)),
+                    () -> assertFalse(ZenBpmErrors.permanentFailure(retryLater)));
+        }
+    }
+
+    @Test
+    @DisplayName("Where workflow-visibility-timeout is zero, a publication nothing waits for is an ordinary repeatable failure, which names the key and leaves the outbox its own backoff")
+    void nobodyWaitsWithAZeroWindowIsAnOrdinaryFailure() {
+        engine.answers("POST", "/v1/messages", 404, NOBODY_WAITS);
+
+        try (var factory = configured(engine.address())) {
+            factory
+                    .configuration()
+                    .setWorkflowVisibilityTimeout(Duration.ZERO);
+            final var processService = startingProcessService(factory, (
+                module,
+                process) -> null);
+            final var failure = assertThrows(IllegalStateException.class, () -> processService
+                    .phaseOperations()
+                    .get(PhaseOperation.CORRELATE_MESSAGE)
+                    .phaseTwo(correlationRequest(null)));
+
+            assertAll(
+                    () -> assertEquals(null, PhaseTwoRetryLater.retryAfter(failure)),
+                    () -> assertTrue(failure
+                            .getMessage()
+                            .contains(
+                                    "vanillabp.adapters.orders.workflow-visibility-timeout is zero, so the publication is repeated with the backoff of the outbox, which blocks its entry after 'vanillabp.outbox.block-after-attempts' attempts. The workflow may not have reached"),
+                            failure.getMessage()),
+                    () -> assertEquals(404, assertInstanceOf(ZenBpmApiException.class, failure.getCause())
+                            .getStatus()),
+                    () -> assertTrue(processService.isPhaseTwoFailureRepeatable(failure)));
+        }
+    }
+
+    @Test
+    @DisplayName("Every other refusal of a publication is thrown as the engine answered it, a permanent one as permanent and a technical one as repeatable, and never as a retry-later")
+    void everyOtherRefusalOfAPublicationIsThrownAsItIs() {
+        try (var factory = configured(engine.address())) {
+            final var processService = startingProcessService(factory, (
+                module,
+                process) -> null);
+            final var correlation = processService
+                    .phaseOperations()
+                    .get(PhaseOperation.CORRELATE_MESSAGE);
+            engine.answers("POST", "/v1/messages", 400, """
+                    {"code":"BAD_REQUEST","message":"messageName is required"}""");
+            final var refused = assertThrows(ZenBpmApiException.class, () -> correlation.phaseTwo(
+                    correlationRequest(null)));
+            engine.answers("POST", "/v1/messages", 500, """
+                    {"code":"TECHNICAL_ERROR","message":"failed to publish message event"}""");
+            final var technical = assertThrows(ZenBpmApiException.class, () -> correlation.phaseTwo(
+                    correlationRequest(null)));
+
+            assertAll(
+                    () -> assertEquals(400, refused.getStatus()),
+                    () -> assertFalse(processService.isPhaseTwoFailureRepeatable(refused)),
+                    () -> assertEquals(500, technical.getStatus()),
+                    () -> assertTrue(processService.isPhaseTwoFailureRepeatable(technical)),
+                    () -> assertEquals(null, PhaseTwoRetryLater.retryAfter(technical)));
+        }
+    }
+
+    @Test
     @DisplayName("Tasks may be delivered more than once, and what the engine does with a type is ZenBpmValueTypes' answer")
     void theSwitchesSayWhatTheEngineDoes() {
         final var processService = startingProcessService(unconfigured("orders"), (
@@ -417,6 +573,18 @@ class ZenBpmProcessServiceTest {
         return starts.getFirst();
     }
 
+    private static FakeEngine.Request onlyPublicationOf(final FakeEngine engine) {
+        final var publications = engine
+                .requests()
+                .stream()
+                .filter(request -> "POST /v1/messages".equals("%s %s".formatted(request.method(), request.path())))
+                .toList();
+        assertEquals(1, publications.size(), engine
+                .requests()
+                .toString());
+        return publications.getFirst();
+    }
+
     // the module is scoped with a prefix, so the test sees the id the engine knows
     private static ZenBpmProcessService<Object> startingProcessService(
         final ZenBpmClientFactory factory,
@@ -459,6 +627,15 @@ class ZenBpmProcessServiceTest {
                     }
 
                 });
+    }
+
+    private static PhaseTwoRequest<Object> correlationRequest(final String correlationId) {
+        final var args = new LinkedHashMap<String, String>();
+        args.put(PhaseTwoCall.ARG_MESSAGE_NAME, "paid");
+        if (correlationId != null) {
+            args.put(PhaseTwoCall.ARG_CORRELATION_ID, correlationId);
+        }
+        return new PhaseTwoRequest<>("shop", "Order", persistence(new Object()), "order-1", args);
     }
 
     // a persistence which names the id attribute and holds one aggregate, or none
