@@ -19,6 +19,11 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.locks.LockSupport;
 import java.util.function.Consumer;
 import java.util.stream.Stream;
 
@@ -28,8 +33,10 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.pbinitiative.zenbpmadapter.TestCollaborators;
 import org.pbinitiative.zenbpmadapter.TestScoping;
+import org.pbinitiative.zenbpmadapter.ZenBpmDeployedProcesses.ModuleMessages;
 import org.pbinitiative.zenbpmadapter.client.FakeEngine;
 import org.pbinitiative.zenbpmadapter.client.ZenBpmAdapterConfiguration;
+import org.pbinitiative.zenbpmadapter.client.ZenBpmAdapterConfiguration.MessageStartLookup;
 import org.pbinitiative.zenbpmadapter.client.ZenBpmApiException;
 import org.pbinitiative.zenbpmadapter.client.ZenBpmClientFactory;
 import org.pbinitiative.zenbpmadapter.client.ZenBpmErrors;
@@ -43,6 +50,8 @@ import io.vanillabp.integration.adapter.spi.PhaseOneRequest;
 import io.vanillabp.integration.adapter.spi.PhaseOperationHandler;
 import io.vanillabp.integration.adapter.spi.PhaseTwoRequest;
 import io.vanillabp.integration.adapter.spi.WorkflowAggregateSync;
+import io.vanillabp.integration.adapter.spi.WorkflowAwareness;
+import io.vanillabp.integration.adapter.spi.WorkflowScope;
 import io.vanillabp.integration.adapter.spi.values.ValueDirection;
 import io.vanillabp.integration.adapter.spi.values.ValueTypeVerdict;
 import io.vanillabp.integration.adapter.spi.workflowstart.WorkflowStartReport;
@@ -67,7 +76,20 @@ class ZenBpmProcessServiceTest {
     private static final ObjectMapper JSON = new ObjectMapper();
 
     private static final Set<PhaseOperation> BUILT = Set.of(PhaseOperation.START_WORKFLOW,
-            PhaseOperation.COMPLETE_TASK, PhaseOperation.CANCEL_TASK, PhaseOperation.CORRELATE_MESSAGE);
+            PhaseOperation.START_WORKFLOW_BY_MESSAGE, PhaseOperation.COMPLETE_TASK, PhaseOperation.CANCEL_TASK,
+            PhaseOperation.CORRELATE_MESSAGE);
+
+    private static final String NO_START_EVENT = """
+            {"code":"NOT_FOUND","message":"no active definition-level message subscription found for name \\"shop__ordered\\""}""";
+
+    /**
+     * What the deployment remembered: the process <code>Order</code>, whose newest version starts
+     * with the message <code>ordered</code>.
+     */
+    private static final ModuleMessages ORDER_STARTED_BY_A_MESSAGE = new ModuleMessages(List.of("shop__Order"), Set
+            .of("shop__paid"), Set.of("shop__ordered"), Set.of("shop__Order"), List.of());
+
+    private static final WorkflowScope ORDER = new WorkflowScope("shop", List.of("Order"));
 
     private static final String NOBODY_WAITS = """
             {"code":"NOT_FOUND","message":"no active message subscription found for name \\"shop__paid\\""}""";
@@ -149,7 +171,7 @@ class ZenBpmProcessServiceTest {
     }
 
     @Test
-    @DisplayName("Every handler and viewer method refuses with the message of the validation where the adapter id has no clients, a start, the handlers of a task and a correlation included")
+    @DisplayName("Every handler and viewer method refuses with the message of the validation where the adapter id has no clients, a start, a start by a message, the handlers of a task and a correlation included")
     void anAdapterIdWithoutClientsRefusesWithItsValidationMessage() {
         final var processService = startingProcessService(unconfigured("orders"), (
             module,
@@ -166,8 +188,14 @@ class ZenBpmProcessServiceTest {
         final var correlation = processService
                 .phaseOperations()
                 .get(PhaseOperation.CORRELATE_MESSAGE);
-        final var calls = Stream.concat(Stream.of(() -> start.phaseOne(null), () -> start.phaseTwo(startRequest(
-                new ArrayList<>())), () -> completion.phaseOne(taskRequest()), () -> completion.phaseTwo(
+        final var startByAMessage = processService
+                .phaseOperations()
+                .get(PhaseOperation.START_WORKFLOW_BY_MESSAGE);
+        final var calls = Stream.concat(Stream.of(() -> startByAMessage.phaseOne(startByMessageCheck()),
+                () -> startByAMessage.phaseTwo(startByMessageRequest()), () -> start.phaseOne(null), () -> start
+                        .phaseTwo(startRequest(
+                                new ArrayList<>())),
+                () -> completion.phaseOne(taskRequest()), () -> completion.phaseTwo(
                         startRequest(
                                 new ArrayList<>())),
                 () -> cancellation.phaseOne(taskRequest()), () -> cancellation.phaseTwo(
@@ -181,7 +209,7 @@ class ZenBpmProcessServiceTest {
     }
 
     @Test
-    @DisplayName("Every handler but the start, those of a task and the correlation, and the viewer methods, of a configured adapter id say that they are not built yet, and what they were asked to do")
+    @DisplayName("Every handler but the starts, those of a task and the correlation, and the viewer methods, of a configured adapter id say that they are not built yet, and what they were asked to do")
     void aConfiguredAdapterIdSaysThatTheCallIsNotBuiltYet() {
         try (var factory = configured("http://localhost:8080")) {
             final var processService = startingProcessService(factory, (
@@ -528,6 +556,168 @@ class ZenBpmProcessServiceTest {
     }
 
     @Test
+    @DisplayName("Under message-start-lookup start-row, the default, a message starts the workflow: phase one asks the engine nothing, phase two publishes the scoped message without a correlation key, with the shared values and the id, and reports nothing; a probe never reads the instances")
+    void underStartRowAMessageStartsTheWorkflowAndNoProbeReadsTheInstances() throws Exception {
+        engine.answers("POST", "/v1/messages", 201, null);
+        searchesFindOnlyTheInstanceTheMessageStarted();
+        final var reported = new ArrayList<String>();
+
+        try (var factory = configured(engine.address())) {
+            final var processService = startedByAMessage(factory, null);
+            final var startByAMessage = processService
+                    .phaseOperations()
+                    .get(PhaseOperation.START_WORKFLOW_BY_MESSAGE);
+            startByAMessage.phaseOne(startByMessageCheck());
+            final var askedInPhaseOne = engine.requests();
+            startByAMessage.phaseTwo(startByMessageRequest(reported));
+            final var found = processService.awarenessOfWorkflow(ORDER, persistence(null), "order-1");
+
+            assertAll(
+                    () -> assertEquals(List.of(), askedInPhaseOne),
+                    () -> assertEquals(JSON.readTree("""
+                            {"messageName": "shop__ordered", "variables": {"amount": 1000, "orderId": "order-1"}}"""),
+                            JSON.readTree(onlyPublicationOf(engine).body())),
+                    () -> assertEquals(List.of(), reported),
+                    () -> assertEquals(WorkflowAwareness.UNKNOWN_TO_BPMS, found),
+                    () -> assertEquals(List.of("businessKey=order-1"), searchesOf(engine)));
+        }
+    }
+
+    @Test
+    @DisplayName("Under message-start-lookup scan, a message starts the workflow as under start-row, and where the business key finds nothing, a probe reads the instances of the process and finds the one whose id variable names the aggregate")
+    void underScanAMessageStartsTheWorkflowAndAProbeReadsTheInstances() {
+        engine.answers("POST", "/v1/messages", 201, null);
+        searchesFindOnlyTheInstanceTheMessageStarted();
+
+        try (var factory = configured(engine.address())) {
+            final var processService = startedByAMessage(factory, MessageStartLookup.SCAN);
+            final var startByAMessage = processService
+                    .phaseOperations()
+                    .get(PhaseOperation.START_WORKFLOW_BY_MESSAGE);
+            startByAMessage.phaseOne(startByMessageCheck());
+            startByAMessage.phaseTwo(startByMessageRequest());
+            final var found = processService.awarenessOfWorkflow(ORDER, persistence(null), "order-1");
+
+            assertAll(
+                    () -> assertEquals(1, publicationsOf(engine)),
+                    () -> assertEquals(WorkflowAwareness.ACTIVE, found),
+                    () -> assertEquals(List.of("businessKey=order-1", "state=active"), searchesOf(engine)));
+        }
+    }
+
+    @Test
+    @DisplayName("Under message-start-lookup refuse, phase one refuses every start by a message, naming the key, the gap and the other two values, and asks the engine nothing")
+    void underRefuseNoWorkflowIsStartedByAMessage() {
+        try (var factory = configured(engine.address())) {
+            final var processService = startedByAMessage(factory, MessageStartLookup.REFUSE);
+
+            final var refusal = assertThrows(IllegalStateException.class, () -> processService
+                    .phaseOperations()
+                    .get(PhaseOperation.START_WORKFLOW_BY_MESSAGE)
+                    .phaseOne(startByMessageCheck()));
+
+            assertEquals("""
+                    ZenBPM adapter 'orders' does not start workflow 'Order' of workflow module 'shop' by message \
+                    'ordered': vanillabp.adapters.orders.message-start-lookup is 'refuse'. ZenBPM gives a workflow it \
+                    starts by a message no business key, and none can be set afterwards (a gap of the engine which \
+                    GAPS.md of zenbpm-vanillabp-adapter lists), so the adapter finds such a workflow only through \
+                    the instance key its start marker writes into the start row of the aggregate. Set the key to \
+                    'start-row', the default, to start it and find it that way, or to 'scan' to find a running one \
+                    also where the start row does not know it yet.""", refusal.getMessage());
+        }
+
+        assertEquals(List.of(), engine.requests());
+    }
+
+    @Test
+    @DisplayName("A start message no start event takes is an ordinary failure, repeated with the outbox's backoff and counted, never a retry-later: it names the deployment, a start on another node at the same moment and the outbox's bound, with the engine's answer as its cause")
+    void aStartMessageNoStartEventTakesIsAnOrdinaryFailure() {
+        engine.answers("POST", "/v1/messages", 404, NO_START_EVENT);
+
+        try (var factory = configured(engine.address())) {
+            final var processService = startedByAMessage(factory, null);
+            final var failure = assertThrows(IllegalStateException.class, () -> processService
+                    .phaseOperations()
+                    .get(PhaseOperation.START_WORKFLOW_BY_MESSAGE)
+                    .phaseTwo(startByMessageRequest()));
+
+            assertAll(
+                    () -> assertEquals(
+                            """
+                                    ZenBPM adapter 'orders' could not start workflow 'Order' of workflow module 'shop' for \
+                                    aggregate 'order-1' by message 'ordered' (scoped: 'shop__ordered'): the engine answered that \
+                                    no start event takes it. Either no version the engine holds starts the process with that \
+                                    message, which only a deployment changes: deploy workflow module 'shop' to the engine of \
+                                    this adapter id; the application deploys it while it boots, and a boot whose deployment \
+                                    failed goes on only where 'vanillabp.adapters.orders.deployment-failure' is 'warn'. Or \
+                                    another node of the application published a message of the same name at the same moment, \
+                                    which ZenBPM answers the same way. So the start is repeated with the backoff of the outbox, \
+                                    which blocks its entry after 'vanillabp.outbox.block-after-attempts' attempts.""",
+                            failure
+                                    .getMessage()),
+                    () -> assertEquals(404, assertInstanceOf(ZenBpmApiException.class, failure.getCause())
+                            .getStatus()),
+                    () -> assertEquals(null, PhaseTwoRetryLater.retryAfter(failure)),
+                    () -> assertTrue(processService.isPhaseTwoFailureRepeatable(failure)));
+        }
+    }
+
+    @Test
+    @DisplayName("Every other refusal of a start message is thrown as the engine answered it, a permanent one as permanent and a technical one as repeatable")
+    void everyOtherRefusalOfAStartMessageIsThrownAsItIs() {
+        try (var factory = configured(engine.address())) {
+            final var processService = startedByAMessage(factory, null);
+            final var startByAMessage = processService
+                    .phaseOperations()
+                    .get(PhaseOperation.START_WORKFLOW_BY_MESSAGE);
+            engine.answers("POST", "/v1/messages", 400, """
+                    {"code":"BAD_REQUEST","message":"messageName is required"}""");
+            final var refused = assertThrows(ZenBpmApiException.class, () -> startByAMessage.phaseTwo(
+                    startByMessageRequest()));
+            engine.answers("POST", "/v1/messages", 500, """
+                    {"code":"TECHNICAL_ERROR","message":"failed to publish message event"}""");
+            final var technical = assertThrows(ZenBpmApiException.class, () -> startByAMessage.phaseTwo(
+                    startByMessageRequest()));
+
+            assertAll(
+                    () -> assertFalse(processService.isPhaseTwoFailureRepeatable(refused)),
+                    () -> assertTrue(processService.isPhaseTwoFailureRepeatable(technical)));
+        }
+    }
+
+    @Test
+    @DisplayName("The start messages of one name are published one after the other, because the engine starts nothing for a second one which arrives while it takes the first; each is published once")
+    void startMessagesOfOneNameArePublishedOneAfterTheOther() throws Exception {
+        final var inFlight = new AtomicInteger();
+        final var mostAtOnce = new AtomicInteger();
+        engine.answers("POST", "/v1/messages", exchange -> {
+            mostAtOnce.accumulateAndGet(inFlight.incrementAndGet(), Math::max);
+            LockSupport.parkNanos(Duration
+                    .ofMillis(50)
+                    .toNanos());
+            inFlight.decrementAndGet();
+            FakeEngine.respond(exchange, 201, null);
+        });
+
+        try (var factory = configured(engine.address()); var starts = Executors.newFixedThreadPool(6)) {
+            final var startByAMessage = startedByAMessage(factory, null)
+                    .phaseOperations()
+                    .get(PhaseOperation.START_WORKFLOW_BY_MESSAGE);
+            final var done = new ArrayList<Future<?>>();
+            for (var start = 0; start < 6; ++start) {
+                done.add(starts.submit(() -> startByAMessage.phaseTwo(startByMessageRequest())));
+            }
+            for (final var start : done) {
+                start.get(10, TimeUnit.SECONDS);
+            }
+        }
+
+        assertAll(
+                () -> assertEquals(1, mostAtOnce.get()),
+                () -> assertEquals(6, publicationsOf(engine)));
+    }
+
+    @Test
     @DisplayName("Tasks may be delivered more than once, and what the engine does with a type is ZenBpmValueTypes' answer")
     void theSwitchesSayWhatTheEngineDoes() {
         final var processService = startingProcessService(unconfigured("orders"), (
@@ -558,6 +748,50 @@ class ZenBpmProcessServiceTest {
                 () -> processService.getProcessDefinitions("shop", "Order", null, "order-1", null),
                 () -> processService.getBpmnXml("shop", "Order", "definition-1"),
                 () -> processService.getWorkflowHistory("shop", "Order", null, "order-1", null)));
+    }
+
+    // the business-key search finds nothing, as for a workflow a message started; the instances of
+    // the process hold the one the message started, which carries the aggregate's id as a variable
+    private void searchesFindOnlyTheInstanceTheMessageStarted() {
+        engine.answers("GET", "/v1/process-instances", exchange -> FakeEngine.respond(exchange, 200, exchange
+                .getRequestURI()
+                .getRawQuery()
+                .contains("businessKey=")
+                        ? """
+                                {"partitions": [{"partition": 1, "totalCount": 0, "items": []}],
+                                 "page": 1, "size": 100, "count": 0, "totalCount": 0}"""
+                        : """
+                                {"partitions": [{"partition": 1, "totalCount": 1, "items": [
+                                  {"key": 4503599627370501, "processDefinitionKey": 4503599627370498,
+                                   "bpmnProcessId": "shop__Order", "version": 1,
+                                   "createdAt": "2026-10-19T10:00:00.123Z", "state": "active",
+                                   "processType": "default", "variables": {"orderId": "order-1"}}]}],
+                                 "page": 1, "size": 100, "count": 1, "totalCount": 1}"""));
+    }
+
+    // each search of the instances by what it filters: the business key, or the state of a scan
+    private static List<String> searchesOf(final FakeEngine engine) {
+        return engine
+                .requests()
+                .stream()
+                .filter(request -> "GET /v1/process-instances".equals("%s %s".formatted(request.method(), request
+                        .path())))
+                .map(request -> Stream
+                        .of(request
+                                .query()
+                                .split("&"))
+                        .filter(parameter -> parameter.startsWith("businessKey=") || parameter.startsWith("state="))
+                        .findFirst()
+                        .orElse(request.query()))
+                .toList();
+    }
+
+    private static long publicationsOf(final FakeEngine engine) {
+        return engine
+                .requests()
+                .stream()
+                .filter(request -> "POST /v1/messages".equals("%s %s".formatted(request.method(), request.path())))
+                .count();
     }
 
     private static FakeEngine.Request onlyStartOf(final FakeEngine engine) {
@@ -593,6 +827,23 @@ class ZenBpmProcessServiceTest {
         return new ZenBpmProcessService<>("orders", factory, collaborators(), historyTimeToLive);
     }
 
+    // a process service of a module whose deployment remembered the process Order, which a message
+    // starts, under the given message-start-lookup, null for the default
+    private static ZenBpmProcessService<Object> startedByAMessage(
+        final ZenBpmClientFactory factory,
+        final MessageStartLookup lookup
+    ) {
+        factory
+                .configuration()
+                .setMessageStartLookup(lookup);
+        factory
+                .deployedProcesses()
+                .recordMessages("shop", ORDER_STARTED_BY_A_MESSAGE, () -> ORDER_STARTED_BY_A_MESSAGE);
+        return startingProcessService(factory, (
+            module,
+            process) -> null);
+    }
+
     private static AdapterCollaborators collaborators() {
         return TestCollaborators.of("orders", TestScoping.of(NameClashAvoidance.USE_PREFIX), new SharingTheAmount());
     }
@@ -612,6 +863,36 @@ class ZenBpmProcessServiceTest {
     ) {
         return new PhaseTwoRequest<>("shop", bpmnProcessId, persistence(new Object()), "order-1", Map
                 .of(), new WorkflowStartReport() {
+
+                    @Override
+                    public void startedWorkflow(final String workflowId) {
+                        reported.add(workflowId);
+                    }
+
+                    @Override
+                    public void startedWorkflow(
+                        final String workflowId,
+                        final String processVersion
+                    ) {
+                        reported.add("%s %s".formatted(workflowId, processVersion));
+                    }
+
+                });
+    }
+
+    private static PhaseOneRequest<Object> startByMessageCheck() {
+        return new PhaseOneRequest<>("shop", "Order", persistence(new Object()), new Object(), Map
+                .of(PhaseTwoCall.ARG_MESSAGE_NAME, "ordered"));
+    }
+
+    private static PhaseTwoRequest<Object> startByMessageRequest() {
+        return startByMessageRequest(new ArrayList<>());
+    }
+
+    // a start reports to the list, which a start by a message never does
+    private static PhaseTwoRequest<Object> startByMessageRequest(final List<String> reported) {
+        return new PhaseTwoRequest<>("shop", "Order", persistence(new Object()), "order-1", Map
+                .of(PhaseTwoCall.ARG_MESSAGE_NAME, "ordered"), new WorkflowStartReport() {
 
                     @Override
                     public void startedWorkflow(final String workflowId) {

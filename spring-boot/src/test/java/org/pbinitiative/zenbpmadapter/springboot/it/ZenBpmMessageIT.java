@@ -24,6 +24,7 @@ import java.util.function.Supplier;
 
 import javax.sql.DataSource;
 
+import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -34,6 +35,8 @@ import org.pbinitiative.zenbpmadapter.client.api.ProcessInstanceRef;
 import org.pbinitiative.zenbpmadapter.springboot.it.message.Letter;
 import org.pbinitiative.zenbpmadapter.springboot.it.message.LetterRepository;
 import org.pbinitiative.zenbpmadapter.springboot.it.message.MessageItApplication;
+import org.pbinitiative.zenbpmadapter.springboot.it.message.Postcard;
+import org.pbinitiative.zenbpmadapter.springboot.it.message.PostcardRepository;
 import org.pbinitiative.zenbpmadapter.test.EngineUnderTest;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -46,6 +49,7 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 
 import io.vanillabp.integration.test.utils.CapturedOutput;
 import io.vanillabp.integration.test.utils.SuppressOutputExtension;
+import io.vanillabp.integration.test.utils.delivery.TaskDeliveryLogReader;
 import io.vanillabp.integration.test.utils.outbox.PhaseTwoOutboxReader;
 import io.vanillabp.spi.process.ProcessService;
 
@@ -59,12 +63,16 @@ import io.vanillabp.spi.process.ProcessService;
  * workflow takes the message; a second correlation with the same correlation id is not planned
  * while the first still waits in the outbox; a message no model waits for is refused where the
  * application calls; and a publication nothing ever waits for is blocked once
- * <code>vanillabp.outbox.wait-for-visibility-at-most</code> ran out.
+ * <code>vanillabp.outbox.wait-for-visibility-at-most</code> ran out. A workflow a message started,
+ * under the default <code>message-start-lookup: start-row</code>, is found through the start row
+ * its start marker wrote, so a correlation reaches it.
  * <p>
  * The application {@link MessageItApplication} runs with <code>message-it.yaml</code>, the default
  * <code>workflow-visibility-timeout</code> of two seconds and fifteen seconds of
- * <code>wait-for-visibility-at-most</code>. Its one process has a path per scenario of
- * {@link Letter}. One engine serves the class, so every case uses letters of its own.
+ * <code>wait-for-visibility-at-most</code>. Its process <code>Letters</code> has a path per scenario
+ * of {@link Letter}, and a message starts its process <code>Postcards</code>, of {@link Postcard}.
+ * One engine serves the class, so every case uses aggregates of its own. The adapter reaches the
+ * engine through a proxy which refuses nothing and writes down what the adapter sent.
  */
 @ExtendWith(SuppressOutputExtension.class)
 @Testcontainers(disabledWithoutDocker = true)
@@ -93,8 +101,16 @@ class ZenBpmMessageIT {
     @Container
     private static final EngineUnderTest ENGINE = new EngineUnderTest();
 
+    private static final RefusingEngineProxy PROXY = new RefusingEngineProxy(ENGINE::restAddress);
+
     @Autowired
     private ProcessService<Letter> processService;
+
+    @Autowired
+    private ProcessService<Postcard> postcardProcessService;
+
+    @Autowired
+    private PostcardRepository postcards;
 
     @Autowired
     private LetterRepository letters;
@@ -107,6 +123,11 @@ class ZenBpmMessageIT {
 
     @Autowired
     private ZenBpmClientRegistry clients;
+
+    @AfterAll
+    static void stopTheProxy() {
+        PROXY.close();
+    }
 
     @Test
     @DisplayName("A correlation resumes the workflow which waits for the message, and the message carries the values the aggregate shares now; the publication is sent once and counts one attempt")
@@ -276,9 +297,59 @@ class ZenBpmMessageIT {
                         .state()));
     }
 
+    @Test
+    @DisplayName("Under the default message-start-lookup start-row, a workflow a message started is found through the start row its marker wrote: the row holds the key of the instance, which carries no business key, the marker wrote nothing into it, a correlation reaches the workflow, and the start named the process a message starts")
+    void aMessageStartedWorkflowIsFoundThroughItsStartRow(final CapturedOutput output) {
+        final var postcardId = "postcard-%s".formatted(UUID.randomUUID());
+
+        transactionTemplate.executeWithoutResult(status -> postcardProcessService.startWorkflowByMessage(
+                new Postcard(postcardId), "postcardPosted"));
+        final var startRow = eventually(() -> TaskDeliveryLogReader
+                .of(dataSource)
+                .workflowStartsOfAggregate(postcardId)
+                .stream()
+                .findFirst(), "the start row");
+        final var instanceKey = Long.parseLong(startRow.workflowId());
+        awaitTheWaitAt(instanceKey, "AwaitStamp");
+        final var started = rest()
+                .instance(instanceKey)
+                .orElseThrow();
+        transactionTemplate.executeWithoutResult(status -> {
+            final var postcard = postcards
+                    .findById(postcardId)
+                    .orElseThrow();
+            postcard.setStatus("stamped");
+            postcardProcessService.correlateMessage(postcard, "stamped");
+        });
+        final var ended = awaitTheEndOf(instanceKey);
+
+        assertAll(
+                () -> assertEquals("Postcards", startRow.bpmnProcessId()),
+                () -> assertEquals("deploy-it__Postcards", started.bpmnProcessId()),
+                () -> assertEquals(null, started.businessKey()),
+                () -> assertEquals(postcardId, started
+                        .variables()
+                        .get("id")),
+                () -> assertEquals(ProcessInstanceRef.State.COMPLETED, ended.state()),
+                () -> assertEquals("stamped", ended
+                        .variables()
+                        .get("status")),
+                () -> assertEquals(List.of(), PROXY
+                        .received()
+                        .stream()
+                        .filter(request -> request.equals("PATCH /v1/process-instances/%d/variables".formatted(
+                                instanceKey)))
+                        .toList()),
+                () -> assertTrue(output
+                        .getAll()
+                        .contains(
+                                "ZenBPM[zenbpm]: workflow module 'deploy-it' has processes a message starts: 'Postcards'. vanillabp.adapters.zenbpm.message-start-lookup is 'start-row': startWorkflowByMessage starts them"),
+                        output::getAll));
+    }
+
     @DynamicPropertySource
     static void theEngine(final DynamicPropertyRegistry registry) {
-        registry.add("vanillabp.adapters.zenbpm.rest-address", ENGINE::restAddress);
+        registry.add("vanillabp.adapters.zenbpm.rest-address", PROXY::address);
         registry.add("vanillabp.adapters.zenbpm.grpc-address", ENGINE::grpcAddress);
     }
 

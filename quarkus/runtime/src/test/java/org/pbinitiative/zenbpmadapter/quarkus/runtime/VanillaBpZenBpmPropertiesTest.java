@@ -23,6 +23,8 @@ import java.util.stream.Collectors;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.EnumSource;
 import org.pbinitiative.zenbpmadapter.client.ZenBpmAdapterConfiguration;
 import org.pbinitiative.zenbpmadapter.client.ZenBpmAdapterConfiguration.MessageStartLookup;
 import org.pbinitiative.zenbpmadapter.client.ZenBpmAdapterConfiguration.ValidationResult.Kind;
@@ -93,6 +95,8 @@ class VanillaBpZenBpmPropertiesTest {
             Map.entry(ADAPTER
                     + "message-start-lookup", "scan"),
             Map.entry(ADAPTER
+                    + "message-start-lookup-max-instances", "77"),
+            Map.entry(ADAPTER
                     + "accept-unscoped-identifiers", "true"));
 
     @Test
@@ -130,6 +134,7 @@ class VanillaBpZenBpmPropertiesTest {
                 () -> assertEquals(Duration.ofDays(30), configuration.getHistoryTimeToLive()),
                 () -> assertEquals(99, configuration.getInstanceCacheMaxEntries()),
                 () -> assertEquals(MessageStartLookup.SCAN, configuration.getMessageStartLookup()),
+                () -> assertEquals(77, configuration.getMessageStartLookupMaxInstances()),
                 () -> assertTrue(configuration.isAcceptUnscopedIdentifiers()),
                 () -> assertEquals(Kind.COMPLETE, configuration
                         .validate("orders", false, false)
@@ -147,6 +152,19 @@ class VanillaBpZenBpmPropertiesTest {
             assertTrue(((Optional<?>) key.invoke(keys)).isPresent(), key.getName());
         }
         assertEquals(EVERY_ADAPTER_KEY.size(), keysOf(ZenBpmAdapterKeys.class).size());
+    }
+
+    @ParameterizedTest(name = "{0}")
+    @EnumSource(MessageStartLookup.class)
+    @DisplayName("Each value of message-start-lookup binds as the documentation writes it")
+    void eachValueOfTheMessageStartLookupBindsAsWritten(final MessageStartLookup lookup) {
+        final var configuration = bind(Map.of(ADAPTER
+                + "rest-address", "http://engine:8080",
+                ADAPTER
+                        + "message-start-lookup",
+                lookup.configured())).configurationOf("orders");
+
+        assertEquals(lookup, configuration.getMessageStartLookup());
     }
 
     @Test

@@ -6,6 +6,7 @@ package org.pbinitiative.zenbpmadapter.deployment;
 
 import static org.junit.jupiter.api.Assertions.assertAll;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -23,6 +24,8 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.EnumSource;
 import org.pbinitiative.zenbpmadapter.TestCollaborators;
 import org.pbinitiative.zenbpmadapter.TestScoping;
 import org.pbinitiative.zenbpmadapter.TestStarts;
@@ -32,6 +35,7 @@ import org.pbinitiative.zenbpmadapter.ZenBpmDeployedProcesses.ModuleMessages;
 import org.pbinitiative.zenbpmadapter.ZenBpmProcessingContext;
 import org.pbinitiative.zenbpmadapter.client.FakeEngine;
 import org.pbinitiative.zenbpmadapter.client.ZenBpmAdapterConfiguration;
+import org.pbinitiative.zenbpmadapter.client.ZenBpmAdapterConfiguration.MessageStartLookup;
 import org.pbinitiative.zenbpmadapter.client.ZenBpmApiException;
 import org.pbinitiative.zenbpmadapter.client.ZenBpmClientFactory;
 import org.pbinitiative.zenbpmadapter.client.ZenBpmClientRegistry;
@@ -308,7 +312,7 @@ class ZenBpmDeployingTest {
 
             assertAll(
                     () -> assertEquals(Optional.of(new ModuleMessages(List.of("shop__Order"), Set.of("shop__paid",
-                            "shop__settled"), Set.of(), List.of())), deployedProcesses(registry)
+                            "shop__settled"), Set.of(), Set.of(), List.of())), deployedProcesses(registry)
                                     .messagesOf("shop")),
                     () -> assertEquals(List.of(
                             "GET /v1/process-definitions/11",
@@ -356,10 +360,39 @@ class ZenBpmDeployingTest {
 
             assertAll(
                     () -> assertEquals(Optional.of(new ModuleMessages(List.of("shop__Order"), Set.of("shop__paid"), Set
-                            .of("shop__ordered"), List.of())), keptWhileDeploying),
+                            .of("shop__ordered"), Set.of("shop__Order"), List.of())), keptWhileDeploying),
                     () -> assertEquals(Optional.of(new ModuleMessages(List.of("shop__Order"), Set.of("shop__paid",
-                            "shop__settled"), Set.of("shop__returned"), List.of())), readAgain),
+                            "shop__settled"), Set.of("shop__returned"), Set.of("shop__Order"), List.of())), readAgain),
                     () -> assertEquals(readAgain, deployedProcesses(registry).messagesOf("shop")));
+        }
+    }
+
+    @Test
+    @DisplayName("Read again, a process counts as started by a message only where its newest version has a message start event, not where only the version this start deployed has one")
+    void readAgainAProcessIsStartedByAMessageWhereItsNewestVersionIs() throws Exception {
+        engine.answers("POST", "/v1/process-definitions", 201, "{\"processDefinitionKey\":11}");
+        engine.answers("GET", "/v1/process-definitions/11", 200, definition(11, 1, heldOrder("shop__paid")
+                .replace("<bpmn:process id=\"shop__Order\" isExecutable=\"true\">", """
+                        <bpmn:message id="Message_Ordered" name="shop__ordered" />
+                        <bpmn:process id="shop__Order" isExecutable="true">
+                          <bpmn:startEvent id="Ordered">
+                            <bpmn:messageEventDefinition messageRef="Message_Ordered" />
+                          </bpmn:startEvent>""")));
+
+        try (var registry = registry()) {
+            final var deploymentService = deploymentService(registry, TestScoping.of(NameClashAvoidance.USE_PREFIX),
+                    TestWiring.claiming("Order"));
+            deploymentService.deployResources("shop", prepared(deploymentService, ORDER));
+            // another node deploys a next version which no message starts
+            engine.answers("GET", "/v1/process-definitions", 200, """
+                    {"items": [{"key": 11, "version": 1, "bpmnProcessId": "shop__Order"},
+                               {"key": 12, "version": 2, "bpmnProcessId": "shop__Order"}], "totalCount": 2}""");
+            engine.answers("GET", "/v1/process-definitions/12", 200, definition(12, 2, heldOrder("shop__paid")));
+
+            assertEquals(Set.of(), deployedProcesses(registry)
+                    .messagesReadAgain("shop")
+                    .orElseThrow()
+                    .startedByMessage());
         }
     }
 
@@ -376,7 +409,7 @@ class ZenBpmDeployingTest {
             engine.answers("GET", "/v1/process-definitions", 500, """
                     {"code":"TECHNICAL_ERROR","message":"database is locked"}""");
 
-            assertEquals(Optional.of(new ModuleMessages(List.of("shop__Order"), Set.of(), Set.of(), List.of(
+            assertEquals(Optional.of(new ModuleMessages(List.of("shop__Order"), Set.of(), Set.of(), Set.of(), List.of(
                     "the versions of process 'shop__Order' (GET /v1/process-definitions was answered with status 500, TECHNICAL_ERROR: database is locked)"))),
                     deployedProcesses(registry).messagesReadAgain("shop"));
         }
@@ -399,7 +432,7 @@ class ZenBpmDeployingTest {
 
             assertAll(
                     () -> assertEquals(Optional.of(new ModuleMessages(List.of("shop__Order"), Set.of("shop__paid"), Set
-                            .of(), List.of())), deployedProcesses(registry).messagesOf("shop")),
+                            .of(), Set.of(), List.of())), deployedProcesses(registry).messagesOf("shop")),
                     () -> assertEquals(Optional.empty(), deployedProcesses(registry).messagesOf("rates")),
                     () -> assertTrue(engine
                             .requests()
@@ -427,7 +460,7 @@ class ZenBpmDeployingTest {
             final var unread = "the versions of process 'shop__Order' (GET /v1/process-definitions was answered with status 500, TECHNICAL_ERROR: database is locked)";
             assertAll(
                     () -> assertEquals(Optional.of(new ModuleMessages(List.of("shop__Order"), Set.of("shop__paid"), Set
-                            .of(), List.of(unread))), deployedProcesses(registry).messagesOf("shop")),
+                            .of(), Set.of(), List.of(unread))), deployedProcesses(registry).messagesOf("shop")),
                     () -> assertTrue(output
                             .getAllOfThisTest()
                             .contains(
@@ -439,6 +472,93 @@ class ZenBpmDeployingTest {
                                             .formatted(unread)),
                             output::getAllOfThisTest));
         }
+    }
+
+    @ParameterizedTest(name = "{0}")
+    @EnumSource(MessageStartLookup.class)
+    @DisplayName("Once a workflow module is deployed, one INFO names its processes a message starts and what message-start-lookup does with them, and under scan a WARN names the bound and what the lookup cannot do")
+    void theProcessesAMessageStartsAreNamedOnce(
+        final MessageStartLookup lookup,
+        final CapturedOutput output
+    ) throws Exception {
+        engine.answers("POST", "/v1/process-definitions", 201, "{\"processDefinitionKey\":11}");
+        engine.answers("GET", "/v1/process-definitions/11", 200, definition(11, 1, heldOrder("shop__paid")
+                .replace("<bpmn:process id=\"shop__Order\" isExecutable=\"true\">", """
+                        <bpmn:message id="Message_Ordered" name="shop__ordered" />
+                        <bpmn:process id="shop__Order" isExecutable="true">
+                          <bpmn:startEvent id="Ordered">
+                            <bpmn:messageEventDefinition messageRef="Message_Ordered" />
+                          </bpmn:startEvent>""")));
+
+        try (var registry = registry()) {
+            registry
+                    .getFactory(ADAPTER_ID)
+                    .configuration()
+                    .setMessageStartLookup(lookup);
+            final var deploymentService = deploymentService(registry, TestScoping.of(NameClashAvoidance.USE_PREFIX),
+                    TestWiring.claiming("Order"));
+            deploymentService.deployResources("shop", prepared(deploymentService, ORDER));
+        }
+
+        final var named = "INFO  o.p.z.d.ZenBpmDeploymentService - ZenBPM[orders]: workflow module 'shop' has processes a message starts: 'Order'. vanillabp.adapters.orders.message-start-lookup is '%s': "
+                .formatted(lookup.configured());
+        final var lines = output
+                .getAllOfThisTest()
+                .lines()
+                .filter(line -> line.contains("message-start-lookup"))
+                .map(line -> line.substring(line.indexOf(" INFO ") >= 0 ? line.indexOf(" INFO ") + 1 : line.indexOf(
+                        " WARN ") + 1))
+                .toList();
+        final var what = switch (lookup) {
+            case START_ROW -> """
+                    startWorkflowByMessage starts them, and the workflow it starts is found through the instance key \
+                    its start marker writes into the start row of the aggregate. Before the marker ran, in an \
+                    application without a delivery log, and once the row is removed, it is not found, and a start \
+                    sent again after its answer was lost may start a second workflow; 'scan' finds a running one in \
+                    those cases as well.""";
+            case SCAN -> """
+                    startWorkflowByMessage starts them, and the workflow it starts is found through the instance key \
+                    its start marker writes into the start row of the aggregate, and where the row does not know it, \
+                    by reading their instances.""";
+            case REFUSE -> """
+                    startWorkflowByMessage is refused for them. Set the key to 'start-row', the default, or to 'scan' \
+                    to start them.""";
+        };
+        final var expected = lookup == MessageStartLookup.SCAN
+                ? List.of(named + what,
+                        """
+                                WARN  o.p.z.d.ZenBpmDeploymentService - ZenBPM[orders]: \
+                                vanillabp.adapters.orders.message-start-lookup is 'scan': where the start row does not know a \
+                                workflow of the processes 'Order' of workflow module 'shop', a probe reads their instances to \
+                                find it by its id variable, at most 1000 \
+                                (vanillabp.adapters.orders.message-start-lookup-max-instances), and answers BPMS_UNAVAILABLE \
+                                where it would have to read more. A workflow of them which ended is not read where the platform \
+                                asks which adapter holds a workflow, so it is answered as unknown to the engine, which the \
+                                platform's contract for adapters does not allow: an operation on it is then treated as one on \
+                                a workflow the engine never held. The lookup is an opt-in until ZenBPM gives a workflow it \
+                                starts by a message a business key.""")
+                : List.of(named + what);
+        assertEquals(expected, lines);
+    }
+
+    @Test
+    @DisplayName("A workflow module whose processes no message starts says nothing about message-start-lookup")
+    void aModuleNoMessageStartsSaysNothingAboutTheLookup(final CapturedOutput output) throws Exception {
+        engine.answers("POST", "/v1/process-definitions", 201, "{\"processDefinitionKey\":11}");
+        engine.answers("GET", "/v1/process-definitions/11", 200, definition(11, 1, heldOrder("shop__paid")));
+
+        try (var registry = registry()) {
+            final var deploymentService = deploymentService(registry, TestScoping.of(NameClashAvoidance.USE_PREFIX),
+                    TestWiring.claiming("Order"));
+            deploymentService.deployResources("shop", prepared(deploymentService, ORDER));
+        }
+
+        assertTrue(output
+                .getAllOfThisTest()
+                .contains("workflow module 'shop' is deployed"), output::getAllOfThisTest);
+        assertFalse(output
+                .getAllOfThisTest()
+                .contains("message-start-lookup"), output::getAllOfThisTest);
     }
 
     private static ZenBpmDeployedProcesses deployedProcesses(final ZenBpmClientRegistry registry) {

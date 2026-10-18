@@ -15,6 +15,8 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
+import java.util.function.Function;
 import java.util.stream.IntStream;
 import java.util.stream.Stream;
 
@@ -27,8 +29,10 @@ import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
 import org.pbinitiative.zenbpmadapter.TestCollaborators;
 import org.pbinitiative.zenbpmadapter.TestScoping;
+import org.pbinitiative.zenbpmadapter.ZenBpmDeployedProcesses.ModuleMessages;
 import org.pbinitiative.zenbpmadapter.client.FakeEngine;
 import org.pbinitiative.zenbpmadapter.client.ZenBpmAdapterConfiguration;
+import org.pbinitiative.zenbpmadapter.client.ZenBpmAdapterConfiguration.MessageStartLookup;
 import org.pbinitiative.zenbpmadapter.client.ZenBpmClientFactory;
 
 import io.vanillabp.integration.adapter.spi.NameClashAvoidance;
@@ -63,9 +67,12 @@ class ZenBpmWorkflowProbesTest {
 
     private final ZenBpmProcessService<Object> processService = processService(factory);
 
+    private final List<ZenBpmClientFactory> scanningFactories = new ArrayList<>();
+
     @AfterEach
     void stopTheEngine() {
         factory.close();
+        scanningFactories.forEach(ZenBpmClientFactory::close);
         engine.close();
     }
 
@@ -338,6 +345,119 @@ class ZenBpmWorkflowProbesTest {
     }
 
     @Test
+    @DisplayName("Under message-start-lookup scan, where the business key finds no workflow which runs, the running instances of the processes of the scope a message starts are read, page by page, an incident included, and the one whose id variable names the aggregate is active")
+    void underScanAWorkflowAMessageStartedIsFoundByItsIdVariable() {
+        final var others = IntStream
+                .range(0, 100)
+                .mapToObj(index -> instanceAt(index, "shop__Order", "active", null, "{\"orderId\": \"order-%d\"}"
+                        .formatted(index + 100)))
+                .toArray(String[]::new);
+        scanFinds(query -> {
+            if (query.contains("state=active&page=1")) {
+                return pageOf(150, others);
+            }
+            if (query.contains("state=failed")) {
+                return page(instanceAt(7, "shop__Order", "failed", null, "{\"orderId\": \"order-1\"}"));
+            }
+            return pageOf(150, instanceAt(8, "shop__Order", "active", null, "{\"orderId\": \"order-2\"}"));
+        });
+
+        final var found = scanning(1_000).awarenessOfWorkflow(SCOPE, persistence(), "order-1");
+
+        assertAll(
+                () -> assertEquals(WorkflowAwareness.ACTIVE, found),
+                () -> assertEquals(List.of(
+                        "businessKey=order-1&bpmnProcessId=shop__Order&page=1&size=100&sortBy=key&sortOrder=asc",
+                        "businessKey=order-1&bpmnProcessId=shop__Invoice&page=1&size=100&sortBy=key&sortOrder=asc",
+                        "bpmnProcessId=shop__Order&state=active&page=1&size=100&sortBy=key&sortOrder=asc",
+                        "bpmnProcessId=shop__Order&state=active&page=2&size=100&sortBy=key&sortOrder=asc",
+                        "bpmnProcessId=shop__Order&state=failed&page=1&size=100&sortBy=key&sortOrder=asc"),
+                        queries()));
+    }
+
+    @Test
+    @DisplayName("Under message-start-lookup scan, a workflow which runs by its business key is not looked for further, nothing is read where the workflow module remembered no process a message starts, and an aggregate no instance names stays as the search answered")
+    void theScanReadsOnlyWhatTheSearchLeavesOpen() {
+        searchFinds(Map.of("shop__Invoice", page(instance("shop__Invoice", "active", "order-1"))));
+        final var running = scanning(1_000).awarenessOfWorkflow(SCOPE, persistence(), "order-1");
+        final var readWhileRunning = queries();
+        searchFinds(Map.of("shop__Order", page(instance("shop__Order", "completed", "order-1"))));
+        final var endedAndNotScanned = scanning(1_000).awarenessOfWorkflow(SCOPE, persistence(), "order-1");
+        final var configuration = new ZenBpmAdapterConfiguration();
+        configuration.setRestAddress(engine.address());
+        configuration.setMessageStartLookup(MessageStartLookup.SCAN);
+        final var withoutAPicture = new ZenBpmClientFactory("orders", configuration, () -> "shop");
+        scanningFactories.add(withoutAPicture);
+        final var nothingRemembered = processService(withoutAPicture).awarenessOfWorkflow(SCOPE, persistence(),
+                "order-1");
+
+        assertAll(
+                () -> assertEquals(WorkflowAwareness.ACTIVE, running),
+                () -> assertTrue(readWhileRunning
+                        .stream()
+                        .allMatch(query -> query.contains("businessKey=")), readWhileRunning::toString),
+                () -> assertEquals(WorkflowAwareness.COMPLETED, endedAndNotScanned),
+                () -> assertEquals(WorkflowAwareness.COMPLETED, nothingRemembered),
+                () -> assertEquals(2, queries()
+                        .stream()
+                        .filter(query -> !query.contains("businessKey="))
+                        .count(), queries()::toString));
+    }
+
+    @Test
+    @DisplayName("A lookup reads at most message-start-lookup-max-instances instances: where it would read more without having found the workflow, the probe is unavailable with a WARN naming the bound, once until a lookup stays within the bound again; a workflow found within the bound is found")
+    void aLookupStopsAtTheBound(final CapturedOutput output) {
+        final var five = IntStream
+                .range(0, 5)
+                .mapToObj(index -> instanceAt(index, "shop__Order", "active", null, "{\"orderId\": \"order-%d\"}"
+                        .formatted(index + 2)))
+                .toArray(String[]::new);
+        scanFinds(query -> query.contains("state=active") ? page(five) : pageOf(0));
+        final var scanning = scanning(4);
+
+        final var beyondTheBound = scanning.awarenessOfWorkflow(SCOPE, persistence(), "order-1");
+        final var againBeyondTheBound = scanning.awarenessOfWorkflowForRedispatch(SCOPE, persistence(), "order-1");
+        final var withinTheBound = scanning.awarenessOfWorkflow(SCOPE, persistence(), "order-5");
+        final var beyondItOnceMore = scanning.awarenessOfWorkflow(SCOPE, persistence(), "order-1");
+
+        assertAll(
+                () -> assertEquals(WorkflowAwareness.BPMS_UNAVAILABLE, beyondTheBound),
+                () -> assertEquals(WorkflowAwareness.BPMS_UNAVAILABLE, againBeyondTheBound),
+                () -> assertEquals(WorkflowAwareness.ACTIVE, withinTheBound),
+                () -> assertEquals(WorkflowAwareness.BPMS_UNAVAILABLE, beyondItOnceMore),
+                () -> assertEquals(List.of(
+                        "ZenBPM[orders]: the lookup of the workflow of aggregate 'order-1' among the workflows started by a message reports BPMS_UNAVAILABLE: the processes [shop__Order] hold more instances to read than vanillabp.adapters.orders.message-start-lookup-max-instances allows (4), so the workflow was not looked for among all of them; raise that bound, or set vanillabp.adapters.orders.message-start-lookup to 'start-row' to leave the lookup to the start row alone; further lookups which reach the bound are logged at DEBUG until one stays within it",
+                        "ZenBPM[orders]: the lookup of the workflow of aggregate 'order-1' among the workflows started by a message reports BPMS_UNAVAILABLE: the processes [shop__Order] hold more instances to read than vanillabp.adapters.orders.message-start-lookup-max-instances allows (4), so the workflow was not looked for among all of them; raise that bound, or set vanillabp.adapters.orders.message-start-lookup to 'start-row' to leave the lookup to the start row alone; further lookups which reach the bound are logged at DEBUG until one stays within it"),
+                        warnings(output)));
+    }
+
+    @Test
+    @DisplayName("Before a start is sent again under message-start-lookup scan, every instance created from the planned moment is read, ended ones included, and where nobody knows the moment, those which run; one whose id variable names the aggregate counts")
+    void theRedispatchLookupCountsFromThePlannedMoment() {
+        scanFinds(query -> query.contains("createdFrom=")
+                ? page(instanceAt(7, "shop__Order", "completed", null, "{\"orderId\": \"order-1\"}"))
+                : pageOf(0));
+
+        final var ended = scanning(1_000).awarenessOfWorkflowForRedispatch(SCOPE, persistence(), "order-1", Instant
+                .parse("2026-10-17T10:00:00.123Z"));
+        final var withoutAMoment = scanning(1_000).awarenessOfWorkflowForRedispatch(SCOPE, persistence(),
+                "order-1");
+
+        final var lookups = queries()
+                .stream()
+                .filter(query -> !query.contains("businessKey="))
+                .toList();
+        assertAll(
+                () -> assertEquals(WorkflowAwareness.COMPLETED, ended),
+                () -> assertEquals(WorkflowAwareness.UNKNOWN_TO_BPMS, withoutAMoment),
+                () -> assertEquals(List.of(
+                        "bpmnProcessId=shop__Order&createdFrom=2026-10-17T10%3A00%3A00.123Z&page=1&size=100&sortBy=key&sortOrder=asc",
+                        "bpmnProcessId=shop__Order&state=active&page=1&size=100&sortBy=key&sortOrder=asc",
+                        "bpmnProcessId=shop__Order&state=failed&page=1&size=100&sortBy=key&sortOrder=asc"),
+                        lookups));
+    }
+
+    @Test
     @DisplayName("The probe asks, a workflow may stay invisible for workflow-visibility-timeout, asked every quarter of a second, and the window of one workflow is the same")
     void theWindowIsTheVisibilityTimeout() {
         final var longer = new ZenBpmAdapterConfiguration();
@@ -421,6 +541,42 @@ class ZenBpmWorkflowProbesTest {
                     }
                     FakeEngine.respond(exchange, 200, pageOf(0));
                 }));
+    }
+
+    // the business-key searches find nothing; every other read of the instances, a lookup of the
+    // scan, is answered by its query
+    private void scanFinds(final Function<String, String> pageByQuery) {
+        engine.answers("GET", SEARCH_PATH, exchange -> {
+            final var query = exchange
+                    .getRequestURI()
+                    .getRawQuery();
+            FakeEngine.respond(exchange, 200, query.contains("businessKey=") ? pageOf(0) : pageByQuery.apply(query));
+        });
+    }
+
+    // a process service of an adapter id under message-start-lookup scan, whose deployment
+    // remembered that a message starts Order and none starts Invoice
+    private ZenBpmProcessService<Object> scanning(final int maxInstances) {
+        final var configuration = new ZenBpmAdapterConfiguration();
+        configuration.setRestAddress(engine.address());
+        configuration.setMessageStartLookup(MessageStartLookup.SCAN);
+        configuration.setMessageStartLookupMaxInstances(maxInstances);
+        final var scanningFactory = new ZenBpmClientFactory("orders", configuration, () -> "shop");
+        scanningFactories.add(scanningFactory);
+        final var messages = new ModuleMessages(List.of("shop__Order", "shop__Invoice"), Set.of(), Set.of(
+                "shop__ordered"), Set.of("shop__Order"), List.of());
+        scanningFactory
+                .deployedProcesses()
+                .recordMessages("shop", messages, () -> messages);
+        return processService(scanningFactory);
+    }
+
+    private List<String> queries() {
+        return engine
+                .requests()
+                .stream()
+                .map(FakeEngine.Request::query)
+                .toList();
     }
 
     private void searchFinds(final Map<String, String> pagesByProcess) {

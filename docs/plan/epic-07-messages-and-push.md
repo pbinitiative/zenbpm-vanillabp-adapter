@@ -289,7 +289,7 @@ run logs for 90 days, so what they showed is written here as well):
 
 ### S7.1.2 `START_WORKFLOW_BY_MESSAGE` and `message-start-lookup` (engine-gated)
 
-- [ ] **Depends on:** S7.1.1, S9.1.1 (the start marker) and S9.3.1 (its handler, which reports the
+- [x] **Depends on:** S7.1.1, S9.1.1 (the start marker) and S9.3.1 (its handler, which reports the
   instance key). **Engine twin:** E13.4.
 
 A workflow started by a message carries no business key: `POST /v1/messages` takes none, and it
@@ -354,9 +354,177 @@ a message to the same aggregate: it reaches the workflow),
 
 **Acceptance criteria**
 
-- [ ] By default, a message-started workflow is found after its start marker ran.
-- [ ] `refuse` refuses with a message naming the setting and the gap; `scan` works within the bound.
+- [x] By default, a message-started workflow is found after its start marker ran.
+  `ZenBpmMessageIT#aMessageStartedWorkflowIsFoundThroughItsStartRow`, against the pinned engine
+  under the default `start-row`: the start row the marker wrote holds the key of the instance, which
+  carries no business key, the marker sent no update of the instance's variables (the proxy in
+  front of the engine saw no `PATCH`), and a correlation reaches the workflow and ends it; the
+  start of the application named `Postcards` and the value in force. At the SPI:
+  `ZenBpmProcessServiceTest#underStartRowAMessageStartsTheWorkflowAndNoProbeReadsTheInstances`.
+- [x] `refuse` refuses with a message naming the setting and the gap; `scan` works within the bound.
+  `ZenBpmMessageStartRefusedIT#startWorkflowByMessageIsRefusedWithRefuse` (the refusal names
+  `vanillabp.adapters.zenbpm.message-start-lookup`, the gap and the other two values, the
+  transaction rolls back and nothing is planned) and
+  `ZenBpmProcessServiceTest#underRefuseNoWorkflowIsStartedByAMessage`;
+  `ZenBpmMessageStartScanIT#scanFindsTheWorkflowOfARedispatchedStart` (a start sent again after its
+  answer was lost, before any start row, publishes once and is skipped as `ACTIVE`),
+  `ZenBpmWorkflowProbesTest#aLookupStopsAtTheBound` and `ZenBpmProcessServiceIT#aStartByAMessageStartsAWorkflowTheScanFinds`.
 - [ ] E13.4's twin replaces the scan by the business-key search, and `scan` is removed then.
+  *Left open:* E13 is out of the pipeline's scope; whoever lands E13.4 ticks it (note there).
+
+*Fit check, 2026-10-19, decided by the Implementor.* Checked against `main` (`c809df4`),
+`ADAPTER-AUTHORS.md` (3.3 and 4.1), the platform as the adapter resolves it
+(`2.0.0-20261015.045823-21`, read at the platform's commit `f9505797` it was built from:
+`MigrationProcessService#startWorkflowByMessage`, `#startWorkflowPhaseTwo`,
+`#skipRedispatchedStart`, `#writtenForThisEntry`, `DeliveryRecords#recordWorkflowStart`,
+`DispatchLanes`, `PhaseTwoOutboxProperties`; signatures checked in the resolved jars), Camunda 8's
+`Camunda8ProcessService#preflightStartByMessage` and `#startWorkflowByMessage`, and the engine at
+the pin `bdd795a3` (source exported with `git archive`: `ZenNode.PublishMessage`,
+`publishDefinitionMessageByName` and `publishMessageBySubscriptionKey` of
+`internal/cluster/node.go`, `Server.PublishMessage` of `internal/rest/server.go` and of
+`internal/cluster/server/server.go`, `PublishMessageByKey` of `pkg/bpmn/events_api.go`,
+`handleStartEventInstanceCreation`, `publishMessageOnInstanceCreation` and
+`renewStartEventTrigger` of `pkg/bpmn/start_event_instance_creation_handler.go`,
+`createMessageStartEventMessageSubscriptions` of `pkg/bpmn/engine.go`,
+`SaveMessageSubscription` of `internal/cluster/partition/partition_persistence.go` and the pointer
+upsert of `internal/sql/message_subscription_pointer.sql.go`; probed with `curl` against the pinned
+image, then held by the ITs below). What did not fit, and what was decided:
+
+1. **The `404` of a start message** (brief question 1, instruction 2). The plan has it permanent.
+   The probes show three causes: no start subscription of the name; a workflow the engine created
+   and failed right behind the start event (the twin of GAPS 29; the instance exists, `failed`);
+   and a start of the same name at the same moment (item 2). A permanent answer would block a start
+   a repetition makes; a retry-later would wait out a missing deployment for hours. Decided an
+   ordinary, counted failure with the engine's answer as its cause, recorded as decision 47 (new,
+   because it differs from the plan). The second cause cannot happen to a process the adapter wired,
+   because its start marker stands right behind the start event and the engine stops at the
+   marker's job: measured, a start event followed by a service task is answered `201`, one followed
+   by a call activity of a process nobody deployed `404`
+   (`ZenBpmRestClientContractIT#aStartMessageIsA404AlsoWhereItsInstanceFailsBehindTheStart`).
+2. **The engine loses starts of one name at the same moment** (found by the probe, beyond the
+   story). 40 start messages of one name sent at once: 26 answered `201`, 14 `404`, 5 workflows;
+   sent one after the other, 40 of 40. The engine consumes the start subscription and renews it
+   under a lock of the old key, and a publication which waited for that lock returns without error.
+   Options: nothing (lose starts silently); a lock per name in the adapter (closes it on one node);
+   asking the engine for a new instance after each publication (impossible without a key, GAPS 1).
+   Decided the lock, held for the publication only, one per scoped name, shared by the adapter ids
+   of the application (decision 47); the outbox dispatches different aggregates on parallel lanes
+   (`DispatchLanes`), so one node needs it. GAPS 30 entered for what remains across nodes, with the
+   contract test `ZenBpmRestClientContractIT#startMessagesOfOneNamePublishedAtOnceLoseStarts`
+   (rounds of 40 until a lost `201` and a `404` were seen, at most five), and
+   `ZenBpmProcessServiceIT#startsByOneMessageAtOnceEachStartTheirWorkflow` holds the lock against
+   the engine. A note under E13.4 names the engine change which would close it.
+3. **Which versions phase one judges by** (brief question 2). Decision 42's rule, unchanged: only
+   the start messages of the newest version the engine holds count, read again before a refusal;
+   silent where the picture is incomplete. A name a model waits for is refused naming
+   `correlateMessage`. No new decision. `ZenBpmKnownMessages` holds what the correlation and the
+   start share (the complete-picture rule, the name as written), moved out of
+   `ZenBpmMessageCorrelation`, so there is one copy.
+4. **What the scan reads** (instruction 3). The engine's largest page is 100 per partition, not
+   200 (`InstanceFilter.MAXIMUM_SIZE`). `state=active` leaves out a workflow with an incident, which
+   the probes count as running, so the election's lookup reads `active` and then `failed`. The
+   probe before a start is sent again reads every state from `createdFrom = plannedAt`, as its
+   business-key search does (a workflow which ended quickly is found too), and only what runs where
+   nobody knows that moment. The processes read are those of the scope whose newest version has a
+   message start event, as this start's deployment read them (`ModuleMessages#startedByMessage`,
+   new); a module which deployed nothing in this start is not read. The bound counts every instance
+   read, processes and pages together; a workflow found within it is found. The WARN of a lookup
+   which reached it is logged once until a lookup stays within the bound again.
+5. **When the core asks the redispatch probe.** In the resolved core,
+   `#startWorkflowPhaseTwo` asks `#skipRedispatchedStart` only for an entry dispatched before: the
+   start row written for this entry first, then `awarenessOfWorkflowForRedispatch`. Phase two of a
+   start by message reports no id, and `DeliveryRecords#recordWorkflowStart` writes nothing for a
+   `null` id, so the marker writes the row. `ZenBpmMessageStartScanIT` keeps the marker from writing
+   it (the proxy refuses every read of one instance) and loses the answer of the first publication,
+   so the redispatch probe alone decides.
+6. **The S9.3.1 note under this story** was proved and stays as it is: the message carries the id
+   variable, the marker's job sees it (its variables are the message's, `#aStartMessageIsAnsweredWithoutTheInstanceItStarted`),
+   the marker writes nothing, and the start row holds the instance key
+   (`ZenBpmMessageIT#aMessageStartedWorkflowIsFoundThroughItsStartRow`).
+7. **GAPS 4 and 23 seen from the start.** A start message is published without a key, which the
+   engine looks up under the start subscriptions only. A wait whose key evaluates to an empty text
+   fails at the wait instead of subscribing (probed), and the engine refuses to deploy a second
+   process whose start event takes a name another process starts with (probed), so no waiting
+   workflow takes a start message. Both entries are extended; GAPS 5 and 29 as well.
+8. **Shared values.** Camunda 8 publishes the id variable alone; the story asks for the shared
+   values and the id, as the start by request sends them. Built as the story says.
+9. **Instruction 5** (brief question 5). One INFO per workflow module with processes a message
+   starts, naming them, the key and the value, and under `scan` a WARN naming the bound and that a
+   workflow which ended stays unknown to the election's probe; asserted in
+   `ZenBpmDeployingTest#theProcessesAMessageStartsAreNamedOnce` (each value) and on Spring Boot in
+   the three ITs. The refusal names the gap in words and `GAPS.md`, not by number, because code
+   cites decisions only.
+10. **The Quarkus side** (brief question 3). Both keys bind and are validated on Quarkus
+   (`VanillaBpZenBpmPropertiesTest#eachValueOfTheMessageStartLookupBindsAsWritten`,
+   `ZenBpmMessageStartKeysTest`) as on Spring Boot (`ZenBpmStartupValidationBootTest#theBoundOfTheLookupOfAMessageStartIsValidated`);
+   the Quarkus twin of the start-row IT is left to S7.3.1 (note there).
+11. **Test classes.** Each value of `message-start-lookup` is a Spring context of its own, so the
+   story's `#startWorkflowByMessageIsRefusedWithRefuse` and `#scanFindsTheWorkflowOfARedispatchedStart`
+   live in `ZenBpmMessageStartRefusedIT` and `ZenBpmMessageStartScanIT`, on the same application
+   `it/message`, which gained `Postcard`, `PostcardRepository`, `PostcardWorkflow` and
+   `message-it/postcards.bpmn`. `RefusingEngineProxy` can lose an answer now and records every
+   request; `ZenBpmMessageIT` reaches the engine through it.
+12. **The changed default.** `MessageStartLookup` gained `START_ROW`, the new default, so
+   `ZenBpmAdapterConfigurationTest#aRestAddressAloneIsComplete` expects `START_ROW` where it expected `REFUSE`;
+   no assertion was weakened.
+
+**Implemented 2026-10-19.** Core: `ZenBpmMessageStart` (both phases of `START_WORKFLOW_BY_MESSAGE`,
+registered by `ZenBpmProcessService` in place of the handler which was not built yet),
+`ZenBpmMessageStartScan` (the lookup of `scan`, the third step of both workflow probes),
+`ZenBpmKnownMessages` (what correlation and start share, moved out of `ZenBpmMessageCorrelation`),
+`ZenBpmDeployedProcesses.ModuleMessages#startedByMessage` (filled by `ZenBpmHeldMessages`), the
+startup report per workflow module in `ZenBpmDeploymentService#deployResources`, and
+`ZenBpmAdapterConfiguration`: `MessageStartLookup.START_ROW`, the new default, and
+`message-start-lookup-max-instances` (`1000`, at least `1`), bound by `ZenBpmAdapterKeys` (Spring
+Boot) and `VanillaBpZenBpmProperties` (Quarkus). Spring Boot tests: `ZenBpmMessageIT` gained the
+start-row case and reaches the engine through `RefusingEngineProxy`, which can lose an answer and
+records every request now; `ZenBpmMessageStartRefusedIT` and `ZenBpmMessageStartScanIT` run the same
+application `it/message`, which gained `Postcard`, `PostcardRepository`, `PostcardWorkflow` and
+`message-it/postcards.bpmn` (with its diagram, decision 29). Decision 47; GAPS 30 new; GAPS 1, 4, 5,
+23 and 29 extended; the README, architecture 4.2, 4.4 and the configuration table, the deviations
+rows 1 and 17, the mapping row 48, open question 12, and notes under S5.2.2, S7.3.1, E12 and
+E13.4.
+
+New tests: `ZenBpmProcessServiceTest` (6: one per value of `message-start-lookup`,
+`#aStartMessageNoStartEventTakesIsAnOrdinaryFailure`, `#everyOtherRefusalOfAStartMessageIsThrownAsItIs`,
+`#startMessagesOfOneNameArePublishedOneAfterTheOther`); `ZenBpmStartMessageDeclarationTest` (8);
+`ZenBpmWorkflowProbesTest` (4: `#underScanAWorkflowAMessageStartedIsFoundByItsIdVariable`,
+`#theScanReadsOnlyWhatTheSearchLeavesOpen`, `#aLookupStopsAtTheBound`,
+`#theRedispatchLookupCountsFromThePlannedMoment`); `ZenBpmDeployingTest` (5:
+`#theProcessesAMessageStartsAreNamedOnce` for each value, `#aModuleNoMessageStartsSaysNothingAboutTheLookup`,
+`#readAgainAProcessIsStartedByAMessageWhereItsNewestVersionIs`); `ZenBpmAdapterConfigurationTest`
+(the bound's defect); against the pinned engine `ZenBpmRestClientContractIT` (3:
+`#aStartMessageIsAnsweredWithoutTheInstanceItStarted`,
+`#aStartMessageIsA404AlsoWhereItsInstanceFailsBehindTheStart`,
+`#startMessagesOfOneNamePublishedAtOnceLoseStarts`, fixtures `contract-started.bpmn` and
+`contract-start-fails.bpmn`) and `ZenBpmProcessServiceIT` (2:
+`#aStartByAMessageStartsAWorkflowTheScanFinds`, `#startsByOneMessageAtOnceEachStartTheirWorkflow`);
+Spring Boot `ZenBpmMessageIT#aMessageStartedWorkflowIsFoundThroughItsStartRow`,
+`ZenBpmMessageStartRefusedIT#startWorkflowByMessageIsRefusedWithRefuse`,
+`ZenBpmMessageStartScanIT#scanFindsTheWorkflowOfARedispatchedStart`,
+`VanillaBpZenBpmPropertiesTest#eachValueOfTheMessageStartLookupBindsAsWritten` (3) and
+`ZenBpmStartupValidationBootTest#theBoundOfTheLookupOfAMessageStartIsValidated`; Quarkus
+`VanillaBpZenBpmPropertiesTest#eachValueOfTheMessageStartLookupBindsAsWritten` (3) and
+`ZenBpmMessageStartKeysTest`.
+
+Seen to fail, each restored afterwards (16 of 16 mutants, against green unmutated runs, a kill
+counted only where a test failed): the lock per name switched off (unit, and against the engine:
+`ZenBpmProcessServiceIT#startsByOneMessageAtOnceEachStartTheirWorkflow` got the engine's `404`);
+the scan switched off in the redispatch probe (unit, and against the engine:
+`ZenBpmMessageStartScanIT`); `refuse` not refused (unit, and against the engine:
+`ZenBpmMessageStartRefusedIT`); the start row's key ignored by the probe (against the engine:
+`ZenBpmMessageIT#aMessageStartedWorkflowIsFoundThroughItsStartRow`); every name passing phase one;
+a refusal without reading again; a `404` thrown as the engine answered it; the bound never reached;
+incidents not read; the lookup under every value; every process of the scope read; the bound's
+WARN never reset; no WARN under `scan`; an older version's message start counted when read again;
+a bound of `0` accepted; the redispatch lookup reading only what runs.
+
+`TZ=Etc/UTC mvn clean install` on OpenJDK 25.0.2 builds green with every integration test run and
+none skipped (engine test support 12 unit and 5 integration tests, core 1,035 unit and 89
+integration tests, Spring Boot 14 unit and 53 integration tests, smoke test 38, Quarkus runtime 13,
+Quarkus deployment 52, Quarkus integration tests 10, coverage gate 37). The gate measures 100 % of
+28,397 instructions for Spring Boot and 100 % of 28,267 for Quarkus, and `bin/check-deploy-safety.sh`
+passes.
 
 ## F7.2 The pushed aggregate
 
@@ -399,6 +567,13 @@ inside a sub-process; the sub-process' child instance carries the value, the roo
 
 `ZenBpmWorkflowLifecycleTest` gains `correlateMessageResumesTheWorkflow`, `aGlobalPushReachesTheGateway`,
 `aTaskScopedPushReachesTheChildScope`.
+
+*Note from S7.1.2, 2026-10-19.* `ZenBpmWorkflowLifecycleTest` also gains
+`startWorkflowByMessageIsFoundThroughItsStartRow`, the Quarkus twin of
+`ZenBpmMessageIT#aMessageStartedWorkflowIsFoundThroughItsStartRow`: start a workflow by a message
+under the default `message-start-lookup: start-row`, wait for its start row, and correlate a message
+which reaches it. The keys `message-start-lookup` and `message-start-lookup-max-instances` are bound
+and validated on Quarkus already (`VanillaBpZenBpmPropertiesTest`, `ZenBpmMessageStartKeysTest`).
 
 **Acceptance criteria**
 

@@ -420,12 +420,20 @@ public interface VanillaBpZenBpmProperties {
         Optional<Integer> instanceCacheMaxEntries();
 
         /**
-         * <code>message-start-lookup</code>: what the adapter does when it is asked for workflows a
-         * message started.
+         * <code>message-start-lookup</code>: how a workflow <code>startWorkflowByMessage</code>
+         * started is found, <code>start-row</code>, <code>scan</code> or <code>refuse</code>.
          *
          * @return The value, empty where the application did not set the key
          */
         Optional<MessageStartLookup> messageStartLookup();
+
+        /**
+         * <code>message-start-lookup-max-instances</code>: how many instances one lookup of
+         * <code>message-start-lookup: scan</code> reads at most.
+         *
+         * @return The value, empty where the application did not set the key
+         */
+        Optional<Integer> messageStartLookupMaxInstances();
 
         /**
          * <code>accept-unscoped-identifiers</code>: whether the identifiers of the workflow modules
@@ -460,6 +468,7 @@ public interface VanillaBpZenBpmProperties {
             configuration.setHistoryTimeToLive(historyTimeToLive().orElse(null));
             configuration.setInstanceCacheMaxEntries(instanceCacheMaxEntries().orElse(null));
             configuration.setMessageStartLookup(messageStartLookup().orElse(null));
+            configuration.setMessageStartLookupMaxInstances(messageStartLookupMaxInstances().orElse(null));
             configuration.setAcceptUnscopedIdentifiers(acceptUnscopedIdentifiers().orElse(null));
         }
 

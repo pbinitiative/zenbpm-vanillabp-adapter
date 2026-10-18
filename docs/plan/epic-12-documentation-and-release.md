@@ -65,6 +65,16 @@ The page also says what is not compared: an id without a valid `rest-address` (a
 degraded because of another key is compared), a mode set for a workflow module only, and two
 addresses of one engine, such as an alias or a proxy, which the check cannot know to be one.
 
+*Note from S7.1.2, 2026-10-19.* The `Configuration` page names `message-start-lookup` (`start-row`,
+the default, `scan`, `refuse`) and `message-start-lookup-max-instances` (`1000`), and the
+`Deviations` page names, under GAPS 1, what the start row does not cover: an application without a
+delivery log, the moments between publishing a start message and the commit of its marker's
+report, and a start sent again after its answer was lost; and how long the row lives,
+`vanillabp.delivery.workflow-start-retention` (`P30D` by default, `0` keeps rows for good) and
+`vanillabp.delivery.keep-workflow-start-while-aggregate-exists`. The README says it until the
+pages exist. GAPS 30 (start messages of one name at the same moment lose starts, decision 47)
+belongs on the same page: an application on several nodes may lose such a start unseen.
+
 **Acceptance criteria**: every claim names its test; a reviewer following the wiki alone boots an
 application against a fresh engine container.
 

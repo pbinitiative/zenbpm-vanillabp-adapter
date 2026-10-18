@@ -73,8 +73,13 @@ import java.util.stream.Collectors;
  * <li><code>instance-cache-max-entries</code> (default
  * {@value #DEFAULT_INSTANCE_CACHE_MAX_ENTRIES}) - the bound of the cache of process instance
  * facts</li>
- * <li><code>message-start-lookup</code> (default <code>refuse</code>) - <code>scan</code>
- * allows the bounded lookup of workflows a message started</li>
+ * <li><code>message-start-lookup</code> (default <code>start-row</code>) - how a workflow which
+ * <code>startWorkflowByMessage</code> started is found: <code>start-row</code> through the instance
+ * key its start marker wrote into the start row, <code>scan</code> in addition by reading the
+ * running instances of its process, and <code>refuse</code> starts no workflow by a message</li>
+ * <li><code>message-start-lookup-max-instances</code> (default
+ * {@value #DEFAULT_MESSAGE_START_LOOKUP_MAX_INSTANCES}) - how many instances one lookup of
+ * <code>scan</code> reads at most; at least one</li>
  * <li><code>accept-unscoped-identifiers</code> (default <code>false</code>) - <code>true</code>
  * says that the identifiers of the workflow modules are unique, so the warning about
  * <code>name-clash-avoidance: none</code> becomes a DEBUG line</li>
@@ -221,26 +226,52 @@ public class ZenBpmAdapterConfiguration {
     public static final int DEFAULT_INSTANCE_CACHE_MAX_ENTRIES = 10_000;
 
     /**
+     * The default of <code>message-start-lookup-max-instances</code>.
+     */
+    public static final int DEFAULT_MESSAGE_START_LOOKUP_MAX_INSTANCES = 1_000;
+
+    /**
      * The application name a derived <code>client-id</code> starts with where the platform
      * knows none.
      */
     public static final String DEFAULT_APPLICATION_NAME = "application";
 
     /**
-     * What the adapter does when it is asked for workflows a message started. The engine stores
-     * no business key on a message start, so finding one means reading the instances.
+     * How a workflow <code>startWorkflowByMessage</code> started is found. The engine gives such
+     * a workflow no business key, so no search by the aggregate's id finds it.
      */
     public enum MessageStartLookup {
 
         /**
-         * The lookup is refused with a message naming the key which allows it. The default.
+         * A workflow is started by a message, and found through the instance key its start
+         * marker writes into the start row of its aggregate, and through nothing else. The
+         * default.
          */
-        REFUSE,
+        START_ROW,
 
         /**
-         * The lookup reads the instances of the workflow, bounded in number.
+         * As {@link #START_ROW}, and where the start row does not know the workflow, the probes
+         * read the running instances of its process to find the one whose id variable names the
+         * aggregate, at most <code>message-start-lookup-max-instances</code> of them.
          */
-        SCAN
+        SCAN,
+
+        /**
+         * No workflow is started by a message: <code>startWorkflowByMessage</code> is refused
+         * with a message naming the key which allows it.
+         */
+        REFUSE;
+
+        /**
+         * The value as a configuration writes it.
+         *
+         * @return E.g. <code>start-row</code>
+         */
+        public String configured() {
+            return name()
+                    .toLowerCase(Locale.ROOT)
+                    .replace('_', '-');
+        }
 
     }
 
@@ -372,7 +403,9 @@ public class ZenBpmAdapterConfiguration {
 
     private int instanceCacheMaxEntries = DEFAULT_INSTANCE_CACHE_MAX_ENTRIES;
 
-    private MessageStartLookup messageStartLookup = MessageStartLookup.REFUSE;
+    private MessageStartLookup messageStartLookup = MessageStartLookup.START_ROW;
+
+    private int messageStartLookupMaxInstances = DEFAULT_MESSAGE_START_LOOKUP_MAX_INSTANCES;
 
     private boolean acceptUnscopedIdentifiers;
 
@@ -766,7 +799,7 @@ public class ZenBpmAdapterConfiguration {
     }
 
     /**
-     * What the adapter does when it is asked for workflows a message started.
+     * How a workflow <code>startWorkflowByMessage</code> started is found.
      *
      * @return Never <code>null</code>
      */
@@ -775,12 +808,32 @@ public class ZenBpmAdapterConfiguration {
     }
 
     /**
-     * What the adapter does when it is asked for workflows a message started.
+     * How a workflow <code>startWorkflowByMessage</code> started is found.
      *
      * @param messageStartLookup The choice, or <code>null</code> for the default
      */
     public void setMessageStartLookup(final MessageStartLookup messageStartLookup) {
-        this.messageStartLookup = messageStartLookup == null ? MessageStartLookup.REFUSE : messageStartLookup;
+        this.messageStartLookup = messageStartLookup == null ? MessageStartLookup.START_ROW : messageStartLookup;
+    }
+
+    /**
+     * How many instances one lookup of <code>message-start-lookup: scan</code> reads at most.
+     *
+     * @return The number
+     */
+    public int getMessageStartLookupMaxInstances() {
+        return messageStartLookupMaxInstances;
+    }
+
+    /**
+     * How many instances one lookup of <code>message-start-lookup: scan</code> reads at most.
+     *
+     * @param messageStartLookupMaxInstances The number, or <code>null</code> for the default
+     */
+    public void setMessageStartLookupMaxInstances(final Integer messageStartLookupMaxInstances) {
+        this.messageStartLookupMaxInstances = messageStartLookupMaxInstances == null
+                ? DEFAULT_MESSAGE_START_LOOKUP_MAX_INSTANCES
+                : messageStartLookupMaxInstances;
     }
 
     /**
@@ -997,6 +1050,13 @@ public class ZenBpmAdapterConfiguration {
                             propertyKey(adapterId, "instance-cache-max-entries"),
                             instanceCacheMaxEntries,
                             DEFAULT_INSTANCE_CACHE_MAX_ENTRIES));
+        }
+        if (messageStartLookupMaxInstances < 1) {
+            valueDefects.add("%s is %d and has to be at least 1; the default is %d"
+                    .formatted(
+                            propertyKey(adapterId, "message-start-lookup-max-instances"),
+                            messageStartLookupMaxInstances,
+                            DEFAULT_MESSAGE_START_LOOKUP_MAX_INSTANCES));
         }
         scopedDurations.forEach((
             propertyKey,
