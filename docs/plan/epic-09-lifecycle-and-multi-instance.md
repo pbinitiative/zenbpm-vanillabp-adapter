@@ -171,6 +171,10 @@ start event, a called process's included; the rewritten model deploys
   `bin/check-deploy-safety.sh` green. Mutants: 3/3 killed for this story (the guard against a
   second insertion, the two guards of the drawing).
 
+**S9.1.1 done 2026-10-18**, merged to `main` together with S9.3.1 as `5041e85` (pull request #55).
+The runs on that commit and what they showed are recorded under S9.3.1. The end marker goes to
+S9.2.1, as the note there says.
+
 ## F9.2 The end of a workflow
 
 ### S9.2.1 `ZenBpmWorkflowEndedHandler`
@@ -424,6 +428,35 @@ integration test run and none skipped (engine test support 12 unit and 5 integra
 Quarkus runtime 10, Quarkus deployment 51, Quarkus integration tests 10, coverage gate 37). The gate
 measures 100 % of 27,401 instructions for Spring Boot and 100 % of 27,275 for Quarkus, and
 `bin/check-deploy-safety.sh` passes. No flake was hit.
+
+**S9.1.1 and S9.3.1 done 2026-10-18**, merged to `main` as `5041e85` (pull request #55). The pull
+request went in after two reviews, whose six distinct findings were all valid and fixed in
+`5cc201b`, and after CodeRabbit's review. Its one comment, a note under S7.1.2 which still described
+the rule the reviews had corrected, was valid and fixed in `cfecc6a`, and CodeRabbit accepted the
+fix. E9 goes on with S9.2.1 after E7 and E8, and the global order goes on with S7.1.2. On `5041e85`
+(GitHub keeps run logs for 90 days, so what they showed is written here as well):
+
+- `Checks`, run
+  [39169363378](https://github.com/pbinitiative/zenbpm-vanillabp-adapter/actions/runs/39169363378):
+  green on both JDKs. `bin/check-engine-copies.sh` (in the JDK 25 job) reported both copies as the
+  engine's files of `bdd795a3...`. On both JDKs the following ran, none skipped:
+  `ZenBpmMarkerTasksTest` 10, `ZenBpmMarkerTasksIT` 2, `ZenBpmBpmsInitiatedStartHandlerTest` 14,
+  `ZenBpmCallActivitiesTest` 3, `ZenBpmDeploymentWiringTest` 18, `ZenBpmDeclaredProcessWorkersTest`
+  18, `ZenBpmLifecycleIT` 5, `ZenBpmDeploymentIT` 3 and `ZenBpmTaskProcessingIT` 20. The totals
+  were engine test support 12 unit and 5 integration tests, core 1,011 unit and 84 integration
+  tests, Spring Boot 11 unit and 50 integration tests, smoke test 37, Quarkus runtime 10, Quarkus
+  deployment 51, Quarkus integration tests 10, coverage gate 37. The gate measured 100 % on both
+  platforms: of 27,401 instructions for Spring Boot and 27,275 for Quarkus on JDK 25, of 27,391 and
+  27,265 on JDK 21.
+- `Publish snapshots`, run
+  [39169363330](https://github.com/pbinitiative/zenbpm-vanillabp-adapter/actions/runs/39169363330):
+  green. The core snapshot it published to GitHub Packages, `2.0.0-20261018.214724-51`, holds the
+  stories' new main classes (`ZenBpmMarkerTasks`, `ZenBpmCallActivities`,
+  `ZenBpmBpmsInitiatedStartHandler` and `$Start`) and no test class, fake, fixture or BPMN file.
+  `quarkus/integration-tests`, the smoke test, the engine test support and the coverage modules
+  skipped deployment. Both report pages (`spring-boot-report/index.html`,
+  `quarkus-report/index.html`) answer HTTP 200 and show 0 of 27,401 (Spring Boot) and 0 of 27,275
+  (Quarkus) instructions missed.
 
 ## F9.4 Multi-instance
 
