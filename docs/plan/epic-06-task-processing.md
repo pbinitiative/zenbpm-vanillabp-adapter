@@ -1605,11 +1605,40 @@ the deployed ones, and the platform names a declared id per module, so under `no
 declares `Orders` without a model took the process over from the module which claims it, and the
 check before the commit then refused that module's own tasks. A process now stays the first
 module's, and the start of the second ends with a message naming both modules and the
-`name-clash-avoidance` keys (`ZenBpmDeclaredProcessWorkersTest#aDeclaredIdAnotherModuleClaimsIsRefused`,
+`name-clash-avoidance` keys
+(`ZenBpmDeclaredProcessWorkersTest#aDeclaredIdAnotherModuleClaimsIsRefused`,
 `ZenBpmDeployedProcessesTest#aProcessServedByOneModuleStaysThatModules`; 3 of 3 mutants killed:
-the old `put`, the same module refused on a restart, no refusal). The full build ran
-again green, none skipped (core 955 unit and 78 integration tests; 100 % of 24,751 and 24,625
+the old `put`, the same module refused on a restart, no refusal). The full build ran again green,
+none skipped (core 955 unit and 78 integration tests; 100 % of 24,751 and 24,625
 instructions), and `bin/check-deploy-safety.sh` passes.
+
+**S6.3.1 and S6.4.1 done 2026-10-18**, merged to `main` as `aee2b08` (pull request #49, after two
+reviews, whose seven findings were all valid and fixed in `3e0c26c`, and CodeRabbit's review,
+whose one comment was valid and fixed in `6730aa1`). F6.3 and F6.4 are complete. On `aee2b08`
+(GitHub keeps run logs for 90 days, so what they showed is written here as well):
+
+- `Checks`, run
+  [39118834311](https://github.com/pbinitiative/zenbpm-vanillabp-adapter/actions/runs/39118834311):
+  green on both JDKs. `bin/check-engine-copies.sh` (in the JDK 25 job) reported both copies as the
+  engine's files of `bdd795a3...`. On both JDKs `ZenBpmTaskOutcomesTest` ran 32 tests,
+  `ZenBpmPreCommitCheckTest` 2, `ZenBpmDeclaredProcessWorkersTest` 12,
+  `ZenBpmDeployedProcessesTest` 3, `ZenBpmJobStreamTest` 43, `ZenBpmProcessServiceTest` 12,
+  `ZenBpmWorkflowProcessingTest` 9, `ZenBpmJobLockIT` 7, `ZenBpmDeploymentServiceIT` 7,
+  `ZenBpmTaskProcessingIT` 19 and `ZenBpmRenamedProcessIT` 1, none skipped (engine test support 12
+  unit and 3 integration tests, core 955 unit and 78 integration tests, Spring Boot 11 unit and 32
+  integration tests, smoke test 37, Quarkus runtime 10, Quarkus deployment 51, Quarkus integration
+  tests 3, coverage gate 37). The gate measured 100 % on both platforms: of 24,751 instructions
+  for Spring Boot and 24,625 for Quarkus on JDK 25, of 24,741 and 24,615 on JDK 21.
+- `Publish snapshots`, run
+  [39118834307](https://github.com/pbinitiative/zenbpm-vanillabp-adapter/actions/runs/39118834307):
+  green. The core snapshot it published to GitHub Packages, `2.0.0-20261018.102017-45`, holds the
+  stories' new and changed main classes (`ZenBpmTaskOutcomes`, `ZenBpmKeys`,
+  `ZenBpmDeclaredProcessWorkers` with `DeclaredProcess` and `HeldTypes`,
+  `ZenBpmDeployedProcesses`) and no test class, fake, fixture or BPMN file;
+  `quarkus/integration-tests`, the smoke test, the engine test support and the coverage modules
+  skipped deployment. Both report pages (`spring-boot-report/index.html`,
+  `quarkus-report/index.html`) answer HTTP 200 and show 0 of 24,751 (Spring Boot) and 0 of 24,625
+  (Quarkus) instructions missed.
 
 ## F6.5 Idempotency and restarts on both platforms
 
