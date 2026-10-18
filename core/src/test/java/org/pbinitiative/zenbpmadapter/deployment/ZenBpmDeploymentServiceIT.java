@@ -6,6 +6,7 @@ package org.pbinitiative.zenbpmadapter.deployment;
 
 import static org.junit.jupiter.api.Assertions.assertAll;
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -33,6 +34,7 @@ import org.pbinitiative.zenbpmadapter.TestCollaborators;
 import org.pbinitiative.zenbpmadapter.TestScoping;
 import org.pbinitiative.zenbpmadapter.TestStarts;
 import org.pbinitiative.zenbpmadapter.TestWiring;
+import org.pbinitiative.zenbpmadapter.ZenBpmDeployedProcesses.ModuleMessages;
 import org.pbinitiative.zenbpmadapter.ZenBpmProcessingContext;
 import org.pbinitiative.zenbpmadapter.client.ZenBpmAdapterConfiguration;
 import org.pbinitiative.zenbpmadapter.client.ZenBpmClientFactory;
@@ -41,11 +43,16 @@ import org.pbinitiative.zenbpmadapter.client.ZenBpmRestClient;
 import org.pbinitiative.zenbpmadapter.client.api.CreateInstanceRequest;
 import org.pbinitiative.zenbpmadapter.client.api.JobFilter;
 import org.pbinitiative.zenbpmadapter.client.api.JobRef;
+import org.pbinitiative.zenbpmadapter.processservice.ZenBpmProcessService;
 import org.pbinitiative.zenbpmadapter.test.EngineUnderTest;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
 import io.vanillabp.integration.adapter.spi.NameClashAvoidance;
+import io.vanillabp.integration.adapter.spi.PhaseOneRequest;
+import io.vanillabp.integration.spi.AggregatePersistenceAware;
+import io.vanillabp.integration.spi.PhaseOperation;
+import io.vanillabp.integration.spi.PhaseTwoCall;
 import io.vanillabp.integration.test.utils.CapturedOutput;
 import io.vanillabp.integration.test.utils.SuppressOutputExtension;
 
@@ -331,6 +338,36 @@ class ZenBpmDeploymentServiceIT {
                         .contains("could not be read"), output::getOutOfThisTest));
     }
 
+    @Test
+    @DisplayName("A message only an earlier version of a process waits for passes phase one of a correlation, because its workflows may still wait for it; a name no version knows is refused, and phase one asks the engine nothing")
+    void aMessageAnEarlierVersionWaitsForPassesPhaseOne() {
+        deployWaitingFor("paid");
+        deployWaitingFor("settled");
+        final var factory = registry.getFactory(ADAPTER_ID);
+        final var correlation = new ZenBpmProcessService<Object>(ADAPTER_ID, factory, TestCollaborators.of(
+                ADAPTER_ID, TestScoping.of(NameClashAvoidance.USE_PREFIX)), (
+                    module,
+                    process) -> null)
+                .phaseOperations()
+                .get(PhaseOperation.CORRELATE_MESSAGE);
+
+        final var refusal = assertThrows(IllegalArgumentException.class, () -> correlation.phaseOne(correlationOf(
+                "payed")));
+
+        assertAll(
+                () -> assertEquals(Optional.of(new ModuleMessages(List.of("messages-it__Payment"), Set.of(
+                        "messages-it__paid", "messages-it__settled"), Set.of(), List.of())), factory
+                                .deployedProcesses()
+                                .messagesOf("messages-it")),
+                () -> assertDoesNotThrow(() -> correlation.phaseOne(correlationOf("paid"))),
+                () -> assertDoesNotThrow(() -> correlation.phaseOne(correlationOf("settled"))),
+                () -> assertTrue(refusal
+                        .getMessage()
+                        .contains(
+                                "the messages they wait for are: [messages-it__paid, messages-it__settled]"),
+                        refusal::getMessage));
+    }
+
     private static void deploy(
         final TestWiring wiring,
         final String workflowModuleId,
@@ -373,6 +410,33 @@ class ZenBpmDeploymentServiceIT {
                 model);
         deploymentService.wireBpmn(workflowModuleId, filename, bpmnProcessId, model, context);
         return context;
+    }
+
+    // one version of a process which waits for the given message
+    private static void deployWaitingFor(final String messageName) {
+        final var deploymentService = deploymentService(NameClashAvoidance.USE_PREFIX, TestWiring.claiming(
+                "Payment"));
+        final var model = deploymentService
+                .readBpmn("messages-it", "payment.bpmn", new ByteArrayInputStream("""
+                        <bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" id="payment" \
+                        targetNamespace="test">
+                          <bpmn:message id="Message_Awaited" name="%s" />
+                          <bpmn:process id="Payment" isExecutable="true">
+                            <bpmn:startEvent id="Start" />
+                            <bpmn:receiveTask id="Await" messageRef="Message_Awaited" />
+                          </bpmn:process>
+                        </bpmn:definitions>
+                        """.formatted(messageName).getBytes(StandardCharsets.UTF_8)), true)
+                .getFirst()
+                .getValue();
+        final var context = deploymentService.prepareBpmn("messages-it", null, "payment.bpmn", "Payment", model);
+        deploymentService.wireBpmn("messages-it", "payment.bpmn", "Payment", model, context);
+        deploymentService.deployResources("messages-it", context);
+    }
+
+    private static PhaseOneRequest<Object> correlationOf(final String messageName) {
+        return new PhaseOneRequest<>("messages-it", "Payment", new AggregatePersistenceAware<>() {
+        }, new Object(), Map.of(PhaseTwoCall.ARG_MESSAGE_NAME, messageName));
     }
 
     // a version of the process an earlier version of the application deployed under the old id

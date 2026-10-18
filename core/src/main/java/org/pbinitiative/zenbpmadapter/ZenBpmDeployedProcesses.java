@@ -7,6 +7,7 @@ package org.pbinitiative.zenbpmadapter;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
@@ -19,6 +20,9 @@ import java.util.concurrent.ConcurrentHashMap;
  * knows the process under: every process a workflow service claims, and every process id a
  * workflow service declares without bringing a model for it, such as the old id of a renamed
  * process. That is what decides whose task a job is, wherever a job is met.
+ * <p>
+ * And it knows per workflow module which messages the models the engine holds for its deployed
+ * processes wait for and start with, so a correlation is judged without asking the engine.
  * <p>
  * The client factory of the adapter id keeps it, because every service of the adapter id holds
  * that factory. It is filled while the application starts and read from any thread afterwards.
@@ -34,6 +38,8 @@ public final class ZenBpmDeployedProcesses {
      * process under.
      */
     private final Map<String, String> servingModules = new ConcurrentHashMap<>();
+
+    private final Map<String, ModuleMessages> messagesOfModules = new ConcurrentHashMap<>();
 
     /**
      * Nothing deployed yet: the client factory of an adapter id builds one.
@@ -154,6 +160,49 @@ public final class ZenBpmDeployedProcesses {
         return Optional.ofNullable(servingModules.get(scopedBpmnProcessId));
     }
 
+    /**
+     * Remembers the messages of the models the engine holds for the processes a workflow module
+     * deployed in this start, replacing what was remembered for the module.
+     *
+     * @param workflowModuleId The workflow module
+     * @param messages The messages
+     */
+    public void recordMessages(
+        final String workflowModuleId,
+        final ModuleMessages messages
+    ) {
+        messagesOfModules.put(workflowModuleId, messages);
+    }
+
+    /**
+     * The messages of the models the engine holds for the processes a workflow module deployed in
+     * this start.
+     *
+     * @param workflowModuleId The workflow module
+     * @return The messages, empty where the module deployed nothing
+     */
+    public Optional<ModuleMessages> messagesOf(final String workflowModuleId) {
+        return Optional.ofNullable(messagesOfModules.get(workflowModuleId));
+    }
+
+    /**
+     * Whether a workflow module serves the instances of a process it deployed no model for in this
+     * start, such as the old id of a renamed process, whose workflows run on models an earlier
+     * version of the application deployed.
+     *
+     * @param workflowModuleId The workflow module
+     * @return <code>true</code> where it does
+     */
+    public boolean servesAProcessItDeployedNoModelFor(final String workflowModuleId) {
+        final var deployed = scopedIdsOf(workflowModuleId);
+        return servingModules
+                .entrySet()
+                .stream()
+                .anyMatch(served -> served
+                        .getValue()
+                        .equals(workflowModuleId) && !deployed.contains(served.getKey()));
+    }
+
     private Optional<DeployedProcess> deployed(
         final String workflowModuleId,
         final String bpmnProcessId
@@ -181,6 +230,36 @@ public final class ZenBpmDeployedProcesses {
         String versionTag,
         String xml
     ) {
+    }
+
+    /**
+     * The messages of the models the engine holds for the processes one workflow module deployed in
+     * this start, every version of each, with the names as the engine holds them.
+     *
+     * @param scopedBpmnProcessIds The ids, as the engine knows them, of the processes whose models
+     *            were read
+     * @param awaited The names of the messages a model waits for: in intermediate catch events,
+     *            boundary events, receive tasks and the start events of event sub-processes
+     * @param starting The names of the messages a model starts its process with
+     * @param unread What could not be read, each with the reason; empty where every model was read
+     */
+    public record ModuleMessages(
+        List<String> scopedBpmnProcessIds,
+        Set<String> awaited,
+        Set<String> starting,
+        List<String> unread
+    ) {
+
+        /**
+         * Copies every collection, so the messages stay what was read.
+         */
+        public ModuleMessages {
+            scopedBpmnProcessIds = List.copyOf(scopedBpmnProcessIds);
+            awaited = Set.copyOf(awaited);
+            starting = Set.copyOf(starting);
+            unread = List.copyOf(unread);
+        }
+
     }
 
     private record ProcessOfModule(

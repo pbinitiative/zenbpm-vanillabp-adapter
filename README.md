@@ -142,8 +142,24 @@ knows no locks (see [`GAPS.md`](./GAPS.md)), or after the application restarted.
 delivery committed, the method does not run again: the platform answers the delivery from its
 record of deliveries, and the adapter sends the recorded outcome to the engine. Two deliveries which
 run at the same time both run; the adapter names the lock it could not keep, and the platform names
-the second run. What is built next, and
-in which order, is the implementation plan in [`docs/`](docs/README.md).
+the second run. A message is correlated in two phases. Phase one asks the engine nothing, and
+refuses where the application calls a message which no version the engine holds of the workflow
+module's processes waits for, and one which a model only starts its process with, naming
+`startWorkflowByMessage`, because ZenBPM hands a message no workflow waits for to a start event of
+the same name; where a version could not be read while deploying, or the module serves a process it
+brought no model for, it refuses nothing (decision 42). Phase two publishes the message under its
+scoped name, with the values the aggregate shares and its id, and with the correlation id as its
+correlation key where the application passed one, else the aggregate id. So a correlation id is the
+correlation key, and the subscription a modeller writes for a message has to read it, as on Camunda
+8: the key the deployment writes reads the aggregate id. ZenBPM keeps no message nothing waits for
+and answers `404` (see [`GAPS.md`](./GAPS.md)): the outbox repeats such a publication every
+`workflow-visibility-timeout` without counting an attempt, until the workflow waits for it, or until
+`vanillabp.outbox.wait-for-visibility-at-most` passed and the entry is blocked; a workflow which
+passed the waiting element, or waits under another key, is answered the same way. ZenBPM
+deduplicates no message: a second correlation with the same correlation id is not planned while the
+first still waits in the outbox, a correlation without one is never deduplicated, and a publication
+repeated after its answer was lost may correlate twice. What is built next, and in which order, is
+the implementation plan in [`docs/`](docs/README.md).
 
 ## Modules
 

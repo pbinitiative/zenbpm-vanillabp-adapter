@@ -748,3 +748,34 @@ is recorded with its types all the same, because a job goes to the workflow modu
 process of its instance. A job of those workflows carries the variables of its scope, and inside a
 multi-instance body only what the model held maps into it, which the version of the application
 that deployed it wrote for the names its methods read then.
+
+### 42. Phase one of a correlation judges the message by every version the engine holds of the module's processes
+
+Decided by the implementation pipeline in place of the maintainers, as their policy for the
+autonomous run asks.
+
+The engine keeps no message nothing waits for: it answers `404` and drops it (pinned commit
+`bdd795a3`: `publishCorrelatedMessageByName` and `publishDefinitionMessageByName` of
+`internal/cluster/node.go` find no subscription, and `POST /v1/messages` carries no time to live).
+So a message name no model waits for, a typo or a renamed message, would make phase two repeat its
+publication for as long as `vanillabp.outbox.wait-for-visibility-at-most` allows, about four hours
+by default, before the entry is blocked. Phase one refuses such a name where the application called,
+and a name a model only starts its process with as well, naming `startWorkflowByMessage`, because
+the engine hands a message no workflow waits for to a start event of the same name, so the
+correlation would start a new workflow. It never asks the engine: a subscription may not exist yet,
+and phase one runs inside the caller's transaction.
+
+Which models count decides whether a correct correlation is refused. A workflow still running may
+run on an older version of its process and wait for a message the deployed version renamed or
+dropped, so the models of this start alone would refuse a correlation its workflow waits for. So the
+deployment reads, once it took every file, the messages of every version the engine holds of each
+process it deployed: the deployed version from the answer the deployment got back, and every other
+version with one request for the list and one per version; the engine counts versions from one, so a
+first version asks nothing more. That is the answer of the Camunda 8 adapter, which judges the name by
+the models its cluster holds (its decision 19), read here while deploying instead of in phase one.
+Where the picture is not complete the check says nothing, because a check which cannot see every
+model that may carry the name must never refuse: the workflow module deployed no process in this
+start, a version could not be read (a WARN names it, and the next start reads it again), or the
+module serves a process it brought no model for, such as the old id of a renamed process (decision
+41), whose models this reading does not cover. A message the models declare under the plain name is
+compared by the name the engine holds, the one phase two publishes.

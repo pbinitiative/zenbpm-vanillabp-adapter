@@ -1,0 +1,15 @@
+spring:
+  jpa:
+    hibernate:
+      ddl-auto: create
+vanillabp:
+  prioritized-adapters:
+    - zenbpm
+  adapters:
+    zenbpm:
+      name-clash-avoidance: use-prefix
+      resources-location: classpath*:message-it
+  outbox:
+    wait-for-visibility-at-most: PT15S
+    housekeeping:
+      zone: UTC
