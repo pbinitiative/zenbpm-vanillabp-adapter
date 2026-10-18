@@ -1208,6 +1208,35 @@ node a held the lock), so node b packed the parcel but could never label it. No 
 at fault. The test now holds whichever of the two tasks reaches node a's handler first
 (`PackingGate#holdEither`), and waits until both reached node a.
 
+**S6.2.1 and S6.2.2 done 2026-10-18**, merged to `main` as `4651056` (pull request #46, after two
+reviews, whose four findings were all valid and fixed, and CodeRabbit's review, whose one comment
+was valid and fixed in `c38a300`), and the test fix of the red run above as `09f9530` (pull
+request #47, test code only; CodeRabbit had no comment). F6.2 is complete. On `09f9530` (GitHub
+keeps run logs for 90 days, so what they showed is written here as well):
+
+- `Checks`, run
+  [39101170517](https://github.com/pbinitiative/zenbpm-vanillabp-adapter/actions/runs/39101170517):
+  green on both JDKs. `bin/check-engine-copies.sh` (in the JDK 25 job) reported both copies as the
+  engine's files of `bdd795a3...`. On both JDKs `ZenBpmTaskProcessingIT` ran 15 tests,
+  `ZenBpmShutdownDrainIT` 4, `ZenBpmStartupValidationBootTest` 16, `ZenBpmJobHandlerTest` 32,
+  `ZenBpmJobDispatcherTest` 12, `ZenBpmDrainTest` 8, `ZenBpmJobFailureTest` 7,
+  `ZenBpmWorkflowProcessingTest` 9, `ZenBpmAdapterConfigurationTest` 116 and Quarkus
+  `ZenBpmRemovedKeyTest`, `ZenBpmRetryBackoffFractionTest` and `ZenBpmLongShutdownGraceTest` 1
+  each, none skipped (engine test support 12 unit and 3 integration tests, core 906 unit and 74
+  integration tests, Spring Boot 11 unit and 27 integration tests, smoke test 37, Quarkus runtime
+  10, Quarkus deployment 51, Quarkus integration tests 3, coverage gate 37). The gate measured
+  100 % on both platforms: of 22,959 instructions for Spring Boot and 22,833 for Quarkus on JDK 25,
+  of 22,951 and 22,825 on JDK 21.
+- `Publish snapshots`, run
+  [39101170515](https://github.com/pbinitiative/zenbpm-vanillabp-adapter/actions/runs/39101170515):
+  green. The core snapshot it published to GitHub Packages, `2.0.0-20261018.053728-43`, holds the
+  stories' new and changed main classes (`ZenBpmDrain` with `Entered` and `Running`,
+  `ZenBpmRetryBackoffResolver`, `ZenBpmJobDispatcher`, `JobFailure`) and no test class, fake,
+  fixture or BPMN file; `quarkus/integration-tests`, the smoke test, the engine test support and
+  the coverage modules skipped deployment. Both report pages (`spring-boot-report/index.html`,
+  `quarkus-report/index.html`) answer HTTP 200 and show 0 of 22,959 (Spring Boot) and 0 of 22,833
+  (Quarkus) instructions missed.
+
 ## F6.3 Asynchronous tasks
 
 ### S6.3.1 `COMPLETE_TASK` and `CANCEL_TASK`
