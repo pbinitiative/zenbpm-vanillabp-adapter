@@ -19,8 +19,10 @@ import org.pbinitiative.zenbpmadapter.client.ZenBpmAdapterConfiguration;
 import org.pbinitiative.zenbpmadapter.client.ZenBpmClientFactory.WorkflowModuleShutdownRegistration;
 import org.pbinitiative.zenbpmadapter.model.ZenBpmBpmnModel;
 import org.pbinitiative.zenbpmadapter.model.ZenBpmCorrelationKeys;
+import org.pbinitiative.zenbpmadapter.model.ZenBpmMarkerTasks;
 
 import io.vanillabp.integration.adapter.spi.NameClashAvoidanceSupport.ModelIdentifier;
+import io.vanillabp.spi.service.BpmsStartTrigger;
 
 /**
  * What the deployment pipeline of this adapter collects about one workflow module, from its first
@@ -251,8 +253,9 @@ public final class ZenBpmProcessingContext {
     }
 
     /**
-     * The job types of the workflow module's claimed processes, and of the process ids it declares
-     * without a model, each once, in the order the processes were wired.
+     * The job types of the workflow module's claimed processes, those of their start markers
+     * included, and of the process ids it declares without a model, each once, in the order the
+     * processes were wired.
      *
      * @return The job types as the engine knows them
      */
@@ -260,7 +263,12 @@ public final class ZenBpmProcessingContext {
         final var jobTypes = new LinkedHashSet<String>();
         wiredProcesses
                 .values()
-                .forEach(wiredProcess -> jobTypes.addAll(wiredProcess.jobTypes()));
+                .forEach(wiredProcess -> {
+                    jobTypes.addAll(wiredProcess.jobTypes());
+                    wiredProcess
+                            .startMarkerJobType()
+                            .ifPresent(jobTypes::add);
+                });
         return Collections.unmodifiableSet(jobTypes);
     }
 
@@ -383,20 +391,39 @@ public final class ZenBpmProcessingContext {
      * @param reportsItsStart Whether the start of one of its instances is the start of a workflow
      *            somebody listens to: <code>false</code> for a called process
      * @param reportsItsEnd Whether the application wants to hear about the end of its workflows
+     * @param startMarkers The start events the deployed model gives a start marker, each with what
+     *            triggers it, see {@link ZenBpmMarkerTasks}; empty where the model gives none, which
+     *            it does where the process starts no workflow of its own, or where the module
+     *            brings no model for it
      */
     public record WiredProcess(
         String bpmnProcessId,
         String scopedBpmnProcessId,
         Set<String> jobTypes,
         boolean reportsItsStart,
-        boolean reportsItsEnd
+        boolean reportsItsEnd,
+        Map<String, BpmsStartTrigger.Kind> startMarkers
     ) {
 
         /**
-         * Copies the job types, so what was found stays what it was.
+         * Copies the job types and the start markers, so what was found stays what it was.
          */
         public WiredProcess {
             jobTypes = Collections.unmodifiableSet(new LinkedHashSet<>(jobTypes));
+            startMarkers = Collections.unmodifiableMap(new LinkedHashMap<>(startMarkers));
+        }
+
+        /**
+         * The job type of the process's start markers.
+         *
+         * @return The job type as the engine knows it, empty where the model gives no start event a
+         *         marker
+         */
+        public Optional<String> startMarkerJobType() {
+            if (startMarkers.isEmpty()) {
+                return Optional.empty();
+            }
+            return Optional.of(ZenBpmMarkerTasks.startMarkerJobType(scopedBpmnProcessId));
         }
 
     }

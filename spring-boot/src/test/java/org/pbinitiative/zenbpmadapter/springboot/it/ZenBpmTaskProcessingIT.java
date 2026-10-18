@@ -262,7 +262,7 @@ class ZenBpmTaskProcessingIT {
     }
 
     @Test
-    @DisplayName("The job of a workflow whose aggregate this application does not hold ends in an incident at once, whose message is the platform's")
+    @DisplayName("A workflow started under the name of an aggregate this application does not hold ends in an incident at its start marker at once, whose message is the platform's, before any task runs")
     void aJobOfAWorkflowThisApplicationDoesNotOwnEndsInAnIncident() {
         final var strangerId = uniqueParcelId();
 
@@ -270,27 +270,26 @@ class ZenBpmTaskProcessingIT {
                 .latestVersionOf(SCOPED_PROCESS_ID)
                 .withBusinessKey(strangerId));
         final var incident = eventually(() -> incidentsOf(started.key()).findFirst());
-        final var weigh = rest()
+        final var jobs = rest()
                 .jobs(JobFilter
                         .anyJob()
                         .withProcessInstanceKey(started.key()))
-                .items()
-                .getFirst();
+                .items();
 
+        // the start marker is the first element behind the start event, so the start is refused
+        // before the task, where the delivery of the task was refused before the markers existed
         assertAll(
-                () -> assertEquals("Weigh", incident
+                () -> assertEquals("vanillabp__started__Start", incident
                         .get("elementId")
                         .asText()),
                 () -> assertTrue(incident
                         .get("message")
                         .asText()
-                        .contains("This application was given a task of a workflow it does not own."),
-                        incident::toString),
-                () -> assertTrue(incident
-                        .get("message")
-                        .asText()
-                        .contains("'%s'".formatted(strangerId)), incident::toString),
-                () -> assertEquals(JobRef.State.FAILED, weigh.state()),
+                        .contains("the BPMS knows this workflow as '%s'".formatted(strangerId)), incident::toString),
+                () -> assertEquals(List.of(JobRef.State.FAILED), jobs
+                        .stream()
+                        .map(JobRef::state)
+                        .toList()),
                 () -> assertEquals(List.of(), deliveriesOf(strangerId)));
     }
 

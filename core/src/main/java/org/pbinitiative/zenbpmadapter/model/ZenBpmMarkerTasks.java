@@ -47,6 +47,13 @@ public final class ZenBpmMarkerTasks {
     public static final String RESERVED_PREFIX = "vanillabp__";
 
     /**
+     * The name a start marker goes by where the configuration resolves a value of a task for it,
+     * such as its <code>job-timeout</code>, and in the messages about its job.
+     */
+    public static final String START_MARKER_TASK = RESERVED_PREFIX
+            + "started";
+
+    /**
      * The start of the id of a start marker, which the id of its start event follows.
      */
     public static final String STARTED = RESERVED_PREFIX

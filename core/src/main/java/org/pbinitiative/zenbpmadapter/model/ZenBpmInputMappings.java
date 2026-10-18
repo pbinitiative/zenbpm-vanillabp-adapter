@@ -7,7 +7,9 @@ package org.pbinitiative.zenbpmadapter.model;
 import java.util.Collection;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.List;
 import java.util.Map;
+import java.util.function.UnaryOperator;
 
 import javax.xml.XMLConstants;
 
@@ -50,33 +52,22 @@ final class ZenBpmInputMappings {
         final Element element,
         final Collection<String> names
     ) {
-        final var mapped = new HashSet<String>();
-        for (final var ioMapping : ZenBpmModelReader.extensions(element, "ioMapping")) {
-            for (var child = ioMapping.getFirstChild(); child != null; child = child.getNextSibling()) {
-                if (child instanceof Element input && "input".equals(input.getLocalName())) {
-                    mapped.add(input.getAttribute("target"));
-                }
-            }
-        }
-        final var missing = names
-                .stream()
-                .filter(name -> !mapped.contains(name))
-                .toList();
-        if (missing.isEmpty()) {
-            return;
-        }
-        final var ioMapping = ZenBpmModelReader
-                .extension(element, "ioMapping")
-                .orElseGet(() -> addExtension(element, "ioMapping"));
-        final var firstOutput = firstChild(ioMapping, "output");
-        for (final var name : missing) {
-            final var input = element
-                    .getOwnerDocument()
-                    .createElementNS(ioMapping.getNamespaceURI(), qualified(ioMapping.getPrefix(), "input"));
-            input.setAttribute("source", "=%s".formatted(name));
-            input.setAttribute("target", name);
-            ioMapping.insertBefore(input, firstOutput);
-        }
+        mapIn(element, names, name -> "=%s".formatted(name));
+    }
+
+    /**
+     * Empties a variable inside an element: one input mapping
+     * <code>source="=null" target="&lt;name&gt;"</code>, where the element does not map to the name
+     * already, in its first <code>ioMapping</code>, or in a new one.
+     *
+     * @param element The element
+     * @param name The name of the variable
+     */
+    static void empty(
+        final Element element,
+        final String name
+    ) {
+        mapIn(element, List.of(name), unused -> "=null");
     }
 
     /**
@@ -113,6 +104,40 @@ final class ZenBpmInputMappings {
             }
         }
         return elements;
+    }
+
+    private static void mapIn(
+        final Element element,
+        final Collection<String> names,
+        final UnaryOperator<String> sourceOf
+    ) {
+        final var mapped = new HashSet<String>();
+        for (final var ioMapping : ZenBpmModelReader.extensions(element, "ioMapping")) {
+            for (var child = ioMapping.getFirstChild(); child != null; child = child.getNextSibling()) {
+                if (child instanceof Element input && "input".equals(input.getLocalName())) {
+                    mapped.add(input.getAttribute("target"));
+                }
+            }
+        }
+        final var missing = names
+                .stream()
+                .filter(name -> !mapped.contains(name))
+                .toList();
+        if (missing.isEmpty()) {
+            return;
+        }
+        final var ioMapping = ZenBpmModelReader
+                .extension(element, "ioMapping")
+                .orElseGet(() -> addExtension(element, "ioMapping"));
+        final var firstOutput = firstChild(ioMapping, "output");
+        for (final var name : missing) {
+            final var input = element
+                    .getOwnerDocument()
+                    .createElementNS(ioMapping.getNamespaceURI(), qualified(ioMapping.getPrefix(), "input"));
+            input.setAttribute("source", sourceOf.apply(name));
+            input.setAttribute("target", name);
+            ioMapping.insertBefore(input, firstOutput);
+        }
     }
 
     // the element's own extensionElements, or a new one in front of everything but its

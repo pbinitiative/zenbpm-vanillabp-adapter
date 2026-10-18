@@ -337,6 +337,14 @@ the core hands that key to every election about the workflow (decision 25).
    lives; the wiki names both.
 5. Every mode logs once per module at startup which processes are message-started and what applies.
 
+*Note from S9.3.1, 2026-10-18.* The start marker is built: a message start event gets one like
+every start event of a process which starts a workflow of its own (decisions 26 and 44). Its job
+hands the core the job's instance key as `nativeInstanceId`, and the core writes it into the start
+row of the aggregate the instance names, or of the one the application's method built; the adapter
+writes the id into the instance only where the job's variables do not carry it (decision 46).
+Where this story's message carries the id variable, as the start by request does, the marker of
+such a start writes nothing, and the start row holds the instance key all the same.
+
 **Tests**: `ZenBpmProcessServiceTest` for the three modes; Spring
 `ZenBpmMessageIT#aMessageStartedWorkflowIsFoundThroughItsStartRow` (start by message, then correlate
 a message to the same aggregate: it reaches the workflow),

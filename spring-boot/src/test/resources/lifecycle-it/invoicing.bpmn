@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL"
+    xmlns:zenbpm="http://zenbpm.pbinitiative.org/1.0" id="invoicing" targetNamespace="http://bpmn.io/schema/bpmn"
+    xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI"
+    xmlns:dc="http://www.omg.org/spec/DD/20100524/DC"
+    xmlns:di="http://www.omg.org/spec/DD/20100524/DI">
+  <bpmn:process id="Invoicing" isExecutable="true">
+    <bpmn:startEvent id="Requested" name="Requested">
+      <bpmn:outgoing>Flow_ToIssue</bpmn:outgoing>
+    </bpmn:startEvent>
+    <bpmn:serviceTask id="Issue" name="Issue">
+      <bpmn:extensionElements>
+        <zenbpm:taskDefinition type="issue" />
+      </bpmn:extensionElements>
+      <bpmn:incoming>Flow_ToIssue</bpmn:incoming>
+      <bpmn:outgoing>Flow_ToEnd</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:endEvent id="Issued" name="Issued">
+      <bpmn:incoming>Flow_ToEnd</bpmn:incoming>
+    </bpmn:endEvent>
+    <bpmn:sequenceFlow id="Flow_ToIssue" sourceRef="Requested" targetRef="Issue" />
+    <bpmn:sequenceFlow id="Flow_ToEnd" sourceRef="Issue" targetRef="Issued" />
+  </bpmn:process>
+  <bpmndi:BPMNDiagram id="BPMNDiagram_1">
+    <bpmndi:BPMNPlane id="BPMNPlane_1" bpmnElement="Invoicing">
+      <bpmndi:BPMNShape id="Requested_di" bpmnElement="Requested">
+        <dc:Bounds x="160" y="80" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Issue_di" bpmnElement="Issue">
+        <dc:Bounds x="256" y="80" width="100" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Issued_di" bpmnElement="Issued">
+        <dc:Bounds x="416" y="80" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNEdge id="Flow_ToIssue_di" bpmnElement="Flow_ToIssue">
+        <di:waypoint x="196" y="98" />
+        <di:waypoint x="226" y="98" />
+        <di:waypoint x="226" y="120" />
+        <di:waypoint x="256" y="120" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_ToEnd_di" bpmnElement="Flow_ToEnd">
+        <di:waypoint x="356" y="120" />
+        <di:waypoint x="386" y="120" />
+        <di:waypoint x="386" y="98" />
+        <di:waypoint x="416" y="98" />
+      </bpmndi:BPMNEdge>
+    </bpmndi:BPMNPlane>
+  </bpmndi:BPMNDiagram>
+</bpmn:definitions>

@@ -31,6 +31,7 @@ import org.pbinitiative.zenbpmadapter.client.grpc.Zenbpm.WaitingJob;
 import com.google.protobuf.ByteString;
 
 import io.vanillabp.integration.adapter.spi.NameClashAvoidance;
+import io.vanillabp.spi.service.BpmsStartTrigger;
 
 /**
  * Jobs run as the adapter runs them, against an engine a test stands in for: the clients of the
@@ -44,6 +45,11 @@ final class JobRunning implements AutoCloseable {
 
     static final String JOB_TYPE = "shop__Order__ship";
 
+    /**
+     * The job type of the start markers of <code>shop__Order</code>.
+     */
+    static final String START_MARKER_TYPE = "vanillabp__started__shop__Order";
+
     static final Duration JOB_TIMEOUT = Duration.ofMinutes(5);
 
     private static final Duration PATIENCE = Duration.ofSeconds(10);
@@ -51,6 +57,8 @@ final class JobRunning implements AutoCloseable {
     final FakeEngine engine = FakeEngine.started();
 
     final TestInvoker invoker = new TestInvoker();
+
+    final TestStartInvoker starts = new TestStartInvoker();
 
     /**
      * The <code>retry-backoff</code> the configuration resolves, by
@@ -96,7 +104,7 @@ final class JobRunning implements AutoCloseable {
         factory = new ZenBpmClientFactory("orders", configuration, () -> "shop");
         dispatcher = new ZenBpmJobDispatcher("orders", factory);
         handler = handlerOf("shop", NameClashAvoidance.USE_PREFIX, new WiredProcess("Order", "shop__Order", Set.of(
-                JOB_TYPE), true, false));
+                JOB_TYPE), true, false, Map.of("Placed", BpmsStartTrigger.Kind.TIMER)));
         dispatcher.register(handler);
     }
 
@@ -118,8 +126,8 @@ final class JobRunning implements AutoCloseable {
         for (final var process : processes) {
             context.recordWiring(process);
         }
-        return new ZenBpmJobHandler("orders", factory, TestCollaborators.withInvoker("orders", TestScoping.of(mode),
-                invoker), context, (
+        return new ZenBpmJobHandler("orders", factory, TestCollaborators.withInvokers("orders", TestScoping.of(mode),
+                invoker, starts), context, (
                     module,
                     process,
                     taskDefinition) -> Optional.ofNullable(retryBackoffs.get("%s/%s/%s".formatted(module, process,
@@ -237,6 +245,37 @@ final class JobRunning implements AutoCloseable {
                 .setLockUntil(lockUntil.toEpochMilli())
                 .setDeliveryToken(deliveryToken)
                 .setInputVariables(ByteString.copyFromUtf8("{\"amount\": 12, \"note\": \"gift\"}"))
+                .build(), lockUntil.minus(JOB_TIMEOUT));
+    }
+
+    /**
+     * Job 42 of a start marker of <code>shop__Order</code> in an instance, delivered just now with a
+     * full lock, delivery token 7 and one retry, as the first attempt.
+     *
+     * @param instanceKey The instance of the job
+     * @param elementId The marker's id, e.g. <code>vanillabp__started__Placed</code>
+     * @param inputVariables The job's variables as JSON
+     * @return The job
+     */
+    static ReceivedJob startMarkerJob(
+        final long instanceKey,
+        final String elementId,
+        final String inputVariables
+    ) {
+        final var lockUntil = Instant
+                .now()
+                .plus(JOB_TIMEOUT);
+        return new ReceivedJob(WaitingJob
+                .newBuilder()
+                .setKey(42)
+                .setInstanceKey(instanceKey)
+                .setType(START_MARKER_TYPE)
+                .setElementId(elementId)
+                .setLockUntil(lockUntil.toEpochMilli())
+                .setDeliveryToken(7)
+                .setRetries(1)
+                .setAttempt(1)
+                .setInputVariables(ByteString.copyFromUtf8(inputVariables))
                 .build(), lockUntil.minus(JOB_TIMEOUT));
     }
 

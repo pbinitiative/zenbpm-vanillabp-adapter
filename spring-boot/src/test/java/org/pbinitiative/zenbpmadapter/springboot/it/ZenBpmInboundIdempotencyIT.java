@@ -31,6 +31,7 @@ import org.pbinitiative.zenbpmadapter.client.api.InstanceFilter;
 import org.pbinitiative.zenbpmadapter.client.api.JobFilter;
 import org.pbinitiative.zenbpmadapter.client.api.JobRef;
 import org.pbinitiative.zenbpmadapter.client.api.ProcessInstanceRef;
+import org.pbinitiative.zenbpmadapter.model.ZenBpmMarkerTasks;
 import org.pbinitiative.zenbpmadapter.springboot.it.idempotency.IdempotencyItApplication;
 import org.pbinitiative.zenbpmadapter.springboot.it.idempotency.PrintingGate;
 import org.pbinitiative.zenbpmadapter.springboot.it.idempotency.Ticket;
@@ -147,12 +148,14 @@ class ZenBpmInboundIdempotencyIT {
         // the partition's leader holds the locks in its memory alone: a new leader knows none of
         // them, which the adapter meets as extensions nobody answers. The completions do not arrive
         // either until the case says so; a 500 is no failure the adapter repeats, so each run
-        // gives up its completion at once and leaves the job to its lock
-        PROXY.refuse(RefusingEngineProxy.LOCK_EXTENSION, 502, RefusingEngineProxy.ALWAYS);
-        PROXY.refuse(RefusingEngineProxy.COMPLETION, 500, RefusingEngineProxy.ALWAYS);
+        // gives up its completion at once and leaves the job to its lock. Both are refused once the
+        // first print waits, so the job of the start marker in front of it is answered
         PrintingGate.holdUntilReleased(ticketId, 2);
 
         final var instance = start(ticketId);
+        eventually(() -> PrintingGate.waiting(ticketId) == 1, "the first delivery of the print");
+        PROXY.refuse(RefusingEngineProxy.LOCK_EXTENSION, 502, RefusingEngineProxy.ALWAYS);
+        PROXY.refuse(RefusingEngineProxy.COMPLETION, 500, RefusingEngineProxy.ALWAYS);
         eventually(() -> PrintingGate.waiting(ticketId) == 2, "a second delivery of the print beside the first");
         final var job = jobOf(instance);
         final var lockLost = "the lock of job %d (task 'print', workflow aggregate '%s') could not be renewed while its handler runs"
@@ -195,10 +198,14 @@ class ZenBpmInboundIdempotencyIT {
     @DisplayName("A completion the engine refused once is sent again for the next delivery: the platform answers that delivery from its record, so the handler runs once, and the job is completed")
     void aRefusedCompletionIsSentAgainForTheNextDelivery(final CapturedOutput output) {
         final var ticketId = uniqueTicketId();
-        // a 500 is no failure the adapter repeats, so the job is left to its lock
-        PROXY.refuse(RefusingEngineProxy.COMPLETION, 500, 1);
+        // a 500 is no failure the adapter repeats, so the job is left to its lock. The completion is
+        // refused once the print waits, so the job of the start marker in front of it is answered
+        PrintingGate.holdUntilReleased(ticketId, 1);
 
         final var instance = start(ticketId);
+        eventually(() -> PrintingGate.waiting(ticketId) == 1, "the first delivery of the print");
+        PROXY.refuse(RefusingEngineProxy.COMPLETION, 500, 1);
+        PrintingGate.release(ticketId);
         final var ended = awaitTheEndOf(instance);
 
         final var job = jobOf(instance);
@@ -258,6 +265,9 @@ class ZenBpmInboundIdempotencyIT {
                         .withProcessInstanceKey(instanceKey))
                 .items()
                 .stream()
+                .filter(job -> !job
+                        .type()
+                        .startsWith(ZenBpmMarkerTasks.RESERVED_PREFIX))
                 .findFirst(), "the job of the print");
     }
 

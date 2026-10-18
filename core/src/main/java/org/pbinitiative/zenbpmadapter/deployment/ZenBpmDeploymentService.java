@@ -7,6 +7,7 @@ package org.pbinitiative.zenbpmadapter.deployment;
 import java.io.InputStream;
 import java.time.Duration;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
@@ -34,6 +35,7 @@ import org.pbinitiative.zenbpmadapter.health.ZenBpmHealth;
 import org.pbinitiative.zenbpmadapter.model.ZenBpmBpmnModel;
 import org.pbinitiative.zenbpmadapter.model.ZenBpmCallActivities;
 import org.pbinitiative.zenbpmadapter.model.ZenBpmCorrelationKeys;
+import org.pbinitiative.zenbpmadapter.model.ZenBpmMarkerTasks;
 import org.pbinitiative.zenbpmadapter.model.ZenBpmModelReader;
 import org.pbinitiative.zenbpmadapter.model.ZenBpmModelWriter;
 import org.pbinitiative.zenbpmadapter.model.ZenBpmMultiInstanceItems;
@@ -60,6 +62,7 @@ import io.vanillabp.integration.adapter.spi.workflowstart.BpmsInitiatedStartSpec
 import io.vanillabp.integration.adapter.spi.workflowtask.WorkflowTaskWiring;
 import io.vanillabp.integration.spi.parts.VanillaBpParts;
 import io.vanillabp.integration.spi.startup.StartupReport;
+import io.vanillabp.spi.service.BpmsStartTrigger;
 import lombok.extern.slf4j.Slf4j;
 
 /**
@@ -490,7 +493,9 @@ public class ZenBpmDeploymentService implements AdapterDeploymentService<ZenBpmB
      * every start event of the process itself; reports the elements which give a workflow a second
      * token; refuses a method which wants the item of an iteration whose element names none, see
      * {@link ZenBpmMultiInstanceItems}; carries the aggregate id to a process called on the same
-     * aggregate from inside a multi-instance body, see {@link ZenBpmCallActivities}; and remembers
+     * aggregate from inside a multi-instance body, see {@link ZenBpmCallActivities}; writes a start
+     * marker behind every start event of a process which starts a workflow of its own, see
+     * {@link ZenBpmMarkerTasks}; and remembers
      * what the start of the workflow processing and the lifecycle of a workflow need, the
      * <code>job-timeout</code> of each job type included. No version
      * catalog is registered yet, which the platform reads as "not asked yet".
@@ -552,8 +557,11 @@ public class ZenBpmDeploymentService implements AdapterDeploymentService<ZenBpmB
                             new ModuleJobTimeout(workflowModuleId, bpmnProcessId, task.taskDefinition(), jobTimeout));
                 });
         final var scopedProcessId = scoping.scopedProcessId(workflowModuleId, bpmnProcessId, adapterId);
-        context.recordWiring(new WiredProcess(bpmnProcessId, scopedProcessId, jobTypes, reportsItsStart(
-                workflowModuleId, bpmnProcessId), reportsItsEnd(workflowModuleId, bpmnProcessId)));
+        final var reportsItsStart = reportsItsStart(workflowModuleId, bpmnProcessId);
+        final Map<String, BpmsStartTrigger.Kind> startMarkers = reportsItsStart ? writeTheStartMarkers(
+                workflowModuleId, bpmnProcessId, scopedProcessId, model, context) : Map.of();
+        context.recordWiring(new WiredProcess(bpmnProcessId, scopedProcessId, jobTypes, reportsItsStart, reportsItsEnd(
+                workflowModuleId, bpmnProcessId), startMarkers));
         recordServed(workflowModuleId, bpmnProcessId, scopedProcessId);
         log.info(
                 "ZenBPM[{}]: wired {} task(s) and {} user task(s) of BPMN process '{}' (file '{}', workflow module '{}')",
@@ -571,8 +579,10 @@ public class ZenBpmDeploymentService implements AdapterDeploymentService<ZenBpmB
      * platform which version of each process the engine ended up with, also where a file was
      * unchanged and the engine kept the version it held.
      * <p>
-     * First it ends the start where two processes of this application would reach the engine under
-     * one id, before anything is sent to it. Then it waits until the engine is ready, once per
+     * First a call activity which starts a process on an aggregate of its own is made to start it
+     * without the caller's business key and id, see {@link ZenBpmCallActivities}. Then it ends the
+     * start where two processes of this application would reach the engine under one id, before
+     * anything is sent to it. Then it waits until the engine is ready, once per
      * adapter id (see {@link ZenBpmEngineWait}; an adapter id without clients ends the start there
      * with the message of its validation), and says which engine it reached, see
      * {@link ZenBpmEnvironmentInfo}. The DMN files go first, so no new version of a process calls a
@@ -598,6 +608,9 @@ public class ZenBpmDeploymentService implements AdapterDeploymentService<ZenBpmB
         final String workflowModuleId,
         final ZenBpmProcessingContext context
     ) {
+        collaborators
+                .bpmsInitiatedStartInvoker()
+                .ifPresent(starts -> cutTheCallersNames(workflowModuleId, context, starts));
         collaborators
                 .scoping()
                 .validateNoCollidingProcessIds(adapterId, context
@@ -825,6 +838,22 @@ public class ZenBpmDeploymentService implements AdapterDeploymentService<ZenBpmB
                 });
     }
 
+    // see decision 45 in the repository's DECISIONS.md: asked once every process of the module is
+    // wired, because only then does the core know which of them other processes call
+    private void cutTheCallersNames(
+        final String workflowModuleId,
+        final ZenBpmProcessingContext context,
+        final BpmsInitiatedStartInvoker starts
+    ) {
+        final var wiring = collaborators.workflowTaskWiring();
+        context
+                .bpmnFiles()
+                .values()
+                .stream()
+                .filter(model -> wiring.isClaimedByAWorkflowService(workflowModuleId, model.bpmnProcessId()))
+                .forEach(model -> ZenBpmCallActivities.cutTheCallersName(model, workflowModuleId, wiring, starts));
+    }
+
     // the job types are recorded like those of a claimed process, so they are subscribed, routed to
     // the module and unsubscribed with the others
     private void serveTheProcessesNobodyDeployed(
@@ -858,7 +887,9 @@ public class ZenBpmDeploymentService implements AdapterDeploymentService<ZenBpmB
         recordServed(workflowModuleId, bpmnProcessId, declared.scopedBpmnProcessId());
         if (declared
                 .jobTypes()
-                .isEmpty()) {
+                .isEmpty() && declared
+                        .startMarkers()
+                        .isEmpty()) {
             return;
         }
         declared
@@ -871,11 +902,44 @@ public class ZenBpmDeploymentService implements AdapterDeploymentService<ZenBpmB
                     refuseAnotherJobTimeoutOfASharedType(jobType,
                             new ModuleJobTimeout(workflowModuleId, bpmnProcessId, taskDefinition, jobTimeout));
                 });
+        // a type which no start marker gives the declared process is not subscribed, so a timeout
+        // recorded for it is never read
+        recordTheJobTimeoutOfTheStartMarkers(workflowModuleId, bpmnProcessId, ZenBpmMarkerTasks.startMarkerJobType(
+                declared.scopedBpmnProcessId()), context);
         context.recordWiring(
                 new WiredProcess(bpmnProcessId, declared.scopedBpmnProcessId(), new LinkedHashSet<>(declared
                         .jobTypes()
                         .values()), reportsItsStart(workflowModuleId, bpmnProcessId), reportsItsEnd(workflowModuleId,
-                                bpmnProcessId)));
+                                bpmnProcessId), declared.startMarkers()));
+    }
+
+    // see decision 44 in the repository's DECISIONS.md: asked once the wiring of the process was
+    // validated, because only then does the core know whether another process calls it
+    private Map<String, BpmsStartTrigger.Kind> writeTheStartMarkers(
+        final String workflowModuleId,
+        final String bpmnProcessId,
+        final String scopedProcessId,
+        final ZenBpmBpmnModel model,
+        final ZenBpmProcessingContext context
+    ) {
+        final var jobType = ZenBpmMarkerTasks.startMarkerJobType(scopedProcessId);
+        ZenBpmMarkerTasks.insertStartMarkers(model, jobType);
+        recordTheJobTimeoutOfTheStartMarkers(workflowModuleId, bpmnProcessId, jobType, context);
+        final var startMarkers = new LinkedHashMap<String, BpmsStartTrigger.Kind>();
+        model
+                .startEvents()
+                .forEach(startEvent -> startMarkers.put(startEvent.elementId(), startEvent.kind()));
+        return startMarkers;
+    }
+
+    private void recordTheJobTimeoutOfTheStartMarkers(
+        final String workflowModuleId,
+        final String bpmnProcessId,
+        final String jobType,
+        final ZenBpmProcessingContext context
+    ) {
+        context.recordJobTimeout(jobType, jobTimeouts.jobTimeoutFor(workflowModuleId, bpmnProcessId,
+                ZenBpmMarkerTasks.START_MARKER_TASK), bpmnProcessId, ZenBpmMarkerTasks.START_MARKER_TASK, adapterId);
     }
 
     private boolean reportsItsStart(

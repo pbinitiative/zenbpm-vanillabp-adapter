@@ -18,6 +18,7 @@ import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 
 import org.junit.jupiter.api.DisplayName;
@@ -33,6 +34,8 @@ import org.pbinitiative.zenbpmadapter.client.ZenBpmAdapterConfiguration;
 import org.pbinitiative.zenbpmadapter.client.ZenBpmClientFactory;
 import org.pbinitiative.zenbpmadapter.client.ZenBpmClientRegistry;
 import org.pbinitiative.zenbpmadapter.model.ZenBpmBpmnModel;
+import org.pbinitiative.zenbpmadapter.model.ZenBpmMarkerTasks;
+import org.pbinitiative.zenbpmadapter.model.ZenBpmModelReader;
 import org.pbinitiative.zenbpmadapter.wiring.ZenBpmRetryBackoffResolver;
 import org.w3c.dom.Element;
 
@@ -40,6 +43,7 @@ import io.vanillabp.integration.adapter.spi.AdapterCollaborators;
 import io.vanillabp.integration.adapter.spi.NameClashAvoidance;
 import io.vanillabp.integration.adapter.spi.workflowtask.BpmnTaskSpec;
 import io.vanillabp.integration.test.utils.SuppressOutputExtension;
+import io.vanillabp.spi.service.BpmsStartTrigger;
 
 /**
  * How the deployment service wires a process: the calls it makes to the platform for a claimed
@@ -129,7 +133,10 @@ class ZenBpmDeploymentWiringTest {
                         "workflowEndedHandlerExists[shop, Orders]"),
                         starts.calls()),
                 () -> assertEquals(Map.of("Orders", new WiredProcess("Orders", "shop__Orders", Set.of(
-                        "shop__Orders__charge", "shop__Orders__ship", "shop__Orders__pack"), true, true)), context
+                        "shop__Orders__charge", "shop__Orders__ship", "shop__Orders__pack"), true, true, Map.of("Start",
+                                BpmsStartTrigger.Kind.NONE, "Placed", BpmsStartTrigger.Kind.MESSAGE, "EveryNight",
+                                BpmsStartTrigger.Kind.TIMER))),
+                        context
                                 .wiredProcesses()));
     }
 
@@ -271,7 +278,9 @@ class ZenBpmDeploymentWiringTest {
 
         final var context = wire(deploymentService, "wiring.bpmn", fixture("wiring.bpmn"), "Orders");
 
-        assertEquals(new WiredProcess("Orders", "Orders", Set.of("charge", "notify", "ship", "pack"), false, false),
+        assertEquals(
+                new WiredProcess("Orders", "Orders", Set.of("charge", "notify", "ship", "pack"), false, false, Map
+                        .of()),
                 context
                         .wiredProcesses()
                         .get("Orders"));
@@ -564,6 +573,74 @@ class ZenBpmDeploymentWiringTest {
     }
 
     @Test
+    @DisplayName("A claimed process which starts a workflow of its own gets a start marker behind every start event of its own, under one job type, subscribed with the job-timeout resolved for the marker; no end marker is written, although the application listens to the end")
+    void aProcessWhichStartsAWorkflowGetsItsStartMarkers() {
+        final var starts = TestStarts
+                .everyProcessStartingAWorkflow()
+                .listeningToTheEndOf("Orders");
+        final var deploymentService = new ZenBpmDeploymentService(ADAPTER_ID, new ZenBpmClientRegistry(List.of(
+                ZenBpmClientFactory.unconfigured(ADAPTER_ID, new ZenBpmAdapterConfiguration(),
+                        NOT_CONFIGURED))), TestCollaborators.of(ADAPTER_ID,
+                                TestScoping.of(NameClashAvoidance.USE_PREFIX), TestWiring
+                                        .claiming("Orders")
+                                        .wiring(),
+                                starts), (
+                                    workflowModuleId,
+                                    bpmnProcessId,
+                                    taskDefinition) -> ZenBpmMarkerTasks.START_MARKER_TASK.equals(taskDefinition)
+                                            ? Duration
+                                                    .ofSeconds(30)
+                                            : Duration.ofMinutes(5), ZenBpmRetryBackoffResolver.NONE);
+
+        final var context = wire(deploymentService, "wiring.bpmn", fixture("wiring.bpmn"), "Orders");
+
+        assertAll(
+                () -> assertEquals(List.of("vanillabp__started__Start", "vanillabp__started__Start__flow",
+                        "vanillabp__started__Placed", "vanillabp__started__Placed__flow",
+                        "vanillabp__started__EveryNight", "vanillabp__started__EveryNight__flow"), idsWritten(context)),
+                () -> assertEquals(Optional.of("vanillabp__started__shop__Orders"), context
+                        .wiredProcesses()
+                        .get("Orders")
+                        .startMarkerJobType()),
+                () -> assertEquals(Duration.ofSeconds(30), context
+                        .jobTimeouts()
+                        .get("vanillabp__started__shop__Orders")));
+    }
+
+    @Test
+    @DisplayName("A called process, and a process nobody claims, get no marker")
+    void aCalledProcessAndOneNobodyClaimsGetNoMarker() {
+        final var called = wire(deploymentService(TestCollaborators.of(ADAPTER_ID, TestScoping.of(
+                NameClashAvoidance.NONE),
+                TestWiring
+                        .claiming("Orders")
+                        .wiring(),
+                TestStarts
+                        .everyProcessStartingAWorkflow()
+                        .called("Orders"))),
+                "wiring.bpmn", fixture("wiring.bpmn"), "Orders");
+        final var nobodys = wire(deploymentService(TestCollaborators.of(ADAPTER_ID, TestScoping.of(
+                NameClashAvoidance.NONE),
+                TestWiring
+                        .claiming()
+                        .wiring(),
+                TestStarts.everyProcessStartingAWorkflow())), "wiring.bpmn", fixture("wiring.bpmn"),
+                "Orders");
+
+        assertAll(
+                () -> assertEquals(List.of(), idsWritten(called)),
+                () -> assertEquals(Optional.empty(), called
+                        .wiredProcesses()
+                        .get("Orders")
+                        .startMarkerJobType()),
+                () -> assertFalse(called
+                        .jobTypes()
+                        .stream()
+                        .anyMatch(jobType -> jobType.startsWith(ZenBpmMarkerTasks.RESERVED_PREFIX))),
+                () -> assertEquals(List.of(), idsWritten(nobodys)));
+    }
+
+    @Test
     @DisplayName("Wiring needs no engine: an adapter id without clients wires like a configured one")
     void wiringNeedsNoEngine() {
         final var wiring = TestWiring.claiming("Orders");
@@ -603,6 +680,22 @@ class ZenBpmDeploymentWiringTest {
         final var context = deploymentService.prepareBpmn(workflowModuleId, null, filename, bpmnProcessId, model);
         deploymentService.wireBpmn(workflowModuleId, filename, bpmnProcessId, model, context);
         return context;
+    }
+
+    private static List<String> idsWritten(final ZenBpmProcessingContext context) {
+        final var written = new ArrayList<String>();
+        final var elements = context
+                .bpmnFiles()
+                .get("wiring.bpmn")
+                .document()
+                .getElementsByTagNameNS(ZenBpmModelReader.BPMN, "*");
+        for (var index = 0; index < elements.getLength(); ++index) {
+            final var id = ((Element) elements.item(index)).getAttribute("id");
+            if (id.startsWith(ZenBpmMarkerTasks.RESERVED_PREFIX)) {
+                written.add(id);
+            }
+        }
+        return written;
     }
 
     private static ZenBpmDeploymentService deploymentService(final AdapterCollaborators collaborators) {

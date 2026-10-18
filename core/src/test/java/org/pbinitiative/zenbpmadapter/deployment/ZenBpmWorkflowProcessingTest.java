@@ -18,6 +18,7 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.locks.LockSupport;
@@ -114,21 +115,23 @@ class ZenBpmWorkflowProcessingTest {
         deploymentService.startWorkflowProcessing("shop", context);
         final var subscribed = engine
                 .call(0)
-                .subscriptions(3);
+                .subscriptions(4);
         final var openWhileStarted = factory.getOpenWorkflowModules();
         deploymentService.stopWorkflowProcessing("shop", context);
         deploymentService.stopWorkflowProcessing("shop", context);
         final var all = engine
                 .call(0)
-                .subscriptions(6);
+                .subscriptions(8);
 
         assertAll(
                 () -> assertEquals(List.of(
                         "TYPE_SUBSCRIBE shop__Orders__charge",
                         "TYPE_SUBSCRIBE shop__Orders__ship",
-                        "TYPE_SUBSCRIBE shop__Orders__pack"),
+                        "TYPE_SUBSCRIBE shop__Orders__pack",
+                        // the start markers of the process, which starts a workflow of its own
+                        "TYPE_SUBSCRIBE vanillabp__started__shop__Orders"),
                         described(subscribed)),
-                () -> assertEquals(List.of(300_000L, 90_000L, 300_000L), subscribed
+                () -> assertEquals(List.of(300_000L, 90_000L, 300_000L, 300_000L), subscribed
                         .stream()
                         .map(StreamSubscriptionRequest::getLockDurationMs)
                         .toList()),
@@ -142,9 +145,10 @@ class ZenBpmWorkflowProcessingTest {
                 () -> assertEquals(List.of(
                         "TYPE_UNSUBSCRIBE shop__Orders__charge",
                         "TYPE_UNSUBSCRIBE shop__Orders__ship",
-                        "TYPE_UNSUBSCRIBE shop__Orders__pack"),
-                        described(all.subList(3, all.size()))),
-                () -> assertEquals(6, all.size()),
+                        "TYPE_UNSUBSCRIBE shop__Orders__pack",
+                        "TYPE_UNSUBSCRIBE vanillabp__started__shop__Orders"),
+                        described(all.subList(4, all.size()))),
+                () -> assertEquals(8, all.size()),
                 () -> assertEquals(Set.of(), factory.getOpenWorkflowModules()),
                 () -> assertEquals(Optional.of("shop"), factory
                         .deployedProcesses()
@@ -165,7 +169,7 @@ class ZenBpmWorkflowProcessingTest {
                                         .wiring(),
                                 TestStarts.everyProcessStartingAWorkflow()));
         final var context = new ZenBpmProcessingContext("shop");
-        context.recordWiring(new WiredProcess("Order", "Order", Set.of(), true, false));
+        context.recordWiring(new WiredProcess("Order", "Order", Set.of(), true, false, Map.of()));
 
         deploymentService.startWorkflowProcessing("shop", context);
         deploymentService.stopWorkflowProcessing("shop", context);
@@ -179,7 +183,7 @@ class ZenBpmWorkflowProcessingTest {
         final var deploymentService = deploymentService(TestWiring.claiming());
         final var shop = withJobTypes("shop", "charge");
         final var billing = withJobTypes("billing", "charge");
-        billing.recordWiring(new WiredProcess("Invoice", "Invoice", Set.of("invoice"), true, false));
+        billing.recordWiring(new WiredProcess("Invoice", "Invoice", Set.of("invoice"), true, false, Map.of()));
         // a module started after the first stop marks on the stream where that stop's frames end
         final var audit = withJobTypes("audit", "audit");
 
@@ -370,7 +374,8 @@ class ZenBpmWorkflowProcessingTest {
         final String... jobTypes
     ) {
         final var context = new ZenBpmProcessingContext(workflowModuleId);
-        context.recordWiring(new WiredProcess("Order", "Order", new LinkedHashSet<>(List.of(jobTypes)), true, false));
+        context.recordWiring(
+                new WiredProcess("Order", "Order", new LinkedHashSet<>(List.of(jobTypes)), true, false, Map.of()));
         return context;
     }
 

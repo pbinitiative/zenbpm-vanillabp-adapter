@@ -18,7 +18,7 @@ wiring), `MultiInstanceValue`.
 
 ### S9.1.1 `ZenBpmMarkerTasks`
 
-- [ ] **Depends on:** S4.2.3 and S4.3.1. The markers are the last rewrite of `prepareBpmn`, after
+- [x] **Depends on:** S4.2.3 and S4.3.1. The markers are the last rewrite of `prepareBpmn`, after
   scoping (S4.2.1), correlation keys (S4.2.2) and task parameters (S4.2.3), so E4 alone fixes the
   order; nothing in E7 rewrites the model. S7.1.2 depends on this story (and on S9.3.1), because the
   start marker is what records the instance key of a message-started workflow.
@@ -148,9 +148,28 @@ start event, a called process's included; the rewritten model deploys
 
 **Acceptance criteria**
 
-- [ ] The engine accepts every rewritten fixture (400 would name the element).
-- [ ] A process without an end marker gate and which starts no workflow of its own is not rewritten.
-- [ ] A `@WorkflowStartedByBpms` method serving a plain start event does not end the boot.
+- [x] The engine accepts every rewritten fixture (400 would name the element). Against the pinned
+  image: `ZenBpmMarkerTasksIT` deploys `models/markers.bpmn` with a marker behind its plain,
+  message and timer start event, and a workflow started by a request and one started by a message
+  each wait at their marker until its job is completed; `ZenBpmDeploymentIT#aModelWithMarkersDeploys`
+  boots an application whose process the engine then holds with the marker, its job type and its
+  shape, and whose first job of a new instance is the marker's; the three models of
+  `ZenBpmLifecycleIT` (timer, plain start with a call activity, called process) deploy and run.
+- [x] A process without an end marker gate and which starts no workflow of its own is not rewritten.
+  `ZenBpmDeploymentWiringTest#aCalledProcessAndOneNobodyClaimsGetNoMarker` (a called process and a
+  process nobody claims get no element of the reserved prefix and no marker type), and
+  `ZenBpmDeploymentServiceIT#aVersion1ModelDeploysByteForByte` (a called process reaches the engine
+  byte for byte). No end marker is written at all yet (fit check, point 2):
+  `ZenBpmDeploymentWiringTest#aProcessWhichStartsAWorkflowGetsItsStartMarkers` wires a process
+  whose end is heard and finds start markers only.
+- [x] A `@WorkflowStartedByBpms` method serving a plain start event does not end the boot.
+  `ZenBpmLifecycleIT` boots `DeliveryWorkflow` and `InvoiceWorkflow`, whose methods serve plain
+  start events, and every case runs. Clean build of the commit of S9.3.1 (`TZ=Etc/UTC mvn clean
+  install`, Docker ITs included): engine test support 12 + 5, core 1007 + 84, Spring Boot 11 + 48,
+  smoke test 37, Quarkus runtime 10, deployment 51, integration tests 10, gate 37; coverage 100 %
+  on both platforms (0 of 27,276 instructions missed on Spring Boot, 0 of 27,150 on Quarkus);
+  `bin/check-deploy-safety.sh` green. Mutants: 3/3 killed for this story (the guard against a
+  second insertion, the two guards of the drawing).
 
 ## F9.2 The end of a workflow
 
@@ -173,6 +192,20 @@ deleted aggregate is skipped, not an error. An exception fails the job at the en
 and backoff, like any handler (decision 27). The end kinds are `COMPLETED` and `CANCELED`; a
 canceled instance passes no marker, so `CANCELED` is not reported (GAPS 9).
 
+*Note from S9.1.1, 2026-10-18.* This story writes the end marker too: instruction 1 of S9.1.1,
+with its DI and its fixtures in `ZenBpmMarkerTasksTest` (`models/markers.bpmn` holds a plain, a
+terminate and an error end event, and end events inside an embedded and an event sub-process), so
+that the marker and the handler of its job land together. `ZenBpmMarkerTasks` holds the insertion
+of the start markers, the drawing and the guard against a second insertion; the end marker is a
+method of its own beside `insertStartMarkers`, inserted in `wireBpmn` after `validateTaskWiring`,
+like the start markers (decision 44: the core answers `workflowEndedHandlerExists` correctly only
+then). Its job type should carry the scoped process id as the start marker's does. Decision 26 says
+the end marker comes with its handler; `ZenBpmDeploymentWiringTest#aProcessWhichStartsAWorkflowGetsItsStartMarkers`
+holds that none is written until then and changes with this story. A process declared without a
+model subscribes its start markers where a held model carries them (decision 46,
+`ZenBpmDeclaredProcessWorkers`); its workflows reach their END marker far more often, so the end
+marker's type of such a process needs the same.
+
 **Tests**: `ZenBpmWorkflowEndedHandlerTest`; Spring `ZenBpmLifecycleIT#theEndOfAWorkflowIsReportedWithItsEndEvent`
 (two end events, each reported with its own id), `#aCancelledWorkflowReportsNothing`,
 `#theEndCancelsTheTasksStillOpen` (a task waiting in a parallel branch inside an embedded
@@ -187,7 +220,7 @@ sub-process is reported `CANCELED` before `@WorkflowEnded` runs, because both ca
 
 ### S9.3.1 `ZenBpmBpmsInitiatedStartHandler`
 
-- [ ] **Depends on:** S9.1.1 and S6.1.1.
+- [x] **Depends on:** S9.1.1 and S6.1.1.
 
 **Instructions**
 
@@ -217,6 +250,69 @@ A `JobHandler` for the `vanillabp__started` type of each process, following deci
    deterministic. Camunda 8 has the same window; the wiki says so.
 5. A refusal fails the job like any handler (decision 27).
 
+*Fit check, 2026-10-18, decided by the Implementor where it says so.* Checked against the
+platform as the adapter resolves it (`2.0.0-20261015.045823-21`: `BpmsInitiatedStartContext`,
+`BpmsInitiatedStartResult`, `startWorkflowByBpms` of `WorkflowTaskRegistry` and
+`BpmsInitiatedStartExecution`, read at the commit the snapshot was built from), Camunda 8's
+`Camunda8BpmsInitiatedStartHandler`, and the engine at the pin `bdd795a3` (`createCallActivity`,
+`resolveChildBusinessKey` and `handleParentProcessContinuationForCallActivity` of
+`pkg/bpmn/sub_process.go`, `PropagateOnlyMappedOutputs` of `pkg/bpmn/runtime/varholder.go`,
+`openapi/api.yaml`; the image run by `ZenBpmMarkerTasksIT` and `ZenBpmLifecycleIT`). What did not
+fit, and what was decided:
+
+1. **When the name is written** (decided by the Implementor, decision 46). Instruction 3 writes
+   `result.variables()` where `created()`. The core also answers `created() == false` for an
+   instance which carries only a business key, and where the application's method named the
+   workflow after an aggregate which exists; both instances would go on without the id variable
+   their tasks and correlation keys read. So the handler writes wherever the job's variables do not
+   carry the result's id under its name, and completes the job without variables. The
+   application's own start carries the id and writes nothing (open question 4: the cost is the job
+   and the transaction; the README says so, `ZenBpmBpmsInitiatedStartHandlerTest#theApplicationsOwnStartWritesNothing`
+   holds it). Camunda 8 completes its listener job with the variables every time.
+2. **The instance key** (decided by the Implementor). A marker sits in the process itself, so the
+   job's instance is the workflow's root; the handler reports it without walking up.
+3. **The kind of the start event** (open question 5): remembered per process while wiring, in
+   `WiredProcess#startMarkers`, where the markers are written. A start event the deployed model
+   does not hold, of an older version, is reported as `NONE`.
+4. **How the marker's job runs** (decided by the Implementor, decision 46). `ZenBpmJobHandler`
+   hands it to `ZenBpmBpmsInitiatedStartHandler` inside the module's drain, with the commands
+   repeated within the lock; the type is subscribed with the `job-timeout` resolved for the task
+   name `vanillabp__started`, and a failure carries the `retry-backoff` resolved for it. The
+   marker's job has no `retries` of its own (decision 38), so the engine's default applies.
+5. **A process called on an aggregate of its own** (open question 2 of the brief, decided by the
+   Implementor, decision 45). Camunda 8 hands the caller's variables on as well and does nothing
+   about it; the core refuses a name no aggregate of the called process's class carries. Decided:
+   a call activity of a claimed process which calls a process of the module which starts a
+   workflow of its own on another aggregate gets `zenbpm:in businessKey=""` and an input mapping
+   `=null` of the called process's id variable, written in `deployResources`, once every process
+   of the module is wired; the engine copies back only mapped outputs, so the caller keeps its id.
+   A call activity with a `zenbpm:in` of the modeller's, one naming its process by an expression,
+   and one calling a process of another module or application are left alone: the boot cannot
+   judge them, and their called process's marker hands the core the caller's name, which it
+   refuses unless an aggregate of that id exists. Proven against the pinned image by
+   `ZenBpmLifecycleIT#aProcessCalledOnAnAggregateOfItsOwnBuildsItsOwn`.
+6. **Existing tests the marker changes** (open question 3). Every claimed process which starts a
+   workflow of its own subscribes one more type, so the tests which list the subscribed types name
+   it (`ZenBpmWorkflowProcessingTest`, `ZenBpmDeclaredProcessWorkersTest`,
+   `ZenBpmDeploymentIT#aStartedModuleSubscribesItsJobTypeAndStopsFirst`). A workflow started under
+   a business key no aggregate carries is now refused at its start marker, before any task, so
+   `ZenBpmTaskProcessingIT#aJobOfAWorkflowThisApplicationDoesNotOwnEndsInAnIncident` finds the
+   incident there, with the core's message. Two IT cases which complete jobs by hand complete the
+   marker first, and the byte-for-byte case wires its process as a called one, which gets no marker
+   (`ZenBpmDeploymentServiceIT`). `ZenBpmInboundIdempotencyIT` refuses the print's completion once
+   the print waits, because a refusal armed before the start hit the marker's completion first, and
+   reads the print's job by its type. On Quarkus, `ZenBpmWorkflowLifecycleTest#serviceTaskRunsAndGatewaySeesValues`
+   counts four completed jobs, the first of them the marker's, and the helper which awaits the one
+   job of a task leaves the marker's out. No assertion was weakened.
+7. **A process declared without a model** (decided by the Implementor, decision 46): it subscribes
+   the type of its start markers where a model the engine holds under the id carries one
+   (`ZenBpmDeclaredProcessWorkers` reads those models anyway), with the start events of the held
+   models which carry them. `ZenBpmRenamedProcessIT` found it: its first version starts a workflow
+   and closes at once, so the renamed version may meet the workflow still at its start marker.
+8. GAPS 1 is entered under the plan's number; GAPS 8 is no longer *planned* for the start
+   markers. The Quarkus twins are S9.5.1's; the existing Quarkus tests run their workflows through
+   the start marker and stay green.
+
 **Tests**: `ZenBpmBpmsInitiatedStartHandlerTest` (the three answers, the redelivery after the PATCH,
 the business key reported); `ZenBpmLifecycleIT#aTimerStartBuildsTheAggregate` (`timer-start.bpmn`
 with `PT2S`; assert the aggregate exists with the id the method chose, the id variable holds it, the
@@ -226,9 +322,27 @@ the instance key to the probe), `#aWorkflowStartedPastVanillaBpGetsAnAggregate` 
 
 **Acceptance criteria**
 
-- [ ] A timer-started workflow gets the aggregate the application's method built, and every later
-  operation on it is routed while the start row lives.
-- [ ] A workflow the application started itself passes its start marker without a second aggregate.
+- [x] A timer-started workflow gets the aggregate the application's method built, and every later
+  operation on it is routed while the start row lives. `ZenBpmLifecycleIT#aTimerStartBuildsTheAggregate`
+  against the pinned image: the timer `R1/PT2S` starts the workflow without a business key, the
+  method is told `TIMER` and the start event, the id variable holds the id it chose, the task
+  behind the start runs on that aggregate, and `correlateMessage` on it reaches the workflow, which
+  has no business key to be searched by, so it completes.
+  `#aWorkflowStartedPastVanillaBpGetsAnAggregate` does the same for a plain start over `POST
+  /v1/process-instances` without a business key, and `#aProcessCalledOnAnAggregateOfItsOwnBuildsItsOwn`
+  for a process a call activity starts on an aggregate of its own (decision 45).
+- [x] A workflow the application started itself passes its start marker without a second aggregate.
+  `ZenBpmLifecycleIT#theApplicationsOwnStartBuildsNothing` (the method is not called, no second
+  aggregate exists, the instance keeps its id) and
+  `ZenBpmBpmsInitiatedStartHandlerTest#theApplicationsOwnStartWritesNothing` (the job is completed
+  without any update of the instance's variables, which the README promises). The clean build's
+  numbers are under S9.1.1. Mutants: 14/14 killed for this story, 12 at the unit level (the check
+  whether the instance carries the name, the guard while stopping, the routing of the marker's
+  job, the four conditions of the cut of the caller's name, the gate on `startsAWorkflowOfItsOwn`
+  in `wireBpmn`, the empty business key, the instance which ended meanwhile, the markers of a held
+  model, the declared process without a served task type) and 2 against the pinned engine (the
+  cut without its empty business key, the cut without its empty id variable, each failing
+  `#aProcessCalledOnAnAggregateOfItsOwnBuildsItsOwn`).
 
 ## F9.4 Multi-instance
 

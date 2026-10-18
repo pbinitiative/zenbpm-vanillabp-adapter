@@ -384,18 +384,27 @@ user-task types the read finds are named at startup, which is where the poller c
 
 Both arrive as ordinary jobs of the marker tasks (section 3, step 4), served by two dedicated handlers:
 
-- `ZenBpmWorkflowEndedHandler`: kind COMPLETED, `endEventId` from the marker's id, `workflowId` =
+- `ZenBpmWorkflowEndedHandler`, which comes with the end marker: kind COMPLETED, `endEventId` from the marker's id, `workflowId` =
   the root instance key (decision 28) and the business key; the core cancels the tasks it still
   believes open in that workflow before `@WorkflowEnded` runs (platform decision 73). Then complete
   the job so the instance ends. A canceled instance runs no marker, so kind CANCELED is never
   reported.
-- `ZenBpmBpmsInitiatedStartHandler` (decision 25): the context carries the job's variables,
-  `nativeInstanceId` = the root instance key, the version, sync mode FULL and the instance's
-  business key where it has one; there is no start time and nothing derives an id.
-  `startWorkflowByBpms` builds the aggregate through the application's `@WorkflowStartedByBpms`
-  method, which names it; the handler writes `result.variables()` back with `PATCH
-  /v1/process-instances/{key}/variables` and completes the marker job. A redelivery, and the marker
-  of a workflow the application started itself, answer `created() == false`.
+- `ZenBpmBpmsInitiatedStartHandler` (decisions 25 and 46), which the module's `ZenBpmJobHandler`
+  hands the job of a start marker, inside the module's drain and under the renewal of its lock: the
+  context carries the start event and its kind (remembered per process while wiring), the job's
+  variables, `nativeInstanceId` = the job's instance, which is the workflow's root because a marker
+  sits in the process itself, the version, sync mode FULL and the instance's business key where it
+  has a non-empty one; there is no start time and nothing derives an id. `startWorkflowByBpms`
+  builds the aggregate through the application's `@WorkflowStartedByBpms` method where the
+  instance carries no name, and writes the start row with the instance key in every case but a
+  refusal. Wherever the job's variables do not carry the result's id under its name, the handler
+  writes `result.variables()` with `PATCH /v1/process-instances/{key}/variables`, then completes the
+  marker job without variables. A redelivery after the update, and the marker of a workflow the
+  application started itself, find the id and write nothing. A refusal or a method which threw
+  fails the job like a task's handler (decision 27), with the `retry-backoff` resolved for the
+  name `vanillabp__started`. A call activity which calls a process of the module on an aggregate of
+  its own gets `zenbpm:in businessKey=""` and an input mapping `=null` of the called process's id
+  variable while deploying, so the called process starts without the caller's name (decision 45).
 
 ### 4.8 Shutdown
 

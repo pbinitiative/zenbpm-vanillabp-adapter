@@ -21,6 +21,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.pbinitiative.zenbpmadapter.client.ZenBpmClientRegistry;
 import org.pbinitiative.zenbpmadapter.client.api.CreateInstanceRequest;
+import org.pbinitiative.zenbpmadapter.client.api.JobFilter;
 import org.pbinitiative.zenbpmadapter.springboot.it.deploy.DeployItApplication;
 import org.pbinitiative.zenbpmadapter.test.EngineUnderTest;
 import org.springframework.boot.WebApplicationType;
@@ -105,9 +106,9 @@ class ZenBpmDeploymentIT {
     }
 
     @Test
-    @DisplayName("A started module subscribes its job type at the engine, whose job of a new instance arrives and, belonging to no shipment of the application, is failed; stopping the application stops the module before its clients close")
+    @DisplayName("A started module subscribes its job types at the engine, its task's and its start marker's, whose job of a new instance arrives and, naming no shipment of the application, is failed; stopping the application stops the module before its clients close")
     void aStartedModuleSubscribesItsJobTypeAndStopsFirst(final CapturedOutput output) {
-        final String warning = "(task 'ship') is about a workflow this application does not own";
+        final String warning = "at start event 'Start' failed at attempt 1";
         try (var context = run(VERSION_1)) {
             context
                     .getBean(ZenBpmClientRegistry.class)
@@ -132,14 +133,63 @@ class ZenBpmDeploymentIT {
 
         assertAll(
                 () -> assertTrue(log.contains(
-                        "ZenBPM[zenbpm]: workflow module 'deploy-it' subscribed the job type(s) deploy-it__DeployIt__ship (job-timeout PT5M), each with at most 4 active job(s)"),
+                        "ZenBPM[zenbpm]: workflow module 'deploy-it' subscribed the job type(s) deploy-it__DeployIt__ship (job-timeout PT5M), vanillabp__started__deploy-it__DeployIt (job-timeout PT5M), each with at most 4 active job(s)"),
                         log),
                 () -> assertTrue(log.contains(warning), log),
                 () -> assertTrue(log.contains(
-                        "ZenBPM[zenbpm]: workflow module 'deploy-it' unsubscribed the job type(s) deploy-it__DeployIt__ship"),
+                        "ZenBPM[zenbpm]: workflow module 'deploy-it' unsubscribed the job type(s) deploy-it__DeployIt__ship, vanillabp__started__deploy-it__DeployIt"),
                         log),
                 () -> assertTrue(log.contains("ZenBPM[zenbpm]: closing the REST client of the engine at "), log),
                 () -> assertFalse(log.contains("still subscribe their job types"), log));
+    }
+
+    @Test
+    @DisplayName("A model with markers deploys: the engine holds the claimed process with a start marker behind its start event, and its first job of a new instance is the marker's")
+    void aModelWithMarkersDeploys() {
+        final String bpmnData;
+        final String firstJobType;
+        try (var context = run(VERSION_1)) {
+            final var rest = context
+                    .getBean(ZenBpmClientRegistry.class)
+                    .getFactory("zenbpm")
+                    .rest();
+            final var definition = rest
+                    .processDefinitions("deploy-it__DeployIt", true)
+                    .getFirst();
+            bpmnData = rest
+                    .processDefinition(definition.key())
+                    .bpmnData();
+            final var started = rest.createInstance(CreateInstanceRequest.latestVersionOf("deploy-it__DeployIt"));
+            final var deadline = Instant
+                    .now()
+                    .plus(DELIVERY_TIMEOUT);
+            var jobs = rest
+                    .jobs(JobFilter
+                            .anyJob()
+                            .withProcessInstanceKey(started.key()))
+                    .items();
+            while (jobs.isEmpty() && Instant
+                    .now()
+                    .isBefore(deadline)) {
+                LockSupport.parkNanos(Duration
+                        .ofMillis(50)
+                        .toNanos());
+                jobs = rest
+                        .jobs(JobFilter
+                                .anyJob()
+                                .withProcessInstanceKey(started.key()))
+                        .items();
+            }
+            firstJobType = jobs
+                    .getFirst()
+                    .type();
+        }
+
+        assertAll(
+                () -> assertTrue(bpmnData.contains("id=\"vanillabp__started__Start\""), bpmnData),
+                () -> assertTrue(bpmnData.contains("type=\"vanillabp__started__deploy-it__DeployIt\""), bpmnData),
+                () -> assertTrue(bpmnData.contains("bpmnElement=\"vanillabp__started__Start\""), bpmnData),
+                () -> assertEquals("vanillabp__started__deploy-it__DeployIt", firstJobType));
     }
 
     private static Optional<Integer> versionOfDeployIt(final ConfigurableApplicationContext context) {
