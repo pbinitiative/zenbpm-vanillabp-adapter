@@ -45,8 +45,9 @@ Full story with analysis, design, tests and acceptance criteria:
   adapter code existed yet. The adapter requires an engine carrying the feature (decision 15) and
   uses it from the first story: S2.2.1 (REST `extendJobLock`), S2.2.2 (its codes), S2.3.1
   (subscription settings, `lock_until`), S6.1.1 (`job-timeout`, renewal while a handler runs),
-  S6.1.2 (parking asynchronous tasks by `async-task-lock-renewal`), S6.2.1 (the backoff as a lock
-  extension), S6.2.2 (a closed stream releases the locks). Decision 12 (user tasks are polled) was
+  S6.1.2 (parking asynchronous tasks by `async-task-lock-renewal`), S6.2.1 (the failure releases
+  the lock, so the engine's backoff decides; it was a lock extension before E13.3 gave the engine
+  its own backoff), S6.2.2 (a closed stream releases the locks). Decision 12 (user tasks are polled) was
   re-examined and stands, for a reason other than slots: a terminated job is never delivered.
 
 ## E13.2 Propagate job outputs without mappings
@@ -72,11 +73,17 @@ Full story with analysis, design, tests and acceptance criteria:
   `v1.9.0-rc1`. Was: implement `zenbpm:taskDefinition retries` (the TODO in `pkg/bpmn/engine.go`): a
   `fail` without an error code decrements retries and re-activates the job after an optional backoff
   (`retryBackoff` in the fail request); an incident only at zero.
-- [ ] **Adapter twin (is S6.2.1, rewritten as such; decision 27):** `fail` with `retries`,
+- [x] **Adapter twin (is S6.2.1, rewritten as such; decision 27):** `fail` with `retries`,
   `retryBackoff`, `message`, `deliveryToken` and `clientId` like Camunda 8 (without `clientId` the
   lock stands whatever `retryBackoff` says); `ZenBpmRestClient.failJob` and `JobRef` gain the
   fields; `ZenBpmLocalRetry` and `max-redeliveries` removed; decision 8 superseded by decision 27.
   No re-pin: the pin `bdd795a3` carries the engine half.
+  *Done by S6.2.1, 2026-10-18,* with these differences: the failure sends no `retries` (the engine
+  counts one down) and a `retryBackoff` only where one is configured (decision 38); `JobRef` needed
+  no field, because the stream's `WaitingJob` carries `retries` and `attempt`; the local retry and
+  `max-redeliveries` had never been built, so only the key and its validation went. With a delivery
+  token the engine releases the lock whoever reports the failure; `clientId` is sent as well for a
+  leader which issues no tokens.
 
 ## E13.4 Findable workflows the engine starts
 

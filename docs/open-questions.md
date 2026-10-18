@@ -76,6 +76,11 @@ incident after `max-redeliveries` (E6 S6.2.1, decision 8).
 The "Plan meanwhile" above holds until the adapter twin: it fails a thrown handler at the engine
 with retries and backoff, and the local retry goes (decision 27, which supersedes decision 8).
 
+**Adapter twin built (2026-10-18, S6.2.1):** the "Plan meanwhile" no longer applies. A thrown
+handler is failed at the engine (decision 27); the adapter keeps no retry state, and how many
+attempts a job has is the model's `retries`, else the engine's `JOBS_DEFAULT_RETRIES` (decision
+38).
+
 ### 4. Is there a way to propagate job outputs without output mappings?
 
 **Found.** `PropagateOnlyMappedOutputs` drops every completion variable of a task without
@@ -246,7 +251,8 @@ adapters recognises them (`request-timeout`, `startup-wait`, `worker-threads`, `
 `retry-backoff` are identical on purpose).
 
 **2026-10-15:** `max-redeliveries` goes with the E13.3 twin (decision 27), and
-`message-start-lookup-max-instances` with the scan once E13.4 lands.
+`message-start-lookup-max-instances` with the scan once E13.4 lands. **2026-10-18:**
+`max-redeliveries` is gone (S6.2.1).
 
 **2026-10-16:** `shared-engine` is dropped. Two ids on one engine are told apart by their
 `name-clash-avoidance`, as on Camunda 8, whose adapter has no such key either (S3.3.1, the user's

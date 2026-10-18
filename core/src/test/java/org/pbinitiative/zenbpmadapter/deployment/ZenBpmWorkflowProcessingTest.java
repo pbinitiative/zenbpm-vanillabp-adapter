@@ -38,6 +38,7 @@ import org.pbinitiative.zenbpmadapter.client.ZenBpmClientRegistry;
 import org.pbinitiative.zenbpmadapter.client.grpc.Zenbpm.JobStreamResponse;
 import org.pbinitiative.zenbpmadapter.client.grpc.Zenbpm.StreamSubscriptionRequest;
 import org.pbinitiative.zenbpmadapter.client.grpc.Zenbpm.WaitingJob;
+import org.pbinitiative.zenbpmadapter.wiring.ZenBpmRetryBackoffResolver;
 
 import io.vanillabp.integration.adapter.spi.NameClashAvoidance;
 import io.vanillabp.integration.test.utils.CapturedOutput;
@@ -103,7 +104,7 @@ class ZenBpmWorkflowProcessingTest {
                     workflowModuleId,
                     bpmnProcessId,
                     taskDefinition) -> "ship".equals(taskDefinition) ? Duration.ofSeconds(90)
-                            : Duration.ofMinutes(5));
+                            : Duration.ofMinutes(5), ZenBpmRetryBackoffResolver.NONE);
         final var context = wired(deploymentService, "wiring.bpmn", fixture("wiring.bpmn"), null);
         wired(deploymentService, "partner.bpmn", PARTNER, context);
         final var factory = registry.getFactory(ADAPTER_ID);

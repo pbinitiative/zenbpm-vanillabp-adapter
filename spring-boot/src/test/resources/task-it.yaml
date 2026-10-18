@@ -19,6 +19,20 @@ vanillabp:
         zenbpm:
           job-timeout: PT3M
       workflows:
+        TaskFailures:
+          adapters:
+            zenbpm:
+              retry-backoff: PT1S
+          tasks:
+            reserve:
+              adapters:
+                zenbpm:
+                  retry-backoff: PT2S
+                  job-timeout: PT30S
+            hold:
+              adapters:
+                zenbpm:
+                  retry-backoff: PT1M
         TaskMatrix:
           tasks:
             pack:

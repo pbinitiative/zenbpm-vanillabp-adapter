@@ -134,6 +134,9 @@ path or query in `grpc-address` accepted, a user in `grpc-address` accepted, a b
   engine's text form (`types.ParseTTL`, whole seconds) and decides what a value below one second
   and `PT0S` mean; S6.2.1 warns at startup about a `retry-backoff` above the 5-minute cap; S8.1.1
   warns about a poll interval below one second and tests `PT0S`.
+  *Note from S6.2.1, 2026-10-18:* S6.2.1 has no such WARN. The cap was the plan's local retry's;
+  the engine caps a backoff itself at `JOBS_MAX_RETRY_BACKOFF`, so the adapter refuses only a
+  negative `retry-backoff` and a fraction of a second (decision 38).
 - Method order (Copilot's suggestion 3): first answered as "the engine's Go rule only", then
   adopted by the user's decision as decision 19 (tests first, helpers after the last test, private
   methods after the others), described in `AGENTS.md` under "Where methods go". The three argument

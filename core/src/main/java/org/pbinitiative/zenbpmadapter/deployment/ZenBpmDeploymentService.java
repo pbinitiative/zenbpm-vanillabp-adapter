@@ -10,6 +10,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Supplier;
@@ -41,6 +42,7 @@ import org.pbinitiative.zenbpmadapter.model.ZenBpmUnsupportedConstructs;
 import org.pbinitiative.zenbpmadapter.wiring.ZenBpmJobDispatcher;
 import org.pbinitiative.zenbpmadapter.wiring.ZenBpmJobHandler;
 import org.pbinitiative.zenbpmadapter.wiring.ZenBpmJobTimeoutResolver;
+import org.pbinitiative.zenbpmadapter.wiring.ZenBpmRetryBackoffResolver;
 
 import io.vanillabp.integration.adapter.spi.AdapterCollaborators;
 import io.vanillabp.integration.adapter.spi.AdapterDeploymentService;
@@ -94,6 +96,8 @@ public class ZenBpmDeploymentService implements AdapterDeploymentService<ZenBpmB
 
     private final ZenBpmJobTimeoutResolver jobTimeouts;
 
+    private final ZenBpmRetryBackoffResolver retryBackoffs;
+
     private StartupReport startupReport;
 
     /**
@@ -127,12 +131,13 @@ public class ZenBpmDeploymentService implements AdapterDeploymentService<ZenBpmB
         final ZenBpmClientRegistry registry,
         final AdapterCollaborators collaborators
     ) {
-        this(adapterId, registry, collaborators, ZenBpmJobTimeoutResolver.DEFAULT);
+        this(adapterId, registry, collaborators, ZenBpmJobTimeoutResolver.DEFAULT, ZenBpmRetryBackoffResolver.NONE);
     }
 
     /**
      * Builds the deployment service of one adapter id, which subscribes the job type of a task with
-     * the <code>job-timeout</code> the configuration resolves for it. Fails first where this adapter
+     * the <code>job-timeout</code> the configuration resolves for it, and fails the job of a handler
+     * which threw with the <code>retry-backoff</code> it resolves. Fails first where this adapter
      * and the VanillaBP platform integration on the classpath do not belong together.
      *
      * @param adapterId The adapter id
@@ -141,6 +146,8 @@ public class ZenBpmDeploymentService implements AdapterDeploymentService<ZenBpmB
      * @param collaborators What the platform hands to the adapter id
      * @param jobTimeouts The <code>job-timeout</code> of each task, resolved over the four levels of
      *            the configuration
+     * @param retryBackoffs The <code>retry-backoff</code> of each task, resolved over the four
+     *            levels of the configuration
      * @throws IllegalStateException Where adapter and platform do not belong together, or where the
      *             registry has no factory of the adapter id
      * @throws IllegalArgumentException Where the collaborators belong to another adapter id, a
@@ -150,7 +157,8 @@ public class ZenBpmDeploymentService implements AdapterDeploymentService<ZenBpmB
         final String adapterId,
         final ZenBpmClientRegistry registry,
         final AdapterCollaborators collaborators,
-        final ZenBpmJobTimeoutResolver jobTimeouts
+        final ZenBpmJobTimeoutResolver jobTimeouts,
+        final ZenBpmRetryBackoffResolver retryBackoffs
     ) {
         VanillaBpParts.requireAdapterFitsPlatform(ZenBpmAdapter.ADAPTER_TYPE, ZenBpmDeploymentService.class);
         if (!adapterId.equals(collaborators.adapterId())) {
@@ -163,6 +171,7 @@ public class ZenBpmDeploymentService implements AdapterDeploymentService<ZenBpmB
         this.factory = registry.getFactory(adapterId);
         this.collaborators = collaborators;
         this.jobTimeouts = jobTimeouts;
+        this.retryBackoffs = retryBackoffs;
     }
 
     @Override
@@ -282,6 +291,23 @@ public class ZenBpmDeploymentService implements AdapterDeploymentService<ZenBpmB
         final String taskDefinition
     ) {
         return jobTimeouts.jobTimeoutFor(workflowModuleId, bpmnProcessId, taskDefinition);
+    }
+
+    /**
+     * The <code>retry-backoff</code> of a task as the configuration resolves it over its four
+     * levels: the wait the failure of a handler which threw asks the engine for.
+     *
+     * @param workflowModuleId The workflow module of the task
+     * @param bpmnProcessId The plain id of the task's process
+     * @param taskDefinition The plain task definition of the task
+     * @return The duration; empty where no level sets it, so the failure carries none
+     */
+    public Optional<Duration> retryBackoffOf(
+        final String workflowModuleId,
+        final String bpmnProcessId,
+        final String taskDefinition
+    ) {
+        return retryBackoffs.retryBackoffFor(workflowModuleId, bpmnProcessId, taskDefinition);
     }
 
     /**
@@ -647,7 +673,7 @@ public class ZenBpmDeploymentService implements AdapterDeploymentService<ZenBpmB
         }
         final var stream = factory.stream();
         final var dispatcher = dispatcher();
-        final var handler = new ZenBpmJobHandler(adapterId, factory, collaborators, context);
+        final var handler = new ZenBpmJobHandler(adapterId, factory, collaborators, context, retryBackoffs);
         context.processingStarted(new StartedProcessing(jobTypes, factory.workflowModuleStarted(workflowModuleId,
                 () -> stopWorkflowProcessing(workflowModuleId, context))));
         dispatcher.register(handler);

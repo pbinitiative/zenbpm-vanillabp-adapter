@@ -1,0 +1,162 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" id="task-it-task-failures"
+    xmlns:zenbpm="http://zenbpm.pbinitiative.org/1.0" targetNamespace="http://bpmn.io/schema/bpmn"
+    xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI"
+    xmlns:dc="http://www.omg.org/spec/DD/20100524/DC"
+    xmlns:di="http://www.omg.org/spec/DD/20100524/DI">
+  <bpmn:process id="TaskFailures" isExecutable="true">
+    <bpmn:startEvent id="Start">
+      <bpmn:outgoing>Flow_ToKind</bpmn:outgoing>
+    </bpmn:startEvent>
+    <bpmn:exclusiveGateway id="Kind" name="Which task?" default="Flow_ToCharge">
+      <bpmn:incoming>Flow_ToKind</bpmn:incoming>
+      <bpmn:outgoing>Flow_ToCharge</bpmn:outgoing>
+      <bpmn:outgoing>Flow_ToReserve</bpmn:outgoing>
+      <bpmn:outgoing>Flow_ToNotify</bpmn:outgoing>
+      <bpmn:outgoing>Flow_ToHold</bpmn:outgoing>
+    </bpmn:exclusiveGateway>
+    <bpmn:serviceTask id="Charge" name="Charge the card">
+      <bpmn:extensionElements>
+        <zenbpm:taskDefinition type="charge" retries="2" />
+      </bpmn:extensionElements>
+      <bpmn:incoming>Flow_ToCharge</bpmn:incoming>
+      <bpmn:outgoing>Flow_ToCharged</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:endEvent id="Charged">
+      <bpmn:incoming>Flow_ToCharged</bpmn:incoming>
+    </bpmn:endEvent>
+    <bpmn:serviceTask id="Reserve" name="Reserve the amount">
+      <bpmn:extensionElements>
+        <zenbpm:taskDefinition type="reserve" retries="3" />
+      </bpmn:extensionElements>
+      <bpmn:incoming>Flow_ToReserve</bpmn:incoming>
+      <bpmn:outgoing>Flow_ToReserved</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:endEvent id="Reserved">
+      <bpmn:incoming>Flow_ToReserved</bpmn:incoming>
+    </bpmn:endEvent>
+    <bpmn:serviceTask id="Notify" name="Notify the customer">
+      <bpmn:extensionElements>
+        <zenbpm:taskDefinition type="notify" />
+      </bpmn:extensionElements>
+      <bpmn:incoming>Flow_ToNotify</bpmn:incoming>
+      <bpmn:outgoing>Flow_ToNotified</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:endEvent id="Notified">
+      <bpmn:incoming>Flow_ToNotified</bpmn:incoming>
+    </bpmn:endEvent>
+    <bpmn:serviceTask id="Hold" name="Hold the payment">
+      <bpmn:extensionElements>
+        <zenbpm:taskDefinition type="hold" retries="3" />
+      </bpmn:extensionElements>
+      <bpmn:incoming>Flow_ToHold</bpmn:incoming>
+      <bpmn:outgoing>Flow_ToHeld</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:endEvent id="Held">
+      <bpmn:incoming>Flow_ToHeld</bpmn:incoming>
+    </bpmn:endEvent>
+    <bpmn:sequenceFlow id="Flow_ToKind" sourceRef="Start" targetRef="Kind" />
+    <bpmn:sequenceFlow id="Flow_ToCharge" sourceRef="Kind" targetRef="Charge" />
+    <bpmn:sequenceFlow id="Flow_ToReserve" sourceRef="Kind" targetRef="Reserve">
+      <bpmn:conditionExpression>=kind = "reserve-once"</bpmn:conditionExpression>
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="Flow_ToNotify" sourceRef="Kind" targetRef="Notify">
+      <bpmn:conditionExpression>=kind = "notify"</bpmn:conditionExpression>
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="Flow_ToHold" sourceRef="Kind" targetRef="Hold">
+      <bpmn:conditionExpression>=kind = "hold"</bpmn:conditionExpression>
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="Flow_ToCharged" sourceRef="Charge" targetRef="Charged" />
+    <bpmn:sequenceFlow id="Flow_ToReserved" sourceRef="Reserve" targetRef="Reserved" />
+    <bpmn:sequenceFlow id="Flow_ToNotified" sourceRef="Notify" targetRef="Notified" />
+    <bpmn:sequenceFlow id="Flow_ToHeld" sourceRef="Hold" targetRef="Held" />
+  </bpmn:process>
+  <bpmndi:BPMNDiagram id="BPMNDiagram_1">
+    <bpmndi:BPMNPlane id="BPMNPlane_1" bpmnElement="TaskFailures">
+      <bpmndi:BPMNShape id="Start_di" bpmnElement="Start">
+        <dc:Bounds x="160" y="80" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Kind_di" bpmnElement="Kind">
+        <dc:Bounds x="256" y="80" width="50" height="50" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Charge_di" bpmnElement="Charge">
+        <dc:Bounds x="366" y="80" width="100" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Reserve_di" bpmnElement="Reserve">
+        <dc:Bounds x="366" y="210" width="100" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Notify_di" bpmnElement="Notify">
+        <dc:Bounds x="366" y="340" width="100" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Hold_di" bpmnElement="Hold">
+        <dc:Bounds x="366" y="470" width="100" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Charged_di" bpmnElement="Charged">
+        <dc:Bounds x="526" y="80" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Reserved_di" bpmnElement="Reserved">
+        <dc:Bounds x="526" y="166" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Notified_di" bpmnElement="Notified">
+        <dc:Bounds x="526" y="252" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Held_di" bpmnElement="Held">
+        <dc:Bounds x="526" y="338" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNEdge id="Flow_ToKind_di" bpmnElement="Flow_ToKind">
+        <di:waypoint x="196" y="98" />
+        <di:waypoint x="226" y="98" />
+        <di:waypoint x="226" y="105" />
+        <di:waypoint x="256" y="105" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_ToCharge_di" bpmnElement="Flow_ToCharge">
+        <di:waypoint x="306" y="105" />
+        <di:waypoint x="336" y="105" />
+        <di:waypoint x="336" y="120" />
+        <di:waypoint x="366" y="120" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_ToReserve_di" bpmnElement="Flow_ToReserve">
+        <di:waypoint x="306" y="105" />
+        <di:waypoint x="336" y="105" />
+        <di:waypoint x="336" y="250" />
+        <di:waypoint x="366" y="250" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_ToNotify_di" bpmnElement="Flow_ToNotify">
+        <di:waypoint x="306" y="105" />
+        <di:waypoint x="336" y="105" />
+        <di:waypoint x="336" y="380" />
+        <di:waypoint x="366" y="380" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_ToHold_di" bpmnElement="Flow_ToHold">
+        <di:waypoint x="306" y="105" />
+        <di:waypoint x="336" y="105" />
+        <di:waypoint x="336" y="510" />
+        <di:waypoint x="366" y="510" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_ToCharged_di" bpmnElement="Flow_ToCharged">
+        <di:waypoint x="466" y="120" />
+        <di:waypoint x="496" y="120" />
+        <di:waypoint x="496" y="98" />
+        <di:waypoint x="526" y="98" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_ToReserved_di" bpmnElement="Flow_ToReserved">
+        <di:waypoint x="466" y="250" />
+        <di:waypoint x="496" y="250" />
+        <di:waypoint x="496" y="184" />
+        <di:waypoint x="526" y="184" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_ToNotified_di" bpmnElement="Flow_ToNotified">
+        <di:waypoint x="466" y="380" />
+        <di:waypoint x="496" y="380" />
+        <di:waypoint x="496" y="270" />
+        <di:waypoint x="526" y="270" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_ToHeld_di" bpmnElement="Flow_ToHeld">
+        <di:waypoint x="466" y="510" />
+        <di:waypoint x="496" y="510" />
+        <di:waypoint x="496" y="356" />
+        <di:waypoint x="526" y="356" />
+      </bpmndi:BPMNEdge>
+    </bpmndi:BPMNPlane>
+  </bpmndi:BPMNDiagram>
+</bpmn:definitions>

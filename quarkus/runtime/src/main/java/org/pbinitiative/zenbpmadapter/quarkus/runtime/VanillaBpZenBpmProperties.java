@@ -24,10 +24,10 @@ import io.smallrye.config.ConfigMapping;
  * mapping of the tree beside the platform's own, which models only the keys of this adapter.
  * <p>
  * The keys of an adapter id live at <code>vanillabp.adapters.&lt;id&gt;.*</code>
- * ({@link ZenBpmAdapterKeys}). Four of them may also be set below the adapter level, and the most
+ * ({@link ZenBpmAdapterKeys}). Three of them may also be set below the adapter level, and the most
  * specific level wins for a task (task &gt; workflow &gt; workflow module &gt; adapter):
  * <ul>
- * <li><code>job-timeout</code>, <code>retry-backoff</code> and <code>max-redeliveries</code> at
+ * <li><code>job-timeout</code> and <code>retry-backoff</code> at
  * <code>vanillabp.workflow-modules.&lt;module&gt;.adapters.&lt;id&gt;.*</code>,
  * <code>vanillabp.workflow-modules.&lt;module&gt;.workflows.&lt;process&gt;.adapters.&lt;id&gt;.*</code>
  * and
@@ -147,45 +147,24 @@ public interface VanillaBpZenBpmProperties {
     }
 
     /**
-     * The first wait after a failed handler of a task: the most specific level which sets
-     * <code>retry-backoff</code>, else the adapter's, else the default.
+     * How long the engine waits before it hands the job of a task out again after its handler
+     * threw: the most specific level which sets <code>retry-backoff</code>, else the adapter's.
      *
      * @param workflowModuleId The workflow module the task belongs to
      * @param bpmnProcessId The BPMN process the task belongs to
      * @param taskId The task, as the BPMN model names its job type
      * @param adapterId The adapter id whose keys are read
-     * @return The wait, never <code>null</code>
+     * @return The wait; empty where no level sets it, so the <code>retryBackoff</code> of the task's
+     *         model applies, else the engine's default
      */
-    default Duration retryBackoffFor(
+    default Optional<Duration> retryBackoffFor(
         final String workflowModuleId,
         final String bpmnProcessId,
         final String taskId,
         final String adapterId
     ) {
         return mostSpecific(workflowModuleId, bpmnProcessId, taskId, adapterId, ZenBpmScopedKeys::retryBackoff)
-                .or(() -> adapterLevel(adapterId, ZenBpmAdapterKeys::retryBackoff))
-                .orElse(ZenBpmAdapterConfiguration.DEFAULT_RETRY_BACKOFF);
-    }
-
-    /**
-     * After how many redeliveries a failing job of a task becomes an incident: the most specific
-     * level which sets <code>max-redeliveries</code>, else the adapter's, else the default.
-     *
-     * @param workflowModuleId The workflow module the task belongs to
-     * @param bpmnProcessId The BPMN process the task belongs to
-     * @param taskId The task, as the BPMN model names its job type
-     * @param adapterId The adapter id whose keys are read
-     * @return The number
-     */
-    default int maxRedeliveriesFor(
-        final String workflowModuleId,
-        final String bpmnProcessId,
-        final String taskId,
-        final String adapterId
-    ) {
-        return mostSpecific(workflowModuleId, bpmnProcessId, taskId, adapterId, ZenBpmScopedKeys::maxRedeliveries)
-                .or(() -> adapterLevel(adapterId, ZenBpmAdapterKeys::maxRedeliveries))
-                .orElse(ZenBpmAdapterConfiguration.DEFAULT_MAX_REDELIVERIES);
+                .or(() -> adapterLevel(adapterId, ZenBpmAdapterKeys::retryBackoff));
     }
 
     /**
@@ -224,9 +203,6 @@ public interface VanillaBpZenBpmProperties {
                 .orElse(null));
         configuration.addScopedValue("%s.retry-backoff".formatted(prefix), keys
                 .retryBackoff()
-                .orElse(null));
-        configuration.addScopedValue("%s.max-redeliveries".formatted(prefix), keys
-                .maxRedeliveries()
                 .orElse(null));
         if (keys instanceof ZenBpmWorkflowScopedKeys workflowKeys) {
             configuration.addScopedValue("%s.history-time-to-live".formatted(prefix), workflowKeys
@@ -398,19 +374,12 @@ public interface VanillaBpZenBpmProperties {
         Optional<String> asyncTaskMaxAgeAction();
 
         /**
-         * <code>retry-backoff</code>: the first wait after a failed handler, at the adapter level.
+         * <code>retry-backoff</code>: how long the engine waits before it hands the job of a
+         * handler which threw out again, at the adapter level.
          *
          * @return The value, empty where the application did not set the key
          */
         Optional<Duration> retryBackoff();
-
-        /**
-         * <code>max-redeliveries</code>: after how many redeliveries a failing job becomes an
-         * incident, at the adapter level.
-         *
-         * @return The value, empty where the application did not set the key
-         */
-        Optional<Integer> maxRedeliveries();
 
         /**
          * <code>shutdown-grace</code>: how long a shutdown waits for the handlers in flight.
@@ -485,7 +454,6 @@ public interface VanillaBpZenBpmProperties {
             configuration.setAsyncTaskLockRenewal(asyncTaskLockRenewal().orElse(null));
             configuration.setAsyncTaskMaxAgeAction(asyncTaskMaxAgeAction().orElse(null));
             configuration.setRetryBackoff(retryBackoff().orElse(null));
-            configuration.setMaxRedeliveries(maxRedeliveries().orElse(null));
             configuration.setShutdownGrace(shutdownGrace().orElse(null));
             configuration.setWorkflowVisibilityTimeout(workflowVisibilityTimeout().orElse(null));
             configuration.setUserTaskPollInterval(userTaskPollInterval().orElse(null));
@@ -515,13 +483,6 @@ public interface VanillaBpZenBpmProperties {
          * @return The wait, empty where this level does not set it
          */
         Optional<Duration> retryBackoff();
-
-        /**
-         * <code>max-redeliveries</code> at this level.
-         *
-         * @return The number, empty where this level does not set it
-         */
-        Optional<Integer> maxRedeliveries();
 
     }
 

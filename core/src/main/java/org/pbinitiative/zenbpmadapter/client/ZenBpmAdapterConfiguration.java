@@ -54,10 +54,9 @@ import java.util.stream.Collectors;
  * <li><code>async-task-max-age-action</code> (default <code>report</code>) - <code>incident</code>
  * fails the job of a task open longer than <code>vanillabp.delivery.max-task-age</code> without
  * retries, so the engine raises an incident</li>
- * <li><code>retry-backoff</code> (default {@value #DEFAULT_RETRY_BACKOFF_ISO}) - the first wait
- * after a failed handler</li>
- * <li><code>max-redeliveries</code> (default {@value #DEFAULT_MAX_REDELIVERIES}) - after which
- * a failing job becomes an incident</li>
+ * <li><code>retry-backoff</code> (default: none) - how long the engine waits before it hands the
+ * job of a handler which threw out again, sent with the failure in whole seconds; without the key
+ * the <code>retryBackoff</code> of the task's model applies, else the engine's own default</li>
  * <li><code>shutdown-grace</code> (default {@value #DEFAULT_SHUTDOWN_GRACE_ISO}) - how long a
  * shutdown waits for the handlers in flight</li>
  * <li><code>workflow-visibility-timeout</code> (default
@@ -78,14 +77,13 @@ import java.util.stream.Collectors;
  * says that the identifiers of the workflow modules are unique, so the warning about
  * <code>name-clash-avoidance: none</code> becomes a DEBUG line</li>
  * </ul>
- * <code>job-timeout</code>, <code>retry-backoff</code> and <code>max-redeliveries</code> may also
- * be set per workflow module, workflow or task, <code>history-time-to-live</code> per workflow
- * module or workflow, and <code>accept-unscoped-identifiers</code> per workflow module, which
+ * <code>job-timeout</code> and <code>retry-backoff</code> may also be set per workflow module,
+ * workflow or task, <code>history-time-to-live</code> per workflow module or workflow, and
+ * <code>accept-unscoped-identifiers</code> per workflow module, which
  * {@link #setAcceptUnscopedIdentifiers(String, Boolean)} hands in.
  * This class holds their values at the adapter level. A value set at a lower level is handed in
- * through {@link #addScopedValue(String, Duration)} or {@link #addScopedValue(String, Integer)},
- * so the validation checks it at startup like the adapter's own; which level wins for a task is
- * the platform's to resolve.
+ * through {@link #addScopedValue(String, Duration)}, so the validation checks it at startup like
+ * the adapter's own; which level wins for a task is the platform's to resolve.
  * <p>
  * The platforms copy their own configuration classes into this one; it is not bound directly.
  * Some getters answer a primitive where the setter takes <code>null</code> for the default, so a
@@ -176,21 +174,6 @@ public class ZenBpmAdapterConfiguration {
      */
     public static final Duration DEFAULT_ASYNC_TASK_LOCK_RENEWAL = Duration.parse(
             DEFAULT_ASYNC_TASK_LOCK_RENEWAL_ISO);
-
-    /**
-     * The default of <code>retry-backoff</code> as written in a configuration.
-     */
-    public static final String DEFAULT_RETRY_BACKOFF_ISO = "PT10S";
-
-    /**
-     * The default of <code>retry-backoff</code>.
-     */
-    public static final Duration DEFAULT_RETRY_BACKOFF = Duration.parse(DEFAULT_RETRY_BACKOFF_ISO);
-
-    /**
-     * The default of <code>max-redeliveries</code>.
-     */
-    public static final int DEFAULT_MAX_REDELIVERIES = 10;
 
     /**
      * The default of <code>shutdown-grace</code> as written in a configuration.
@@ -363,9 +346,7 @@ public class ZenBpmAdapterConfiguration {
      */
     private String asyncTaskMaxAgeAction;
 
-    private Duration retryBackoff = DEFAULT_RETRY_BACKOFF;
-
-    private int maxRedeliveries = DEFAULT_MAX_REDELIVERIES;
+    private Duration retryBackoff;
 
     private Duration shutdownGrace = DEFAULT_SHUTDOWN_GRACE;
 
@@ -392,12 +373,6 @@ public class ZenBpmAdapterConfiguration {
      * they were handed in.
      */
     private final Map<String, Duration> scopedDurations = new LinkedHashMap<>();
-
-    /**
-     * The numbers set below the adapter level, keyed by their full property key, in the order
-     * they were handed in.
-     */
-    private final Map<String, Integer> scopedNumbers = new LinkedHashMap<>();
 
     // drawn once, so every call of clientIdInUse answers the same id for this adapter instance.
     // It keeps two nodes of one application apart, which is all it is for: it guards nothing
@@ -659,39 +634,24 @@ public class ZenBpmAdapterConfiguration {
     }
 
     /**
-     * The first wait after a failed handler, at the adapter level.
+     * How long the engine waits before it hands the job of a handler which threw out again, at the
+     * adapter level.
      *
-     * @return Never <code>null</code>
+     * @return The wait; <code>null</code> where the key is not set, so the model's or the engine's
+     *         backoff applies
      */
     public Duration getRetryBackoff() {
         return retryBackoff;
     }
 
     /**
-     * The first wait after a failed handler, at the adapter level.
+     * How long the engine waits before it hands the job of a handler which threw out again, at the
+     * adapter level.
      *
-     * @param retryBackoff The wait, or <code>null</code> for the default
+     * @param retryBackoff The wait, or <code>null</code> where the key is not set
      */
     public void setRetryBackoff(final Duration retryBackoff) {
-        this.retryBackoff = retryBackoff == null ? DEFAULT_RETRY_BACKOFF : retryBackoff;
-    }
-
-    /**
-     * After how many redeliveries a failing job becomes an incident, at the adapter level.
-     *
-     * @return The number
-     */
-    public int getMaxRedeliveries() {
-        return maxRedeliveries;
-    }
-
-    /**
-     * After how many redeliveries a failing job becomes an incident, at the adapter level.
-     *
-     * @param maxRedeliveries The number, or <code>null</code> for the default
-     */
-    public void setMaxRedeliveries(final Integer maxRedeliveries) {
-        this.maxRedeliveries = maxRedeliveries == null ? DEFAULT_MAX_REDELIVERIES : maxRedeliveries;
+        this.retryBackoff = retryBackoff;
     }
 
     /**
@@ -873,9 +833,10 @@ public class ZenBpmAdapterConfiguration {
      * Hands a duration set below the adapter level to the validation: a <code>job-timeout</code>,
      * a <code>retry-backoff</code> or a <code>history-time-to-live</code> of a workflow module, a
      * workflow or a task. Like the adapter's own, it must not be negative, a
-     * <code>job-timeout</code> must not be zero either, a <code>history-time-to-live</code> must be
-     * whole seconds the engine takes, and a <code>history-time-to-live</code> handed in here counts
-     * as a started configuration, as the adapter's own does.
+     * <code>job-timeout</code> must not be zero either, a <code>retry-backoff</code> and a
+     * <code>history-time-to-live</code> must be whole seconds the engine takes, and both, which have
+     * no default, count as a started configuration where they are handed in here, as the adapter's
+     * own do.
      *
      * @param propertyKey The full key as the application wrote it, e.g.
      *            <code>vanillabp.workflow-modules.orders.adapters.zenbpm.retry-backoff</code>
@@ -888,25 +849,6 @@ public class ZenBpmAdapterConfiguration {
     ) {
         if (value != null) {
             scopedDurations.put(propertyKey, value);
-        }
-    }
-
-    /**
-     * Hands a number set below the adapter level to the validation: a
-     * <code>max-redeliveries</code> of a workflow module, a workflow or a task. Like the
-     * adapter's own, it must not be negative.
-     *
-     * @param propertyKey The full key as the application wrote it, e.g.
-     *            <code>vanillabp.workflow-modules.orders.adapters.zenbpm.max-redeliveries</code>
-     * @param value The number; <code>null</code>, where the level does not set the key, is
-     *            ignored
-     */
-    public void addScopedValue(
-        final String propertyKey,
-        final Integer value
-    ) {
-        if (value != null) {
-            scopedNumbers.put(propertyKey, value);
         }
     }
 
@@ -1005,7 +947,14 @@ public class ZenBpmAdapterConfiguration {
                 DEFAULT_JOB_TIMEOUT_ISO), valueDefects);
         addAsyncTaskDefects(adapterId, deliveryRetention, valueDefects);
         addAsyncTaskMaxAgeActionDefect(adapterId, valueDefects);
-        addNegativeDurationDefect(adapterId, "retry-backoff", retryBackoff, DEFAULT_RETRY_BACKOFF_ISO, valueDefects);
+        if ((retryBackoff != null) && retryBackoff.isNegative()) {
+            valueDefects.add(
+                    "%s is %s and must not be negative; without the key the retryBackoff of the task's model applies, else the engine's own default"
+                            .formatted(propertyKey(adapterId, "retry-backoff"), retryBackoff));
+        }
+        addRetryBackoffDefect(propertyKey(adapterId, "retry-backoff"),
+                retryBackoff, "the retryBackoff of the task's model applies, else the engine's own default",
+                valueDefects);
         addNegativeDurationDefect(adapterId, "shutdown-grace", shutdownGrace, DEFAULT_SHUTDOWN_GRACE_ISO, valueDefects);
         addNegativeDurationDefect(
                 adapterId,
@@ -1026,12 +975,6 @@ public class ZenBpmAdapterConfiguration {
         addTimeToLiveDefect(propertyKey(adapterId, "history-time-to-live"), historyTimeToLive,
                 "the engine's own default applies", valueDefects);
 
-        if (maxRedeliveries < 0) {
-            valueDefects
-                    .add("%s is %d and must not be negative; 0 turns the first failure into an incident, the default is %d"
-                            .formatted(propertyKey(adapterId, "max-redeliveries"), maxRedeliveries,
-                                    DEFAULT_MAX_REDELIVERIES));
-        }
         if (instanceCacheMaxEntries < 0) {
             valueDefects.add("%s is %d and must not be negative; the default is %d"
                     .formatted(
@@ -1052,26 +995,21 @@ public class ZenBpmAdapterConfiguration {
             if (propertyKey.endsWith(".job-timeout")) {
                 addJobTimeoutDefect(propertyKey, value, "without the key the level above applies", valueDefects);
             }
-        });
-        scopedNumbers.forEach((
-            propertyKey,
-            value) -> {
-            if (value < 0) {
-                valueDefects.add("%s is %d and must not be negative; without the key the level above applies"
-                        .formatted(propertyKey, value));
+            if (propertyKey.endsWith(".retry-backoff")) {
+                addRetryBackoffDefect(propertyKey, value, "the level above applies", valueDefects);
             }
         });
 
         // a key without a default, at the adapter level or below it, is set only by somebody who
         // configures this adapter. Beside one, or beside a value which cannot work, a missing address
         // is no longer "not configured yet": the configuration was started and has to be finished.
-        // retry-backoff and max-redeliveries below the adapter level fall back to a default, so they
-        // do not count
-        final var historyTimeToLiveBelow = scopedDurations
+        // job-timeout below the adapter level falls back to a default, so it does not count
+        final var keyWithoutADefaultBelow = scopedDurations
                 .keySet()
                 .stream()
-                .anyMatch(propertyKey -> propertyKey.endsWith(".history-time-to-live"));
-        final var partlyConfigured = (grpcAddress != null) || (clientId != null) || (historyTimeToLive != null) || historyTimeToLiveBelow;
+                .anyMatch(propertyKey -> propertyKey.endsWith(".history-time-to-live") || propertyKey.endsWith(
+                        ".retry-backoff"));
+        final var partlyConfigured = (grpcAddress != null) || (clientId != null) || (historyTimeToLive != null) || (retryBackoff != null) || keyWithoutADefaultBelow;
         if (restAddressMissing && (partlyConfigured || !valueDefects.isEmpty())) {
             connectionDefects.addFirst(
                     "%s is missing, but other keys of this adapter are set; it is the address of the engine's REST API, e.g. http://localhost:8080"
@@ -1367,6 +1305,22 @@ public class ZenBpmAdapterConfiguration {
             defects.add("%s is PT0S, but a job has to stay locked for a while to the node which runs it; %s"
                     .formatted(propertyKey, withoutTheKey));
         }
+    }
+
+    // the engine reads a backoff in whole seconds and refuses a fraction of one; a negative backoff
+    // has a defect of its own, so it is left out here
+    private static void addRetryBackoffDefect(
+        final String propertyKey,
+        final Duration configured,
+        final String withoutTheKey,
+        final List<String> defects
+    ) {
+        if ((configured == null) || configured.isNegative() || (configured.getNano() == 0)) {
+            return;
+        }
+        defects.add(
+                "%s is %s, but the engine takes a backoff in whole seconds; write whole seconds, or remove the key, so %s"
+                        .formatted(propertyKey, configured, withoutTheKey));
     }
 
     private void addAsyncTaskDefects(

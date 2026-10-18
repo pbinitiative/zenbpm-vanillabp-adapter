@@ -20,10 +20,10 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
  * view of the tree beside the platform's own binding, which reads only the keys of this adapter.
  * <p>
  * The keys of an adapter id live at <code>vanillabp.adapters.&lt;id&gt;.*</code>
- * ({@link ZenBpmAdapterKeys}). Four of them may also be set below the adapter level, and the most
+ * ({@link ZenBpmAdapterKeys}). Three of them may also be set below the adapter level, and the most
  * specific level wins for a task (task &gt; workflow &gt; workflow module &gt; adapter):
  * <ul>
- * <li><code>job-timeout</code>, <code>retry-backoff</code> and <code>max-redeliveries</code> at
+ * <li><code>job-timeout</code> and <code>retry-backoff</code> at
  * <code>vanillabp.workflow-modules.&lt;module&gt;.adapters.&lt;id&gt;.*</code>,
  * <code>vanillabp.workflow-modules.&lt;module&gt;.workflows.&lt;process&gt;.adapters.&lt;id&gt;.*</code>
  * and
@@ -165,45 +165,24 @@ public class VanillaBpZenBpmProperties {
     }
 
     /**
-     * The first wait after a failed handler of a task: the most specific level which sets
-     * <code>retry-backoff</code>, else the adapter's, else the default.
+     * How long the engine waits before it hands the job of a task out again after its handler
+     * threw: the most specific level which sets <code>retry-backoff</code>, else the adapter's.
      *
      * @param workflowModuleId The workflow module the task belongs to
      * @param bpmnProcessId The BPMN process the task belongs to
      * @param taskId The task, as the BPMN model names its job type
      * @param adapterId The adapter id whose keys are read
-     * @return The wait, never <code>null</code>
+     * @return The wait; empty where no level sets it, so the <code>retryBackoff</code> of the task's
+     *         model applies, else the engine's default
      */
-    public Duration retryBackoffFor(
+    public Optional<Duration> retryBackoffFor(
         final String workflowModuleId,
         final String bpmnProcessId,
         final String taskId,
         final String adapterId
     ) {
         return mostSpecific(workflowModuleId, bpmnProcessId, taskId, adapterId, ZenBpmScopedKeys::getRetryBackoff)
-                .or(() -> adapterLevel(adapterId, ZenBpmAdapterKeys::getRetryBackoff))
-                .orElse(ZenBpmAdapterConfiguration.DEFAULT_RETRY_BACKOFF);
-    }
-
-    /**
-     * After how many redeliveries a failing job of a task becomes an incident: the most specific
-     * level which sets <code>max-redeliveries</code>, else the adapter's, else the default.
-     *
-     * @param workflowModuleId The workflow module the task belongs to
-     * @param bpmnProcessId The BPMN process the task belongs to
-     * @param taskId The task, as the BPMN model names its job type
-     * @param adapterId The adapter id whose keys are read
-     * @return The number
-     */
-    public int maxRedeliveriesFor(
-        final String workflowModuleId,
-        final String bpmnProcessId,
-        final String taskId,
-        final String adapterId
-    ) {
-        return mostSpecific(workflowModuleId, bpmnProcessId, taskId, adapterId, ZenBpmScopedKeys::getMaxRedeliveries)
-                .or(() -> adapterLevel(adapterId, ZenBpmAdapterKeys::getMaxRedeliveries))
-                .orElse(ZenBpmAdapterConfiguration.DEFAULT_MAX_REDELIVERIES);
+                .or(() -> adapterLevel(adapterId, ZenBpmAdapterKeys::getRetryBackoff));
     }
 
     /**
@@ -239,7 +218,6 @@ public class VanillaBpZenBpmProperties {
         }
         configuration.addScopedValue("%s.job-timeout".formatted(prefix), keys.getJobTimeout());
         configuration.addScopedValue("%s.retry-backoff".formatted(prefix), keys.getRetryBackoff());
-        configuration.addScopedValue("%s.max-redeliveries".formatted(prefix), keys.getMaxRedeliveries());
         if (keys instanceof ZenBpmWorkflowScopedKeys workflowKeys) {
             configuration.addScopedValue("%s.history-time-to-live".formatted(prefix), workflowKeys
                     .getHistoryTimeToLive());
@@ -322,8 +300,6 @@ public class VanillaBpZenBpmProperties {
 
         private Duration retryBackoff;
 
-        private Integer maxRedeliveries;
-
         /**
          * Bound by Spring Boot.
          */
@@ -364,24 +340,6 @@ public class VanillaBpZenBpmProperties {
          */
         public void setRetryBackoff(final Duration retryBackoff) {
             this.retryBackoff = retryBackoff;
-        }
-
-        /**
-         * <code>max-redeliveries</code> at this level.
-         *
-         * @return The number, or <code>null</code> where this level does not set it
-         */
-        public Integer getMaxRedeliveries() {
-            return maxRedeliveries;
-        }
-
-        /**
-         * <code>max-redeliveries</code> at this level.
-         *
-         * @param maxRedeliveries The number as bound
-         */
-        public void setMaxRedeliveries(final Integer maxRedeliveries) {
-            this.maxRedeliveries = maxRedeliveries;
         }
 
     }

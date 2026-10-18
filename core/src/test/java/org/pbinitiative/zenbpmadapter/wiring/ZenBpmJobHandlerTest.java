@@ -43,8 +43,8 @@ import io.vanillabp.integration.test.utils.SuppressOutputExtension;
  * completion, the failure without retries of a job whose instance names no aggregate or whose
  * workflow this application does not own, what at-least-once delivery leaves over, a BPMN error
  * sent with its scoped code after the values were written, a task left open parked by its window or,
- * overdue under the incident action, failed without retries, and a handler which throws, which it
- * leaves to the job's lock. Once an outcome reached the engine, and only then, the core looks at the
+ * overdue under the incident action, failed without retries; a handler which throws is failed at
+ * the engine, which {@link ZenBpmJobFailureTest} holds. Once an outcome reached the engine, and only then, the core looks at the
  * other open tasks of the workflow with the probe of the job's process. Every job gives its handler
  * slot back.
  */
@@ -707,26 +707,6 @@ class ZenBpmJobHandlerTest {
                 () -> assertFalse(output
                         .getAllOfThisTest()
                         .contains("could not be answered"), output::getAllOfThisTest));
-    }
-
-    @Test
-    @DisplayName("A handler which throws is not failed at the engine yet: a WARN, and the job is left to its lock")
-    void aThrowingHandlerIsLeftToItsLock(final CapturedOutput output) {
-        jobs.holds(ROOT, "default", null, "order-1", "\"id\": \"order-1\"");
-        jobs.takesTheCommands(ROOT);
-        jobs.invoker.answers(context -> {
-            throw new IllegalStateException("the warehouse is closed");
-        });
-
-        jobs.runs(JobRunning.job(ROOT));
-
-        assertAll(
-                () -> assertEquals(List.of(), jobs.commands()),
-                () -> assertTrue(output
-                        .getAllOfThisTest()
-                        .contains(
-                                "the handler of job 42 (task 'ship', workflow aggregate 'order-1') threw, and this adapter does not fail a job at the engine yet"),
-                        output::getAllOfThisTest));
     }
 
     @Test

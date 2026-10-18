@@ -38,6 +38,7 @@ import org.pbinitiative.zenbpmadapter.client.ZenBpmRestClient;
 import org.pbinitiative.zenbpmadapter.client.api.CreateInstanceRequest;
 import org.pbinitiative.zenbpmadapter.client.api.HistoryEntry;
 import org.pbinitiative.zenbpmadapter.client.api.InstanceFilter;
+import org.pbinitiative.zenbpmadapter.client.api.JobFailure;
 import org.pbinitiative.zenbpmadapter.client.api.JobFilter;
 import org.pbinitiative.zenbpmadapter.client.api.JobRef;
 import org.pbinitiative.zenbpmadapter.client.api.ProcessInstanceRef;
@@ -46,6 +47,9 @@ import org.pbinitiative.zenbpmadapter.springboot.it.task.Claim;
 import org.pbinitiative.zenbpmadapter.springboot.it.task.ClaimRepository;
 import org.pbinitiative.zenbpmadapter.springboot.it.task.Parcel;
 import org.pbinitiative.zenbpmadapter.springboot.it.task.ParcelRepository;
+import org.pbinitiative.zenbpmadapter.springboot.it.task.Payment;
+import org.pbinitiative.zenbpmadapter.springboot.it.task.PaymentAttempts;
+import org.pbinitiative.zenbpmadapter.springboot.it.task.PaymentRepository;
 import org.pbinitiative.zenbpmadapter.springboot.it.task.Reservation;
 import org.pbinitiative.zenbpmadapter.springboot.it.task.ReservationRepository;
 import org.pbinitiative.zenbpmadapter.springboot.it.task.TaskItApplication;
@@ -79,12 +83,16 @@ import io.vanillabp.spi.process.ProcessService;
  * is routed by the error boundary event which catches its code, or ends in an incident where none
  * does, and a task left open for its asynchronous completion is parked, and parked again whenever
  * the engine hands its job out once more. A task which a timer boundary event took away is reported
- * cancelled at the next delivery of its workflow.
+ * cancelled at the next delivery of its workflow. A handler which throws is failed at the engine,
+ * which spends one of the retries the model gives the task and hands the job out again after the
+ * configured backoff, and raises an incident after the last one; a failure repeated with its
+ * delivery token counts once.
  * <p>
  * The application runs the workflow module <code>deploy-it</code> under <code>use-prefix</code> with
  * the process <code>TaskMatrix</code> of <code>task-it/task-matrix.bpmn</code> and the process
  * <code>TaskOutcomes</code> of <code>task-it/task-outcomes.bpmn</code> and the process
- * <code>TaskTakenAway</code> of <code>task-it/task-taken-away.bpmn</code>, configured by
+ * <code>TaskTakenAway</code> of <code>task-it/task-taken-away.bpmn</code> and the process
+ * <code>TaskFailures</code> of <code>task-it/task-failures.bpmn</code>, configured by
  * <code>task-it.yaml</code>. It is started once for the class, against an engine of its own.
  */
 @ExtendWith(SuppressOutputExtension.class)
@@ -121,6 +129,15 @@ class ZenBpmTaskProcessingIT {
 
     @Autowired
     private ReservationRepository reservations;
+
+    @Autowired
+    private ProcessService<Payment> paymentProcessService;
+
+    @Autowired
+    private PaymentRepository payments;
+
+    @Autowired
+    private PaymentAttempts paymentAttempts;
 
     @Autowired
     private ZenBpmClientRegistry clients;
@@ -407,6 +424,121 @@ class ZenBpmTaskProcessingIT {
                         .asText()));
     }
 
+    @Test
+    @DisplayName("A handler which throws spends one attempt per delivery: a model with two retries is delivered twice, the backoff apart, and then raises an incident naming the attempts, the exception and the aggregate")
+    void aThrowingHandlerEndsInAnIncidentAfterItsRetries() {
+        final var paymentId = uniquePaymentId();
+
+        final var started = start(new Payment(paymentId, Payment.CHARGE));
+        final var incident = eventually(() -> incidentsOf(started.key()).findFirst());
+
+        final var attempts = paymentAttempts.of(paymentId);
+        final var charge = jobOf(started.key(), "Charge");
+        assertAll(
+                () -> assertEquals(2, attempts.size(), attempts::toString),
+                () -> assertTrue(Duration
+                        .between(attempts.get(0), attempts.get(1))
+                        .compareTo(Duration.ofSeconds(1)) >= 0, attempts::toString),
+                () -> assertEquals("Charge", incident
+                        .get("elementId")
+                        .asText()),
+                () -> assertEquals(
+                        "Task 'charge' of workflow aggregate '%s' threw java.lang.IllegalStateException: the card was declined (job %d: 2 attempts, retries exhausted)"
+                                .formatted(paymentId, charge.key()),
+                        incident
+                                .get("message")
+                                .asText()),
+                () -> assertEquals(JobRef.State.FAILED, charge.state()),
+                () -> assertEquals(2, failuresOf(charge.key()).size()),
+                () -> assertEquals(List.of(), deliveriesOf(paymentId)));
+    }
+
+    @Test
+    @DisplayName("A model which names no retries has the engine's default of one attempt, so the first handler which throws raises an incident")
+    void aModelWithoutRetriesEndsInAnIncidentAtTheFirstThrow() {
+        final var paymentId = uniquePaymentId();
+
+        final var started = start(new Payment(paymentId, Payment.NOTIFY));
+        final var incident = eventually(() -> incidentsOf(started.key()).findFirst());
+
+        assertAll(
+                () -> assertEquals(1, paymentAttempts
+                        .of(paymentId)
+                        .size()),
+                () -> assertTrue(incident
+                        .get("message")
+                        .asText()
+                        .endsWith("1 attempt, retries exhausted)"), incident::toString),
+                () -> assertEquals(JobRef.State.FAILED, jobOf(started.key(), "Notify").state()));
+    }
+
+    @Test
+    @DisplayName("The backoff decides when the job comes back: not before the task's retry-backoff of two seconds, and long before its job-timeout of thirty, so the failure released the lock")
+    void theBackoffDecidesWhenTheJobComesBack() {
+        final var paymentId = uniquePaymentId();
+
+        final var ended = awaitTheEndOf(start(new Payment(paymentId, Payment.RESERVE_ONCE)).key());
+
+        final var attempts = paymentAttempts.of(paymentId);
+        final var waited = Duration.between(attempts.get(0), attempts.get(1));
+        final var reserve = jobOf(ended.key(), "Reserve");
+        assertAll(
+                () -> assertEquals(Duration.ofSeconds(2), deploymentService
+                        .retryBackoffOf("deploy-it", "TaskFailures", "reserve")
+                        .orElseThrow()),
+                () -> assertEquals(ProcessInstanceRef.State.COMPLETED, ended.state()),
+                () -> assertEquals(2, attempts.size(), attempts::toString),
+                () -> assertTrue(waited.compareTo(Duration.ofSeconds(2)) >= 0, waited::toString),
+                // the engine looks for jobs due again at least once a second
+                () -> assertTrue(waited.compareTo(Duration.ofSeconds(10)) < 0, waited::toString),
+                () -> assertTrue(payments
+                        .findById(paymentId)
+                        .orElseThrow()
+                        .isReserved()),
+                () -> assertEquals(JobRef.State.COMPLETED, reserve.state()),
+                () -> assertEquals(2, engineJson("/v1/jobs/%d".formatted(reserve.key()))
+                        .path("retries")
+                        .asInt()),
+                () -> assertEquals(List.of("COMPLETED"), deliveriesOf(paymentId)
+                        .stream()
+                        .map(TaskDeliveryLogReader.Delivery::outcome)
+                        .toList()));
+    }
+
+    @Test
+    @DisplayName("A failure sent again with the same delivery token, as after a lost answer, is answered like the first and counts once")
+    void aFailureRepeatedAfterALostAnswerCountsOnce() {
+        final var paymentId = uniquePaymentId();
+        final var started = start(new Payment(paymentId, Payment.HOLD));
+        try {
+            eventually(() -> Optional
+                    .of(paymentAttempts.of(paymentId))
+                    .filter(attempts -> !attempts.isEmpty()));
+            final var hold = jobOf(started.key(), "Hold");
+            final var failure = JobFailure
+                    .withMessage("the answer to this failure was lost")
+                    .withRetryBackoff(Duration.ofMinutes(1))
+                    .ofTheDelivery(deliveryTokenOf(hold.key()), clients
+                            .getFactory("zenbpm")
+                            .clientId());
+
+            rest().failJob(hold.key(), failure);
+            rest().failJob(hold.key(), failure);
+
+            final var job = engineJson("/v1/jobs/%d".formatted(hold.key()));
+            assertAll(
+                    () -> assertEquals(2, job
+                            .path("retries")
+                            .asInt(), job::toString),
+                    () -> assertEquals("active", job
+                            .path("state")
+                            .asText(), job::toString),
+                    () -> assertEquals(1, failuresOf(hold.key()).size()));
+        } finally {
+            paymentAttempts.release(paymentId);
+        }
+    }
+
     // only the test knows the ports the container was given
     @DynamicPropertySource
     static void theEngineUnderTest(final DynamicPropertyRegistry registry) {
@@ -421,6 +553,28 @@ class ZenBpmTaskProcessingIT {
 
     private static String uniqueClaimId() {
         return "claim-%s".formatted(UUID.randomUUID());
+    }
+
+    private static String uniquePaymentId() {
+        return "payment-%s".formatted(UUID.randomUUID());
+    }
+
+    private ProcessInstanceRef start(final Payment payment) {
+        transactionTemplate.executeWithoutResult(status -> paymentProcessService.startWorkflow(payment));
+        return eventually(() -> rest()
+                .instances(InstanceFilter
+                        .anyInstance()
+                        .withBusinessKey(payment.getId()))
+                .items()
+                .stream()
+                .findFirst());
+    }
+
+    private static List<JsonNode> failuresOf(final long jobKey) {
+        final var items = engineJson("/v1/jobs/%d/failures".formatted(jobKey)).path("items");
+        return StreamSupport
+                .stream(items.spliterator(), false)
+                .toList();
     }
 
     private ProcessInstanceRef start(final Claim claim) {

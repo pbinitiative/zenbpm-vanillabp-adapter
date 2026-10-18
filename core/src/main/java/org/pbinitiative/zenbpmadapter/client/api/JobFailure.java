@@ -4,6 +4,7 @@
  */
 package org.pbinitiative.zenbpmadapter.client.api;
 
+import java.time.Duration;
 import java.util.Map;
 
 /**
@@ -19,6 +20,9 @@ import java.util.Map;
  *            retries left; <code>null</code> for none
  * @param retries How many retries the job has left after this failure; <code>null</code> for one
  *            less than now. <code>0</code> raises an incident at once.
+ * @param retryBackoff How long the engine waits before it hands the job out again, in whole
+ *            seconds; <code>null</code> for the <code>retryBackoff</code> of the task's model, else
+ *            the engine's default. The engine caps it at its <code>jobs.maxRetryBackoff</code>.
  * @param deliveryToken The delivery the failure belongs to, the <code>delivery_token</code> of the
  *            job as the job stream handed it out, so a repeated failure counts once and the
  *            failure of a delivery the engine handed out again is refused; <code>null</code> for
@@ -31,6 +35,7 @@ public record JobFailure(
     String message,
     Map<String, Object> variables,
     Integer retries,
+    Duration retryBackoff,
     Long deliveryToken,
     String clientId
 ) {
@@ -57,7 +62,7 @@ public record JobFailure(
         final String errorCode,
         final String message
     ) {
-        return new JobFailure(errorCode, message, null, null, null, null);
+        return new JobFailure(errorCode, message, null, null, null, null, null);
     }
 
     /**
@@ -67,7 +72,7 @@ public record JobFailure(
      * @return The failure
      */
     public static JobFailure withMessage(final String message) {
-        return new JobFailure(null, message, null, null, null, null);
+        return new JobFailure(null, message, null, null, null, null, null);
     }
 
     /**
@@ -77,7 +82,7 @@ public record JobFailure(
      * @return A new failure
      */
     public JobFailure withVariables(final Map<String, Object> variables) {
-        return new JobFailure(errorCode, message, variables, retries, deliveryToken, clientId);
+        return new JobFailure(errorCode, message, variables, retries, retryBackoff, deliveryToken, clientId);
     }
 
     /**
@@ -87,7 +92,18 @@ public record JobFailure(
      * @return A new failure
      */
     public JobFailure withRetries(final int retries) {
-        return new JobFailure(errorCode, message, variables, retries, deliveryToken, clientId);
+        return new JobFailure(errorCode, message, variables, retries, retryBackoff, deliveryToken, clientId);
+    }
+
+    /**
+     * This failure, with the wait before the job is handed out again.
+     *
+     * @param retryBackoff The wait in whole seconds; <code>null</code> for the backoff of the task's
+     *            model, else the engine's default
+     * @return A new failure
+     */
+    public JobFailure withRetryBackoff(final Duration retryBackoff) {
+        return new JobFailure(errorCode, message, variables, retries, retryBackoff, deliveryToken, clientId);
     }
 
     /**
@@ -102,7 +118,7 @@ public record JobFailure(
         final long deliveryToken,
         final String clientId
     ) {
-        return new JobFailure(errorCode, message, variables, retries, deliveryToken == 0 ? null
+        return new JobFailure(errorCode, message, variables, retries, retryBackoff, deliveryToken == 0 ? null
                 : deliveryToken, clientId);
     }
 

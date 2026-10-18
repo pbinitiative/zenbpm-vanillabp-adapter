@@ -99,7 +99,11 @@ public class ZenBpmDeploymentServiceProducer {
                         workflowModuleId,
                         bpmnProcessId,
                         taskDefinition) -> overlay.jobTimeoutFor(workflowModuleId, bpmnProcessId, taskDefinition,
-                                adapterId));
+                                adapterId), (
+                                    workflowModuleId,
+                                    bpmnProcessId,
+                                    taskDefinition) -> overlay.retryBackoffFor(workflowModuleId, bpmnProcessId,
+                                            taskDefinition, adapterId));
                     // the block both platform integrations write at the end of a start
                     deploymentService.setStartupReport(startupReport);
                     return asListElement(deploymentService);

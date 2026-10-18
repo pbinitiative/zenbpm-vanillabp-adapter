@@ -45,8 +45,6 @@ public class ZenBpmAdapterKeys {
 
     private Duration retryBackoff;
 
-    private Integer maxRedeliveries;
-
     private Duration shutdownGrace;
 
     private Duration workflowVisibilityTimeout;
@@ -274,7 +272,8 @@ public class ZenBpmAdapterKeys {
     }
 
     /**
-     * <code>retry-backoff</code>: the first wait after a failed handler, at the adapter level.
+     * <code>retry-backoff</code>: how long the engine waits before it hands the job of a handler
+     * which threw out again, at the adapter level.
      *
      * @return The value, or <code>null</code> where the application did not set the key
      */
@@ -283,30 +282,13 @@ public class ZenBpmAdapterKeys {
     }
 
     /**
-     * <code>retry-backoff</code>: the first wait after a failed handler, at the adapter level.
+     * <code>retry-backoff</code>: how long the engine waits before it hands the job of a handler
+     * which threw out again, at the adapter level.
      *
      * @param retryBackoff The value as bound
      */
     public void setRetryBackoff(final Duration retryBackoff) {
         this.retryBackoff = retryBackoff;
-    }
-
-    /**
-     * <code>max-redeliveries</code>: after how many redeliveries a failing job becomes an incident, at the adapter level.
-     *
-     * @return The value, or <code>null</code> where the application did not set the key
-     */
-    public Integer getMaxRedeliveries() {
-        return maxRedeliveries;
-    }
-
-    /**
-     * <code>max-redeliveries</code>: after how many redeliveries a failing job becomes an incident, at the adapter level.
-     *
-     * @param maxRedeliveries The value as bound
-     */
-    public void setMaxRedeliveries(final Integer maxRedeliveries) {
-        this.maxRedeliveries = maxRedeliveries;
     }
 
     /**
@@ -456,7 +438,6 @@ public class ZenBpmAdapterKeys {
         configuration.setAsyncTaskLockRenewal(asyncTaskLockRenewal);
         configuration.setAsyncTaskMaxAgeAction(asyncTaskMaxAgeAction);
         configuration.setRetryBackoff(retryBackoff);
-        configuration.setMaxRedeliveries(maxRedeliveries);
         configuration.setShutdownGrace(shutdownGrace);
         configuration.setWorkflowVisibilityTimeout(workflowVisibilityTimeout);
         configuration.setUserTaskPollInterval(userTaskPollInterval);
