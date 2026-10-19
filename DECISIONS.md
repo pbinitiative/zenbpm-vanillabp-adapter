@@ -1054,7 +1054,11 @@ which the process was started with or a call activity started (a called process 
 its own; the probes find it too), not an embedded sub-process or an iteration, else, under
 `message-start-lookup: scan`, the running instance of a process a message starts whose id variable
 names the aggregate, as the probes find a workflow. Where none runs, the push is a warned no-op,
-because the core found the workflow when it dispatched the push.
+because the core found the workflow when it dispatched the push. Where the engine did not answer for
+the key and nothing else finds the workflow, that failure is thrown and the outbox repeats the push:
+a workflow the engine started has no business key, so the key is the only way to it, and an engine
+which did not answer says nothing about whether the workflow ended. The probes keep taking such a
+failure as no answer of the key, because their search reports an engine it cannot ask.
 
 The cost is one read of the children per instance which runs, a leaf included, and one write per
 instance which runs. A push into the scope of a task stays a write of the instance the task's job

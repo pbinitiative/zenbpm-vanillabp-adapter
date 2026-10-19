@@ -871,6 +871,35 @@ Quarkus runtime 13, Quarkus deployment 52, Quarkus integration tests 15, coverag
 measures 100 % of 29,128 instructions for Spring Boot and 100 % of 28,998 for Quarkus, and
 `bin/check-deploy-safety.sh` passes.
 
+**Answer to CodeRabbit's review of `dd1fa49`, 2026-10-19.** One inline comment (Major) and a
+generic warning in its summary:
+
+1. **A failed read of the start row's key dropped the push** (Major). Valid. The push used the
+   probe's key lookup, which takes any failure as "the key leads nowhere" (`ofTheKey`), so a
+   timeout or a `5xx` on `GET /v1/process-instances/{key}`, for a workflow the engine started and
+   which therefore has no business key, ended in "no running workflow", a wrong WARN and a consumed
+   entry, under the default `message-start-lookup: start-row`. Fixed:
+   `ZenBpmRunningWorkflows#ofTheKeyOrFailure` throws, and the push keeps the business-key search
+   and the scan as fallbacks but throws the key's failure where neither finds the root, so the
+   outbox repeats the push. The probes keep `ofTheKey`, because their search reports an engine it
+   cannot ask. Decision 49, the README and architecture 4.5 say so. Tests:
+   `ZenBpmAggregatePushTest#aFailedReadOfTheKeyIsThrownWhereNothingElseFindsTheWorkflow` and
+   `#aFailedReadOfTheKeyLeavesTheRootToTheSearch`. Seen to fail, each restored afterwards (3 of 3
+   mutants): the failure not rethrown; the failure thrown at once, without the fallbacks; the
+   probe's lookup used again.
+2. **Docstring coverage of 48.97 %** (pre-merge check, warning). Not valid for this repository:
+   the build's javadoc run (`doclint` all, failing on warnings) enforces a comment on every public
+   and protected member of the published modules, package-private types and members carry one by
+   convention, and private methods and test methods carry none by convention; those make up the
+   rest of the count.
+
+`TZ=Etc/UTC mvn clean install` on OpenJDK 25.0.2 after this fix builds green with every
+integration test run and none skipped (engine test support 12 unit and 5 integration tests, core
+1,059 unit and 92 integration tests, Spring Boot 14 unit and 58 integration tests, smoke test 38,
+Quarkus runtime 13, Quarkus deployment 52, Quarkus integration tests 15, coverage gate 37). The gate
+measures 100 % of 29,150 instructions for Spring Boot and 100 % of 29,020 for Quarkus, and
+`bin/check-deploy-safety.sh` passes.
+
 ## F7.3 Quarkus twins
 
 ### S7.3.1 Messages and push on Quarkus

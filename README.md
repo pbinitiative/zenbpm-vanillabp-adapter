@@ -223,22 +223,22 @@ repeated with the outbox's backoff and blocked after `vanillabp.outbox.block-aft
 (decision 47).
 
 A changed aggregate is pushed in phase two only. A push of the workflow writes the values the
-aggregate shares, and its id, into the workflow's root and then into every instance which runs
-below it, at any depth, because ZenBPM gives an embedded sub-process, a multi-instance body and
-each of its iterations, and a called process a copy of the variables of their own, and a gateway
-decides on the copy of the instance it runs in (decision 49). It does not enter a called instance
-of a process which works on another aggregate, as the workflow services say, although that
-instance carries a copy of the caller's id. The root is the instance the workflow started as,
-where the start row names it, else the one the aggregate's business key finds, a workflow a call
-activity started included, else, under `message-start-lookup: scan`, the one whose id variable
-names the aggregate; where none runs any more, the push is a warned no-op. A push into the scope of
-a task writes the instance the task waits in, that of its sub-process or its iteration, and leaves
-the root and every other branch as they were; the task's completion writes the values up to the
-root later. Where the instance the task waits in ended, nothing is written; a task the engine does
-not know yet is pushed again later. A handler which runs already, or a task handed out again, gets
-the variables its job was created with all the same. An iteration of a multi-instance element
-which starts after a push reads the pushed value only where the element maps it in (see
-[`GAPS.md`](./GAPS.md)).
+aggregate shares, and its id, into the workflow's root and then into every instance which runs below
+it, at any depth, because ZenBPM gives an embedded sub-process, a multi-instance body and each of
+its iterations, and a called process a copy of the variables of their own, and a gateway decides on
+the copy of the instance it runs in (decision 49). It does not enter a called instance of a process
+which works on another aggregate, as the workflow services say, although that instance carries a
+copy of the caller's id. The root is the instance the workflow started as, where the start row names
+it, else the one the aggregate's business key finds, a workflow a call activity started included,
+else, under `message-start-lookup: scan`, the one whose id variable names the aggregate; where none
+runs any more, the push is a warned no-op, and where the engine does not answer for the start row's
+key and nothing else finds the workflow, the push is repeated later. A push into the scope of a task
+writes the instance the task waits in, that of its sub-process or its iteration, and leaves the root
+and every other branch as they were; the task's completion writes the values up to the root later.
+Where the instance the task waits in ended, nothing is written; a task the engine does not know yet
+is pushed again later. A handler which runs already, or a task handed out again, gets the variables
+its job was created with all the same. An iteration of a multi-instance element which starts after a
+push reads the pushed value only where the element maps it in (see [`GAPS.md`](./GAPS.md)).
 
 What is built next, and in which order, is the implementation plan in [`docs/`](docs/README.md).
 

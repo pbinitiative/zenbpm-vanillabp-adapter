@@ -46,7 +46,9 @@ import lombok.extern.slf4j.Slf4j;
  * aggregate's business key finds, else, under <code>message-start-lookup: scan</code>, the running
  * instance of a process a message starts whose id variable names the aggregate. Where none runs,
  * the push is a warned no-op: the core found the workflow when it dispatched the push, so it ended
- * since.
+ * since. Where the engine did not answer for the key and nothing else finds the workflow, the failure
+ * is thrown, so the outbox repeats the push: the key is the only way to a workflow the engine
+ * started.
  * <p>
  * A push into the scope of a task writes the instance the task's job waits in, which is the
  * instance of the sub-process or the iteration the task runs in, and nothing else: the root and
@@ -152,11 +154,24 @@ final class ZenBpmAggregatePush<A> {
         final var scopedIds = Set.of(collaborators
                 .scoping()
                 .scopedProcessId(request.workflowModuleId(), request.bpmnProcessId(), adapterId));
-        final var root = runningWorkflows
-                .ofTheKey(rest, scopedIds, idVariableName, aggregateId, request.workflowId())
+        Optional<ProcessInstanceRef> ofTheKey;
+        RuntimeException failureOfTheKey = null;
+        try {
+            ofTheKey = runningWorkflows.ofTheKeyOrFailure(rest, scopedIds, idVariableName, aggregateId, request
+                    .workflowId());
+        } catch (final RuntimeException failure) {
+            ofTheKey = Optional.empty();
+            failureOfTheKey = failure;
+        }
+        final var root = ofTheKey
                 .or(() -> ZenBpmRunningWorkflows.byBusinessKey(rest, scopedIds, aggregateId))
                 .or(() -> startedByAMessage(rest, scope, scopedIds, idVariableName, aggregateId));
         if (root.isEmpty()) {
+            // a workflow the engine started has no business key, so the key may be the only way to
+            // it: an engine which did not answer for the key says nothing about whether it ended
+            if (failureOfTheKey != null) {
+                throw failureOfTheKey;
+            }
             warnNothingRuns(request);
             return;
         }

@@ -168,6 +168,41 @@ class ZenBpmAggregatePushTest {
     }
 
     @Test
+    @DisplayName("Where the engine fails to answer for the start row's key and nothing else finds the workflow, the failure is thrown, so the outbox repeats the push: a workflow the engine started is found by that key alone")
+    void aFailedReadOfTheKeyIsThrownWhereNothingElseFindsTheWorkflow(final CapturedOutput output) {
+        engine.answers("GET", instancePath(ROOT), 500, "{\"code\":\"TECHNICAL_ERROR\",\"message\":\"down\"}");
+        engine.answers("GET", SEARCH_PATH, 200, page());
+
+        final var failure = assertThrows(RuntimeException.class, () -> handler().phaseTwo(push(String.valueOf(ROOT),
+                null)));
+
+        assertAll(
+                () -> assertTrue(failure
+                        .getMessage()
+                        .contains(instancePath(ROOT)), failure::toString),
+                () -> assertTrue(ZenBpmErrors.isRepeatable(failure), failure::toString),
+                () -> assertEquals(List.of(), written()),
+                () -> assertTrue(!output
+                        .getAllOfThisTest()
+                        .contains("no running workflow"), output::getAllOfThisTest));
+    }
+
+    @Test
+    @DisplayName("Where the engine fails to answer for the start row's key, the business-key search still finds the root, which is written")
+    void aFailedReadOfTheKeyLeavesTheRootToTheSearch() {
+        engine.answers("GET", instancePath(ROOT), 500, "{\"code\":\"TECHNICAL_ERROR\",\"message\":\"down\"}");
+        final var found = 4503599627370700L;
+        engine.answers("GET", SEARCH_PATH, 200, page(instance(found, "shop__Order", "active", "default", null,
+                "order-1", "order-1")));
+        engine.answers("GET", childrenPath(found), 200, page());
+        everyWriteIsTaken();
+
+        handler().phaseTwo(push(String.valueOf(ROOT), null));
+
+        assertEquals(List.of(found), written());
+    }
+
+    @Test
     @DisplayName("Where no root instance waits under the business key, one with an incident is the root")
     void aRootWithAnIncidentIsFoundWhereNoneWaits() {
         engine.answers("GET", SEARCH_PATH, exchange -> FakeEngine.respond(exchange, 200, exchange

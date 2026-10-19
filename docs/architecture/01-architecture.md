@@ -379,7 +379,8 @@ business key or id variable must name the aggregate. With a task: `GET /v1/jobs/
 instance) -> `PATCH` that instance and no other. `taskRecord()` is not read: no field of the row
 says that a handler holds the task (the row exists for a task the adapter left open), and the row
 names the workflow, not the instance the task waits in. A `409` (the instance ended) makes the write
-a no-op, a `404` of the write or of the job is repeated (decision 34). No idempotency key, as the
+a no-op, a `404` of the write or of the job is repeated (decision 34), and so is a push whose root
+nothing found where the engine did not answer for the start row's key. No idempotency key, as the
 core defines it.
 
 ### 4.6 User tasks

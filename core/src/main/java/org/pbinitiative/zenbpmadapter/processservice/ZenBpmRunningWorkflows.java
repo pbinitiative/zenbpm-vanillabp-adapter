@@ -65,22 +65,45 @@ final class ZenBpmRunningWorkflows {
         final String aggregateId,
         final String workflowId
     ) {
-        final var key = ZenBpmKeys.keyOf(workflowId);
-        if (key.isEmpty()) {
-            return Optional.empty();
-        }
         try {
-            return rest
-                    .instance(key.getAsLong())
-                    .filter(instance -> isRunning(instance.state()))
-                    .filter(instance -> scopedIds.contains(instance.bpmnProcessId()))
-                    .filter(instance -> isTheWorkflowOf(aggregateId, idVariableName, instance));
+            return ofTheKeyOrFailure(rest, scopedIds, idVariableName, aggregateId, workflowId);
         } catch (final RuntimeException failure) {
             log.debug(
                     "ZenBPM[{}]: the engine could not be asked for workflow '{}' of aggregate '{}', so the search answers",
                     adapterId, workflowId, aggregateId, failure);
             return Optional.empty();
         }
+    }
+
+    /**
+     * The instance a key names, where it runs the workflow of the aggregate in the scope, as
+     * {@link #ofTheKey}, but a failure of the engine is thrown: for a caller which must not take
+     * an engine it could not ask for a workflow which ended.
+     *
+     * @param rest The REST client of the adapter id
+     * @param scopedIds The processes of the scope, as the engine knows them
+     * @param idVariableName The name of the aggregate's id variable
+     * @param aggregateId The id of the aggregate
+     * @param workflowId The key VanillaBP holds, <code>null</code> where it holds none
+     * @return The instance, empty where the key leads to anything else
+     * @throws RuntimeException What the REST client throws where the engine did not answer
+     */
+    Optional<ProcessInstanceRef> ofTheKeyOrFailure(
+        final ZenBpmRestClient rest,
+        final Set<String> scopedIds,
+        final String idVariableName,
+        final String aggregateId,
+        final String workflowId
+    ) {
+        final var key = ZenBpmKeys.keyOf(workflowId);
+        if (key.isEmpty()) {
+            return Optional.empty();
+        }
+        return rest
+                .instance(key.getAsLong())
+                .filter(instance -> isRunning(instance.state()))
+                .filter(instance -> scopedIds.contains(instance.bpmnProcessId()))
+                .filter(instance -> isTheWorkflowOf(aggregateId, idVariableName, instance));
     }
 
     /**
