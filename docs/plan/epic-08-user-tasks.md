@@ -439,6 +439,61 @@ the check before the commit still refuses, with its own message instead of the p
 
 ### S8.3.1 User tasks on Quarkus
 
-- [ ] **Depends on:** S8.2.1.
+- [x] **Depends on:** S8.2.1.
 
 `ZenBpmWorkflowLifecycleTest#userTaskNotificationAndCompletion`, `#userTaskCancellationByError`.
+
+*Fit check, 2026-10-19 (implementation pipeline, batch e08-f8.2-f8.3).* Checked against S8.2.1 on
+the batch branch and `ZenBpmWorkflowLifecycleTest` (prod mode, `EngineUnderTest`). Nothing did not
+fit. Decided by the Implementor: the model is a copy of the Spring Boot fixture
+(`zenbpm-e2e/processes/zenbpm/Reviews.bpmn`, process `Reviewing`), served by `E2eReviewWorkflow`
+and driven through `introspect/user-tasks/reviews/...` (`E2eUserTaskIntrospection`), since the
+application runs in a JVM of its own; the application's `user-task-poll-interval` is `PT1S`, so a
+test can watch three looks for a second notification. The notification test asserts the creation
+once, before and after the completion, and that nothing is told as cancelled; the cancellation test
+asserts the `CANCELED` of decision 50 once, so "cancellation reaches the application once" on
+Quarkus needs no test of its own.
+
+**Tests**: `ZenBpmWorkflowLifecycleTest#userTaskNotificationAndCompletion` (the creation is told
+once, with the job key as the task id; the completion of the accepted review ends the instance at
+`Accepted` through `Decision`, never `Rejected`; after three more looks one creation and no
+cancellation), `#userTaskCancellationByError` (the error boundary event `Withdrawn` takes over and
+the instance ends at `ReviewWithdrawn` without passing `Decision`; the job is `TERMINATED`; after
+three more looks one creation and one cancellation).
+
+**Acceptance criteria**
+
+- [x] The user tasks of S8.1.1 and S8.2.1 work on a booted Quarkus application: both tests above,
+  green against the pinned engine in the clean build below. They are the first Quarkus proof of
+  S8.1.1's poller.
+
+*Evidence of the clean build, 2026-10-19* (`TZ=Etc/UTC mvn clean install` on JDK 25, Docker ITs
+included, none skipped, then `bin/check-deploy-safety.sh`: 13 files deployed by the green build,
+nothing by the red gate). Tests per module: engine-test-support 12 + 5 ITs; core 1,110 + 92 ITs;
+Spring Boot 14 + 70 ITs; smoke test 38; Quarkus runtime 13, deployment 52, integration tests 17
+(`ZenBpmWorkflowLifecycleTest` 16); coverage gate 37. Coverage per platform: Spring Boot 100.00 % (0
+of 31,622 instructions missed), Quarkus 100.00 % (0 of 31,492 missed). No guard is new in this
+story, so its mutants prove the two tests instead, against the pinned engine: the node and the
+platform deduplicate a notification each on their own (the seen-set, the delivery record), so
+both were switched off together. With the seen-set's check off and a delivery id new at every
+look, `#userTaskNotificationAndCompletion` counts 4 creations instead of 1; with the memory of what
+was told as cancelled off as well, `#userTaskCancellationByError` counts 4 cancellations. Both
+killed, 2 of 2.
+
+**E8 "Done when", checked after S8.3.1 (2026-10-19).** "A user task's creation and cancellation
+reach the application once each, completion continues the workflow with the shared values,
+cancellation routes an error boundary event, on both platforms." Met, half by half:
+
+| Half | Spring Boot | Quarkus |
+|---|---|---|
+| creation reaches the application once | `ZenBpmUserTaskIT#userTaskCreatedIsNotifiedOnce` (three more looks, one creation, job never streamed), across a restart `ZenBpmUserTaskRestartIT#eachEventOfAUserTaskIsToldOnceAcrossARestart` | `ZenBpmWorkflowLifecycleTest#userTaskNotificationAndCompletion` (one creation after three more looks, and after the completion) |
+| cancellation reaches the application once | `ZenBpmUserTaskIT#userTaskCanceledOnInstanceCancellation`, `#aUserTaskTakenAwayIsCanceledOnce`, `#cancelUserTaskRoutesTheBoundaryEvent` (decision 50), across a restart `ZenBpmUserTaskRestartIT` | `ZenBpmWorkflowLifecycleTest#userTaskCancellationByError` (one cancellation after three more looks, decision 50) |
+| completion continues the workflow with the shared values | `ZenBpmUserTaskIT#completeUserTaskContinuesWithSharedValues` | `ZenBpmWorkflowLifecycleTest#userTaskNotificationAndCompletion` |
+| cancellation routes an error boundary event | `ZenBpmUserTaskIT#cancelUserTaskRoutesTheBoundaryEvent` | `ZenBpmWorkflowLifecycleTest#userTaskCancellationByError` |
+
+On Quarkus a cancellation is proved through `cancelUserTask` only; the cancellation of an instance
+over the engine's API and one by an interrupting boundary event run through the same poller and
+notifier, which the Spring Boot tests prove, and the platform glue under test is the same call of
+the invoker. E8 is complete; with it E7, E8 and the start half of E9 are merged, which is milestone
+M4 "It talks". Left for the engine, out of the run's scope: E13.5 (user-task events on the stream)
+and E13.2 (outputs without the `PATCH` before `complete`).
