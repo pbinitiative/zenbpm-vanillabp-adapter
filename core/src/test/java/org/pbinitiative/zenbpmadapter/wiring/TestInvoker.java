@@ -6,6 +6,7 @@ package org.pbinitiative.zenbpmadapter.wiring;
 
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.function.Function;
 
@@ -35,6 +36,10 @@ final class TestInvoker implements WorkflowTaskInvoker {
 
     private volatile RuntimeException reportFailure;
 
+    private volatile Set<String> servedUserTasks;
+
+    private final List<String> handlerQuestions = new CopyOnWriteArrayList<>();
+
     /**
      * Answers every invocation from now on the way the function does, which may throw.
      *
@@ -60,6 +65,26 @@ final class TestInvoker implements WorkflowTaskInvoker {
      */
     void failsToReport(final RuntimeException failure) {
         this.reportFailure = failure;
+    }
+
+    /**
+     * Answers from now on that a method serves the user tasks of these task definitions and element
+     * ids, and no other; until then the question fails the test, because a job handler never asks
+     * it.
+     *
+     * @param served The task definitions and element ids a method serves
+     */
+    void servesUserTasks(final String... served) {
+        this.servedUserTasks = Set.of(served);
+    }
+
+    /**
+     * Whether a method serves a task, as the core was asked, in the order asked.
+     *
+     * @return The task definitions and element ids asked about, as <code>process/name</code>
+     */
+    List<String> handlerQuestions() {
+        return List.copyOf(handlerQuestions);
     }
 
     /**
@@ -138,7 +163,11 @@ final class TestInvoker implements WorkflowTaskInvoker {
         final String bpmnProcessId,
         final String taskDefinitionOrActivityId
     ) {
-        throw new AssertionError("a job handler does not ask whether a handler exists");
+        if (servedUserTasks == null) {
+            throw new AssertionError("a job handler does not ask whether a handler exists");
+        }
+        handlerQuestions.add("%s/%s".formatted(bpmnProcessId, taskDefinitionOrActivityId));
+        return servedUserTasks.contains(taskDefinitionOrActivityId);
     }
 
     @Override

@@ -35,7 +35,8 @@ import lombok.extern.slf4j.Slf4j;
  * <b>The slots.</b> Every handler runs in a slot, and there are as many slots as the execution
  * model says. A slot is taken before the handler is handed to the handler threads, and given back
  * after it returned. {@link #tryExecute(Runnable)} takes a free slot or answers <code>false</code>
- * at once, so the dispatcher and the user-task poller, which run on the timing threads, never wait.
+ * at once, so the dispatcher, which runs on the timing threads, and the user-task poller, whose looks
+ * the timing threads start, never wait.
  * {@link #execute(Runnable)} waits for a slot in the submitting thread. Either way no queue of
  * handlers grows here: the jobs which wait for a slot stay with the dispatcher, which is told
  * through {@link #onSlotFreed(Runnable)} when it can hand over the next one.

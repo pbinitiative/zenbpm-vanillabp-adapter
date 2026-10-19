@@ -159,6 +159,100 @@ class ZenBpmWorkflowProcessingTest {
     }
 
     @Test
+    @DisplayName("The job stream never subscribes the type of a user task a method serves: its module has it looked for by the user-task poller of the adapter id, which the start says, and the stop ends the looks")
+    void theStreamNeverSubscribesAUserTask(final CapturedOutput output) {
+        final var deploymentService = new ZenBpmDeploymentService(ADAPTER_ID, registry, TestCollaborators.of(
+                ADAPTER_ID, TestScoping.of(NameClashAvoidance.USE_PREFIX), TestWiring
+                        .claiming("Orders")
+                        .servedElsewhere("Notify")
+                        .wiring(),
+                TestStarts.everyProcessStartingAWorkflow(), TestCollaborators.servingUserTasks(
+                        "Approve")));
+        final var context = wired(deploymentService, "wiring.bpmn", fixture("wiring.bpmn"), null);
+
+        deploymentService.startWorkflowProcessing("shop", context);
+        final var subscribed = engine
+                .call(0)
+                .subscriptions(4);
+        deploymentService.stopWorkflowProcessing("shop", context);
+        final var all = engine
+                .call(0)
+                .subscriptions(8);
+
+        assertAll(
+                () -> assertEquals(Set.of("user-task-type"), context.userTaskTypes()),
+                () -> assertTrue(all
+                        .stream()
+                        .noneMatch(subscription -> context
+                                .userTaskTypes()
+                                .contains(subscription.getJobType())),
+                        () -> described(all).toString()),
+                () -> assertEquals(4, subscribed.size()),
+                () -> assertTrue(output
+                        .getOutOfThisTest()
+                        .contains("""
+                                ZenBPM[orders]: workflow module 'shop' has its user tasks of the job type(s) \
+                                user-task-type looked for every PT5S"""), output::getOutOfThisTest));
+    }
+
+    @Test
+    @DisplayName("A module whose processes have user tasks and no job type subscribes nothing, has its user tasks looked for, and stops like any other module")
+    void aModuleWithUserTasksOnlySubscribesNothing(final CapturedOutput output) {
+        final var deploymentService = deploymentService(TestWiring.claiming());
+        final var context = new ZenBpmProcessingContext("shop");
+        context.recordWiring(new WiredProcess("Order", "Order", Set.of(), true, false, Map.of(), Map.of("approve",
+                "approve")));
+
+        deploymentService.startWorkflowProcessing("shop", context);
+        final var openWhileStarted = registry
+                .getFactory(ADAPTER_ID)
+                .getOpenWorkflowModules();
+        deploymentService.stopWorkflowProcessing("shop", context);
+
+        final var log = output.getOutOfThisTest();
+        assertAll(
+                () -> assertFalse(log.contains("unsubscribed the job type(s)"), log),
+                () -> assertEquals(0, engine.callCount()),
+                () -> assertEquals(Set.of("shop"), openWhileStarted),
+                () -> assertTrue(log.contains("workflow module 'shop' has its user tasks of the job type(s) approve"),
+                        log),
+                () -> assertTrue(log.contains("workflow module 'shop' drained after"), log),
+                () -> assertFalse(log.contains("subscribed the job type(s)"), log));
+    }
+
+    @Test
+    @DisplayName("The stop of the last module with user tasks ends the looks for them: no look is made after it")
+    void theStopOfTheLastModuleEndsTheLooks(final CapturedOutput output) {
+        final var configuration = new ZenBpmAdapterConfiguration();
+        // a port nothing answers on, so a look made after the stop would be warned about
+        configuration.setRestAddress("http://127.0.0.1:1");
+        configuration.setGrpcAddress(engine.address());
+        configuration.setGrpcPlaintext(true);
+        configuration.setUserTaskPollInterval(Duration.ofMillis(500));
+        try (var registry = new ZenBpmClientRegistry(List
+                .of(new ZenBpmClientFactory(ADAPTER_ID, configuration, () -> "shop")))) {
+            final var deploymentService = new ZenBpmDeploymentService(ADAPTER_ID, registry, TestCollaborators.of(
+                    ADAPTER_ID, TestScoping.of(NameClashAvoidance.USE_PREFIX), TestWiring
+                            .claiming()
+                            .wiring(),
+                    TestStarts.everyProcessStartingAWorkflow()));
+            final var context = new ZenBpmProcessingContext("shop");
+            context.recordWiring(new WiredProcess("Order", "Order", Set.of(), true, false, Map.of(), Map.of(
+                    "approve", "approve")));
+
+            deploymentService.startWorkflowProcessing("shop", context);
+            deploymentService.stopWorkflowProcessing("shop", context);
+            LockSupport.parkNanos(Duration
+                    .ofMillis(1_500)
+                    .toNanos());
+        }
+
+        assertFalse(output
+                .getOutOfThisTest()
+                .contains("did not answer the look at the user tasks"), output::getOutOfThisTest);
+    }
+
+    @Test
     @DisplayName("A module without a job type subscribes nothing and asks the engine nothing, also for an adapter id without clients")
     void aModuleWithoutAJobTypeSubscribesNothing() {
         final var deploymentService = new ZenBpmDeploymentService(ADAPTER_ID, new ZenBpmClientRegistry(List.of(
@@ -169,7 +263,7 @@ class ZenBpmWorkflowProcessingTest {
                                         .wiring(),
                                 TestStarts.everyProcessStartingAWorkflow()));
         final var context = new ZenBpmProcessingContext("shop");
-        context.recordWiring(new WiredProcess("Order", "Order", Set.of(), true, false, Map.of()));
+        context.recordWiring(new WiredProcess("Order", "Order", Set.of(), true, false, Map.of(), Map.of()));
 
         deploymentService.startWorkflowProcessing("shop", context);
         deploymentService.stopWorkflowProcessing("shop", context);
@@ -183,7 +277,8 @@ class ZenBpmWorkflowProcessingTest {
         final var deploymentService = deploymentService(TestWiring.claiming());
         final var shop = withJobTypes("shop", "charge");
         final var billing = withJobTypes("billing", "charge");
-        billing.recordWiring(new WiredProcess("Invoice", "Invoice", Set.of("invoice"), true, false, Map.of()));
+        billing.recordWiring(
+                new WiredProcess("Invoice", "Invoice", Set.of("invoice"), true, false, Map.of(), Map.of()));
         // a module started after the first stop marks on the stream where that stop's frames end
         final var audit = withJobTypes("audit", "audit");
 
@@ -375,7 +470,8 @@ class ZenBpmWorkflowProcessingTest {
     ) {
         final var context = new ZenBpmProcessingContext(workflowModuleId);
         context.recordWiring(
-                new WiredProcess("Order", "Order", new LinkedHashSet<>(List.of(jobTypes)), true, false, Map.of()));
+                new WiredProcess("Order", "Order", new LinkedHashSet<>(List.of(jobTypes)), true, false, Map.of(), Map
+                        .of()));
         return context;
     }
 

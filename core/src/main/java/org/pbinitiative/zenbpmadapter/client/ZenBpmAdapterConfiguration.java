@@ -65,7 +65,9 @@ import java.util.stream.Collectors;
  * {@value #DEFAULT_WORKFLOW_VISIBILITY_TIMEOUT_ISO}) - how long a started workflow may stay
  * invisible to a query</li>
  * <li><code>user-task-poll-interval</code> (default
- * {@value #DEFAULT_USER_TASK_POLL_INTERVAL_ISO}) - how often user tasks are looked for</li>
+ * {@value #DEFAULT_USER_TASK_POLL_INTERVAL_ISO}) - how often user tasks are looked for;
+ * <code>PT0S</code> switches the notifications of user tasks off, and both it and an interval below
+ * one second are warned about, see decision 12 in the repository's DECISIONS.md</li>
  * <li><code>history-time-to-live</code> (default: none, the engine's own) - sent with every
  * start in whole seconds, so a value with a fraction of a second is refused, and so is one above
  * {@link ZenBpmTimeToLive#LONGEST}; <code>PT0S</code> has the engine remove an ended workflow at
@@ -219,6 +221,12 @@ public class ZenBpmAdapterConfiguration {
      * The default of <code>user-task-poll-interval</code>.
      */
     public static final Duration DEFAULT_USER_TASK_POLL_INTERVAL = Duration.parse(DEFAULT_USER_TASK_POLL_INTERVAL_ISO);
+
+    /**
+     * The shortest <code>user-task-poll-interval</code> above zero which the start does not warn
+     * about: a shorter one asks the engine almost without pause.
+     */
+    public static final Duration SHORTEST_USER_TASK_POLL_INTERVAL_WITHOUT_A_WARNING = Duration.ofSeconds(1);
 
     /**
      * The default of <code>instance-cache-max-entries</code>.
@@ -1037,6 +1045,7 @@ public class ZenBpmAdapterConfiguration {
                 userTaskPollInterval,
                 DEFAULT_USER_TASK_POLL_INTERVAL_ISO,
                 valueDefects);
+        addUserTaskPollIntervalWarning(adapterId, warnings);
         if ((historyTimeToLive != null) && historyTimeToLive.isNegative()) {
             valueDefects.add("%s is %s and must not be negative; without the key the engine's own default applies"
                     .formatted(propertyKey(adapterId, "history-time-to-live"), historyTimeToLive));
@@ -1394,6 +1403,30 @@ public class ZenBpmAdapterConfiguration {
                 "%s is %s, above the %s which Kubernetes grants a pod to stop by default: raise terminationGracePeriodSeconds, or the stop timeout of whatever else runs the application, with it, or the application is killed before the handlers had their grace"
                         .formatted(propertyKey(adapterId, "shutdown-grace"), shutdownGrace,
                                 LONGEST_SHUTDOWN_GRACE_WITHIN_THE_USUAL_BUDGETS));
+    }
+
+    // the validation refuses only a negative interval, so the two which work against the application
+    // are said once at startup: one which switches the notifications off, and one which asks the engine
+    // almost without pause, because every look reads every page of the jobs of every user-task type
+    private void addUserTaskPollIntervalWarning(
+        final String adapterId,
+        final List<String> warnings
+    ) {
+        final var key = propertyKey(adapterId, "user-task-poll-interval");
+        if (userTaskPollInterval.isZero()) {
+            warnings.add(
+                    "%s is %s, which switches the notifications of user tasks off: no @WorkflowTask method hears that a user task was created or cancelled. Remove the key for the default %s"
+                            .formatted(key, userTaskPollInterval, DEFAULT_USER_TASK_POLL_INTERVAL_ISO));
+            return;
+        }
+        final var belowASecond = userTaskPollInterval.compareTo(SHORTEST_USER_TASK_POLL_INTERVAL_WITHOUT_A_WARNING) < 0;
+        if (userTaskPollInterval.isNegative() || !belowASecond) {
+            return;
+        }
+        warnings.add(
+                "%s is %s, below %s: every look lists the active and the terminated jobs of every user-task type, every page of them, so the engine is asked almost without pause. Raise it to a second or more; the default is %s"
+                        .formatted(key, userTaskPollInterval, SHORTEST_USER_TASK_POLL_INTERVAL_WITHOUT_A_WARNING,
+                                DEFAULT_USER_TASK_POLL_INTERVAL_ISO));
     }
 
     // the engine reads a backoff in whole seconds and refuses a fraction of one; a negative backoff

@@ -385,25 +385,38 @@ core defines it.
 
 ### 4.6 User tasks
 
-A ZenBPM user task is a job of type `zenbpm:taskDefinition type` (default `user-task-type`), which
-is the VanillaBP task definition. Notifications come from `ZenBpmUserTaskPoller` (one per adapter
-id, timing thread): every `user-task-poll-interval` it lists `GET
-/v1/jobs?jobType=<scoped>&state=active` and `state=terminated` per user-task type of the deployed
-modules, keeps a bounded seen-set per node, and invokes the core with `TaskEvent CREATED` resp.
-`CANCELED`, delivery id = `job.key + ":created"` resp. `":canceled"`. The delivery record makes a
-restarted node harmless. `COMPLETE_USER_TASK` / `CANCEL_USER_TASK` are the job commands. The stream
-is deliberately NOT subscribed to user-task types (decision 12): a lock would have to be renewed for
-the whole life of a user task, and a terminated job is never delivered, so polling is needed for
-`CANCELED` anyway. The context reports `taskKind = USER_TASK`. Because the poller already reports
-every canceled user task, the open-task probe of section 4.3 answers CANNOT_SAY for user-task
-definitions: the platform's contract forbids a second source for the same cancellation.
+A ZenBPM user task is a job of type `zenbpm:taskDefinition type` (default `user-task-type`, which
+the scoping leaves alone, so every application on the engine shares it); the plain type is the
+VanillaBP task definition. Wiring asks `workflowTaskHandlerExists` by the task definition and by the
+element id of each user task of a claimed process and remembers the type, as the deployed model
+gives it, of each one a method serves (`WiredProcess#userTaskTypes`); a marked one is never looked
+for. Notifications come from `ZenBpmUserTaskPoller` (one per adapter id, decision 12): every
+`user-task-poll-interval` the timing threads start a look on a virtual thread of its own, which
+lists `GET /v1/jobs?jobType=<scoped>&state=active` and `state=terminated` per type, page by page to
+the last (the engine filters by neither time nor key), skips a job of another element type, and
+hands each job and event not in its seen-set (per node; a delivery is forgotten once two complete
+looks in a row no longer list it) to a handler slot with `tryExecute`. There
+`ZenBpmUserTaskNotifier` of the module whose claimed process the job's instance belongs to (instance
+cache) builds the context: `TaskEvent CREATED` resp. `CANCELED`, `taskKind = USER_TASK`, task id =
+job key, delivery id = `job.key + "-created"` resp. `"-canceled"`, the root as the workflow
+(decision 28), and after the core took it, the module's open-task probe as a wake-up. A terminated
+job never seen active is told as `CANCELED` only; the delivery record makes a restarted node
+harmless. A look which fails is never read as an empty one; a notification which found no free slot
+waits for the next look, and one which threw or met the module's stop is told again by the next
+look, then after a wait which doubles with each failure, at most 64 looks. A job of a process no
+running module claims is not handed over again until a module starts. The stream is deliberately NOT
+subscribed to user-task types (decision 12): a lock would have to be renewed for the whole life of a
+user task, and a terminated job is never delivered. Because the poller reports every cancelled user
+task, the open-task probe of section 4.3 answers CANNOT_SAY for user-task definitions: the
+platform's contract forbids a second source for the same cancellation. `COMPLETE_USER_TASK` /
+`CANCEL_USER_TASK` are the job commands (S8.2.1).
 
 A process id a workflow service declares without a model (the old id of a renamed process) is
 served by `ZenBpmDeclaredProcessWorkers` (S6.4.1) when its module starts processing: the methods'
 task definitions (`taskWiringOfProcessesNobodyDeployed`) are scoped by the id, the models the engine
 holds under the id are read, every version, and a composed type is subscribed only where a held
-model gives it to a task, so the stream never takes a user task of the old id (decision 41). The
-user-task types the read finds are named at startup, which is where the poller can take them from.
+model gives it to a task, so the stream never takes a user task of the old id (decision 41). A type
+a held model gives to a user task is handed to the poller from the same read.
 
 ### 4.7 Workflow ended and BPMS-initiated start
 
@@ -437,7 +450,7 @@ Both arrive as ordinary jobs of the marker tasks (section 3, step 4), served by 
 
 ### 4.8 Shutdown
 
-`stopWorkflowProcessing(module)`: unsubscribe the module's job types, stop the module's pollers, wait
+`stopWorkflowProcessing(module)`: unsubscribe the module's job types, unregister it from the user-task poller, wait
 `shutdown-grace` (default `PT20S`) for handlers still inside the application, never `fail` a job while
 shutting down (the delivery record answers the redelivery). The client factory closes the stream
 and the HTTP client last, for every module which never reached the stop; closing the stream releases
@@ -452,8 +465,10 @@ and are re-parked by whichever node receives them next.
   and the engine counts that cap per type, so the queue in front of the slots is bounded by the
   number of subscribed types times the slots; a queued job does not lose its lock, because the handler
   renews it when it starts.
-- Timing threads: two per adapter id, for the stream's reconnect, the lock renewals, the user-task
-  poller and the engine wait. No handler runs on them.
+- Timing threads: two per adapter id, for the stream's reconnect, the lock renewals, the timing of the
+  user-task looks and the engine wait. No handler runs on them; the lock extensions and the looks
+  at the user tasks run on virtual threads of their own, so an engine slow to answer holds no timing
+  thread.
 - The core may call probes from any thread and from the outbox dispatcher concurrently; the REST
   client is thread-safe (`HttpClient` is), the caches are concurrent.
 
@@ -474,7 +489,7 @@ and are re-parked by whichever node receives them next.
 | `retry-backoff` | adapter, module, workflow, task | none | the `retryBackoff` sent with a failure of a handler (decision 27); unset, the request leaves it out and the task definition's `retryBackoff` or the engine's `jobs.defaultRetryBackoff` applies; the number of attempts is the job's `retries` (model or engine default) |
 | `shutdown-grace` | adapter | `PT20S` | |
 | `workflow-visibility-timeout` | adapter | `PT2S` | `workflowVisibilityDelay()` and the retry-later window of a message |
-| `user-task-poll-interval` | adapter | `PT5S` | `PT0S` switches user-task notifications off with a WARN |
+| `user-task-poll-interval` | adapter | `PT5S` | `PT0S` switches user-task notifications off, and the start warns about it and about an interval below a second (decision 12) |
 | `history-time-to-live` | adapter, module, workflow | none (engine default) | sent with every start |
 | `instance-cache-max-entries` | adapter | `10000` | |
 | `name-clash-avoidance` | adapter, module, workflow | `by-adapter` (the platform's default) | refused while deploying, so every application sets `use-prefix` or `none` (decision 24); `none` warns; two ids on one `rest-address` boot only where their modes at the adapter level differ, the setup of a prefix migration |
@@ -552,7 +567,8 @@ org.pbinitiative.zenbpmadapter
   wiring/ZenBpmLockRenewal             renews locks of running handlers, parks async tasks
   wiring/ZenBpmJobHandler              section 4.3
   wiring/ZenBpmOpenTaskProbe           OpenTaskProbe: is a task the core believes open still there
-  wiring/ZenBpmUserTaskPoller          section 4.6
+  wiring/ZenBpmUserTaskPoller          section 4.6: looks for the user tasks, once per adapter id
+  wiring/ZenBpmUserTaskNotifier        section 4.6: tells a module's application about a user task
   wiring/ZenBpmWorkflowEndedHandler    marker job -> WorkflowEndedInvoker
   wiring/ZenBpmBpmsInitiatedStartHandler marker job -> BpmsInitiatedStartInvoker
   wiring/ZenBpmMultiInstance           iteration facts from the instance cache and child lists

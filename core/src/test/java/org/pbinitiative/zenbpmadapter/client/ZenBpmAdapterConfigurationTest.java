@@ -556,6 +556,40 @@ class ZenBpmAdapterConfigurationTest {
     }
 
     @Test
+    @DisplayName("A user-task-poll-interval of PT0S is warned about, because it switches the notifications of user tasks off, one below a second because it asks the engine almost without pause; a second, the default and a negative one, which is a defect, are not")
+    void aUserTaskPollIntervalWhichWorksAgainstTheApplicationIsWarnedAbout() {
+        final var off = configured("http://zenbpm:8080");
+        off.setUserTaskPollInterval(Duration.ZERO);
+        final var tooShort = configured("http://zenbpm:8080");
+        tooShort.setUserTaskPollInterval(Duration.ofMillis(500));
+        final var oneSecond = configured("http://zenbpm:8080");
+        oneSecond.setUserTaskPollInterval(Duration.ofSeconds(1));
+        final var negative = configured("http://zenbpm:8080");
+        negative.setUserTaskPollInterval(Duration.ofSeconds(-1));
+
+        assertAll(
+                () -> assertEquals(List.of(
+                        "vanillabp.adapters.orders.user-task-poll-interval is PT0S, which switches the notifications of user tasks off: no @WorkflowTask method hears that a user task was created or cancelled. Remove the key for the default PT5S"),
+                        off
+                                .validate(ADAPTER_ID, false, false)
+                                .warnings()),
+                () -> assertEquals(List.of(
+                        "vanillabp.adapters.orders.user-task-poll-interval is PT0.5S, below PT1S: every look lists the active and the terminated jobs of every user-task type, every page of them, so the engine is asked almost without pause. Raise it to a second or more; the default is PT5S"),
+                        tooShort
+                                .validate(ADAPTER_ID, false, false)
+                                .warnings()),
+                () -> assertEquals(List.of(), oneSecond
+                        .validate(ADAPTER_ID, false, false)
+                        .warnings()),
+                () -> assertEquals(List.of(), configured("http://zenbpm:8080")
+                        .validate(ADAPTER_ID, false, false)
+                        .warnings()),
+                () -> assertEquals(List.of(), negative
+                        .validate(ADAPTER_ID, false, false)
+                        .warnings()));
+    }
+
+    @Test
     @DisplayName("The engine's address is the REST address normalised, without '/v1'")
     void theEngineAddressLeavesTheApiVersionOut() {
         assertEquals(URI.create("http://zenbpm:8080"), configured("http://zenbpm:8080/v1/").engineAddress());

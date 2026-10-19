@@ -49,6 +49,8 @@ import org.pbinitiative.zenbpmadapter.wiring.ZenBpmJobDispatcher;
 import org.pbinitiative.zenbpmadapter.wiring.ZenBpmJobHandler;
 import org.pbinitiative.zenbpmadapter.wiring.ZenBpmJobTimeoutResolver;
 import org.pbinitiative.zenbpmadapter.wiring.ZenBpmRetryBackoffResolver;
+import org.pbinitiative.zenbpmadapter.wiring.ZenBpmUserTaskNotifier;
+import org.pbinitiative.zenbpmadapter.wiring.ZenBpmUserTaskPoller;
 
 import io.vanillabp.integration.adapter.spi.AdapterCollaborators;
 import io.vanillabp.integration.adapter.spi.AdapterDeploymentService;
@@ -112,6 +114,12 @@ public class ZenBpmDeploymentService implements AdapterDeploymentService<ZenBpmB
      * its processing. Guarded by <code>this</code>.
      */
     private ZenBpmJobDispatcher dispatcher;
+
+    /**
+     * The poller of the user tasks of this adapter id, built when the first workflow module starts
+     * its processing. Guarded by <code>this</code>.
+     */
+    private ZenBpmUserTaskPoller userTaskPoller;
 
     /**
      * The <code>job-timeout</code> of every job type the workflow modules of this adapter id wired,
@@ -499,7 +507,10 @@ public class ZenBpmDeploymentService implements AdapterDeploymentService<ZenBpmB
      * marker behind every start event of a process which starts a workflow of its own, see
      * {@link ZenBpmMarkerTasks}; and remembers
      * what the start of the workflow processing and the lifecycle of a workflow need, the
-     * <code>job-timeout</code> of each job type included. No version
+     * <code>job-timeout</code> of each job type included, and the job type of each user task a
+     * method serves, whose notifications are polled, see decision 12 in the repository's DECISIONS.md;
+     * the platform is asked by the user task's task definition and by its element id, and a user
+     * task no method serves, one marked <code>implemented-externally</code>, is never looked for. No version
      * catalog is registered yet, which the platform reads as "not asked yet".
      *
      * @param workflowModuleId The workflow module of the process
@@ -563,7 +574,8 @@ public class ZenBpmDeploymentService implements AdapterDeploymentService<ZenBpmB
         final Map<String, BpmsStartTrigger.Kind> startMarkers = reportsItsStart ? writeTheStartMarkers(
                 workflowModuleId, bpmnProcessId, scopedProcessId, model, context) : Map.of();
         context.recordWiring(new WiredProcess(bpmnProcessId, scopedProcessId, jobTypes, reportsItsStart, reportsItsEnd(
-                workflowModuleId, bpmnProcessId), startMarkers));
+                workflowModuleId, bpmnProcessId), startMarkers, userTasksNotifiedOf(workflowModuleId, bpmnProcessId,
+                        model)));
         recordServed(workflowModuleId, bpmnProcessId, scopedProcessId);
         log.info(
                 "ZenBPM[{}]: wired {} task(s) and {} user task(s) of BPMN process '{}' (file '{}', workflow module '{}')",
@@ -704,6 +716,13 @@ public class ZenBpmDeploymentService implements AdapterDeploymentService<ZenBpmB
      * this adapter id before the first subscription, so the first job finds it. Every type is
      * subscribed with its <code>job-timeout</code> as the lock and the number of handler slots as
      * the cap of active jobs, see decision 9 in the repository's DECISIONS.md.
+     * <p>
+     * The user tasks of the module whose creation and cancellation the application wants to hear of
+     * are never subscribed: the module is registered with the {@link ZenBpmUserTaskPoller} of this
+     * adapter id once its job types are subscribed, which looks for them every
+     * <code>user-task-poll-interval</code> and runs each notification on a handler slot inside the
+     * module's drain, see decision 12 in the repository's DECISIONS.md. A module with user tasks and
+     * no job type subscribes nothing and is looked for all the same.
      *
      * @param workflowModuleId The workflow module
      * @param context What its deployment collected
@@ -721,13 +740,17 @@ public class ZenBpmDeploymentService implements AdapterDeploymentService<ZenBpmB
             serveTheProcessesNobodyDeployed(workflowModuleId, context);
         }
         final var jobTypes = context.jobTypes();
-        if (jobTypes.isEmpty()) {
+        if (jobTypes.isEmpty() && context
+                .userTaskTypes()
+                .isEmpty()) {
             log.info("ZenBPM[{}]: workflow module '{}' has no job type to subscribe", adapterId, workflowModuleId);
             return;
         }
         final var stream = factory.stream();
         final var dispatcher = dispatcher();
         final var handler = new ZenBpmJobHandler(adapterId, factory, collaborators, context, retryBackoffs);
+        final var userTasks = new ZenBpmUserTaskNotifier(adapterId, factory, collaborators, context, handler);
+        final var poller = userTaskPoller();
         final var slots = factory
                 .executor()
                 .getSlots();
@@ -750,6 +773,10 @@ public class ZenBpmDeploymentService implements AdapterDeploymentService<ZenBpmB
                 stopWorkflowProcessing(workflowModuleId, context);
                 throw e;
             }
+            poller.register(userTasks);
+        }
+        if (jobTimeoutsOfTheTypes.isEmpty()) {
+            return;
         }
         log.info("ZenBPM[{}]: workflow module '{}' subscribed the job type(s) {}, each with at most {} active job(s)",
                 adapterId, workflowModuleId, jobTimeoutsOfTheTypes
@@ -762,7 +789,8 @@ public class ZenBpmDeploymentService implements AdapterDeploymentService<ZenBpmB
 
     /**
      * Stops the workflow processing of a workflow module: unsubscribes its job types, where no other
-     * module of this adapter id subscribes them, hands no further job to the module's handler, which
+     * module of this adapter id subscribes them, looks for its user tasks no longer, which ends the
+     * looks of the adapter id with its last module, hands no further job to the module's handler, which
      * from now on repeats no failed command, starts no job and fails no job whose handler threw, and
      * removes the hook of the client factory after the last of them. It is idempotent, because the
      * platform and the closing client factory may both stop a module. Jobs delivered before keep
@@ -790,15 +818,22 @@ public class ZenBpmDeploymentService implements AdapterDeploymentService<ZenBpmB
                 .get()
                 .jobTypes()
                 .forEach(jobType -> stream.unsubscribe(workflowModuleId, jobType));
+        // before the handler hears of the stop, so no look hands the module a user task after it
+        userTaskPoller().unregister(workflowModuleId);
         dispatcher().unregister(workflowModuleId);
         started
                 .get()
                 .registration()
                 .close();
-        log.info("ZenBPM[{}]: workflow module '{}' unsubscribed the job type(s) {}", adapterId, workflowModuleId,
-                String.join(", ", started
-                        .get()
-                        .jobTypes()));
+        if (!started
+                .get()
+                .jobTypes()
+                .isEmpty()) {
+            log.info("ZenBPM[{}]: workflow module '{}' unsubscribed the job type(s) {}", adapterId, workflowModuleId,
+                    String.join(", ", started
+                            .get()
+                            .jobTypes()));
+        }
         final List<ZenBpmDrain> stopped;
         synchronized (drainsToWaitFor) {
             drainsToWaitFor.add(drainsOfRunningModules.remove(workflowModuleId));
@@ -900,7 +935,9 @@ public class ZenBpmDeploymentService implements AdapterDeploymentService<ZenBpmB
                 .jobTypes()
                 .isEmpty() && declared
                         .startMarkers()
-                        .isEmpty()) {
+                        .isEmpty() && declared
+                                .userTaskTypes()
+                                .isEmpty()) {
             return;
         }
         declared
@@ -921,7 +958,7 @@ public class ZenBpmDeploymentService implements AdapterDeploymentService<ZenBpmB
                 new WiredProcess(bpmnProcessId, declared.scopedBpmnProcessId(), new LinkedHashSet<>(declared
                         .jobTypes()
                         .values()), reportsItsStart(workflowModuleId, bpmnProcessId), reportsItsEnd(workflowModuleId,
-                                bpmnProcessId), declared.startMarkers()));
+                                bpmnProcessId), declared.startMarkers(), declared.userTaskTypes()));
     }
 
     // see decision 44 in the repository's DECISIONS.md: asked once the wiring of the process was
@@ -980,6 +1017,35 @@ public class ZenBpmDeploymentService implements AdapterDeploymentService<ZenBpmB
                 .orElse(false);
     }
 
+    // see decision 12 in the repository's DECISIONS.md: the type is read from the model as it is
+    // deployed, because the scoping leaves the engine's default type of a user task without a task
+    // definition as it is; a user task no method serves, one marked implemented-externally, is
+    // left out and never looked for
+    private Map<String, String> userTasksNotifiedOf(
+        final String workflowModuleId,
+        final String bpmnProcessId,
+        final ZenBpmBpmnModel model
+    ) {
+        final var invoker = collaborators.workflowTaskInvoker();
+        final var deployedTypes = ZenBpmModelReader.userTaskTypesOf(model.document());
+        final var notifiedOf = new LinkedHashMap<String, String>();
+        model
+                .userTasks()
+                .forEach(userTask -> {
+                    if (invoker.workflowTaskHandlerExists(workflowModuleId, bpmnProcessId, userTask
+                            .taskDefinition()) || invoker.workflowTaskHandlerExists(workflowModuleId, bpmnProcessId,
+                                    userTask.activityId())) {
+                        notifiedOf.putIfAbsent(deployedTypes.get(userTask.activityId()), userTask.taskDefinition());
+                        return;
+                    }
+                    log.trace(
+                            "ZenBPM[{}]: no @WorkflowTask method serves user task '{}' ('{}') of BPMN process '{}' (workflow module '{}'), so it is not looked for",
+                            adapterId, userTask.activityId(), userTask.taskDefinition(), bpmnProcessId,
+                            workflowModuleId);
+                });
+        return notifiedOf;
+    }
+
     // two workflow modules share a job type where its name is not scoped, and the job stream keeps
     // one lock duration per job type, so the second module's subscription would be refused when
     // its processing starts; refused here instead, before anything reaches the engine
@@ -1013,6 +1079,14 @@ public class ZenBpmDeploymentService implements AdapterDeploymentService<ZenBpmB
         String taskDefinition,
         Duration duration
     ) {
+    }
+
+    // built once per adapter id, by the first module which starts
+    private synchronized ZenBpmUserTaskPoller userTaskPoller() {
+        if (userTaskPoller == null) {
+            userTaskPoller = new ZenBpmUserTaskPoller(adapterId, factory);
+        }
+        return userTaskPoller;
     }
 
     // built once per adapter id, by the first module which starts, and the job stream's consumer

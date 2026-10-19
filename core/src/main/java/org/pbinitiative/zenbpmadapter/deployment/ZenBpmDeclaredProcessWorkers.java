@@ -14,6 +14,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.TreeSet;
+import java.util.stream.Stream;
 
 import org.pbinitiative.zenbpmadapter.client.ZenBpmClientFactory;
 import org.pbinitiative.zenbpmadapter.model.ZenBpmMarkerTasks;
@@ -39,9 +40,11 @@ import lombok.extern.slf4j.Slf4j;
  * and complete it as if it were a service task. So the models the engine holds under the id are
  * read, every version, and a composed type is served only where one of them gives it to a task which
  * creates a job for a worker and none gives it to a user task, see decision 41 in the repository's
- * DECISIONS.md. A type one of them gives to a user task, or none gives to any element, is named in
- * the line the start writes, and so is every reason why the workflows of the id may stand still: a
- * method wired by element id, which names no task definition, and models which cannot be read.
+ * DECISIONS.md. A type one of them gives to a user task is handed to the user-task poller instead,
+ * which tells a user task's job by its element type, see decision 12 in the repository's
+ * DECISIONS.md. Both are named in the line the start writes, and so are a type none of them gives to
+ * any element and every reason why the workflows of the id may stand still: a method wired by
+ * element id, which names no task definition, and models which cannot be read.
  * <p>
  * Its tasks are served with what their jobs carry: the variables of their scope, and inside a
  * multi-instance body only what the model held maps into it, which the version of the application
@@ -129,7 +132,7 @@ final class ZenBpmDeclaredProcessWorkers {
                              The start markers of the models the engine holds under that id are served all the \
                             same, because they need no task definition.""" : "");
             return new DeclaredProcess(bpmnProcessId, scopedProcessId, Map.of(), startsAreHeard ? startMarkersHeld(
-                    workflowModuleId, scopedProcessId) : Map.of());
+                    workflowModuleId, scopedProcessId) : Map.of(), Map.of());
         }
         final HeldTypes types;
         try {
@@ -144,20 +147,28 @@ final class ZenBpmDeclaredProcessWorkers {
                     task, which the engine hands out alike. The next start of the application reads them again.""",
                     adapterId, workflowModuleId, bpmnProcessId, scopedProcessId, Objects.requireNonNullElse(e
                             .getMessage(), e.toString()));
-            return new DeclaredProcess(bpmnProcessId, scopedProcessId, Map.of(), Map.of());
+            return new DeclaredProcess(bpmnProcessId, scopedProcessId, Map.of(), Map.of(), Map.of());
         }
         final var served = new LinkedHashMap<String, String>();
-        final var userTasks = new TreeSet<String>();
+        final var userTasks = new LinkedHashMap<String, String>();
         final var heldNowhere = new TreeSet<String>();
+        final var sharedWithATask = new TreeSet<String>();
         for (final var taskDefinition : new TreeSet<>(taskDefinitions)) {
             final var jobType = scoping.scopedTaskDefinition(workflowModuleId, bpmnProcessId, taskDefinition,
                     adapterId);
             // a type a user task carries in any version is never taken from the job stream, where
-            // its job cannot be told from a task's, even where a task of another version carries it
-            if (types
-                    .userTaskTypes()
-                    .contains(jobType)) {
-                userTasks.add(taskDefinition);
+            // its job cannot be told from a task's, even where a task of another version carries it;
+            // it is polled, and the poller tells a user task's job by its element type
+            final var userTaskTypes = userTaskTypesOf(taskDefinition, jobType, types);
+            if (!userTaskTypes.isEmpty()) {
+                userTaskTypes.forEach(userTaskType -> userTasks.put(userTaskType, taskDefinition));
+                // a task of another version which carries the type is served by nobody: the job
+                // stream does not take the type, and the poller passes a task's job over
+                if (userTaskTypes
+                        .stream()
+                        .anyMatch(types.taskTypes()::contains)) {
+                    sharedWithATask.add(taskDefinition);
+                }
                 continue;
             }
             if (types
@@ -169,8 +180,8 @@ final class ZenBpmDeclaredProcessWorkers {
             heldNowhere.add(taskDefinition);
         }
         report(workflowModuleId, bpmnProcessId, scopedProcessId, served, types.startMarkers(), subscribedBefore,
-                userTasks, heldNowhere);
-        return new DeclaredProcess(bpmnProcessId, scopedProcessId, served, types.startMarkers());
+                userTasks, heldNowhere, sharedWithATask);
+        return new DeclaredProcess(bpmnProcessId, scopedProcessId, served, types.startMarkers(), userTasks);
     }
 
     // see decision 46 in the repository's DECISIONS.md: the start markers of an id whose methods
@@ -190,6 +201,22 @@ final class ZenBpmDeclaredProcessWorkers {
                     adapterId, scopedProcessId, Objects.requireNonNullElse(e.getMessage(), e.toString()));
             return Map.of();
         }
+    }
+
+    // the types the held models give to a user task of the task definition: its scoped type, and
+    // the engine's default type where the task definition is that default, because a user task
+    // without a task definition keeps it unscoped while one which names it is scoped
+    private static List<String> userTaskTypesOf(
+        final String taskDefinition,
+        final String jobType,
+        final HeldTypes types
+    ) {
+        return Stream
+                .of(jobType, ZenBpmModelReader.DEFAULT_USER_TASK_TYPE)
+                .distinct()
+                .filter(userTaskType -> userTaskType.equals(jobType) || userTaskType.equals(taskDefinition))
+                .filter(types.userTaskTypes()::contains)
+                .toList();
     }
 
     // every version, because the workflows still running under the id run on old ones as well; a
@@ -246,8 +273,9 @@ final class ZenBpmDeclaredProcessWorkers {
         final Map<String, String> served,
         final Map<String, BpmsStartTrigger.Kind> startMarkers,
         final Set<String> subscribedBefore,
-        final Set<String> userTasks,
-        final Set<String> heldNowhere
+        final Map<String, String> userTasks,
+        final Set<String> heldNowhere,
+        final Set<String> sharedWithATask
     ) {
         final var subscribed = new TreeSet<String>();
         final var sharing = new TreeSet<String>();
@@ -265,15 +293,22 @@ final class ZenBpmDeclaredProcessWorkers {
             servedBy.add("the job type '%s' of the start markers of %s".formatted(ZenBpmMarkerTasks
                     .startMarkerJobType(scopedProcessId), new TreeSet<>(startMarkers.keySet())));
         }
-        final var notServed = new ArrayList<String>();
         if (!userTasks.isEmpty()) {
-            notServed.add("""
-                    the task definition(s) %s, which a user task of a model held under that id carries, and the job \
-                    stream cannot tell its job from a task's""".formatted(userTasks));
+            servedBy.add("""
+                    the user-task poller for the task definition(s) %s, which a user task of a model held under that \
+                    id carries, and which the job stream never takes, because it cannot tell a user task's job from \
+                    a task's""".formatted(new TreeSet<>(userTasks.values())));
         }
+        final var notServed = new ArrayList<String>();
         if (!heldNowhere.isEmpty()) {
             notServed.add("the task definition(s) %s, which no model held under that id names".formatted(
                     heldNowhere));
+        }
+        if (!sharedWithATask.isEmpty()) {
+            notServed.add("""
+                    the tasks of the task definition(s) %s in the versions which give its type to a task, because a \
+                    user task of another version carries the type, which the job stream never takes, and the \
+                    user-task poller passes a task's job over""".formatted(sharedWithATask));
         }
         final var line = """
                 workflow module '%s' declares BPMN process '%s' without deploying a model under it, and the engine \
@@ -282,7 +317,7 @@ final class ZenBpmDeclaredProcessWorkers {
                         : "its workflows are served by %s".formatted(String.join(" and ", servedBy)),
                 notServed
                         .isEmpty() ? "" : " Not served: %s.".formatted(String.join("; ", notServed)));
-        if (served.isEmpty()) {
+        if (served.isEmpty() && userTasks.isEmpty()) {
             log.warn("ZenBPM[{}]: {}", adapterId, line);
             return;
         }
@@ -300,12 +335,16 @@ final class ZenBpmDeclaredProcessWorkers {
      *            name, as the engine knows it, empty where nothing does
      * @param startMarkers The start events of the held models which carry start markers, each with
      *            what triggers it, empty where none does
+     * @param userTaskTypes The job type of a user task of a held model for each task definition the
+     *            methods serving the id name, as the engine knows it, each with that task definition;
+     *            empty where no held model gives one to a user task
      */
     record DeclaredProcess(
         String bpmnProcessId,
         String scopedBpmnProcessId,
         Map<String, String> jobTypes,
-        Map<String, BpmsStartTrigger.Kind> startMarkers
+        Map<String, BpmsStartTrigger.Kind> startMarkers,
+        Map<String, String> userTaskTypes
     ) {
     }
 

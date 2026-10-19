@@ -1,0 +1,22 @@
+spring:
+  jpa:
+    hibernate:
+      ddl-auto: update
+vanillabp:
+  prioritized-adapters:
+    - zenbpm
+  adapters:
+    zenbpm:
+      name-clash-avoidance: use-prefix
+      resources-location: classpath*:usertask-it
+      user-task-poll-interval: PT1S
+  outbox:
+    housekeeping:
+      zone: UTC
+  workflow-modules:
+    deploy-it:
+      workflows:
+        Signing:
+          tasks:
+            Sign:
+              implemented-externally: true

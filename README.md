@@ -115,8 +115,8 @@ declares without bringing a model for it, such as the old id of a renamed proces
 workflows served: the methods' task definitions are scoped by that id, and each one a model the
 engine holds under the id gives to a task is subscribed and routed to the module; one a held model
 gives to a user task, in any version, is not, because the engine hands a user task out as a job of
-the same kind, and the start's line names it, as it names a method wired by element id, whose workflows stand
-still (decision 41). A method which throws is failed at the engine without an error code, so the
+the same kind, but is looked for like the user tasks of a deployed process, and the start's line
+names it, as it names a method wired by element id, whose workflows stand still (decision 41). A method which throws is failed at the engine without an error code, so the
 engine spends one attempt of the task, hands the job out again after the backoff, and after the
 last attempt raises an incident which names the attempts, the task, the aggregate and the
 exception (decision 27); a failure sent again for the same delivery counts once. How many attempts
@@ -129,7 +129,30 @@ engine decides. Once the outcome of a delivery reached the engine, the
 platform asks the adapter about the other tasks it believes open in the same workflow: a task the
 engine took away, as an interrupting boundary event does, is reported to the application as
 `CANCELED`, once; only a task served by a job of the job stream is asked about, and an engine which
-cannot be asked or does not know the job, or a job of another workflow, reports nothing. A shutdown
+cannot be asked or does not know the job, or a job of another workflow, reports nothing.
+A user task is a job as well, which nothing pushes, so the job stream never subscribes its type: the
+adapter looks for the user tasks a method serves, by its task definition or its element id, every
+`user-task-poll-interval` (`PT5S` by default; `PT0S` switches the looks off, and the start warns
+about it and about an interval below a second), and tells the application once per node that a user
+task was created, when its job is listed active, and that it was cancelled, when its job is listed
+terminated, as an interrupting boundary event or a cancelled instance leaves it; a user task which
+came and went between two looks is told as cancelled only, and a user task marked
+`implemented-externally` is never looked for (decision 12). The start names the job types and the
+interval. A notification carries the job key as the task id and the kind `USER_TASK`, and after a
+restart the platform answers from its record what it was told before. Each look reads every page of
+the active and the terminated jobs of each type, because the engine filters jobs by neither time nor
+key, so it reads more the more terminated user tasks the engine keeps: set `history-time-to-live`,
+but long enough, because a cancellation is told only while the engine still lists the terminated
+job, and one whose job the engine deleted with its instance's history before a look reached it,
+while a node was down for example, is never told. A look starts one interval after the last one
+ended, so a notification is told one interval and the time of a look late, and later where every
+handler slot is taken or the engine does not answer. One which threw is told again by the next look,
+and after each further failure by a look which waits twice as many looks, at most 64, so it cannot
+take the handler slots from the others; its failure is logged at WARN, and a failure right after
+another at DEBUG. A user task whose workflow module starts after the first look is told once it
+started. A user task told as cancelled is not told as created afterwards by the same node, even
+where a lagging node of the engine lists it active again. A cancelled user task wakes its workflow
+up, so a service task left open in a cancelled instance is told as cancelled as well. A shutdown
 unsubscribes the job types of each workflow module and then waits for the handlers which still run,
 those of every module of an adapter id together, at most `shutdown-grace` (`PT20S` by default;
 above thirty seconds the start warns that the runtime's shutdown budget has to grow with it), and

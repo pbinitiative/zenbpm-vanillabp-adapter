@@ -736,7 +736,7 @@ class ZenBpmDeploymentServiceTest {
         final var context = new ZenBpmProcessingContext("shop");
         context.recordWiring(
                 new ZenBpmProcessingContext.WiredProcess("Order", "Order", java.util.Set
-                        .of("charge"), true, false, java.util.Map.of()));
+                        .of("charge"), true, false, java.util.Map.of(), java.util.Map.of()));
         return context;
     }
 

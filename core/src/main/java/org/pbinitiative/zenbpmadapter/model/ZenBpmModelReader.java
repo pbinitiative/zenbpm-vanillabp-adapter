@@ -140,6 +140,29 @@ public final class ZenBpmModelReader {
     }
 
     /**
+     * The job type the engine gives each user task of a file as the file stands, which the pipeline
+     * may have scoped since it was read: the type of the task's <code>zenbpm:taskDefinition</code>,
+     * or the engine's default {@value #DEFAULT_USER_TASK_TYPE} where it names none or an empty one,
+     * which the scoping leaves as it is. So a task definition written as
+     * <code>user-task-type</code> is told from the default, which the plain task definitions of a
+     * model cannot.
+     *
+     * @param document The file
+     * @return The job type of each user task, by its id, in the order of the file
+     */
+    public static Map<String, String> userTaskTypesOf(final Document document) {
+        final var types = new LinkedHashMap<String, String>();
+        final var userTasks = document.getElementsByTagNameNS(BPMN, "userTask");
+        for (var index = 0; index < userTasks.getLength(); ++index) {
+            final var userTask = (Element) userTasks.item(index);
+            types.put(userTask.getAttribute("id"), extension(userTask, "taskDefinition")
+                    .map(taskDefinition -> attribute(taskDefinition, "type"))
+                    .orElse(DEFAULT_USER_TASK_TYPE));
+        }
+        return types;
+    }
+
+    /**
      * Whether the pipeline left the document of a model as the file was written: equal to the
      * document its bytes give when they are read again.
      *
