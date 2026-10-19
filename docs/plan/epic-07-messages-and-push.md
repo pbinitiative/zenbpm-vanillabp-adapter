@@ -1009,3 +1009,31 @@ measured), and `bin/check-deploy-safety.sh` passes.
 
 So E7's "Done when" is met. Acceptance criterion 3 of S7.1.2 (E13.4 replaces `scan`) stays open
 and unticked: it is engine work, out of the pipeline's scope, and no part of the "Done when".
+
+**S7.2.1 and S7.3.1 done 2026-10-19**, merged to `main` as `9a3723f` (pull request #59: stories
+`cb273a9` and `20b9ed4`; two reviews, whose six findings were all valid and fixed in `dd1fa49`;
+CodeRabbit's review, whose one inline comment was valid and fixed in `13ac423`, which CodeRabbit
+accepted, and whose docstring-coverage warning does not apply here). F7.2 and F7.3 are complete,
+and with them **E7 is complete**: its "Done when" is met (above). On `9a3723f` (GitHub keeps run
+logs for 90 days, so what they showed is written here as well):
+
+- `Checks`, run
+  [39243822887](https://github.com/pbinitiative/zenbpm-vanillabp-adapter/actions/runs/39243822887):
+  green on both JDKs. `bin/check-engine-copies.sh` (in the JDK 25 job) reported both copies as the
+  engine's files of `bdd795a3...`. On both JDKs `ZenBpmAggregatePushTest` ran 21 tests,
+  `ZenBpmAggregateChangedIT` 5, `ZenBpmRestClientContractIT` 25, `ZenBpmProcessServiceTest` 23,
+  `ZenBpmWorkflowProbesTest` 33, `ZenBpmMessageIT` 8, and on Quarkus `ZenBpmWorkflowLifecycleTest`
+  14 and `ZenBpmRestartDeliveryTest` 1, none skipped (engine test support 12 unit and 5 integration
+  tests, core 1,059 unit and 92 integration tests, Spring Boot 14 unit and 58 integration tests,
+  smoke test 38, Quarkus runtime 13, Quarkus deployment 52, Quarkus integration tests 15, coverage
+  gate 37). The gate measured 100 % on both platforms: of 29,150 instructions for Spring Boot and
+  29,020 for Quarkus on JDK 25, of 29,140 and 29,010 on JDK 21.
+- `Publish snapshots`, run
+  [39243822867](https://github.com/pbinitiative/zenbpm-vanillabp-adapter/actions/runs/39243822867):
+  green. The core snapshot it published to GitHub Packages, `2.0.0-20261019.111951-55`, holds the
+  stories' new main classes (`ZenBpmAggregatePush`, `ZenBpmRunningWorkflows` with
+  `ofTheKeyOrFailure`) and no test class, fake, fixture or BPMN file;
+  `quarkus/integration-tests`, the smoke test, the engine test support and the coverage modules
+  skipped deployment. Both report pages (`spring-boot-report/index.html`,
+  `quarkus-report/index.html`) answer HTTP 200 and show 0 of 29,150 (Spring Boot) and 0 of 29,020
+  (Quarkus) instructions missed.
