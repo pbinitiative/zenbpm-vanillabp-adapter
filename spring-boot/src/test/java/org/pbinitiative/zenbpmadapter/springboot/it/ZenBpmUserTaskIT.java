@@ -7,6 +7,7 @@ package org.pbinitiative.zenbpmadapter.springboot.it;
 import static org.junit.jupiter.api.Assertions.assertAll;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.IOException;
@@ -16,7 +17,9 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.locks.LockSupport;
@@ -28,6 +31,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.pbinitiative.zenbpmadapter.client.ZenBpmClientRegistry;
+import org.pbinitiative.zenbpmadapter.client.api.HistoryEntry;
 import org.pbinitiative.zenbpmadapter.client.api.InstanceFilter;
 import org.pbinitiative.zenbpmadapter.client.api.JobFilter;
 import org.pbinitiative.zenbpmadapter.client.api.JobRef;
@@ -38,6 +42,8 @@ import org.pbinitiative.zenbpmadapter.springboot.it.usertask.Offer;
 import org.pbinitiative.zenbpmadapter.springboot.it.usertask.OfferRepository;
 import org.pbinitiative.zenbpmadapter.springboot.it.usertask.Quote;
 import org.pbinitiative.zenbpmadapter.springboot.it.usertask.QuoteRepository;
+import org.pbinitiative.zenbpmadapter.springboot.it.usertask.Review;
+import org.pbinitiative.zenbpmadapter.springboot.it.usertask.ReviewRepository;
 import org.pbinitiative.zenbpmadapter.springboot.it.usertask.Signature;
 import org.pbinitiative.zenbpmadapter.springboot.it.usertask.UserTaskItApplication;
 import org.pbinitiative.zenbpmadapter.test.EngineUnderTest;
@@ -54,6 +60,7 @@ import io.vanillabp.integration.test.utils.CapturedOutput;
 import io.vanillabp.integration.test.utils.SuppressOutputExtension;
 import io.vanillabp.integration.test.utils.delivery.TaskDeliveryLogReader;
 import io.vanillabp.spi.process.ProcessService;
+import io.vanillabp.spi.process.TaskNotFoundException;
 
 /**
  * The user tasks of a booted Spring Boot application against the pinned engine: the user-task
@@ -63,13 +70,17 @@ import io.vanillabp.spi.process.ProcessService;
  * away while a service task of the same workflow waited; the cancellation of a user task wakes its
  * workflow up, so the service task left open in a cancelled instance is told as cancelled as well;
  * the job stream never takes a user task, and a user task the application marks
- * <code>implemented-externally</code> is never looked for.
+ * <code>implemented-externally</code> is never looked for. The application completes a user task,
+ * after which the gateway behind it decides on the values the aggregate shares, or cancels it with a
+ * BPMN error, which the error boundary event of the user task catches and which the application is
+ * then told of as a cancellation, once; a user task which ends before the commit is not found, and
+ * the commands of a task find no user task.
  * <p>
  * The application runs the workflow module <code>deploy-it</code> under <code>use-prefix</code> with
  * the processes <code>Approving</code> of <code>usertask-it/approvals.bpmn</code>,
  * <code>Offering</code> of <code>usertask-it/offers.bpmn</code>, <code>Quoting</code> of
- * <code>usertask-it/quotes.bpmn</code> and <code>Signing</code> of
- * <code>usertask-it/signatures.bpmn</code>. It is started once for the class, against an engine of
+ * <code>usertask-it/quotes.bpmn</code>, <code>Reviewing</code> of <code>usertask-it/reviews.bpmn</code>
+ * and <code>Signing</code> of <code>usertask-it/signatures.bpmn</code>. It is started once for the class, against an engine of
  * its own.
  */
 @ExtendWith(SuppressOutputExtension.class)
@@ -109,6 +120,12 @@ class ZenBpmUserTaskIT {
 
     @Autowired
     private QuoteRepository quotes;
+
+    @Autowired
+    private ProcessService<Review> reviewProcessService;
+
+    @Autowired
+    private ReviewRepository reviews;
 
     @Autowired
     private ProcessService<Signature> signatureProcessService;
@@ -307,6 +324,170 @@ class ZenBpmUserTaskIT {
                         .contains("sign"), startLine::toString));
     }
 
+    @Test
+    @DisplayName("A user task the application completes continues its workflow: the gateway behind it decides on what the application changed before the completion, the record of the user task is closed, and nothing is told as cancelled")
+    void completeUserTaskContinuesWithSharedValues() {
+        final var reviewId = "review-%s".formatted(UUID.randomUUID());
+        final var started = startReview(reviewId);
+        final var taskId = reviewTaskOf(reviewId);
+
+        transactionTemplate.executeWithoutResult(status -> {
+            final var review = reviews
+                    .findById(reviewId)
+                    .orElseThrow();
+            review.accept();
+            reviewProcessService.completeUserTask(review, taskId);
+        });
+        final var ended = awaitTheEndOf(started.key());
+        watchThreeLooks();
+
+        final var review = reviews
+                .findById(reviewId)
+                .orElseThrow();
+        final var deliveries = deliveriesOf(reviewId);
+        assertAll(
+                () -> assertEquals(ProcessInstanceRef.State.COMPLETED, ended.state()),
+                () -> assertTrue(visited(ended).containsAll(List.of("Decision", "Accepted")), () -> visited(ended)
+                        .toString()),
+                () -> assertFalse(visited(ended).contains("Rejected"), () -> visited(ended).toString()),
+                () -> assertEquals("completed", ENGINE
+                        .json("/v1/jobs/%s".formatted(taskId))
+                        .path("state")
+                        .asText()),
+                () -> assertEquals(1, review.getCreations()),
+                () -> assertEquals(0, review.getCancellations()),
+                () -> assertEquals(1, deliveries.size(), deliveries::toString),
+                () -> assertTrue(deliveries
+                        .getFirst()
+                        .taskWasClosed(), deliveries::toString));
+    }
+
+    @Test
+    @DisplayName("A user task the application cancels with a BPMN error is caught by the error boundary event of the user task, and the application is then told once that the user task was cancelled, as Camunda 7 tells it")
+    void cancelUserTaskRoutesTheBoundaryEvent() {
+        final var reviewId = "review-%s".formatted(UUID.randomUUID());
+        final var started = startReview(reviewId);
+        final var taskId = reviewTaskOf(reviewId);
+
+        transactionTemplate.executeWithoutResult(status -> reviewProcessService.cancelUserTask(reviews
+                .findById(reviewId)
+                .orElseThrow(), taskId, "withdrawn"));
+        final var ended = awaitTheEndOf(started.key());
+        eventually(() -> reviews
+                .findById(reviewId)
+                .filter(review -> review.getCancellations() > 0));
+        watchThreeLooks();
+
+        final var review = reviews
+                .findById(reviewId)
+                .orElseThrow();
+        final var deliveries = deliveriesOf(reviewId);
+        assertAll(
+                () -> assertEquals(ProcessInstanceRef.State.COMPLETED, ended.state()),
+                () -> assertTrue(visited(ended).containsAll(List.of("Withdrawn", "ReviewWithdrawn")), () -> visited(
+                        ended).toString()),
+                () -> assertFalse(visited(ended).contains("Decision"), () -> visited(ended).toString()),
+                () -> assertEquals("terminated", ENGINE
+                        .json("/v1/jobs/%s".formatted(taskId))
+                        .path("state")
+                        .asText()),
+                () -> assertEquals(1, review.getCreations()),
+                () -> assertEquals(1, review.getCancellations()),
+                () -> assertEquals(2, deliveries.size(), deliveries::toString),
+                () -> assertTrue(deliveries
+                        .stream()
+                        .allMatch(TaskDeliveryLogReader.Delivery::taskWasClosed), deliveries::toString));
+    }
+
+    @Test
+    @DisplayName("Phase two of a user task which ended meanwhile is a WARN and nothing else, so its outbox entry is done, and a completed user task is never told as cancelled")
+    void completingAGoneUserTaskIsAWarnedNoOp(final CapturedOutput output) {
+        final var reviewId = "review-%s".formatted(UUID.randomUUID());
+        final var started = startReview(reviewId);
+        final var taskId = reviewTaskOf(reviewId);
+
+        // both checks pass, as the user task waits at the commit, so the second phase two finds it
+        // ended
+        transactionTemplate.executeWithoutResult(status -> {
+            final var review = reviews
+                    .findById(reviewId)
+                    .orElseThrow();
+            reviewProcessService.completeUserTask(review, taskId);
+            reviewProcessService.cancelUserTask(review, taskId, "withdrawn");
+        });
+        final var ended = awaitTheEndOf(started.key());
+        final var warned = eventually(() -> Optional
+                .of(output.getOutOfThisTest())
+                .filter(out -> out.contains("canceling user task '%s'".formatted(taskId)) && out.contains(
+                        "it has ended already; the entry is consumed")));
+        watchThreeLooks();
+
+        assertAll(
+                () -> assertEquals(ProcessInstanceRef.State.COMPLETED, ended.state()),
+                () -> assertTrue(visited(ended).contains("Rejected"), () -> visited(ended).toString()),
+                () -> assertTrue(warned.contains("WARN"), warned),
+                () -> assertEquals(0, reviews
+                        .findById(reviewId)
+                        .orElseThrow()
+                        .getCancellations()));
+    }
+
+    @Test
+    @DisplayName("The check of a user task's completion runs right before the commit: a user task which ends between the call and the commit is not found, and the transaction is rolled back with the platform's TaskNotFoundException")
+    void completingAUserTaskWhichIsGoneThrowsTaskNotFound() {
+        final var reviewId = "review-%s".formatted(UUID.randomUUID());
+        final var started = startReview(reviewId);
+        final var taskId = reviewTaskOf(reviewId);
+
+        final var refused = assertThrows(TaskNotFoundException.class, () -> transactionTemplate
+                .executeWithoutResult(status -> {
+                    final var review = reviews
+                            .findById(reviewId)
+                            .orElseThrow();
+                    review.accept();
+                    reviewProcessService.completeUserTask(review, taskId);
+                    // somebody else completes the user task after the call and before the commit
+                    rest().completeJob(Long.parseLong(taskId), Map.of());
+                }));
+        final var ended = awaitTheEndOf(started.key());
+
+        assertAll(
+                () -> assertTrue(refused
+                        .getMessage()
+                        .contains("user task '%s' is gone, the engine holds it as completed".formatted(taskId)),
+                        refused::getMessage),
+                () -> assertFalse(reviews
+                        .findById(reviewId)
+                        .orElseThrow()
+                        .isAccepted()),
+                () -> assertTrue(visited(ended).contains("Rejected"), () -> visited(ended).toString()));
+    }
+
+    @Test
+    @DisplayName("The commands of a task find no user task: completing a user task with completeTask throws the platform's TaskNotFoundException, which names the method for a user task, and the user task still waits")
+    void theCommandsOfATaskFindNoUserTask() {
+        final var reviewId = "review-%s".formatted(UUID.randomUUID());
+        startReview(reviewId);
+        final var taskId = reviewTaskOf(reviewId);
+
+        final var refused = assertThrows(TaskNotFoundException.class, () -> transactionTemplate
+                .executeWithoutResult(status -> reviewProcessService.completeTask(reviews
+                        .findById(reviewId)
+                        .orElseThrow(), taskId)));
+
+        assertAll(
+                () -> assertTrue(refused
+                        .getMessage()
+                        .contains("is the id of a user task"), refused::getMessage),
+                () -> assertTrue(refused
+                        .getMessage()
+                        .contains("completeUserTask"), refused::getMessage),
+                () -> assertEquals("active", ENGINE
+                        .json("/v1/jobs/%s".formatted(taskId))
+                        .path("state")
+                        .asText()));
+    }
+
     // only the test knows the ports the container was given
     @DynamicPropertySource
     static void theEngineUnderTest(final DynamicPropertyRegistry registry) {
@@ -324,6 +505,40 @@ class ZenBpmUserTaskIT {
                 .items()
                 .stream()
                 .findFirst());
+    }
+
+    private ProcessInstanceRef startReview(final String reviewId) {
+        transactionTemplate.executeWithoutResult(status -> reviewProcessService.startWorkflow(new Review(reviewId)));
+        return eventually(() -> rest()
+                .instances(InstanceFilter
+                        .anyInstance()
+                        .withBusinessKey(reviewId))
+                .items()
+                .stream()
+                .findFirst());
+    }
+
+    private String reviewTaskOf(final String reviewId) {
+        return eventually(() -> reviews
+                .findById(reviewId)
+                .map(Review::getReviewTaskId));
+    }
+
+    private ProcessInstanceRef awaitTheEndOf(final long key) {
+        return eventually(() -> rest()
+                .instance(key)
+                .filter(instance -> instance.state() != ProcessInstanceRef.State.ACTIVE));
+    }
+
+    private List<String> visited(final ProcessInstanceRef instance) {
+        final var visited = new ArrayList<String>();
+        rest()
+                .history(instance.key(), 1)
+                .items()
+                .stream()
+                .map(HistoryEntry::elementId)
+                .forEach(visited::add);
+        return visited;
     }
 
     // the adapter's client has no call for it, because the adapter never cancels a workflow

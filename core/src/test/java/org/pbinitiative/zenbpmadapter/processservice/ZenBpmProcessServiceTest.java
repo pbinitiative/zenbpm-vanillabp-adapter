@@ -24,7 +24,6 @@ import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.locks.LockSupport;
-import java.util.function.Consumer;
 import java.util.stream.Stream;
 
 import org.junit.jupiter.api.AfterEach;
@@ -47,7 +46,6 @@ import io.vanillabp.integration.adapter.spi.AdapterCollaborators;
 import io.vanillabp.integration.adapter.spi.AggregateSyncMode;
 import io.vanillabp.integration.adapter.spi.NameClashAvoidance;
 import io.vanillabp.integration.adapter.spi.PhaseOneRequest;
-import io.vanillabp.integration.adapter.spi.PhaseOperationHandler;
 import io.vanillabp.integration.adapter.spi.PhaseTwoRequest;
 import io.vanillabp.integration.adapter.spi.WorkflowAggregateSync;
 import io.vanillabp.integration.adapter.spi.WorkflowAwareness;
@@ -77,7 +75,8 @@ class ZenBpmProcessServiceTest {
 
     private static final Set<PhaseOperation> BUILT = Set.of(PhaseOperation.START_WORKFLOW,
             PhaseOperation.START_WORKFLOW_BY_MESSAGE, PhaseOperation.COMPLETE_TASK, PhaseOperation.CANCEL_TASK,
-            PhaseOperation.CORRELATE_MESSAGE, PhaseOperation.AGGREGATE_CHANGED);
+            PhaseOperation.COMPLETE_USER_TASK, PhaseOperation.CANCEL_USER_TASK, PhaseOperation.CORRELATE_MESSAGE,
+            PhaseOperation.AGGREGATE_CHANGED);
 
     private static final String NO_START_EVENT = """
             {"code":"NOT_FOUND","message":"no active definition-level message subscription found for name \\"shop__ordered\\""}""";
@@ -173,7 +172,7 @@ class ZenBpmProcessServiceTest {
     }
 
     @Test
-    @DisplayName("Every handler and viewer method refuses with the message of the validation where the adapter id has no clients, a start, a start by a message, the handlers of a task, a correlation and a push included")
+    @DisplayName("Every handler and viewer method refuses with the message of the validation where the adapter id has no clients, a start, a start by a message, the handlers of a task and of a user task, a correlation and a push included")
     void anAdapterIdWithoutClientsRefusesWithItsValidationMessage() {
         final var processService = startingProcessService(unconfigured("orders"), (
             module,
@@ -187,6 +186,12 @@ class ZenBpmProcessServiceTest {
         final var cancellation = processService
                 .phaseOperations()
                 .get(PhaseOperation.CANCEL_TASK);
+        final var userTaskCompletion = processService
+                .phaseOperations()
+                .get(PhaseOperation.COMPLETE_USER_TASK);
+        final var userTaskCancellation = processService
+                .phaseOperations()
+                .get(PhaseOperation.CANCEL_USER_TASK);
         final var correlation = processService
                 .phaseOperations()
                 .get(PhaseOperation.CORRELATE_MESSAGE);
@@ -206,6 +211,10 @@ class ZenBpmProcessServiceTest {
                                 new ArrayList<>())),
                 () -> cancellation.phaseOne(taskRequest()), () -> cancellation.phaseTwo(
                         startRequest(new ArrayList<>())),
+                () -> userTaskCompletion.phaseOne(taskRequest()), () -> userTaskCompletion.phaseTwo(startRequest(
+                        new ArrayList<>())),
+                () -> userTaskCancellation.phaseOne(taskRequest()), () -> userTaskCancellation.phaseTwo(startRequest(
+                        new ArrayList<>())),
                 () -> correlation.phaseOne(taskRequest()), () -> correlation.phaseTwo(correlationRequest(null))),
                 notBuiltYet(processService));
 
@@ -215,7 +224,7 @@ class ZenBpmProcessServiceTest {
     }
 
     @Test
-    @DisplayName("Every handler but the starts, those of a task, the correlation and the push, and the viewer methods, of a configured adapter id say that they are not built yet, and what they were asked to do")
+    @DisplayName("Every handler is built, and the viewer methods of a configured adapter id say that they are not built yet, and what they were asked to do")
     void aConfiguredAdapterIdSaysThatTheCallIsNotBuiltYet() {
         try (var factory = configured("http://localhost:8080")) {
             final var processService = startingProcessService(factory, (
@@ -227,23 +236,14 @@ class ZenBpmProcessServiceTest {
                     .toList();
 
             assertAll(
-                    () -> assertEquals(
-                            "ZenBPM adapter 'orders': phase one of COMPLETE_USER_TASK is implemented in a later story",
-                            messages.getFirst()),
-                    () -> assertEquals(
-                            "ZenBPM adapter 'orders': phase two of COMPLETE_USER_TASK is implemented in a later story",
-                            messages.get(1)),
-                    () -> assertTrue(messages
-                            .stream()
-                            .noneMatch(message -> BUILT
-                                    .stream()
-                                    .anyMatch(built -> message.contains(" of %s ".formatted(built.name())))),
-                            messages::toString),
+                    () -> assertEquals(BUILT, processService
+                            .phaseOperations()
+                            .keySet()),
                     () -> assertEquals(List.of(
                             "ZenBPM adapter 'orders': listing the process definitions of workflow 'Order' of workflow module 'shop' is implemented in a later story",
                             "ZenBPM adapter 'orders': reading the BPMN XML of process definition 'definition-1' of workflow module 'shop' is implemented in a later story",
                             "ZenBPM adapter 'orders': reading the history of workflow 'Order' of workflow module 'shop' is implemented in a later story"),
-                            messages.subList(messages.size() - 3, messages.size())));
+                            messages));
         }
     }
 
@@ -740,20 +740,10 @@ class ZenBpmProcessServiceTest {
 
     // both phases of every handler which is not built yet, then the three viewer methods
     private static Stream<Runnable> notBuiltYet(final ZenBpmProcessService<Object> processService) {
-        final var handlers = processService
-                .phaseOperations()
-                .entrySet()
-                .stream()
-                .filter(handler -> !BUILT.contains(handler.getKey()))
-                .map(Map.Entry::getValue)
-                .flatMap(handler -> Stream.<Consumer<PhaseOperationHandler<Object>>>of(
-                        phases -> phases.phaseOne(null),
-                        phases -> phases.phaseTwo(null))
-                        .map(phase -> (Runnable) () -> phase.accept(handler)));
-        return Stream.concat(handlers, Stream.of(
+        return Stream.of(
                 () -> processService.getProcessDefinitions("shop", "Order", null, "order-1", null),
                 () -> processService.getBpmnXml("shop", "Order", "definition-1"),
-                () -> processService.getWorkflowHistory("shop", "Order", null, "order-1", null)));
+                () -> processService.getWorkflowHistory("shop", "Order", null, "order-1", null));
     }
 
     // the business-key search finds nothing, as for a workflow a message started; the instances of

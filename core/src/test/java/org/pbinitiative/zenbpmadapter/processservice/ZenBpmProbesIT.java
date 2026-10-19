@@ -216,7 +216,7 @@ class ZenBpmProbesIT {
     }
 
     @Test
-    @DisplayName("A waiting job is active for its scope and unknown for a scope naming another process, and completed once it ended, for both task probes")
+    @DisplayName("A waiting job of a service task is active for its scope and unknown for a scope naming another process, and completed once it ended, to the probe of a task, and unknown throughout to the probe of a user task")
     void aWaitingJobIsActiveForItsScopeOnly() {
         final var started = start("probe-order", uniqueAggregateId(), true);
         final var job = waitingJobOf(started.key());
@@ -234,10 +234,12 @@ class ZenBpmProbesIT {
                 .awarenessOfUserTask(ORDERS, "order", taskId));
 
         assertAll(
-                () -> assertEquals(List.of(WorkflowAwareness.ACTIVE, WorkflowAwareness.ACTIVE), whileItWaits),
+                () -> assertEquals("SERVICE_TASK", job.elementType()),
+                () -> assertEquals(List.of(WorkflowAwareness.ACTIVE, WorkflowAwareness.UNKNOWN_TO_BPMS), whileItWaits),
                 () -> assertEquals(List.of(WorkflowAwareness.UNKNOWN_TO_BPMS, WorkflowAwareness.UNKNOWN_TO_BPMS),
                         forAnotherProcess),
-                () -> assertEquals(List.of(WorkflowAwareness.COMPLETED, WorkflowAwareness.COMPLETED), onceItEnded));
+                () -> assertEquals(List.of(WorkflowAwareness.COMPLETED, WorkflowAwareness.UNKNOWN_TO_BPMS),
+                        onceItEnded));
     }
 
     @Test

@@ -47,6 +47,15 @@ public record JobRef(
     }
 
     /**
+     * Whether the job is the one of a user task, which the engine names by its element type.
+     *
+     * @return <code>true</code> for the job of a user task
+     */
+    public boolean isAUserTask() {
+        return "USER_TASK".equals(elementType);
+    }
+
+    /**
      * The state of a job.
      */
     public enum State {

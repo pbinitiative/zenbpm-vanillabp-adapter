@@ -44,6 +44,7 @@ import io.vanillabp.integration.adapter.spi.WorkflowScope;
 import io.vanillabp.integration.adapter.spi.WorkflowVisibilityDelay;
 import io.vanillabp.integration.adapter.spi.values.ValueDirection;
 import io.vanillabp.integration.adapter.spi.values.ValueTypeVerdict;
+import io.vanillabp.integration.adapter.spi.workflowtask.TaskKind;
 import io.vanillabp.integration.spi.AggregatePersistenceAware;
 import io.vanillabp.integration.spi.PhaseOperation;
 import io.vanillabp.spi.process.ProcessDefinition;
@@ -55,15 +56,15 @@ import lombok.extern.slf4j.Slf4j;
  * id, built by the platform modules.
  * <p>
  * This version of the adapter starts workflows, also by a message, completes and cancels the tasks
- * the application left open, correlates messages, pushes a changed aggregate, answers every probe,
- * counts the open tasks of a process and says what the engine does with the values a workflow
- * carries. It serves every operation the core requires of each adapter, so the core accepts it
- * while the application starts. Every other handler and every method of the viewer/history API
- * throw: where the adapter id has no clients, the message of its validation, which names the keys
- * to set; otherwise an {@link UnsupportedOperationException} which says that the call is not built
- * yet. Nothing pretends to have done the work. Sending a signal, which ZenBPM cannot, is left out,
- * so the core answers it as not supported. A probe of an adapter id without clients throws the
- * message of its validation as well.
+ * and the user tasks the application left open, correlates messages, pushes a changed aggregate,
+ * answers every probe, counts the open tasks of a process and says what the engine does with the
+ * values a workflow carries. These are all the operations the core requires of each adapter, so the
+ * core accepts it while the application starts. Sending a signal, which ZenBPM cannot, is left out,
+ * so the core answers it as not supported. Every method of the viewer/history API throws: where the
+ * adapter id has no clients, the message of its validation, which names the keys to set; otherwise
+ * an {@link UnsupportedOperationException} which says that the call is not built yet. Nothing
+ * pretends to have done the work. A probe of an adapter id without clients throws the message of
+ * its validation as well.
  * <p>
  * A start asks the engine nothing in phase one, because there is nothing to ask before an
  * instance exists. Phase two starts the latest version of the process under the id the engine
@@ -72,9 +73,11 @@ import lombok.extern.slf4j.Slf4j;
  * new instance. A start the engine answers with <code>404</code>, because it holds no such
  * process, is permanent, see decision 30 in the repository's DECISIONS.md.
  * <p>
- * A task the application completes or cancels is checked right before the caller's transaction
- * commits, and phase two writes the shared values into the engine before it completes the task's
- * job or fails it with the BPMN error the application named, see {@link ZenBpmTaskOutcomes}.
+ * A task or a user task the application completes or cancels is checked right before the caller's
+ * transaction commits, and phase two writes the shared values into the engine before it completes
+ * the task's job or fails it with the BPMN error the application named, see
+ * {@link ZenBpmTaskOutcomes}. A user task is a job of the engine as well, and each kind finds no job
+ * of the other, see decision 51 in the repository's DECISIONS.md.
  * <p>
  * A message is checked against the models of the workflow module in phase one, without asking the
  * engine, and published in phase two, where a publication nothing waits for yet is handed back to
@@ -155,22 +158,18 @@ public class ZenBpmProcessService<A> implements MigratableProcessService<A> {
         this.collaborators = collaborators;
         this.historyTimeToLive = historyTimeToLive;
         final var handlers = new LinkedHashMap<PhaseOperation, PhaseOperationHandler<A>>();
-        PhaseOperation.CORE_OPERATIONS
-                .stream()
-                .filter(PhaseOperation::requiredOfEveryAdapter)
-                .forEach(operation -> handlers.put(operation, PhaseOperationHandler.of(request -> {
-                    throw notBuiltYet("phase one of %s".formatted(operation.name()));
-                }, request -> {
-                    throw notBuiltYet("phase two of %s".formatted(operation.name()));
-                })));
-        // each replaces the handler which is not built yet, in its place
         handlers.put(PhaseOperation.START_WORKFLOW, PhaseOperationHandler.of(this::askNothingBeforeAStart,
                 this::startWorkflow));
-        final var tasks = new ZenBpmTaskOutcomes<A>(adapterId, factory, collaborators, this::variablesOf);
+        final var tasks = new ZenBpmTaskOutcomes<A>(adapterId, TaskKind.TASK, factory, collaborators, this::variablesOf);
         handlers.put(PhaseOperation.COMPLETE_TASK, PhaseOperationHandler.of(tasks::checkBeforeTheCompletion,
                 tasks::complete));
         handlers.put(PhaseOperation.CANCEL_TASK, PhaseOperationHandler.of(tasks::checkBeforeTheCancellation,
                 tasks::cancel));
+        final var userTasks = new ZenBpmTaskOutcomes<A>(adapterId, TaskKind.USER_TASK, factory, collaborators, this::variablesOf);
+        handlers.put(PhaseOperation.COMPLETE_USER_TASK, PhaseOperationHandler.of(userTasks::checkBeforeTheCompletion,
+                userTasks::complete));
+        handlers.put(PhaseOperation.CANCEL_USER_TASK, PhaseOperationHandler.of(userTasks::checkBeforeTheCancellation,
+                userTasks::cancel));
         final var messages = new ZenBpmMessageCorrelation<A>(adapterId, factory, collaborators, this::variablesOf);
         handlers.put(PhaseOperation.CORRELATE_MESSAGE, PhaseOperationHandler.of(messages::checkTheMessage,
                 messages::correlate));
@@ -216,9 +215,9 @@ public class ZenBpmProcessService<A> implements MigratableProcessService<A> {
 
     /**
      * A handler for every operation the core requires of each adapter: the start of a workflow,
-     * also by a message, the completion and the cancellation of a task, the correlation of a
-     * message, and a handler which throws for every other; and one for the push of a changed
-     * aggregate, which the core does not require.
+     * also by a message, the completion and the cancellation of a task and of a user task, and the
+     * correlation of a message; and one for the push of a changed aggregate, which the core does not
+     * require.
      *
      * @return The handlers, which cannot be changed
      */
@@ -292,7 +291,7 @@ public class ZenBpmProcessService<A> implements MigratableProcessService<A> {
         final Object workflowAggregateId,
         final String taskId
     ) {
-        return awarenessOfJob(scope, taskId, "task");
+        return awarenessOfJob(scope, taskId, TaskKind.TASK);
     }
 
     /**
@@ -311,7 +310,7 @@ public class ZenBpmProcessService<A> implements MigratableProcessService<A> {
         final Object workflowAggregateId,
         final String taskId
     ) {
-        return awarenessOfJob(scope, taskId, "user task");
+        return awarenessOfJob(scope, taskId, TaskKind.USER_TASK);
     }
 
     /**
@@ -688,16 +687,16 @@ public class ZenBpmProcessService<A> implements MigratableProcessService<A> {
     private WorkflowAwareness awarenessOfJob(
         final WorkflowScope scope,
         final String taskId,
-        final String kind
+        final TaskKind kind
     ) {
         final var rest = clients();
         final var key = ZenBpmKeys.keyOf(taskId);
         if (key.isEmpty()) {
-            log.debug("ZenBPM[{}]: {} '{}' is no key of this engine, so the engine does not know it", adapterId, kind,
-                    taskId);
+            log.debug("ZenBPM[{}]: {} '{}' is no key of this engine, so the engine does not know it", adapterId,
+                    ZenBpmTaskOutcomes.wordFor(kind), taskId);
             return WorkflowAwareness.UNKNOWN_TO_BPMS;
         }
-        final var subject = "%s '%s'".formatted(kind, taskId);
+        final var subject = "%s '%s'".formatted(ZenBpmTaskOutcomes.wordFor(kind), taskId);
         final Optional<JobRef> job;
         try {
             job = rest.job(key.getAsLong());
@@ -713,6 +712,19 @@ public class ZenBpmProcessService<A> implements MigratableProcessService<A> {
         try {
             if (job.isEmpty()) {
                 probeAnswered();
+                return WorkflowAwareness.UNKNOWN_TO_BPMS;
+            }
+            // other engines keep the ids of the two kinds apart, and so does this probe, see
+            // decision 51 in the repository's DECISIONS.md
+            if (job
+                    .get()
+                    .isAUserTask() != (kind == TaskKind.USER_TASK)) {
+                probeAnswered();
+                log.debug("ZenBPM[{}]: the job of {} is of element type {}, so the engine holds no {} of that key",
+                        adapterId, subject, job
+                                .get()
+                                .elementType(),
+                        ZenBpmTaskOutcomes.wordFor(kind));
                 return WorkflowAwareness.UNKNOWN_TO_BPMS;
             }
             final var instanceKey = job

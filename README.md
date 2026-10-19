@@ -81,10 +81,11 @@ of the scope; a search which fails answers that the engine is unavailable, never
 nothing. The probe asked before a start is sent again counts only the workflows created from the
 millisecond the start was planned in, and a workflow may stay invisible to the search for
 `workflow-visibility-timeout`. The workflow id of an instance is the key of its root instance, or
-of the instance a call activity started (decision 28). The probes which ask for a task, a service
-task and a user task alike, read the job by its key and the process of its instance, and answer
-for the scope they are asked about only; a task id of a partition the engine does not have is
-unknown to it (decision 32). The open tasks of a process are counted from the engine's statistics
+of the instance a call activity started (decision 28). The probes which ask for a task and for a
+user task read the job by its key and the process of its instance, and answer for the scope they
+are asked about only; a task id of a partition the engine does not have is unknown to it (decision
+32), and so is the job of a user task to the probe of a task, and the job of any other element to
+the probe of a user task (decision 51). The open tasks of a process are counted from the engine's statistics
 of every version it holds. A job of a subscribed type runs its `@WorkflowTask` method on a handler
 slot, under a lock which is renewed while the method runs; then the values the aggregate shares and
 its id are written into the job's instance and every instance above it up to the workflow's root,
@@ -152,7 +153,18 @@ take the handler slots from the others; its failure is logged at WARN, and a fai
 another at DEBUG. A user task whose workflow module starts after the first look is told once it
 started. A user task told as cancelled is not told as created afterwards by the same node, even
 where a lagging node of the engine lists it active again. A cancelled user task wakes its workflow
-up, so a service task left open in a cancelled instance is told as cancelled as well. A shutdown
+up, so a service task left open in a cancelled instance is told as cancelled as well. The
+application completes a user task, or cancels it with a BPMN error, through its process service as
+it does a task left open: right before its transaction commits, the adapter asks the engine whether
+the user task still waits and belongs to the workflow module, and after the commit the shared values
+are written up to the workflow's root and the job is completed, so the gateway behind the user task
+decides on them, or failed with the error code as the deployed model carries it, so an error
+boundary event of the user task takes over. The Camunda 8 adapter cannot do the second: no cluster
+up to 8.9 offers a command to cancel a Camunda-managed user task by BPMN error. The application is
+then told once that the user task was cancelled, as the Camunda 7 adapter tells it (decision 50); a
+completed user task is not told as cancelled. The commands of a task find no user task, and those
+of a user task no task: the call throws the platform's `TaskNotFoundException`, which names the
+method meant for the id where the platform recorded the delivery of the task (decision 51). A shutdown
 unsubscribes the job types of each workflow module and then waits for the handlers which still run,
 those of every module of an adapter id together, at most `shutdown-grace` (`PT20S` by default;
 above thirty seconds the start warns that the runtime's shutdown budget has to grow with it), and

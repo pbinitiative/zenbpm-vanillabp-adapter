@@ -335,6 +335,165 @@ class ZenBpmTaskOutcomesTest {
     }
 
     @Test
+    @DisplayName("A user task which waits, of a process the module serves, passes the checks of the user-task handlers, and the checks only read")
+    void aWaitingUserTaskOfTheModulePassesTheCheck() {
+        engine.answers("GET", JOB_PATH, 200, userTaskJob("active"));
+        engine.answers("GET", INSTANCE_PATH, 200, instance(INSTANCE, "subprocess", ROOT));
+
+        handler(PhaseOperation.COMPLETE_USER_TASK).phaseOne(phaseOne(String.valueOf(JOB)));
+        handler(PhaseOperation.CANCEL_USER_TASK).phaseOne(phaseOne(String.valueOf(JOB)));
+
+        assertAll(
+                () -> assertEquals(2, checks.size()),
+                () -> assertDoesNotThrow(() -> checks.forEach(Runnable::run)),
+                () -> assertTrue(engine
+                        .requests()
+                        .stream()
+                        .allMatch(request -> "GET".equals(request.method())), () -> requests().toString()));
+    }
+
+    @ParameterizedTest(name = "{0}")
+    @ValueSource(strings = {
+            "COMPLETE_TASK", "CANCEL_TASK", "COMPLETE_USER_TASK", "CANCEL_USER_TASK"
+    })
+    @DisplayName("A job of the other kind is not found, whatever its state, naming what the job is and the methods which end it, and its instance is not read")
+    void aJobOfTheOtherKindIsNotFound(final String operation) {
+        final var askedForAUserTask = operation.contains("USER_TASK");
+        engine.answers("GET", JOB_PATH, 200, askedForAUserTask ? job("completed") : userTaskJob("active"));
+
+        final var gone = assertThrows(TaskNotFoundException.class, () -> check(PhaseOperation.CORE_OPERATIONS
+                .stream()
+                .filter(candidate -> candidate
+                        .name()
+                        .equals(operation))
+                .findFirst()
+                .orElseThrow()));
+
+        final var completesOrCancels = operation.startsWith("COMPLETE") ? "completes" : "cancels";
+        assertAll(
+                () -> assertEquals(askedForAUserTask
+                        ? """
+                                ZenBPM adapter 'orders': there is no user task '%d': the engine holds a job under that key, but \
+                                of element 'Task_Approve', a SERVICE_TASK, which is no user task. So the transaction which %s \
+                                it is rolled back. A job of that element is ended by ProcessService#completeTask or \
+                                #cancelTask."""
+                                .formatted(JOB, completesOrCancels)
+                        : """
+                                ZenBPM adapter 'orders': there is no task '%d': the engine holds a job under that key, but of \
+                                element 'Approve', a user task. So the transaction which %s it is rolled back. A job of that \
+                                element is ended by ProcessService#completeUserTask or #cancelUserTask."""
+                                .formatted(JOB, completesOrCancels),
+                        gone.getMessage()),
+                () -> assertEquals(List.of("GET %s".formatted(JOB_PATH)), requests()));
+    }
+
+    @Test
+    @DisplayName("A user task of a process the module serves under a declared id, such as the old id of a renamed process, passes the check")
+    void aUserTaskOfADeclaredIdPassesTheCheck() {
+        factory
+                .deployedProcesses()
+                .recordServed("shop", "shop__OrderBeforeTheRename");
+        engine.answers("GET", JOB_PATH, 200, userTaskJob("active"));
+        engine.answers("GET", INSTANCE_PATH, 200, instance(INSTANCE, "shop__OrderBeforeTheRename", "default", null));
+
+        assertAll(
+                () -> assertDoesNotThrow(() -> check(PhaseOperation.COMPLETE_USER_TASK)),
+                () -> assertDoesNotThrow(() -> check(PhaseOperation.CANCEL_USER_TASK)));
+    }
+
+    @Test
+    @DisplayName("The messages of the user-task handlers say user task: a user task which ended, one which carries an incident, one of another module")
+    void theMessagesOfAUserTaskSayUserTask() {
+        engine.answers("GET", JOB_PATH, 200, userTaskJob("terminated"));
+        final var gone = assertThrows(TaskNotFoundException.class, () -> check(PhaseOperation.COMPLETE_USER_TASK));
+        engine.answers("GET", JOB_PATH, 200, userTaskJob("failed"));
+        final var incident = assertThrows(IllegalStateException.class, () -> check(
+                PhaseOperation.CANCEL_USER_TASK));
+        engine.answers("GET", JOB_PATH, 200, userTaskJob("active"));
+        engine.answers("GET", INSTANCE_PATH, 200, instance(INSTANCE, "crm__Order", "default", null));
+        final var another = assertThrows(IllegalStateException.class, () -> check(
+                PhaseOperation.COMPLETE_USER_TASK));
+
+        assertAll(
+                () -> assertTrue(gone
+                        .getMessage()
+                        .startsWith("ZenBPM adapter 'orders': user task '%d' is gone, the engine holds it as terminated"
+                                .formatted(JOB)),
+                        gone::getMessage),
+                () -> assertTrue(incident
+                        .getMessage()
+                        .startsWith("ZenBPM adapter 'orders': user task '%d' carries an incident at the engine"
+                                .formatted(JOB)),
+                        incident::getMessage),
+                () -> assertTrue(another
+                        .getMessage()
+                        .startsWith("""
+                                ZenBPM adapter 'orders': user task '%d' is a user task of process 'crm__Order' at the \
+                                engine, which workflow module 'crm' serves""".formatted(JOB)),
+                        another::getMessage));
+    }
+
+    @Test
+    @DisplayName("Phase two of a user task writes the values up to the workflow's root and completes its job, or fails it with the scoped code and a message which names the user task")
+    void aUserTaskIsCompletedAndCancelledAsAJob() throws Exception {
+        aJobWaitsInASubProcess();
+        final var reads = new AtomicInteger();
+        engine.answers("GET", JOB_PATH, exchange -> FakeEngine.respond(exchange, 200, userTaskJob(reads
+                .incrementAndGet() < 3 ? "active" : "terminated")));
+        engine.answers("POST", JOB_PATH
+                + "/complete", 201, null);
+        engine.answers("POST", JOB_PATH
+                + "/fail", 204, null);
+
+        handler(PhaseOperation.COMPLETE_USER_TASK).phaseTwo(request(String.valueOf(JOB), null));
+        handler(PhaseOperation.CANCEL_USER_TASK).phaseTwo(request(String.valueOf(JOB), "withdrawn"));
+
+        final var commands = commands();
+        final var failure = JSON.readTree(commands
+                .getLast()
+                .body());
+        assertAll(
+                () -> assertEquals(List.of("PATCH %s/variables".formatted(INSTANCE_PATH), "PATCH %s/variables"
+                        .formatted(ROOT_PATH), "POST %s/complete".formatted(JOB_PATH),
+                        "PATCH %s/variables".formatted(
+                                INSTANCE_PATH),
+                        "PATCH %s/variables".formatted(ROOT_PATH), "POST %s/fail".formatted(
+                                JOB_PATH)),
+                        commands
+                                .stream()
+                                .map(request -> "%s %s".formatted(request.method(), request.path()))
+                                .toList()),
+                () -> assertEquals("shop__withdrawn", failure
+                        .get("errorCode")
+                        .asText()),
+                () -> assertEquals("""
+                        User task %d (element 'Approve', workflow aggregate 'order-1') was cancelled with BPMN error \
+                        'withdrawn', which no error boundary event and no error event sub-process catches, its code"""
+                        .formatted(JOB),
+                        failure
+                                .get("message")
+                                .asText()));
+    }
+
+    @Test
+    @DisplayName("Phase two of a user task which ended meanwhile is a WARN which names the user task, and nothing else")
+    void aUserTaskWhichEndedMeanwhileIsAWarnedNoOp(final CapturedOutput output) {
+        engine.answers("GET", JOB_PATH, 200, userTaskJob("terminated"));
+
+        assertDoesNotThrow(() -> handler(PhaseOperation.CANCEL_USER_TASK).phaseTwo(request(String.valueOf(JOB),
+                "withdrawn")));
+
+        assertAll(
+                () -> assertEquals(List.of(), commands()),
+                () -> assertTrue(output
+                        .getOutOfThisTest()
+                        .contains(
+                                "ZenBPM[orders]: user task %d of workflow aggregate 'order-1' is not cancelled: the engine holds it as terminated"
+                                        .formatted(JOB)),
+                        output::getOutOfThisTest));
+    }
+
+    @Test
     @DisplayName("A completion writes the shared values and the id into the job's instance and every instance up to the workflow's root, and then completes the job with them")
     void aCompletionWritesTheValuesUpToTheWorkflowAndThenCompletes() throws Exception {
         aJobWaitsInASubProcess();
@@ -791,6 +950,13 @@ class ZenBpmTaskOutcomesTest {
                  "processInstanceKey": %d, "elementInstanceKey": 4503599627370599, "state": "%s",
                  "createdAt": "2026-10-17T10:00:00Z", "inputVariables": {}}""".formatted(JOB, JOB_TYPE, INSTANCE,
                 state);
+    }
+
+    private static String userTaskJob(final String state) {
+        return """
+                {"key": %d, "elementId": "Approve", "type": "user-task-type", "elementType": "USER_TASK",
+                 "processInstanceKey": %d, "elementInstanceKey": 4503599627370599, "state": "%s",
+                 "createdAt": "2026-10-17T10:00:00Z", "inputVariables": {}}""".formatted(JOB, INSTANCE, state);
     }
 
     private static String instance(

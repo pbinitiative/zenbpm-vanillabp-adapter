@@ -93,8 +93,6 @@ public final class ZenBpmUserTaskPoller {
      */
     static final int LONGEST_WAIT_IN_LOOKS = 64;
 
-    private static final String USER_TASK = "USER_TASK";
-
     private final String adapterId;
 
     private final ZenBpmRestClient rest;
@@ -321,7 +319,7 @@ public final class ZenBpmUserTaskPoller {
         final Set<Delivery> listed
     ) {
         // a task of another version may carry the type, which the job stream serves
-        if (!USER_TASK.equals(job.elementType())) {
+        if (!job.isAUserTask()) {
             return true;
         }
         final var delivery = new Delivery(job.key(), event);

@@ -310,7 +310,7 @@ answered without a change). F8.1 is complete; E8 goes on with S8.2.1 and S8.3.1.
 
 ### S8.2.1 `COMPLETE_USER_TASK` and `CANCEL_USER_TASK`
 
-- [ ] **Depends on:** S8.1.1.
+- [x] **Depends on:** S8.1.1.
 
 **Instructions**
 
@@ -346,9 +346,94 @@ if not, have the node remember the keys it failed or skip such a job; pin the an
 `#cancelUserTaskRoutesTheBoundaryEvent`, `#completingAGoneUserTaskIsAWarnedNoOp`,
 `#completingAUserTaskWhichIsGoneThrowsTaskNotFound` (phase one).
 
+*Fit check, 2026-10-19 (implementation pipeline, batch e08-f8.2-f8.3).* Checked against `main` at
+`3c7bc91`, the platform snapshot the build resolves (`vanillabp-adapter-spi`
+`2.0.0-20261015.045823-21`, whose sources are `adapter-platform-integration` at `f9505797`),
+Camunda 8's `Camunda8ProcessService` (`awarenessOfUserTask`, `whatThe404WasAbout`,
+`cancelUserTask`), Camunda 7's `Camunda7UserTaskEventListener` and `Camunda7TaskProcessingIT`, and
+the engine at the pin `bdd795a3` (behaviour through `ZenBpmUserTaskIT` against the pinned image).
+Decided by the Implementor in place of the maintainers:
+
+1. **The `CANCELED` after the application's own `cancelUserTask` (open question 1): told, decision
+   50.** Camunda 7 tells it: `handleBpmnError` deletes the task, and the `delete` listener delivers
+   `CANCELED` (`Camunda7TaskProcessingIT#cancelUserTaskRoutesBoundary` and its Quarkus twin assert
+   it). The core takes it without harm, read in the resolved jars: phase two of `CANCEL_USER_TASK`
+   closes the records of the user task (`MigrationProcessService#addressWorkflowPhaseTwo`,
+   `DeliveryRecords#writeDownThatTheTaskIsClosed`); the later notification is a delivery of its own,
+   because the event is part of the key (`TaskDeliveryKey`), so it runs the method with `CANCELED`
+   once, is recorded as `COMPLETED` and closes what is still open. The core does not ask whether the
+   application closed the task itself, so the method hears of it as a cancellation, as on Camunda 7.
+   Suppressing it on the node was rejected: another node of the application, or this one after a
+   restart, would still tell it. Pinned by `#cancelUserTaskRoutesTheBoundaryEvent` (one `CANCELED`,
+   two records, both closed) and its Quarkus twin; a completed user task is never told as cancelled,
+   because its job is `completed` (`#completeUserTaskContinuesWithSharedValues` and
+   `#completingAGoneUserTaskIsAWarnedNoOp` count no cancellation).
+2. **The kind behind an id (open question 2): did not fit, fixed here, decision 51.** S6.3.1's check
+   accepted the job of a user task for `completeTask`, and S5.2.2's probes answered a task and a user
+   task alike (its note "the probes need not tell the kinds apart" no longer holds). The platform's
+   record answers the election only where its kind matches the operation; for the other kind it asks
+   the adapters and words its `TaskNotFoundException` from the record only where every adapter
+   answers `UNKNOWN_TO_BPMS` (`DeliveryRecords#locate`, `MigrationProcessService#unknownToEveryBpms`).
+   With both probes alike, `completeTask` completed a user task on this engine, which fails on every
+   other. Now both probes answer `UNKNOWN_TO_BPMS` for a job of the other kind (by `elementType`,
+   `JobRef#isAUserTask`, which the poller uses as well) without reading its instance, and both checks
+   before the commit throw `TaskNotFoundException` for it, whatever its state, naming the element and
+   the methods for it (Camunda 8's `whatThe404WasAbout` has the same shape). Both directions tested:
+   `ZenBpmTaskProbesTest#aJobOfTheOtherKindIsUnknown`, `ZenBpmTaskOutcomesTest#aJobOfTheOtherKindIsNotFound`,
+   and against the pinned engine `ZenBpmUserTaskIT#theCommandsOfATaskFindNoUserTask` (the platform's
+   message names `completeUserTask`) and `ZenBpmProbesIT#aWaitingJobIsActiveForItsScopeOnly` (the job
+   of a service task is `SERVICE_TASK`, unknown to the probe of a user task).
+3. **The word in the messages (open question 3): as recommended.** `ZenBpmTaskOutcomes` takes the
+   SPI's `TaskKind`, is built once per kind, and every message says "task" or "user task"
+   (`ZenBpmTaskOutcomesTest#theMessagesOfAUserTaskSayUserTask`); the incident message of a
+   cancellation starts with "User task". The new message names the adapter id, the key, the element
+   and the methods which end it.
+4. **A user task of a declared id (open question 4): passes.** The declared ids are recorded as
+   served by the module (`ZenBpmDeclaredProcessWorkersTest` asserts `moduleServing` of a held id),
+   and `ZenBpmTaskOutcomesTest#aUserTaskOfADeclaredIdPassesTheCheck` checks a user task of such a
+   process at the SPI boundary.
+5. **Every required operation is built now**, so the process service's constructor no longer fills
+   the required operations with handlers which say "not built yet" (that code became unreachable);
+   only the viewer/history methods still say it (`ZenBpmProcessServiceTest`).
+6. The instructions' "phase two `patchVariables` + `completeJob`" is decision 35's write up to the
+   root, as for a task. The README's sentence about Camunda 8 is worded as
+   `camunda8-adapter/README.md` says it (no cluster up to 8.9 offers a command to cancel a
+   Camunda-managed user task by BPMN error); the ZenBPM half names its test.
+
 **Acceptance criteria**
 
-- [ ] The gateway behind the completed user task sees the pushed values.
+- [x] The gateway behind the completed user task sees the pushed values.
+  `ZenBpmUserTaskIT#completeUserTaskContinuesWithSharedValues`, against the pinned engine: the
+  review starts not accepted (process `Reviewing` of `usertask-it/reviews.bpmn`), the application
+  accepts it and completes the user task in one transaction, and the instance passes `Decision` and
+  ends at `Accepted`, never at `Rejected`; the job is `completed`, the one record of the user task is
+  closed, and three more looks tell nothing as cancelled. Beside it, against the same engine:
+  `#cancelUserTaskRoutesTheBoundaryEvent` (the error boundary event `Withdrawn` takes over and the
+  instance ends at `ReviewWithdrawn` without passing `Decision`, the job is `terminated`, and the
+  application is told once that the user task was cancelled, decision 50: two records, both closed),
+  `#completingAGoneUserTaskIsAWarnedNoOp` (a completion and a cancellation in one transaction: the
+  second phase two is the platform's WARN "it has ended already; the entry is consumed", and nothing
+  is told as cancelled), `#completingAUserTaskWhichIsGoneThrowsTaskNotFound` (a user task completed
+  by somebody else between the call and the commit: `TaskNotFoundException` "user task '...' is
+  gone, the engine holds it as completed", the aggregate's change rolled back, the instance ends at
+  `Rejected`), and `#theCommandsOfATaskFindNoUserTask` (decision 51: `completeTask` with the id of a
+  user task throws the platform's `TaskNotFoundException`, which says that the id is the one of a user
+  task and names `completeUserTask`, and the user task still waits).
+
+*Evidence of the clean build, 2026-10-19* (`TZ=Etc/UTC mvn clean install` on JDK 25, Docker ITs
+included, none skipped, then `bin/check-deploy-safety.sh`: 13 files deployed by the green build,
+nothing by the red gate). Its first run failed in the core on `ZenBpmJobStreamTest#aConnectionNobodyAnswersIsNoReturn`
+with `BindException: Address already in use`: the test's relay binds its port again after a cut, and
+another process had taken it; the safety script's own build of the same tree and the next clean
+build were green. Tests per module: engine-test-support 12 + 5 ITs; core 1,110 + 92 ITs; Spring Boot
+14 + 70 ITs; smoke test 38; Quarkus runtime 13, deployment 52, integration tests 15; coverage gate
+37. `ZenBpmTaskOutcomesTest` 41, `ZenBpmTaskProbesTest` 27, `ZenBpmProcessServiceTest` 23,
+`ZenBpmUserTaskIT` 10. Coverage per platform: Spring Boot 100.00 % (0 of 31,622 instructions
+missed), Quarkus 100.00 % (0 of 31,492 missed). Mutants: 6 of 6 killed in the core's tests (the
+check of the kind off, the probe of the kind off, the user-task handlers built as task handlers, the
+word always "task", no job a user task, `completeUserTask` cancelling in phase two), and 1 of 1
+against the pinned engine (the probe of the kind off fails `ZenBpmUserTaskIT#theCommandsOfATaskFindNoUserTask`:
+the check before the commit still refuses, with its own message instead of the platform's).
 
 ## F8.3 Quarkus twin
 
