@@ -799,7 +799,7 @@ passes.
 
 ### S7.3.1 Messages and push on Quarkus
 
-- [ ] **Depends on:** S7.2.1.
+- [x] **Depends on:** S7.2.1.
 
 `ZenBpmWorkflowLifecycleTest` gains `correlateMessageResumesTheWorkflow`, `aGlobalPushReachesTheGateway`,
 `aTaskScopedPushReachesTheChildScope`.
@@ -813,4 +813,94 @@ and validated on Quarkus already (`VanillaBpZenBpmPropertiesTest`, `ZenBpmMessag
 
 **Acceptance criteria**
 
-- [ ] The Quarkus report covers the correlation and push handlers.
+- [x] The Quarkus report covers the correlation and push handlers. The Quarkus report of the clean
+  build below (`test-coverage-report/quarkus/report/jacoco.csv`) counts 0 instructions missed of
+  `ZenBpmMessageCorrelation` (423), `ZenBpmMessageStart` (359) and `ZenBpmAggregatePush` (431), and
+  of `ZenBpmRunningWorkflows` (153), which both use. The prod-mode run of
+  `ZenBpmWorkflowLifecycleTest` on its own, its `jacoco.exec` read with the JaCoCo CLI 0.8.15
+  against the core's classes, covers 230 of the 423 instructions of `ZenBpmMessageCorrelation`, 142
+  of the 359 of `ZenBpmMessageStart` and 246 of the 431 of `ZenBpmAggregatePush`: both phases of
+  each, the retry-later of a publication nothing waits for yet, the walk below the root and the
+  task-scoped write. The core's unit tests cover the rest, which counts for both platforms.
+
+*Fit check, 2026-10-19, decided by the Implementor.* Checked against the branch after S7.2.1
+(`cb273a9`), the merged Quarkus prod-mode test `ZenBpmWorkflowLifecycleTest` and its application
+(`E2eTaskIntrospection`, the copies of the Spring Boot task fixtures), the Spring Boot ITs it twins
+(`ZenBpmMessageIT`, `ZenBpmAggregateChangedIT`) and the platform's Quarkus integration as the
+adapter resolves it (`2.0.0-20261015.045823-21`: `JdbcTaskDeliveryLog`, an `@ApplicationScoped`
+bean of the type `TaskDeliveryLog`, and `TaskDeliveryLog#workflowStartOf`). What did not fit, and
+what was decided:
+
+1. **The cases.** The story names three, the note from S7.1.2 a fourth, and E7's "Done when" asks
+   for a Quarkus twin of a message published before its subscription exists. Decided a case of its
+   own for it, `#aMessagePublishedBeforeTheSubscriptionIsRepeatedUntilItCorrelates`, rather than a
+   second half of `#correlateMessageResumesTheWorkflow`, so each half fails on its own (the mutants
+   below show it). Five new cases: `#correlateMessageResumesTheWorkflow`,
+   `#aMessagePublishedBeforeTheSubscriptionIsRepeatedUntilItCorrelates`,
+   `#startWorkflowByMessageIsFoundThroughItsStartRow`, `#aGlobalPushReachesTheGateway`,
+   `#aTaskScopedPushReachesTheChildScope`.
+2. **The application.** One prod-mode application per class, so the processes join the module
+   `zenbpm-e2e`: `Letters.bpmn`, `Postcards.bpmn` and `Shipments.bpmn` are copies of the Spring Boot
+   fixtures (`message-it/letters.bpmn`, `message-it/postcards.bpmn`, `push-it/shipments.bpmn`, only
+   the id of the definitions changed), with their diagrams, as `TaskMatrix.bpmn` and the others are.
+   The aggregates `E2eLetter`, `E2ePostcard` and `E2eShipment` with a JPA persistence each, the
+   workflow services `E2eLetterWorkflow`, `E2ePostcardWorkflow` and `E2eShipmentWorkflow`, and one
+   resource `E2eMessageIntrospection` (`introspect/messages/...`), because the application runs in a
+   JVM of its own.
+3. **The start row on Quarkus.** The application has a datasource, so the platform's JDBC delivery
+   log is in place and writes the start row; the application reads it through the injected
+   `TaskDeliveryLog#workflowStartOf`, which is what the Spring Boot IT reads from the table. The
+   workflow is found through that row: the case asserts that the instance has no business key, and
+   the mutant which ignores the row's key in the probe fails it.
+4. **The root of a workflow with sub-processes.** The merged helper of the class reads the
+   instances of an aggregate by business key and expects one, and the engine hands the business key
+   on to the instances below the root. The new cases read the root instance from the engine
+   (`#awaitTheRootOf`), and the merged helper stays as it is.
+5. **The published-before case on Quarkus** reads the outbox's INFO line ("cannot run yet - the
+   outbox entry ... is dispatched again in PT2S") from the application's log file, as the Spring
+   Boot IT reads it from the captured output, and asserts that the workflow ended after its
+   five-second timer.
+
+**Implemented 2026-10-19.** Quarkus integration tests: `ZenBpmWorkflowLifecycleTest` gained the five
+cases above (14 tests now); its application gained `E2eLetter`, `E2eLetterPersistence`,
+`E2eLetterWorkflow`, `E2ePostcard`, `E2ePostcardPersistence`, `E2ePostcardWorkflow`, `E2eShipment`,
+`E2eShipmentPersistence`, `E2eShipmentWorkflow`, `E2eMessageIntrospection` and the models
+`Letters.bpmn`, `Postcards.bpmn` and `Shipments.bpmn`. No main code changed.
+
+Seen to fail, each restored afterwards and the core packaged again before the next prod-mode run
+(5 of 5 mutants, against a green unmutated run, a kill counted only where a test failed): a push of
+the workflow which writes nothing (`#aGlobalPushReachesTheGateway`); a task-scoped push which
+writes the root as well (`#aTaskScopedPushReachesTheChildScope`); a `404` of a publication not
+handed back as a retry-later (`#aMessagePublishedBeforeTheSubscriptionIsRepeatedUntilItCorrelates`);
+the start row's key ignored by the probe (`#startWorkflowByMessageIsFoundThroughItsStartRow`); a
+correlation which publishes nothing (`#correlateMessageResumesTheWorkflow`, and the two other
+message cases).
+
+`TZ=Etc/UTC mvn clean install` on OpenJDK 25.0.2 builds green with every integration test run and
+none skipped (engine test support 12 unit and 5 integration tests, core 1,054 unit and 92
+integration tests, Spring Boot 14 unit and 57 integration tests, smoke test 38, Quarkus runtime 13,
+Quarkus deployment 52, Quarkus integration tests 15, coverage gate 37). The gate measures 100 % of
+29,064 instructions for Spring Boot and 100 % of 28,934 for Quarkus (the test application is not
+measured), and `bin/check-deploy-safety.sh` passes.
+
+**E7 Done when**, checked 2026-10-19 on the clean build above:
+
+- *A waiting workflow continues on a correlation published after its subscription exists*: met.
+  Spring Boot `ZenBpmMessageIT#correlateMessageResumesTheWaitingWorkflow`; Quarkus
+  `ZenBpmWorkflowLifecycleTest#correlateMessageResumesTheWorkflow`.
+- *... and on one published before it*: met. Spring Boot
+  `ZenBpmMessageIT#aMessagePublishedBeforeTheSubscriptionIsRepeatedUntilItCorrelates`; Quarkus
+  `ZenBpmWorkflowLifecycleTest#aMessagePublishedBeforeTheSubscriptionIsRepeatedUntilItCorrelates`,
+  a case of its own.
+- *A conditional gateway behind a pushed aggregate takes the new branch*: met. Spring Boot
+  `ZenBpmAggregateChangedIT#aGlobalPushReachesTheGateway` (and inside a sub-process and every
+  iteration, `#aGlobalPushReachesAGatewayInsideASubProcess`,
+  `#aGlobalPushReachesTheGatewayOfEveryIteration`); Quarkus
+  `ZenBpmWorkflowLifecycleTest#aGlobalPushReachesTheGateway`. The task-scoped push is proven on both
+  as well (`ZenBpmAggregateChangedIT#aTaskScopedPushWritesTheChildInstance`,
+  `ZenBpmWorkflowLifecycleTest#aTaskScopedPushReachesTheChildScope`), and so is the start by a
+  message found through its start row (`ZenBpmMessageIT#aMessageStartedWorkflowIsFoundThroughItsStartRow`,
+  `ZenBpmWorkflowLifecycleTest#startWorkflowByMessageIsFoundThroughItsStartRow`).
+
+So E7's "Done when" is met. Acceptance criterion 3 of S7.1.2 (E13.4 replaces `scan`) stays open
+and unticked: it is engine work, out of the pipeline's scope, and no part of the "Done when".
