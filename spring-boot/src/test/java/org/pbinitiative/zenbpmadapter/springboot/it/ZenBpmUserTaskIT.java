@@ -79,8 +79,9 @@ import io.vanillabp.spi.process.TaskNotFoundException;
  * The application runs the workflow module <code>deploy-it</code> under <code>use-prefix</code> with
  * the processes <code>Approving</code> of <code>usertask-it/approvals.bpmn</code>,
  * <code>Offering</code> of <code>usertask-it/offers.bpmn</code>, <code>Quoting</code> of
- * <code>usertask-it/quotes.bpmn</code>, <code>Reviewing</code> of <code>usertask-it/reviews.bpmn</code>
- * and <code>Signing</code> of <code>usertask-it/signatures.bpmn</code>. It is started once for the class, against an engine of
+ * <code>usertask-it/quotes.bpmn</code>, <code>Reviewing</code> of
+ * <code>usertask-it/reviews.bpmn</code> and <code>Signing</code> of
+ * <code>usertask-it/signatures.bpmn</code>. It is started once for the class, against an engine of
  * its own.
  */
 @ExtendWith(SuppressOutputExtension.class)
@@ -416,10 +417,13 @@ class ZenBpmUserTaskIT {
             reviewProcessService.cancelUserTask(review, taskId, "withdrawn");
         });
         final var ended = awaitTheEndOf(started.key());
-        final var warned = eventually(() -> Optional
-                .of(output.getOutOfThisTest())
-                .filter(out -> out.contains("canceling user task '%s'".formatted(taskId)) && out.contains(
-                        "it has ended already; the entry is consumed")));
+        final var warned = eventually(() -> output
+                .getOutOfThisTest()
+                .lines()
+                .filter(line -> line.contains("Skipped phase two of") && line
+                        .contains("canceling user task '%s'".formatted(
+                                taskId)) && line.contains("it has ended already; the entry is consumed"))
+                .findFirst());
         watchThreeLooks();
 
         assertAll(

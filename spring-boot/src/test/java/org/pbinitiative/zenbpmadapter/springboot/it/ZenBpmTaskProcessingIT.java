@@ -487,10 +487,12 @@ class ZenBpmTaskProcessingIT {
             claimProcessService.cancelTask(claim, taskId, "withdrawn");
         });
         final var ended = awaitTheEndOf(started.key());
-        final var warned = eventually(() -> Optional
-                .of(output.getOutOfThisTest())
-                .filter(out -> out.contains("task '%s'".formatted(taskId)) && out.contains(
-                        "it has ended already; the entry is consumed")));
+        final var warned = eventually(() -> output
+                .getOutOfThisTest()
+                .lines()
+                .filter(line -> line.contains("Skipped phase two of") && line.contains("task '%s'".formatted(
+                        taskId)) && line.contains("it has ended already; the entry is consumed"))
+                .findFirst());
 
         assertAll(
                 () -> assertEquals(ProcessInstanceRef.State.COMPLETED, ended.state()),

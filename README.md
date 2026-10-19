@@ -159,8 +159,10 @@ it does a task left open: right before its transaction commits, the adapter asks
 the user task still waits and belongs to the workflow module, and after the commit the shared values
 are written up to the workflow's root and the job is completed, so the gateway behind the user task
 decides on them, or failed with the error code as the deployed model carries it, so an error
-boundary event of the user task takes over. The Camunda 8 adapter cannot do the second: no cluster
-up to 8.9 offers a command to cancel a Camunda-managed user task by BPMN error. The application is
+boundary event of the user task takes over (`ZenBpmUserTaskIT#cancelUserTaskRoutesTheBoundaryEvent`
+on Spring Boot, `ZenBpmWorkflowLifecycleTest#userTaskCancellationByError` on Quarkus). The Camunda
+8 adapter cannot do the second: no cluster up to 8.9 offers a command to cancel a Camunda-managed
+user task by BPMN error. The application is
 then told once that the user task was cancelled, as the Camunda 7 adapter tells it (decision 50); a
 completed user task is not told as cancelled. The commands of a task find no user task, and those
 of a user task no task: the call throws the platform's `TaskNotFoundException`, which names the

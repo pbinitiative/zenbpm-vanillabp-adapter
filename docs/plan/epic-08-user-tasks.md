@@ -435,6 +435,45 @@ word always "task", no job a user task, `completeUserTask` cancelling in phase t
 against the pinned engine (the probe of the kind off fails `ZenBpmUserTaskIT#theCommandsOfATaskFindNoUserTask`:
 the check before the commit still refuses, with its own message instead of the platform's).
 
+**Answers to two reviews of e08-f8.2-f8.3, 2026-10-20.** Claude (approve with minor fixes: 2 Minor,
+3 Nits) and Copilot (approve, no findings) reviewed `03c8804`; both built it green with 100 %
+coverage per platform. Each finding was checked against the code, the engine at the pin and the
+resolved platform; all five are valid and fixed in one commit:
+
+1. *The incident of a user task named the incident action (Claude, Minor).* Valid: only the word of
+   the two incident messages followed the kind, so a user task's message said to set
+   `async-task-max-age-action` back to `report`, which `ZenBpmJobHandler` applies to streamed jobs
+   only; a user task's job is never streamed (decision 12). Its incident comes from a
+   `cancelUserTask` whose code nothing catches (`failJobWithIncident` in `pkg/bpmn/jobs_api.go` at
+   the pin). Both messages now name that cause and its fix for a user task.
+   `ZenBpmTaskOutcomesTest#theIncidentOfAUserTaskNamesTheUncaughtErrorAsItsCause` (both whole
+   messages) was red first. Mutants 2 of 2 killed: the task's text for both kinds fails the new
+   test, the user task's text for both fails `#aTaskWithAnIncidentCannotBeEnded` and
+   `#aTaskWhichCarriesAnIncidentIsRepeated`.
+2. *The README's promise named no test (Claude, Minor).* Valid: fit-check item 6 said it did. The
+   sentence now names `ZenBpmUserTaskIT#cancelUserTaskRoutesTheBoundaryEvent` and
+   `ZenBpmWorkflowLifecycleTest#userTaskCancellationByError`.
+3. *Epic 05 still said the probes answer both kinds alike (Claude, Nit).* Valid: S5.2.2's
+   instruction 2 and its `ZenBpmProbesIT` evidence carry a pointer to decision 51 now.
+4. *The WARN of `#completingAGoneUserTaskIsAWarnedNoOp` was looked for in the whole output (Claude,
+   Nit).* Valid, and so in its task twin `ZenBpmTaskProcessingIT#completingAGoneTaskIsAWarnedNoOp`:
+   any WARN, the poller's among them, passed it. Both now pick the platform's one line ("Skipped
+   phase two of ... it has ended already; the entry is consumed") and assert WARN on it.
+5. *Two class Javadocs not reflowed (Claude, Nit).* Valid; `ZenBpmTaskProbesTest` and
+   `ZenBpmUserTaskIT` are reflowed.
+
+*Evidence of the clean build after the fixes, 2026-10-20* (`TZ=Etc/UTC mvn clean install` on JDK
+25, Docker ITs included, none skipped; `bin/check-deploy-safety.sh` on the same tree: 13 files
+deployed by the green build, nothing by the red gate). Two runs before it failed on tests this
+batch does not touch: `ZenBpmJobStreamTest#aConnectionNobodyAnswersIsNoReturn` ("Address already in
+use", as before), and `ZenBpmMessageIT#aPublicationNothingEverWaitsForIsBlockedOnceTheWindowRanOut`,
+which read the log right after it saw the entry blocked, while the platform writes its error line
+after it marked the entry. Tests per module: engine-test-support 12 + 5 ITs; core 1,111 + 92 ITs;
+Spring Boot 14 + 70 ITs; smoke test 38; Quarkus runtime 13, deployment 52, integration tests 17;
+coverage gate 37. `ZenBpmTaskOutcomesTest` 42, `ZenBpmUserTaskIT` 10, `ZenBpmTaskProcessingIT` 20,
+`ZenBpmWorkflowLifecycleTest` 16. Coverage per platform: Spring Boot 100.00 % (0 of 31,636
+instructions missed), Quarkus 100.00 % (0 of 31,506 missed).
+
 ## F8.3 Quarkus twin
 
 ### S8.3.1 User tasks on Quarkus

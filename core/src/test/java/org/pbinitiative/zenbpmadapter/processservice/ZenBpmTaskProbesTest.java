@@ -40,9 +40,9 @@ import io.vanillabp.integration.test.utils.SuppressOutputExtension;
 
 /**
  * The probes which ask for a task and for a user task, each finding a job of its own kind only, and
- * the count of the open tasks of a process. The engine is a fake which answers what each test tells it to and writes down
- * what it was asked, so every test also sees that a probe only reads. The module is scoped with a
- * prefix, so the scope's process is <code>shop__Order</code> at the engine.
+ * the count of the open tasks of a process. The engine is a fake which answers what each test tells
+ * it to and writes down what it was asked, so every test also sees that a probe only reads. The
+ * module is scoped with a prefix, so the scope's process is <code>shop__Order</code> at the engine.
  */
 @ExtendWith(SuppressOutputExtension.class)
 class ZenBpmTaskProbesTest {

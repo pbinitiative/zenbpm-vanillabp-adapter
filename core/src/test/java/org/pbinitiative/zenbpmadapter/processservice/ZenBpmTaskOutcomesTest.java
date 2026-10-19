@@ -434,6 +434,33 @@ class ZenBpmTaskOutcomesTest {
     }
 
     @Test
+    @DisplayName("The incident of a user task is told as what raises it, a cancellation by a BPMN error nothing catches, and not as the incident action of a delivered task, which never touches a user task")
+    void theIncidentOfAUserTaskNamesTheUncaughtErrorAsItsCause() {
+        engine.answers("GET", JOB_PATH, 200, userTaskJob("failed"));
+
+        final var refused = assertThrows(IllegalStateException.class, () -> check(
+                PhaseOperation.COMPLETE_USER_TASK));
+        final var repeated = assertThrows(IllegalStateException.class, () -> handler(
+                PhaseOperation.CANCEL_USER_TASK).phaseTwo(request(String.valueOf(JOB), "withdrawn")));
+
+        assertAll(
+                () -> assertEquals("""
+                        ZenBPM adapter 'orders': user task '%d' carries an incident at the engine, which takes \
+                        neither a completion nor a cancellation of the user task until the incident is resolved, so \
+                        the transaction which completes it is rolled back. Resolve the incident first; where a \
+                        cancellation by a BPMN error which no event of the model catches raised it, model an event \
+                        which catches the code, or the next such cancellation raises it again.""".formatted(JOB),
+                        refused.getMessage()),
+                () -> assertEquals("""
+                        ZenBPM adapter 'orders': user task %d carries an incident at the engine, which takes \
+                        neither a completion nor a cancellation of it until the incident is resolved, so it is not \
+                        cancelled now, and the outbox repeats it. Resolve the incident; where a cancellation by a \
+                        BPMN error which no event of the model catches raised it, model an event which catches the \
+                        code, or the next such cancellation raises it again.""".formatted(JOB),
+                        repeated.getMessage()));
+    }
+
+    @Test
     @DisplayName("Phase two of a user task writes the values up to the workflow's root and completes its job, or fails it with the scoped code and a message which names the user task")
     void aUserTaskIsCompletedAndCancelledAsAJob() throws Exception {
         aJobWaitsInASubProcess();

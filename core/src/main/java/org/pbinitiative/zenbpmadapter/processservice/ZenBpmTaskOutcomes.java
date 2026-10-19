@@ -287,11 +287,8 @@ final class ZenBpmTaskOutcomes<A> {
             case FAILED -> throw new IllegalStateException("""
                     ZenBPM adapter '%s': %s '%s' carries an incident at the engine, which takes neither a completion \
                     nor a cancellation of the %s until the incident is resolved, so the transaction which %s it is \
-                    rolled back. Resolve the incident first; where %s raised it, set that key back to 'report' before, \
-                    or the next delivery of the task raises it again."""
-                    .formatted(adapterId, word, taskId, word, operation,
-                            ZenBpmAdapterConfiguration.propertyKey(adapterId,
-                                    "async-task-max-age-action")));
+                    rolled back. Resolve the incident first; %s"""
+                    .formatted(adapterId, word, taskId, word, operation, whereTheIncidentComesFrom()));
             case ACTIVE -> refuseATaskOfAnotherModule(rest, job, workflowModuleId, taskId, operation);
         }
     }
@@ -496,9 +493,20 @@ final class ZenBpmTaskOutcomes<A> {
         return new IllegalStateException("""
                 ZenBPM adapter '%s': %s %d carries an incident at the engine, which takes neither a completion nor a \
                 cancellation of it until the incident is resolved, so it is not %s now, and the outbox repeats it. \
-                Resolve the incident; where %s raised it, set that key back to 'report' before, or the next delivery \
-                of the task raises it again.""".formatted(adapterId, word, key, answer, ZenBpmAdapterConfiguration
-                .propertyKey(adapterId, "async-task-max-age-action")));
+                Resolve the incident; %s""".formatted(adapterId, word, key, answer, whereTheIncidentComesFrom()));
+    }
+
+    // a delivered task gets its incident from the incident action; a user task is never delivered,
+    // so its incident comes from a cancellation whose BPMN error nothing catches
+    private String whereTheIncidentComesFrom() {
+        if (kind == TaskKind.USER_TASK) {
+            return """
+                    where a cancellation by a BPMN error which no event of the model catches raised it, model an \
+                    event which catches the code, or the next such cancellation raises it again.""";
+        }
+        return """
+                where %s raised it, set that key back to 'report' before, or the next delivery of the task raises it \
+                again.""".formatted(ZenBpmAdapterConfiguration.propertyKey(adapterId, "async-task-max-age-action"));
     }
 
     // see decision 35 and decision 34 in the repository's DECISIONS.md: an update which finds no
