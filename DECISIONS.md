@@ -1015,3 +1015,39 @@ modeller maps the id variable, whose mapping is theirs. A message which does not
 variable, sent past VanillaBP, still starts the instance: the engine maps the missing variable to
 nothing, as it does for any source the message does not hold, and the marker reports the start as
 one nobody named, as before.
+
+### 49. A push of the workflow writes the root and every instance which runs below it
+
+Decided by the implementation pipeline in place of the maintainers, as their policy for the
+autonomous run asks.
+
+The engine evaluates a gateway's condition on the variables of the instance its token runs in, and
+an instance it starts below another one holds a copy of its own (decision 35). Measured against the
+pinned engine (`ZenBpmAggregateChangedIT`, `ZenBpmRestClientContractIT`): a value written into the
+root does not reach a gateway inside a running embedded sub-process, and an iteration of a
+multi-instance sub-process holds its item and what the element maps in, and once it waited it
+reads nothing else of its workflow (GAPS 31). A write into one parallel iteration is seen by that
+iteration alone and is not lost. A write into the instance of a multi-instance body reaches an
+iteration which starts later only through an input mapping of the element, which the engine
+evaluates in that instance.
+
+So a push without a task writes the workflow's root and then every instance below it which runs
+(`active` or `failed`), at any depth: embedded and event sub-processes, multi-instance bodies and
+their iterations, and called instances. Each instance is written before the instances below it are
+read, so one started meanwhile copies the new values from its parent. An instance a call activity
+started which names another aggregate, by business key or id variable, is not written and not
+entered (decision 45 starts such a process without the caller's name): what runs there is not this
+aggregate's business, as the Camunda 8 adapter stops at a called process which does not carry the
+aggregate. An instance which ended between its reading and its writing (`409`) is passed over with
+everything below it; a `404` is thrown, because a node which lags behind answers it for an
+instance it does not know yet (decision 34), and the outbox repeats the push.
+
+The root is the instance of the key VanillaBP wrote down for the workflow, where it runs, belongs
+to the process and names the aggregate (decision 25), else the root instance the business-key
+search finds, else, under `message-start-lookup: scan`, the running instance of a process a message
+starts whose id variable names the aggregate, as the probes find a workflow. Where none runs, the
+push is a warned no-op, because the core found the workflow when it dispatched the push.
+
+The cost is one read of the children per instance which runs, a leaf included, and one write per
+instance which runs. A push into the scope of a task stays a write of the instance the task's job
+waits in and nothing else: the task's completion writes the values up to the root (decision 35).

@@ -83,3 +83,8 @@ what a remote BPMS looks like.
     result stays inside the task, where Camunda 8 hands it to the process under the task's
     `resultVariable`. Map it, for example `<zenbpm:output source="=rating" target="rating" />`
     (GAPS 27).
+17. **A gateway inside a multi-instance body reads a value of the workflow only where the
+    multi-instance element maps it in** (`zenbpm:input`): an iteration starts with its item and
+    what the element maps in, and once it waited it reads nothing else. A push of the workflow
+    writes every iteration which runs, so their gateways read the pushed value; an iteration which
+    starts later reads it only through such a mapping (GAPS 31).

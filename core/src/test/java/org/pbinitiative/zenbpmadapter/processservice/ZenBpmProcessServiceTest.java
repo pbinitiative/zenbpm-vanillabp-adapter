@@ -77,7 +77,7 @@ class ZenBpmProcessServiceTest {
 
     private static final Set<PhaseOperation> BUILT = Set.of(PhaseOperation.START_WORKFLOW,
             PhaseOperation.START_WORKFLOW_BY_MESSAGE, PhaseOperation.COMPLETE_TASK, PhaseOperation.CANCEL_TASK,
-            PhaseOperation.CORRELATE_MESSAGE);
+            PhaseOperation.CORRELATE_MESSAGE, PhaseOperation.AGGREGATE_CHANGED);
 
     private static final String NO_START_EVENT = """
             {"code":"NOT_FOUND","message":"no active definition-level message subscription found for name \\"shop__ordered\\""}""";
@@ -151,7 +151,7 @@ class ZenBpmProcessServiceTest {
     }
 
     @Test
-    @DisplayName("Every operation the core requires of an adapter is served, and only those, in a map nobody can change")
+    @DisplayName("Every operation the core requires of an adapter is served, and of the others only the push of a changed aggregate, in a map nobody can change")
     void everyRequiredOperationIsServed() {
         final var operations = new ZenBpmProcessService<Object>("orders", unconfigured("orders"), TestCollaborators
                 .of("orders"), (
@@ -160,18 +160,20 @@ class ZenBpmProcessServiceTest {
                 .phaseOperations();
 
         assertAll(
-                () -> assertEquals(PhaseOperation.CORE_OPERATIONS
-                        .stream()
-                        .filter(PhaseOperation::requiredOfEveryAdapter)
+                () -> assertEquals(Stream
+                        .concat(PhaseOperation.CORE_OPERATIONS
+                                .stream()
+                                .filter(PhaseOperation::requiredOfEveryAdapter),
+                                Stream.of(
+                                        PhaseOperation.AGGREGATE_CHANGED))
                         .toList(), List.copyOf(operations.keySet())),
                 () -> assertFalse(operations.containsKey(PhaseOperation.SEND_SIGNAL)),
-                () -> assertFalse(operations.containsKey(PhaseOperation.AGGREGATE_CHANGED)),
                 () -> assertThrows(UnsupportedOperationException.class, () -> operations.put(
                         PhaseOperation.SEND_SIGNAL, null)));
     }
 
     @Test
-    @DisplayName("Every handler and viewer method refuses with the message of the validation where the adapter id has no clients, a start, a start by a message, the handlers of a task and a correlation included")
+    @DisplayName("Every handler and viewer method refuses with the message of the validation where the adapter id has no clients, a start, a start by a message, the handlers of a task, a correlation and a push included")
     void anAdapterIdWithoutClientsRefusesWithItsValidationMessage() {
         final var processService = startingProcessService(unconfigured("orders"), (
             module,
@@ -191,7 +193,11 @@ class ZenBpmProcessServiceTest {
         final var startByAMessage = processService
                 .phaseOperations()
                 .get(PhaseOperation.START_WORKFLOW_BY_MESSAGE);
-        final var calls = Stream.concat(Stream.of(() -> startByAMessage.phaseOne(startByMessageCheck()),
+        final var push = processService
+                .phaseOperations()
+                .get(PhaseOperation.AGGREGATE_CHANGED);
+        final var calls = Stream.concat(Stream.of(() -> push.phaseOne(taskRequest()), () -> push.phaseTwo(
+                correlationRequest(null)), () -> startByAMessage.phaseOne(startByMessageCheck()),
                 () -> startByAMessage.phaseTwo(startByMessageRequest()), () -> start.phaseOne(null), () -> start
                         .phaseTwo(startRequest(
                                 new ArrayList<>())),
@@ -209,7 +215,7 @@ class ZenBpmProcessServiceTest {
     }
 
     @Test
-    @DisplayName("Every handler but the starts, those of a task and the correlation, and the viewer methods, of a configured adapter id say that they are not built yet, and what they were asked to do")
+    @DisplayName("Every handler but the starts, those of a task, the correlation and the push, and the viewer methods, of a configured adapter id say that they are not built yet, and what they were asked to do")
     void aConfiguredAdapterIdSaysThatTheCallIsNotBuiltYet() {
         try (var factory = configured("http://localhost:8080")) {
             final var processService = startingProcessService(factory, (

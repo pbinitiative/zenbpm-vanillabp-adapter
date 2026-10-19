@@ -1,0 +1,130 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" id="contract-iterations-definitions"
+    xmlns:zenbpm="http://zenbpm.pbinitiative.org/1.0" targetNamespace="http://bpmn.io/schema/bpmn"
+    xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI"
+    xmlns:dc="http://www.omg.org/spec/DD/20100524/DC"
+    xmlns:di="http://www.omg.org/spec/DD/20100524/DI">
+  <bpmn:process id="contract-iterations" isExecutable="true">
+    <bpmn:startEvent id="Start">
+      <bpmn:outgoing>Flow_ToIterations</bpmn:outgoing>
+    </bpmn:startEvent>
+    <bpmn:subProcess id="Iterations">
+      <bpmn:incoming>Flow_ToIterations</bpmn:incoming>
+      <bpmn:outgoing>Flow_ToWaitLong</bpmn:outgoing>
+      <bpmn:multiInstanceLoopCharacteristics>
+        <bpmn:extensionElements>
+          <zenbpm:loopCharacteristics inputCollection="=[1, 2]" inputElement="item" />
+        </bpmn:extensionElements>
+      </bpmn:multiInstanceLoopCharacteristics>
+      <bpmn:startEvent id="Iteration_Start">
+        <bpmn:outgoing>Flow_ToIterationWait</bpmn:outgoing>
+      </bpmn:startEvent>
+      <bpmn:intermediateCatchEvent id="Iteration_Wait">
+        <bpmn:incoming>Flow_ToIterationWait</bpmn:incoming>
+        <bpmn:outgoing>Flow_ToIterationApproved</bpmn:outgoing>
+        <bpmn:timerEventDefinition id="Iteration_Wait_Definition">
+          <bpmn:timeDuration>PT1S</bpmn:timeDuration>
+        </bpmn:timerEventDefinition>
+      </bpmn:intermediateCatchEvent>
+      <bpmn:exclusiveGateway id="Iteration_IsApproved" default="Flow_ToIterationHeld">
+        <bpmn:incoming>Flow_ToIterationApproved</bpmn:incoming>
+        <bpmn:outgoing>Flow_ToIterationShipped</bpmn:outgoing>
+        <bpmn:outgoing>Flow_ToIterationHeld</bpmn:outgoing>
+      </bpmn:exclusiveGateway>
+      <bpmn:endEvent id="Iteration_Approved">
+        <bpmn:incoming>Flow_ToIterationShipped</bpmn:incoming>
+      </bpmn:endEvent>
+      <bpmn:endEvent id="Iteration_Held">
+        <bpmn:incoming>Flow_ToIterationHeld</bpmn:incoming>
+      </bpmn:endEvent>
+      <bpmn:sequenceFlow id="Flow_ToIterationWait" sourceRef="Iteration_Start" targetRef="Iteration_Wait" />
+      <bpmn:sequenceFlow id="Flow_ToIterationApproved" sourceRef="Iteration_Wait" targetRef="Iteration_IsApproved" />
+      <bpmn:sequenceFlow id="Flow_ToIterationShipped" sourceRef="Iteration_IsApproved" targetRef="Iteration_Approved">
+        <bpmn:conditionExpression>=approved = true</bpmn:conditionExpression>
+      </bpmn:sequenceFlow>
+      <bpmn:sequenceFlow id="Flow_ToIterationHeld" sourceRef="Iteration_IsApproved" targetRef="Iteration_Held" />
+    </bpmn:subProcess>
+    <bpmn:intermediateCatchEvent id="Wait_Long">
+      <bpmn:incoming>Flow_ToWaitLong</bpmn:incoming>
+      <bpmn:outgoing>Flow_ToEnd</bpmn:outgoing>
+      <bpmn:timerEventDefinition id="Wait_Long_Definition">
+        <bpmn:timeDuration>PT1H</bpmn:timeDuration>
+      </bpmn:timerEventDefinition>
+    </bpmn:intermediateCatchEvent>
+    <bpmn:endEvent id="End">
+      <bpmn:incoming>Flow_ToEnd</bpmn:incoming>
+    </bpmn:endEvent>
+    <bpmn:sequenceFlow id="Flow_ToIterations" sourceRef="Start" targetRef="Iterations" />
+    <bpmn:sequenceFlow id="Flow_ToWaitLong" sourceRef="Iterations" targetRef="Wait_Long" />
+    <bpmn:sequenceFlow id="Flow_ToEnd" sourceRef="Wait_Long" targetRef="End" />
+  </bpmn:process>
+  <bpmndi:BPMNDiagram id="BPMNDiagram_1">
+    <bpmndi:BPMNPlane id="BPMNPlane_1" bpmnElement="contract-iterations">
+      <bpmndi:BPMNShape id="Start_di" bpmnElement="Start">
+        <dc:Bounds x="160" y="80" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Iterations_di" bpmnElement="Iterations" isExpanded="true">
+        <dc:Bounds x="256" y="80" width="398" height="182" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Iteration_Start_di" bpmnElement="Iteration_Start">
+        <dc:Bounds x="286" y="110" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Iteration_Wait_di" bpmnElement="Iteration_Wait">
+        <dc:Bounds x="382" y="110" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Iteration_IsApproved_di" bpmnElement="Iteration_IsApproved">
+        <dc:Bounds x="478" y="110" width="50" height="50" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Iteration_Approved_di" bpmnElement="Iteration_Approved">
+        <dc:Bounds x="588" y="110" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Iteration_Held_di" bpmnElement="Iteration_Held">
+        <dc:Bounds x="588" y="196" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Wait_Long_di" bpmnElement="Wait_Long">
+        <dc:Bounds x="714" y="80" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="End_di" bpmnElement="End">
+        <dc:Bounds x="810" y="80" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNEdge id="Flow_ToIterationWait_di" bpmnElement="Flow_ToIterationWait">
+        <di:waypoint x="322" y="128" />
+        <di:waypoint x="382" y="128" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_ToIterationApproved_di" bpmnElement="Flow_ToIterationApproved">
+        <di:waypoint x="418" y="128" />
+        <di:waypoint x="448" y="128" />
+        <di:waypoint x="448" y="135" />
+        <di:waypoint x="478" y="135" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_ToIterationShipped_di" bpmnElement="Flow_ToIterationShipped">
+        <di:waypoint x="528" y="135" />
+        <di:waypoint x="558" y="135" />
+        <di:waypoint x="558" y="128" />
+        <di:waypoint x="588" y="128" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_ToIterationHeld_di" bpmnElement="Flow_ToIterationHeld">
+        <di:waypoint x="528" y="135" />
+        <di:waypoint x="558" y="135" />
+        <di:waypoint x="558" y="214" />
+        <di:waypoint x="588" y="214" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_ToIterations_di" bpmnElement="Flow_ToIterations">
+        <di:waypoint x="196" y="98" />
+        <di:waypoint x="226" y="98" />
+        <di:waypoint x="226" y="171" />
+        <di:waypoint x="256" y="171" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_ToWaitLong_di" bpmnElement="Flow_ToWaitLong">
+        <di:waypoint x="654" y="171" />
+        <di:waypoint x="684" y="171" />
+        <di:waypoint x="684" y="98" />
+        <di:waypoint x="714" y="98" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_ToEnd_di" bpmnElement="Flow_ToEnd">
+        <di:waypoint x="750" y="98" />
+        <di:waypoint x="810" y="98" />
+      </bpmndi:BPMNEdge>
+    </bpmndi:BPMNPlane>
+  </bpmndi:BPMNDiagram>
+</bpmn:definitions>

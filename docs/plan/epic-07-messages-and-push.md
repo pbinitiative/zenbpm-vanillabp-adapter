@@ -628,7 +628,7 @@ so what they showed is written here as well):
 
 ### S7.2.1 `AGGREGATE_CHANGED`, global and task-scoped
 
-- [ ] **Depends on:** S7.1.1.
+- [x] **Depends on:** S7.1.1.
 
 **Instructions**
 
@@ -655,7 +655,145 @@ inside a sub-process; the sub-process' child instance carries the value, the roo
 
 **Acceptance criteria**
 
-- [ ] A task-scoped push leaves the root instance's variables untouched.
+- [x] A task-scoped push leaves the root instance's variables untouched.
+  `ZenBpmAggregateChangedIT#aTaskScopedPushWritesTheChildInstance`, against the pinned engine: the
+  task inside the sub-process `Inspection` is left open, the application approves the shipment and
+  pushes into the task's scope; the sub-process's instance carries `approved = true`, the root still
+  carries `false`, and the proxy in front of the engine saw no write of the root between the start
+  and the completion; the completion then writes the values everywhere and the gateway inside the
+  sub-process takes the approved branch. At the SPI:
+  `ZenBpmAggregatePushTest#aTaskScopedPushWritesTheInstanceTheTaskWaitsInAndNothingElse` (one read
+  of the job, one write of its instance, nothing else).
+
+*Fit check, 2026-10-19, decided by the Implementor.* Checked against `main` (`c328ace`),
+`ADAPTER-AUTHORS.md` (3.3 and 4.1), the platform as the adapter resolves it
+(`2.0.0-20261015.045823-21`, read at the platform's commit `f9505797` it was built from:
+`PhaseOperation.AGGREGATE_CHANGED`, `PhaseTwoRequest#workflowId`, `#taskRecord` and `#taskId`,
+`TaskDelivery`, `TaskDeliveryLog#recordOfTask`, `MigrationProcessService#aggregateChanged`,
+`#addressWorkflowPhaseTwo`, `#elect`, `#probe`, `#taskRowDeliveredBy`, `#workflowIdStartedBy`,
+`DeliveryRecords#locate` and `#taskRowOf`; signatures checked in the resolved jars, and
+`ProcessService#aggregateChanged(A)` and `(A, String)` in the resolved `spi-for-java`
+`2.0.0-20261013.234025-8`), Camunda 8's `Camunda8ProcessService#pushChangedAggregate`,
+`#pushedIntoTheInstanceOfTheStartRow`, `#pushIntoTheCalledInstances` and
+`#theAdapterLeftTheTaskOpen`, and the engine at the pin `bdd795a3` (source exported with
+`git archive`: `Server.UpdateProcessInstanceVariables` of `internal/rest/server.go`,
+`ZenNode.UpdateProcessInstanceVariables` of `internal/cluster/node.go`, `Engine.ModifyInstance` of
+`pkg/bpmn/engine_api.go`, `Engine.NewEngineBatch` of `pkg/bpmn/engine_batch.go`,
+`handleMultiInstanceActivity`, `startParallelMultiInstance` and `startSequentialMultiInstance` of
+`pkg/bpmn/multi_instance.go`, `createSubProcess` of `pkg/bpmn/sub_process.go`, `NewVariableHolder`
+of `pkg/bpmn/runtime/varholder.go` and the loading of an instance in
+`internal/cluster/partition/partition_persistence.go`; probed with `curl` against the pinned image,
+then held by the tests below). What did not fit, and what was decided:
+
+1. **The handler was not one of the `requiredOfEveryAdapter` loop.** `AGGREGATE_CHANGED` is not
+   required of every adapter in the resolved platform, so `ZenBpmProcessService` had left it out
+   and the core answered it as not supported (its javadoc said so). The handler is added after the
+   loop, in a class of its own, `ZenBpmAggregatePush`, as `ZenBpmMessageCorrelation` and
+   `ZenBpmMessageStart` were. `ZenBpmProcessServiceTest#everyRequiredOperationIsServed` pinned the
+   push as absent; it now pins that the push is served and a signal is not.
+2. **Does a push of the root reach a child instance?** (instruction 1, brief question 1, open
+   question 1) Measured on the pin, first with probes and then by the IT written before the code:
+   a value written into the root does not reach a gateway inside a running embedded sub-process,
+   whose instance holds a copy taken when it started (decision 35); a write into the sub-process's
+   instance does. An iteration of a multi-instance sub-process holds its item and what the element
+   maps in, and once it waited it reads nothing else of its workflow, not even a value the root
+   carried from the start: the engine saves an iteration with its own variables and reads an
+   instance back without its parent's (GAPS 31, entered). A write into one parallel iteration is
+   seen by that iteration alone and is not lost; a write into the body's instance reaches a
+   sequential iteration which starts later only through an input mapping of the element. Decided
+   the recommended answer, recorded as decision 49: write the root, then every instance below it
+   which is `active` or `failed`, at any depth, each before the instances below it are read; do not
+   enter a called instance which names another aggregate (decision 45). Against a push of the root
+   alone (the mutant below), `#aGlobalPushReachesAGatewayInsideASubProcess` and
+   `#aGlobalPushReachesTheGatewayOfEveryIteration` fail with the gateway on its held branch.
+3. **What `PATCH /v1/process-instances/{key}/variables` answers** (brief). `204` for an instance
+   which is `active` or `failed`; `409` for one which ended, a child which ended while its root
+   runs included (the REST server checks the state first); `404` for a key the node asked does not
+   hold; `502` for a key of a partition the engine does not have. The write takes the instance's
+   lock (`NewEngineBatch`), so it is not lost against a job completion in the same instance. A `409`
+   passes the instance over, with everything below it, as decision 34 reads it; a `404` is thrown,
+   because a node which lags behind answers it, and the outbox repeats the push.
+   `ZenBpmRestClientContractIT#anIterationWhichWaitedReadsOnlyItsOwnVariables` holds the `409` of a
+   child and the iteration's variables.
+4. **Which instance is the root** (instruction 1). The start row's key is used only through the
+   probe's own check, now shared by the probe and the push (`ZenBpmRunningWorkflows`, moved out of
+   `ZenBpmProcessService`): the instance runs, belongs to the process and names the aggregate;
+   anything else falls through. The business-key search reads root instances only, because the
+   engine hands a business key on to every instance it starts below the root, and reads `active`,
+   then `failed`. Beyond the story, under `message-start-lookup: scan` the push also finds a workflow
+   a message started by its id variable, as the probes do (`ZenBpmMessageStartScan#running`, the
+   scan's loop shared with `#find`), so a push reaches every workflow the election found. The scope
+   is the request's process, as on Camunda 8.
+5. **A task-scoped push** (instruction 2, brief question 2). As recommended: the job's own
+   `processInstanceKey` and nothing else; a task id which is no key of the engine, a job the engine
+   does not know, and an instance which ended are each a warned no-op, and the root is not written
+   instead. `ZenBpmAggregateChangedIT#aTaskScopedPushWritesTheChildInstance` holds the acceptance
+   criterion through the proxy: the sub-process's instance carries the value, the root keeps
+   `false`, and no write of the root was sent.
+6. **"A handler holds the task"** (instruction 2, brief question 3). No field of the task's row says
+   so. The row exists only for a task the adapter left open (`TaskDeliveryLog#recordOfTask`: the
+   record of the delivery which reported `COMPLETION_PENDING`), `taskClosedAt` says whether the
+   application closed it since, and a missing row says nothing (no delivery log, the retention, a
+   row of another adapter, or a handler which runs now). Camunda 8 reads the row to decide whether
+   it may ASK its engine about the task, because its question shortens the lock of a job a handler
+   may hold; ZenBPM's `GET /v1/jobs/{key}` is a plain read. Decided not to skip: a skip on a missing
+   row would lose the push of every application without a delivery log, and writing while a handler
+   holds the job harms nothing, because the handler's completion writes the values of its own
+   commit afterwards (decision 35) and the push writes the values of the moment it runs. The row is
+   not read either, because it names the workflow (decision 28) and not the instance the task waits
+   in. A job keeps the variables of its creation, so a handler which runs, or a task handed out
+   again, does not see a push; `ZenBpmRestClientContractIT#aJobKeepsTheVariablesItWasCreatedWith`
+   holds that engine fact, which the README states.
+7. **UNKNOWN** (brief question 4). The core warns and consumes the entry where its own election of
+   phase two finds the workflow ended or unknown. Between that election and the write, the push
+   finds no running root: a WARN names the process, the module, the aggregate, the adapter id and
+   that the entry is consumed, and nothing is retried.
+8. **Instruction 3.** Conditional events are refused while deploying (GAPS 14); the exclusive
+   gateways of the IT read the pushed value.
+9. **Names and places.** `processservice/ZenBpmAggregatePush`, `processservice/ZenBpmRunningWorkflows`;
+   the Spring IT application `it/push` (`PushItApplication`, `Shipment`, `ShipmentRepository`,
+   `ShipmentWorkflow`), `push-it.yaml`, one process `Shipments` with a path per scenario in
+   `push-it/shipments.bpmn` (with its diagram, decision 29). Beyond the story the IT has
+   `#aGlobalPushReachesTheGatewayOfEveryIteration`, because the walk is only proved where a copy
+   exists to reach.
+10. **Documentation.** The README gained the push; architecture 4.5 and the mapping row 53 say what
+   is built; the deviations draft gained item 17 for GAPS 31. Open question 1 keeps what was found
+   and planned then, and a dated note says that the default `start-row` reaches a workflow a message
+   started.
+
+**Implemented 2026-10-19.** Core: `ZenBpmAggregatePush` (both phases of `AGGREGATE_CHANGED`,
+registered by `ZenBpmProcessService` after the handlers every adapter must have),
+`ZenBpmRunningWorkflows` (the key check of the probes, moved out of `ZenBpmProcessService`, and the
+search for the root instance), `ZenBpmMessageStartScan#running` (the scan's loop shared with
+`#find`). Spring Boot tests: `ZenBpmAggregateChangedIT` with the application `it/push`
+(`PushItApplication`, `Shipment`, `ShipmentRepository`, `ShipmentWorkflow`), `push-it.yaml` and
+`push-it/shipments.bpmn` (with its diagram, decision 29). Decision 49; GAPS 31 new; the README,
+architecture 4.5, the mapping row 53, open question 1 and item 17 of the deviations draft.
+
+New tests: `ZenBpmAggregatePushTest` (16: the walk below the root, the five ways the key leads
+elsewhere, a root with an incident, nothing which runs, a root and an instance below which ended
+meanwhile, a `404` repeated, the scan, no scan without it, the task-scoped write, the three gone
+scopes, phase one); `ZenBpmProcessServiceTest` (the push served, refused without clients; three
+cases changed, none weakened); against the pinned engine `ZenBpmRestClientContractIT` (2:
+`#anIterationWhichWaitedReadsOnlyItsOwnVariables`, fixture `contract-iterations.bpmn`, and
+`#aJobKeepsTheVariablesItWasCreatedWith`); Spring Boot `ZenBpmAggregateChangedIT` (4:
+`#aGlobalPushReachesTheGateway`, `#aGlobalPushReachesAGatewayInsideASubProcess`,
+`#aGlobalPushReachesTheGatewayOfEveryIteration`, `#aTaskScopedPushWritesTheChildInstance`).
+
+Seen to fail, each restored afterwards (9 of 9 mutants, against green unmutated runs, a kill counted
+only where a test failed): a push of the root alone (against the engine: the sub-process and the
+iterations take the held branch); a task-scoped push which writes the root as well (against the
+engine: the root carries `true`, and the proxy saw its write); a called instance of another
+aggregate entered; ended instances written; a `409` thrown instead of passed over; the root
+search taking an instance below the root; the root search not reading instances with an incident;
+the scan switched off in the push; the children of an instance read without its write first.
+
+`TZ=Etc/UTC mvn clean install` on OpenJDK 25.0.2 builds green with every integration test run and
+none skipped (engine test support 12 unit and 5 integration tests, core 1,054 unit and 92
+integration tests, Spring Boot 14 unit and 57 integration tests, smoke test 38, Quarkus runtime 13,
+Quarkus deployment 52, Quarkus integration tests 10, coverage gate 37). The gate measures 100 % of
+29,064 instructions for Spring Boot and 100 % of 28,934 for Quarkus, and `bin/check-deploy-safety.sh`
+passes.
 
 ## F7.3 Quarkus twins
 

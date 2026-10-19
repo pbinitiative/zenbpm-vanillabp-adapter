@@ -364,11 +364,19 @@ and a `404` is an ordinary failure, repeated with the outbox's backoff (decision
 
 ### 4.5 Aggregate push
 
-`AGGREGATE_CHANGED` without a task: the instance named by `PhaseTwoRequest#workflowId()` (the start
-row) first, the business-key search second, then `PATCH .../{key}/variables`. With a task: `GET
-/v1/jobs/{taskId}` -> its `processInstanceKey` IS the scope the task runs in (a sub-process or
-multi-instance body is a child instance) -> `PATCH` that instance; `taskRecord()` lets the adapter
-skip a task a handler holds. No idempotency key, as the core defines it.
+`AGGREGATE_CHANGED` without a task (`ZenBpmAggregatePush`): the root is the instance named by
+`PhaseTwoRequest#workflowId()` (the start row) where it runs the workflow of the aggregate, else the
+root instance of the business-key search, else, under `message-start-lookup: scan`, the running
+instance whose id variable names the aggregate; then `PATCH .../{key}/variables` of the root, and of
+every instance below it which is `active` or `failed`, read with `GET .../{key}/child-processes`
+after its parent was written, because a sub-process, a multi-instance body, each iteration and a
+called instance hold a copy of their own (decisions 35 and 49, GAPS 31). A called instance which
+names another aggregate is not entered (decision 45). With a task: `GET /v1/jobs/{taskId}` -> its
+`processInstanceKey` IS the scope the task runs in (a sub-process or an iteration is a child
+instance) -> `PATCH` that instance and no other. `taskRecord()` is not read: no field of the row says
+that a handler holds the task (the row exists for a task the adapter left open), and the row names
+the workflow, not the instance the task waits in. A `409` (the instance ended) makes the write a
+no-op, a `404` is repeated (decision 34). No idempotency key, as the core defines it.
 
 ### 4.6 User tasks
 

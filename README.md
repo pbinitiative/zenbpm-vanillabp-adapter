@@ -222,6 +222,22 @@ takes is answered `404`, also where another node took the start event at that mo
 repeated with the outbox's backoff and blocked after `vanillabp.outbox.block-after-attempts`
 (decision 47).
 
+A changed aggregate is pushed in phase two only. A push of the workflow writes the values the
+aggregate shares, and its id, into the workflow's root and then into every instance which runs
+below it, at any depth, because ZenBPM gives an embedded sub-process, a multi-instance body and
+each of its iterations, and a called process a copy of the variables of their own, and a gateway
+decides on the copy of the instance it runs in (decision 49). It does not enter a called instance
+which names another aggregate. The root is the instance the workflow started as, where the start
+row names it, else the one the aggregate's business key finds, else, under
+`message-start-lookup: scan`, the one whose id variable names the aggregate; where none runs any
+more, the push is a warned no-op. A push into the scope of a task writes the instance the task
+waits in, that of its sub-process or its iteration, and leaves the root and every other branch as
+they were; the task's completion writes the values up to the root later. Where the task or the
+instance it waits in is gone, nothing is written. A handler which runs already, or a task handed
+out again, gets the variables its job was created with all the same. An iteration of a
+multi-instance element which starts after a push reads the pushed value only where the element
+maps it in (see [`GAPS.md`](./GAPS.md)).
+
 What is built next, and in which order, is the implementation plan in [`docs/`](docs/README.md).
 
 ## Modules
