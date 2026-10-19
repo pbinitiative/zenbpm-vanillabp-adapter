@@ -571,6 +571,34 @@ class ZenBpmDeclaredProcessWorkersTest {
     }
 
     @Test
+    @DisplayName("Under use-prefix a declared id whose method names the engine's default type user-task-type polls a held user task without a task definition under that type, which the scoping leaves as it is, and one which names it under its scoped type; another task definition never takes the default type")
+    void theDefaultTypeOfAHeldUserTaskIsPolledUnscoped(final CapturedOutput output) throws Exception {
+        final var held = "shop__%s".formatted(DECLARED);
+        theEngineHolds(held, model(held, null, ""), model(held, null, "shop__%s__user-task-type".formatted(
+                DECLARED)));
+        final var deploymentService = deploymentService(NameClashAvoidance.USE_PREFIX, TestWiring
+                .claiming("Orders")
+                .servedElsewhere("Notify")
+                .declaringWithoutAModel(DECLARED, "user-task-type", "verify"));
+        final var context = wired(deploymentService);
+
+        deploymentService.startWorkflowProcessing("shop", context);
+
+        assertAll(
+                () -> assertEquals(Map.of("user-task-type", "user-task-type",
+                        "shop__OrdersBeforeTheRename__user-task-type", "user-task-type"),
+                        context
+                                .wiredProcesses()
+                                .get(DECLARED)
+                                .userTaskTypes()),
+                () -> assertTrue(output
+                        .getOutOfThisTest()
+                        .contains(
+                                "Not served: the task definition(s) [verify], which no model held under that id names."),
+                        output::getOutOfThisTest));
+    }
+
+    @Test
     @DisplayName("The start markers a held model carries are served, with the start events of the held models which carry them, so a workflow started right before the rename passes its marker; a held model without markers adds none")
     void theStartMarkersOfAHeldModelAreServed() throws Exception {
         final var held = "shop__%s".formatted(DECLARED);
@@ -753,13 +781,14 @@ class ZenBpmDeclaredProcessWorkersTest {
 
     // a version of the process held under the declared id, without start markers: a start event, a
     // service task, without a task definition where no type is given for it, and a user task where
-    // a type is given for one
+    // a type is given for one, without a task definition where the type given is empty
     private static String model(
         final String scopedProcessId,
         final String serviceTaskType,
         final String userTaskType
     ) {
-        final var userTask = userTaskType == null ? "" : """
+        final var userTask = userTaskType == null ? "" : userTaskType.isEmpty() ? """
+                <bpmn:userTask id="Review" />""" : """
                 <bpmn:userTask id="Review">
                   <bpmn:extensionElements><zenbpm:taskDefinition type="%s" /></bpmn:extensionElements>
                 </bpmn:userTask>""".formatted(userTaskType);

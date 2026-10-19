@@ -164,15 +164,16 @@ public final class ZenBpmUserTaskNotifier {
      * @param facts The facts of the job's instance, with the variable of the aggregate's id where
      *            the instance has it
      * @param process The process of the module the job belongs to
-     * @return Whether nothing is left to do for the event: the core took the notification, or there
-     *         is nobody to be notified; <code>false</code> where the next look at the user tasks
-     *         has to hand it over again
+     * @param warnedBefore Whether a failure of the method notified was said at WARN before, so a
+     *            further one is said at DEBUG
+     * @return What became of the notification
      */
-    boolean deliver(
+    Outcome deliver(
         final JobRef job,
         final TaskEvent.Event event,
         final InstanceFacts facts,
-        final WiredProcess process
+        final WiredProcess process,
+        final boolean warnedBefore
     ) {
         final var plainProcessId = process.bpmnProcessId();
         final var taskDefinition = process
@@ -183,7 +184,7 @@ public final class ZenBpmUserTaskNotifier {
             log.trace(
                     "ZenBPM[{}]: no @WorkflowTask method of process '{}' (workflow module '{}') serves user task '{}' (element '{}'), so job {} is {} without a notification",
                     adapterId, plainProcessId, workflowModuleId, taskDefinition, job.elementId(), job.key(), event);
-            return true;
+            return Outcome.DONE;
         }
         final var drain = handler.drain();
         // entered before the module's state is read, as a job's handler enters, so either the stop
@@ -193,7 +194,7 @@ public final class ZenBpmUserTaskNotifier {
             if (drain.isStopping()) {
                 log.debug("ZenBPM[{}]: user task {} ('{}') is not notified as {} while workflow module '{}' shuts down",
                         adapterId, job.key(), taskDefinition, event, workflowModuleId);
-                return false;
+                return Outcome.AGAIN;
             }
             final Optional<Notification> notification;
             try {
@@ -202,21 +203,21 @@ public final class ZenBpmUserTaskNotifier {
                 log.debug(
                         "ZenBPM[{}]: the workflow of user task {} ('{}') could not be read; the next look at the user tasks hands it over again: {}",
                         adapterId, job.key(), taskDefinition, e.getMessage());
-                return false;
+                return Outcome.AGAIN;
             }
             if (notification.isEmpty()) {
-                return false;
+                return Outcome.AGAIN;
             }
             if (notification
                     .get()
                     .namesNoAggregate()) {
                 warnAboutAnInstanceWithoutAnAggregate(job, event, facts, taskDefinition);
-                return true;
+                return Outcome.DONE;
             }
             drain.describe(entered, notification
                     .get()
                     .getWorkflowAggregateId());
-            return invoke(plainProcessId, notification.get());
+            return invoke(plainProcessId, notification.get(), warnedBefore);
         } finally {
             drain.leave(entered);
         }
@@ -238,9 +239,10 @@ public final class ZenBpmUserTaskNotifier {
         return event == TaskEvent.Event.CANCELED ? "%d-canceled".formatted(jobKey) : "%d-created".formatted(jobKey);
     }
 
-    private boolean invoke(
+    private Outcome invoke(
         final String plainProcessId,
-        final Notification notification
+        final Notification notification,
+        final boolean warnedBefore
     ) {
         final WorkflowTaskOutcome outcome;
         try {
@@ -251,14 +253,23 @@ public final class ZenBpmUserTaskNotifier {
                     ZenBPM[{}]: user task {} ('{}') is about a workflow this application does not own, so it is \
                     not notified as {}: {}""", adapterId, notification.getTaskId(), notification.getTaskDefinition(),
                     notification.getTaskEvent(), e.getMessage());
-            return true;
+            return Outcome.DONE;
         } catch (final RuntimeException e) {
-            log.warn("""
+            final var failure = """
                     ZenBPM[{}]: the @WorkflowTask method notified of user task {} ('{}', workflow aggregate '{}') as \
-                    {} threw; its transaction was rolled back, and the next look at the user tasks notifies it \
-                    again""", adapterId, notification.getTaskId(), notification.getTaskDefinition(), notification
-                    .getWorkflowAggregateId(), notification.getTaskEvent(), e);
-            return false;
+                    {} threw; its transaction was rolled back, and a later look at the user tasks notifies it again: \
+                    the next look first, and after each further failure a look which waits twice as many looks, at \
+                    most {}. A further failure of this notification is logged at DEBUG.""";
+            if (warnedBefore) {
+                log.debug(failure, adapterId, notification.getTaskId(), notification.getTaskDefinition(),
+                        notification.getWorkflowAggregateId(), notification.getTaskEvent(),
+                        ZenBpmUserTaskPoller.LONGEST_WAIT_IN_LOOKS, e);
+            } else {
+                log.warn(failure, adapterId, notification.getTaskId(), notification.getTaskDefinition(), notification
+                        .getWorkflowAggregateId(), notification.getTaskEvent(),
+                        ZenBpmUserTaskPoller.LONGEST_WAIT_IN_LOOKS, e);
+            }
+            return Outcome.THREW;
         }
         if (outcome.kind() == WorkflowTaskOutcome.Kind.BPMN_ERROR) {
             log.warn("""
@@ -271,7 +282,7 @@ public final class ZenBpmUserTaskNotifier {
                     outcome.errorCode());
         }
         reportTheTasksTheEngineNoLongerHas(plainProcessId, notification);
-        return true;
+        return Outcome.DONE;
     }
 
     // after the core took the notification, as after a job's outcome reached the engine; nothing of
@@ -350,6 +361,30 @@ public final class ZenBpmUserTaskNotifier {
         return instances
                 .facts(workflowId, idVariableName)
                 .flatMap(root -> NamedAggregate.in(root, idVariableName));
+    }
+
+    /**
+     * What became of a notification of a user task.
+     */
+    enum Outcome {
+
+        /**
+         * Nothing is left to do: the core took the notification, or nobody is to be notified.
+         */
+        DONE,
+
+        /**
+         * It was not told, because the engine did not answer for its workflow or the module stops;
+         * a later look hands it over again.
+         */
+        AGAIN,
+
+        /**
+         * The method notified threw, and the core rolled its transaction back; a later look hands it
+         * over again.
+         */
+        THREW
+
     }
 
     /**

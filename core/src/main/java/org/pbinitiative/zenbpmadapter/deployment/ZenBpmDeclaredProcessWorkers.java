@@ -14,6 +14,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.TreeSet;
+import java.util.stream.Stream;
 
 import org.pbinitiative.zenbpmadapter.client.ZenBpmClientFactory;
 import org.pbinitiative.zenbpmadapter.model.ZenBpmMarkerTasks;
@@ -157,10 +158,9 @@ final class ZenBpmDeclaredProcessWorkers {
             // a type a user task carries in any version is never taken from the job stream, where
             // its job cannot be told from a task's, even where a task of another version carries it;
             // it is polled, and the poller tells a user task's job by its element type
-            if (types
-                    .userTaskTypes()
-                    .contains(jobType)) {
-                userTasks.put(jobType, taskDefinition);
+            final var userTaskTypes = userTaskTypesOf(taskDefinition, jobType, types);
+            if (!userTaskTypes.isEmpty()) {
+                userTaskTypes.forEach(userTaskType -> userTasks.put(userTaskType, taskDefinition));
                 continue;
             }
             if (types
@@ -193,6 +193,22 @@ final class ZenBpmDeclaredProcessWorkers {
                     adapterId, scopedProcessId, Objects.requireNonNullElse(e.getMessage(), e.toString()));
             return Map.of();
         }
+    }
+
+    // the types the held models give to a user task of the task definition: its scoped type, and
+    // the engine's default type where the task definition is that default, because a user task
+    // without a task definition keeps it unscoped while one which names it is scoped
+    private static List<String> userTaskTypesOf(
+        final String taskDefinition,
+        final String jobType,
+        final HeldTypes types
+    ) {
+        return Stream
+                .of(jobType, ZenBpmModelReader.DEFAULT_USER_TASK_TYPE)
+                .distinct()
+                .filter(userTaskType -> userTaskType.equals(jobType) || userTaskType.equals(taskDefinition))
+                .filter(types.userTaskTypes()::contains)
+                .toList();
     }
 
     // every version, because the workflows still running under the id run on old ones as well; a

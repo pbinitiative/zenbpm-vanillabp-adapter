@@ -94,7 +94,8 @@ the maintainers, all recorded in decision 12, which this story enters together w
   be missed.
 - *The shared default type:* each distinct type is looked for once per adapter id; a
   job goes to the module claiming its instance's process, and one of a process nobody here claims
-  is remembered as done with after one instance read and never reaches the core. The task
+  is remembered as done with after one instance read and never reaches the core (corrected by the
+  answers to the reviews below: remembered until a module of the adapter id starts). The task
   definition reported is the plain type the wiring recorded (`user-task-type` where the model names
   none), the element id travels beside it, and the platform is asked whether a method serves the
   user task by both, at wiring and again per notification (the core routes by either, see
@@ -142,22 +143,22 @@ delivered: one `CANCELED`), `#aMarkedUserTaskIsNotPolled` (`implemented-external
 **Acceptance criteria**
 
 - [x] Each lifecycle event is delivered to the handler once per node and, across a restart, once per
-  application (the record).
-  Once per node: `ZenBpmUserTaskPollerTest` (27 tests: created once, cancelled once with a delivery
-  id of its own, a terminated job never seen active told as cancelled only, a notification which
-  threw told again and then not, the bound of 100,000 forgetting the eldest, a job whose
-  notification still runs never handed over twice, a refused slot ending the look). Against the
-  pinned engine, `ZenBpmUserTaskIT#userTaskCreatedIsNotifiedOnce`,
-  `#userTaskCanceledOnInstanceCancellation` and `#aUserTaskTakenAwayIsCanceledOnce` watch three
-  more looks after each event (poll interval `PT1S`) and count one creation and one cancellation;
-  in the last, the service task of the same workflow is delivered after the boundary event took the
-  user task away, and the platform's look at the other open tasks adds no second `CANCELED`.
-  Once per application: `ZenBpmUserTaskRestartIT#eachEventOfAUserTaskIsToldOnceAcrossARestart`
-  boots the application twice on one database: a creation and a cancellation told before the
-  restart are listed again and answered from the record ("Skipping the repeated delivery of task
-  'approve'"), the counts stay one each, and a cancellation which happened while the application
-  was down is told once; `#aUserTaskNobodyWasToldOfIsToldAsCancelledOnly` (looks off before the
-  restart) gets one `CANCELED` and no `CREATED`, recorded `COMPLETED`.
+  application (the record). Once per node: `ZenBpmUserTaskPollerTest` (33 tests since the answers to
+  the reviews below: created once, cancelled once with a delivery id of its own, a terminated job
+  never seen active told as cancelled only, a notification which threw told again and then not, a
+  delivery forgotten only once two complete looks no longer list it, 300 listed user tasks each
+  handed over once, a job whose notification still runs never handed over twice, a refused slot
+  ending the look). Against the pinned engine, `ZenBpmUserTaskIT#userTaskCreatedIsNotifiedOnce`,
+  `#userTaskCanceledOnInstanceCancellation` and `#aUserTaskTakenAwayIsCanceledOnce` watch three more
+  looks after each event (poll interval `PT1S`) and count one creation and one cancellation; in the
+  last, the service task of the same workflow is delivered after the boundary event took the user
+  task away, and the platform's look at the other open tasks adds no second `CANCELED`. Once per
+  application: `ZenBpmUserTaskRestartIT#eachEventOfAUserTaskIsToldOnceAcrossARestart` boots the
+  application twice on one database: a creation and a cancellation told before the restart are
+  listed again and answered from the record ("Skipping the repeated delivery of task 'approve'"),
+  the counts stay one each, and a cancellation which happened while the application was down is told
+  once; `#aUserTaskNobodyWasToldOfIsToldAsCancelledOnly` (looks off before the restart) gets one
+  `CANCELED` and no `CREATED`, recorded `COMPLETED`.
 - [x] The stream is never subscribed for a user-task type (asserted on the in-process server).
   `ZenBpmWorkflowProcessingTest#theStreamNeverSubscribesAUserTask`: on the in-process gRPC server
   (`FakeJobStreamEngine`) the module of `wiring.bpmn`, whose user task `Approve` a method serves,
@@ -180,6 +181,69 @@ configuration's 3, the model reader's and the context's 2); two of them were fir
 tests then got sharper (a failing look met by a stop; a lagging instance the first look never
 reached). One mutant against the pinned engine: the wake-up after a notification switched off
 fails `ZenBpmUserTaskIT#theCancellationOfAUserTaskTellsTheOpenServiceTaskOfItsWorkflow`.
+
+**Answers to two reviews of e08-f8.1, 2026-10-19.** Claude (approve with changes: 1 Major, 3
+Minor) and Copilot (changes requested: 3 Major, 2 Minor) reviewed `8c7e171`. Each finding was
+checked against the code, the engine at the pin and, where it could be, a test written first. Seven
+distinct findings, all valid; decision 12 was corrected in place, since it is entered by this
+unmerged story.
+
+1. *The seen-set thrashes above its bound (Claude, Major).* Valid: a look lists the jobs in the same
+   order every time, so an LRU set of 100,000 forgets each delivery before the next look reaches it
+   once one more job is listed, and every listed job is handed over at every look. The set now holds
+   what the engine lists: a delivery is forgotten once two looks in a row which listed every job no
+   longer list it (two, because offset paging may pass over a job while jobs before it leave the
+   state). `ZenBpmUserTaskPollerTest#aDeliveryIsForgottenOnceTwoLooksListedItNoMore`,
+   `#aLookWhichListedNotEveryJobForgetsNothing`, `#aLongListingIsHandedOverOnce` (300 listed, each
+   handed over once). The plan's "100,000 keys, LRU" is replaced; decision 12 says why.
+2. *A module not started yet is taken for nobody (both, Minor and Major).* Valid, and reproduced by
+   Copilot: the platform starts the modules one after the other, and a job of a later module found
+   by an earlier look was remembered as done with. Deliveries of nobody's processes are now kept
+   apart and cleared by every start of a module; one found to be nobody's while a module starts is
+   not remembered (the modules are read at the hand-over, after the starts were counted).
+   `#aUserTaskOfAModuleWhichStartsLaterIsToldOnceItStarted`,
+   `#aUserTaskFoundToBeNobodysWhileItsModuleStartsIsToldAtTheNextLook`.
+3. *A caught BPMN error terminates the job (Claude, Minor).* Valid: `processBoundaryErrorEvent` in
+   `pkg/bpmn/jobs_api.go` and `pkg/bpmn/engine_error_event_subprocess.go` set the job `terminated`
+   at the pin. Named in decision 12's engine facts; S8.2.1 decides what follows (note there). No
+   code here, as `cancelUserTask` is not built yet.
+4. *A notification which keeps failing (Claude, Minor: a stack trace at every look; Copilot, Major:
+   it takes the slots from the others).* Both valid; Copilot's reproduction showed a failing first
+   job keeping a healthy creation and a cancellation from ever running with one slot. A notification
+   handed over and not told is now handed over again by the next look, then after a wait which
+   doubles with each failure, at most 64 looks; a method's failure is a WARN with its stack trace,
+   and one right after another a DEBUG. `#notificationsWhichKeepFailingLeaveTheSlotsToTheOthers`
+   (two failing jobs and two slots: the creation and the cancellation behind them are told at the
+   third look, and two WARNs for four failures),
+   `#aNotificationWhichKeepsFailingIsRetriedAfterTheLongestWaitAtTheLatest` (ten tries in 300
+   looks). `#anInstanceWhichCannotBeReadSkipsItsUserTaskOnly` and
+   `#aUserTaskInASubProcessNamesTheRoot` now look twice at the end: their second failure waits two
+   looks.
+5. *The default type of a declared id under `use-prefix` (Copilot, Major).* Valid: the declared path
+   scoped `user-task-type` before comparing it with the held models, whose user task without a task
+   definition keeps the unscoped default. Both types are now polled where the held models carry
+   them, and the default only for that task definition.
+   `ZenBpmDeclaredProcessWorkersTest#theDefaultTypeOfAHeldUserTaskIsPolledUnscoped`, red before the
+   fix.
+6. *A short `history-time-to-live` loses a cancellation (Copilot, Minor).* Valid: the engine deletes
+   the terminated job with its instance's history, and Copilot measured it on the pinned image. Said
+   in decision 12's limits, GAPS 10, the README and the startup line. No test: it pins the engine's
+   cleanup, not a promise of the adapter, and its timing is the engine's.
+7. *"Up to one interval late" (Copilot, Minor).* Valid: the next look is timed when one ends, and
+   full slots defer more. The startup line, the README, GAPS 10 and decision 12 say what holds;
+   `#theStartOfTheLooksIsSaid` asserts the line.
+
+Mutants of the fixes: 12 of 12 killed (the default type of a declared id, and for any task
+definition; forgetting after an incomplete look, after one look, never; no wait after a failure, no
+longest wait; a start which keeps nobody's deliveries, one found to be nobody's during a start
+remembered, nobody's deliveries asked again; every failure a WARN, a throw not remembered as said).
+The first run left the race of a start during an instance read unkilled, because the modules were
+read after the read; reading them at the hand-over made it testable. Clean build of the fixes,
+2026-10-19 (`TZ=Etc/UTC mvn clean install`, Docker ITs included, none skipped, then
+`bin/check-deploy-safety.sh`: 13 files deployed by the green build, nothing by the red gate):
+engine-test-support 12 + 5 ITs; core 1,099 + 92 ITs; Spring Boot 14 + 65 ITs; smoke test 38;
+Quarkus runtime 13, deployment 52, integration tests 15; coverage gate 37. Coverage per platform:
+Spring Boot 100.00 % (0 of 31,295 instructions missed), Quarkus 100.00 % (0 of 31,165 missed).
 
 ## F8.2 Completing and cancelling
 
@@ -207,6 +271,15 @@ before it dispatches an entry, and ignores or skips one whose task ended with a 
 the `TaskNotFoundException` of the check shows only for a task which ends between the call and the
 commit (`ZenBpmTaskProcessingIT#aTaskWhichEndsBeforeTheCommitIsNotFoundAtTheCommit` is the shape of
 `#completingAUserTaskWhichIsGoneThrowsTaskNotFound`).
+
+*Note from S8.1.1, 2026-10-19.* A job failed with an error code which a boundary error event or an
+error event sub-process catches is set `terminated` at the pin (`processBoundaryErrorEvent` in
+`pkg/bpmn/jobs_api.go`, `pkg/bpmn/engine_error_event_subprocess.go`). So after `cancelUserTask`
+the user-task poller lists the job as terminated and tells the application `CANCELED`
+(`<key>-canceled`) for a user task it cancelled itself a moment before. Decide whether that
+notification is wanted (check what Camunda 8 tells after its own BPMN error on a user task), and,
+if not, have the node remember the keys it failed or skip such a job; pin the answer in
+`#cancelUserTaskRoutesTheBoundaryEvent`.
 
 **Tests**: `ZenBpmUserTaskIT#completeUserTaskContinuesWithSharedValues`,
 `#cancelUserTaskRoutesTheBoundaryEvent`, `#completingAGoneUserTaskIsAWarnedNoOp`,

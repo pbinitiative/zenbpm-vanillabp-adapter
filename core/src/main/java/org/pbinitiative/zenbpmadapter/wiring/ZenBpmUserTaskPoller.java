@@ -5,8 +5,10 @@
 package org.pbinitiative.zenbpmadapter.wiring;
 
 import java.time.Duration;
-import java.util.LinkedHashMap;
+import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedHashSet;
+import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
@@ -47,38 +49,48 @@ import lombok.extern.slf4j.Slf4j;
  * of an older version, is left to the job stream. An active job is a created user task, a terminated
  * one a cancelled user task. A completed user task is neither: the application completed it.
  * <p>
- * <b>Once per node.</b> Each job and event which was handed over and is done with goes into a
- * bounded set of {@value #SEEN_BOUND} deliveries, which forgets the one used longest ago first, and
- * is not handed over again while the set holds it. A job seen active is still handed over as
- * cancelled once it is terminated, and a terminated job never seen active, after a restart or where
- * the user task came and went between two looks, is handed over as cancelled only. Across a restart
- * the platform's record of deliveries answers a notification it took before, by its delivery id.
+ * <b>Once per node.</b> Each job and event which was handed over and is done with goes into a set
+ * of deliveries, and is not handed over again while the set holds it. The set forgets a delivery
+ * once two looks which listed every job in a row listed it no more: its job left the state, or the
+ * engine deleted it with its instance's history, and it is never listed so again. Two looks, because
+ * a listing by pages may pass over a job while jobs before it leave the state. So the set holds what
+ * the engine lists, however much that is, and no delivery is handed over a second time because the
+ * set ran full. A job seen active is still handed over as cancelled once it is terminated, and a
+ * terminated job never seen active, after a restart or where the user task came and went between
+ * two looks, is handed over as cancelled only. Across a restart the platform's record of deliveries
+ * answers a notification it took before, by its delivery id.
  * <p>
  * <b>Which module.</b> On a handler slot the facts of the job's instance are read through the
  * instance cache of the adapter id, and the job goes to the module which claims the instance's
  * process and is notified of the job's type in it: the scoped id of a process tells whose it is, as
  * it does for the probes. The engine's default type <code>user-task-type</code> is shared by every
- * application on the engine, so a job of a process this application does not claim is done with at
- * the cost of one read of its instance, and never reaches the core.
+ * application on the engine, so a job of a process no running module claims costs one read of its
+ * instance, never reaches the core, and is not handed over again until a workflow module of the
+ * adapter id starts: the module which claims it may be one which starts later than the first.
  * <p>
  * <b>Threads.</b> The look is timed by the timing threads of the adapter id and runs on a virtual
  * thread of its own, so an engine slow to answer never holds the job stream's hand-overs up, and the
  * next look is timed only once a look ended. A job is handed to a handler slot with
  * {@link ZenBpmExecutor#tryExecute(Runnable)}, which never waits: where no slot is free, the look
- * ends and the rest waits for the next one, out of the set, as a notification which threw does. A
- * job whose notification still runs is not handed over a second time.
+ * ends and the rest waits for the next one, out of the set. A job whose notification still runs is
+ * not handed over a second time.
  * <p>
  * <b>Failures.</b> A look the engine did not answer adds nothing to the set, is said once per outage
  * at WARN, and the next look asks again: a failed page is never read as an empty one. A failed read
- * of one job's instance skips that job only.
+ * of one job's instance skips that job only. A notification which was handed over and not told, its
+ * method threw or its instance could not be read, is handed over again by a later look: by the next
+ * one first, and after each further failure one which waits twice as many looks, at most
+ * {@value #LONGEST_WAIT_IN_LOOKS}. So a notification which keeps failing cannot take the handler
+ * slots from the others at every look. Its method's failure is said at WARN, and a failure right
+ * after another one of the method at DEBUG.
  */
 @Slf4j
 public final class ZenBpmUserTaskPoller {
 
     /**
-     * How many deliveries the set of the deliveries done with holds at most.
+     * How many looks a notification which keeps failing waits at most before it is handed over again.
      */
-    static final int SEEN_BOUND = 100_000;
+    static final int LONGEST_WAIT_IN_LOOKS = 64;
 
     private static final String USER_TASK = "USER_TASK";
 
@@ -106,8 +118,25 @@ public final class ZenBpmUserTaskPoller {
      */
     private final Set<Long> running = ConcurrentHashMap.newKeySet();
 
-    // guarded by itself; in the order used, so the eldest is the one used longest ago
-    private final Map<Delivery, Boolean> seen;
+    // guarded by itself: the deliveries done with
+    private final Set<Delivery> seen = new HashSet<>();
+
+    // guarded by seen: the deliveries of processes no running workflow module claimed
+    private final Set<Delivery> nobodys = new HashSet<>();
+
+    // guarded by seen: the deliveries handed over and not told, each with when it is due again
+    private final Map<Delivery, Retry> retries = new HashMap<>();
+
+    // guarded by seen: the starts of workflow modules, so a delivery found to be nobody's before a
+    // start is not remembered so after it
+    private long starts;
+
+    // read and written by the thread of a look only, and looks never overlap
+    private long lookNumber;
+
+    // read and written by the thread of a look only: what the last look which listed every job
+    // listed
+    private Set<Delivery> listedBefore = Set.of();
 
     // guarded by this: whether a module wants its user tasks looked for
     private boolean looking;
@@ -134,7 +163,7 @@ public final class ZenBpmUserTaskPoller {
     ) {
         this(adapterId, factory.rest(), factory.executor(), factory.instances(), factory
                 .configuration()
-                .getUserTaskPollInterval(), SEEN_BOUND);
+                .getUserTaskPollInterval());
     }
 
     ZenBpmUserTaskPoller(
@@ -142,8 +171,7 @@ public final class ZenBpmUserTaskPoller {
         final ZenBpmRestClient rest,
         final ZenBpmExecutor executor,
         final ZenBpmInstanceCache instances,
-        final Duration interval,
-        final int seenBound
+        final Duration interval
     ) {
         this.adapterId = adapterId;
         this.rest = rest;
@@ -155,14 +183,6 @@ public final class ZenBpmUserTaskPoller {
                 .ofVirtual()
                 .name("zenbpm-%s-user-tasks".formatted(adapterId))
                 .factory();
-        this.seen = new LinkedHashMap<>(16, 0.75f, true) {
-
-            @Override
-            protected boolean removeEldestEntry(final Map.Entry<Delivery, Boolean> eldest) {
-                return size() > seenBound;
-            }
-
-        };
     }
 
     /**
@@ -188,12 +208,19 @@ public final class ZenBpmUserTaskPoller {
             return;
         }
         modules.put(module.workflowModuleId(), module);
+        synchronized (seen) {
+            ++starts;
+            nobodys.clear();
+        }
         log.info("""
                 ZenBPM[{}]: workflow module '{}' has its user tasks of the job type(s) {} looked for every {} ({}): \
                 each look lists the active and the terminated jobs of each type, every page of them, so a look \
                 reads more the more terminated user tasks the engine keeps, until the history-time-to-live of \
-                their workflows passed, and a creation or a cancellation reaches the application up to one interval \
-                late""", adapterId, module.workflowModuleId(), String.join(", ", userTaskTypes), interval,
+                their workflows passed, and a cancellation is told only while the engine still lists its job. A \
+                look starts one interval after the last one ended, so a creation or a cancellation reaches the \
+                application one interval and the time of a look late, and later where every handler slot is \
+                taken or the engine does not answer""", adapterId, module.workflowModuleId(),
+                String.join(", ", userTaskTypes), interval,
                 ZenBpmAdapterConfiguration.propertyKey(adapterId, "user-task-poll-interval"));
         synchronized (this) {
             if (looking) {
@@ -235,20 +262,27 @@ public final class ZenBpmUserTaskPoller {
      * One look at the user tasks of every registered module, on the calling thread.
      */
     void look() {
+        ++lookNumber;
         final var userTaskTypes = new LinkedHashSet<String>();
         modules
                 .values()
                 .forEach(module -> userTaskTypes.addAll(module.userTaskTypes()));
+        final var listed = new HashSet<Delivery>();
+        var everyJobListed = true;
         try {
             for (final var userTaskType : userTaskTypes) {
-                if (!lookAt(userTaskType, JobRef.State.ACTIVE, TaskEvent.Event.CREATED) || !lookAt(userTaskType,
-                        JobRef.State.TERMINATED, TaskEvent.Event.CANCELED)) {
+                if (!lookAt(userTaskType, JobRef.State.ACTIVE, TaskEvent.Event.CREATED, listed) || !lookAt(
+                        userTaskType, JobRef.State.TERMINATED, TaskEvent.Event.CANCELED, listed)) {
+                    everyJobListed = false;
                     break;
                 }
             }
         } catch (final RuntimeException e) {
             reportTheOutage(userTaskTypes, e);
             return;
+        }
+        if (everyJobListed) {
+            forgetWhatIsNoLongerListed(listed);
         }
         if (outage) {
             outage = false;
@@ -260,7 +294,8 @@ public final class ZenBpmUserTaskPoller {
     private boolean lookAt(
         final String userTaskType,
         final JobRef.State state,
-        final TaskEvent.Event event
+        final TaskEvent.Event event,
+        final Set<Delivery> listed
     ) {
         final var filter = JobFilter
                 .anyJob()
@@ -269,7 +304,7 @@ public final class ZenBpmUserTaskPoller {
         for (var page = 1;; ++page) {
             final var jobs = rest.jobs(filter.withPage(page));
             for (final var job : jobs.items()) {
-                if (!handOver(job, event)) {
+                if (!handOver(job, event, listed)) {
                     return false;
                 }
             }
@@ -281,19 +316,34 @@ public final class ZenBpmUserTaskPoller {
 
     private boolean handOver(
         final JobRef job,
-        final TaskEvent.Event event
+        final TaskEvent.Event event,
+        final Set<Delivery> listed
     ) {
         // a task of another version may carry the type, which the job stream serves
         if (!USER_TASK.equals(job.elementType())) {
             return true;
         }
         final var delivery = new Delivery(job.key(), event);
-        if (wasSeen(delivery) || !running.add(job.key())) {
+        listed.add(delivery);
+        final Retry retry;
+        final long startsSoFar;
+        synchronized (seen) {
+            if (seen.contains(delivery) || nobodys.contains(delivery)) {
+                return true;
+            }
+            retry = retries.get(delivery);
+            startsSoFar = starts;
+        }
+        // after the starts were counted, so a module which starts later than this is counted
+        final var modulesNow = List.copyOf(modules.values());
+        if (((retry != null) && (retry.dueLook() > lookNumber)) || !running.add(job.key())) {
             return true;
         }
+        final var look = lookNumber;
         final boolean handedOver;
         try {
-            handedOver = executor.tryExecute(() -> deliver(job, delivery));
+            handedOver = executor
+                    .tryExecute(() -> deliver(job, delivery, retry, look, new Modules(modulesNow, startsSoFar)));
         } catch (final RejectedExecutionException e) {
             running.remove(job.key());
             log.debug("ZenBPM[{}]: the adapter shuts down, so user task {} is not handed over", adapterId, job.key());
@@ -311,12 +361,27 @@ public final class ZenBpmUserTaskPoller {
     // on a handler thread
     private void deliver(
         final JobRef job,
-        final Delivery delivery
+        final Delivery delivery,
+        final Retry retry,
+        final long look,
+        final Modules atTheHandOver
     ) {
         try {
-            if (deliveredTheModule(job, delivery.event())) {
-                synchronized (seen) {
-                    seen.put(delivery, Boolean.TRUE);
+            final var outcome = deliveredTheModule(job, delivery.event(), (retry != null) && retry.warned(),
+                    atTheHandOver.notifiers());
+            synchronized (seen) {
+                if (outcome.isEmpty()) {
+                    retries.remove(delivery);
+                    // a module which started meanwhile may claim it
+                    if (starts == atTheHandOver.startsSoFar()) {
+                        nobodys.add(delivery);
+                    }
+                } else if (outcome.get() == ZenBpmUserTaskNotifier.Outcome.DONE) {
+                    retries.remove(delivery);
+                    seen.add(delivery);
+                } else {
+                    retries.put(delivery,
+                            Retry.after(retry, look, outcome.get() == ZenBpmUserTaskNotifier.Outcome.THREW));
                 }
             }
         } finally {
@@ -324,9 +389,12 @@ public final class ZenBpmUserTaskPoller {
         }
     }
 
-    private boolean deliveredTheModule(
+    // empty where no workflow module which ran at the hand-over claims the job's process
+    private Optional<ZenBpmUserTaskNotifier.Outcome> deliveredTheModule(
         final JobRef job,
-        final TaskEvent.Event event
+        final TaskEvent.Event event,
+        final boolean warnedBefore,
+        final List<ZenBpmUserTaskNotifier> notifiers
     ) {
         final Optional<InstanceFacts> facts;
         try {
@@ -335,19 +403,18 @@ public final class ZenBpmUserTaskPoller {
             log.debug(
                     "ZenBPM[{}]: instance {} of user task {} could not be read; the next look hands the user task over again: {}",
                     adapterId, job.instanceKey(), job.key(), e.getMessage());
-            return false;
+            return Optional.of(ZenBpmUserTaskNotifier.Outcome.AGAIN);
         }
         if (facts.isEmpty()) {
             log.debug(
                     "ZenBPM[{}]: instance {} of user task {} is not known to the engine node asked, which may lag behind; the next look hands the user task over again",
                     adapterId, job.instanceKey(), job.key());
-            return false;
+            return Optional.of(ZenBpmUserTaskNotifier.Outcome.AGAIN);
         }
         final var scopedProcessId = facts
                 .get()
                 .scopedProcessId();
-        final var polling = modules
-                .values()
+        final var polling = notifiers
                 .stream()
                 .flatMap(module -> module
                         .processPolling(scopedProcessId, job.type())
@@ -360,14 +427,14 @@ public final class ZenBpmUserTaskPoller {
             log.debug(
                     "ZenBPM[{}]: user task {} of type '{}' belongs to process '{}', of which no running workflow module of this application is notified",
                     adapterId, job.key(), job.type(), scopedProcessId);
-            return true;
+            return Optional.empty();
         }
-        return polling
+        return Optional.of(polling
                 .get()
                 .module()
                 .deliver(job, event, facts.get(), polling
                         .get()
-                        .process());
+                        .process(), warnedBefore));
     }
 
     private String idVariableNameOf(final String scopedProcessId) {
@@ -380,10 +447,19 @@ public final class ZenBpmUserTaskPoller {
                 .orElse(null);
     }
 
-    private boolean wasSeen(final Delivery delivery) {
+    // a delivery which neither this look nor the one before listed: its job left the state or was
+    // deleted with its instance's history, and is never listed so again
+    private void forgetWhatIsNoLongerListed(final Set<Delivery> listed) {
+        final var listedLately = new HashSet<>(listed);
+        listedLately.addAll(listedBefore);
         synchronized (seen) {
-            return seen.get(delivery) != null;
+            seen.retainAll(listedLately);
+            nobodys.retainAll(listedLately);
+            retries
+                    .keySet()
+                    .retainAll(listedLately);
         }
+        listedBefore = listed;
     }
 
     private void reportTheOutage(
@@ -471,6 +547,45 @@ public final class ZenBpmUserTaskPoller {
     private record Delivery(
         long jobKey,
         TaskEvent.Event event
+    ) {
+    }
+
+    /**
+     * When a notification handed over and not told is handed over again.
+     *
+     * @param failures How often it was not told in a row
+     * @param dueLook The number of the first look which hands it over again
+     * @param warned Whether it was not told because its method threw, which was said then
+     */
+    private record Retry(
+        int failures,
+        long dueLook,
+        boolean warned
+    ) {
+
+        // the next look after the first failure, and after each further one a look which waits
+        // twice as many looks
+        static Retry after(
+            final Retry before,
+            final long look,
+            final boolean threw
+        ) {
+            final var failures = before == null ? 1 : before.failures() + 1;
+            final var wait = Math.min(1L << Math.min(failures - 1, 30), LONGEST_WAIT_IN_LOOKS);
+            return new Retry(failures, look + wait, threw);
+        }
+
+    }
+
+    /**
+     * The workflow modules which ran when a job was handed over, and how many had started by then.
+     *
+     * @param notifiers Their notifiers
+     * @param startsSoFar The starts of workflow modules counted before
+     */
+    private record Modules(
+        List<ZenBpmUserTaskNotifier> notifiers,
+        long startsSoFar
     ) {
     }
 

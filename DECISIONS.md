@@ -87,9 +87,11 @@ engine shares it. Subscribing that type on the job stream would lock the job for
 the user task, renewed by the adapter for days, and it would still not say when a user task is
 taken away, because the stream never hands out a job the engine terminated. At the pinned commit
 `bdd795a3` a cancelled instance and an interrupting boundary event set the job `terminated`
-(`handleProcessInstanceInnerCancel` in `pkg/bpmn/engine.go`, `pkg/bpmn/events.go`), and nothing is
-pushed. So the stream never subscribes a user task's type, and one `ZenBpmUserTaskPoller` per
-adapter id lists the jobs instead.
+(`handleProcessInstanceInnerCancel` in `pkg/bpmn/engine.go`, `pkg/bpmn/events.go`), and so does a
+failure of the job with an error code which a boundary error event or an error event sub-process
+catches (`processBoundaryErrorEvent` in `pkg/bpmn/jobs_api.go`,
+`pkg/bpmn/engine_error_event_subprocess.go`); nothing is pushed. So the stream never subscribes a
+user task's type, and one `ZenBpmUserTaskPoller` per adapter id lists the jobs instead.
 
 The parts below the plan left open were decided by the implementation pipeline in place of the
 maintainers, as their policy for the autonomous run asks.
@@ -111,13 +113,22 @@ maintainers, as their policy for the autonomous run asks.
   `PT0S` switches the looks off, and the start warns about it and about an interval below a second.
 - **Whose user task.** A job names no process, so the instance cache reads its instance, and the
   job goes to the module which claims the instance's process and looks for the type in it. A job of
-  a process this application does not claim is never handed to the core.
+  a process no running module claims is never handed to the core, and is not handed over again
+  until a module of the adapter id starts, because the platform starts the modules one after the
+  other, and the module which claims it may start later than the first look.
 - **Once per node.** A job and its event, once the core took the notification or there is nobody to
-  notify, go into a bounded set of 100,000 deliveries, which forgets the one used longest ago
-  first. A job seen `active` is still told as `CANCELED` once it is `terminated`; a `terminated` job
-  never seen `active`, after a restart or where the user task came and went between two looks, is
-  told as `CANCELED` only, because a creation told for a task already gone would set a person to
-  work on it. The core runs a method which takes `CANCELED` for such a task as well, and records it.
+  notify, go into a set of deliveries. The set forgets a delivery once two looks in a row which
+  listed every job listed it no more: its job left the state, or was deleted with its instance's
+  history, and is never listed so again. Two looks, because a listing by pages may pass over a job
+  while jobs before it leave the state. The plan asked for a set of 100,000 keys which forgets the
+  one used longest ago; a look lists the jobs in the same order every time, so once the engine
+  listed one more than the bound, such a set would forget each delivery before the next look reached
+  it again and hand every listed job over at every look. The set holds what the engine lists
+  instead, which a look reads anyway. A job seen `active` is still told as `CANCELED` once it is
+  `terminated`; a `terminated` job never seen `active`, after a restart or where the user task came
+  and went between two looks, is told as `CANCELED` only, because a creation told for a task already
+  gone would set a person to work on it. The core runs a method which takes `CANCELED` for such a
+  task as well, and records it.
 - **Once per application.** The delivery id is the job key and the event, `<key>-created` and
   `<key>-canceled`, which no delivery of a job of the stream, a key alone, can be. The core answers a
   notification it recorded from its record, so a restarted node tells nothing twice, as long as the
@@ -126,16 +137,27 @@ maintainers, as their policy for the autonomous run asks.
   job: keep `history-time-to-live` below the retention to rule that out.
 - **Threads.** The looks are timed by the timing threads of the adapter id and run on a virtual
   thread of their own; the next look is timed when one ends. Each notification is handed to a
-  handler slot with `tryExecute`, which never waits: where no slot is free the look ends, and one
-  which threw or found the module stopping is not remembered, so the next look hands it over again.
-  A job whose notification still runs is not handed over twice.
+  handler slot with `tryExecute`, which never waits: where no slot is free the look ends, and the
+  rest waits for the next one. A job whose notification still runs is not handed over twice.
 - **Start and stop.** A module is registered with the poller once its job types are subscribed, and
   a module with user tasks and no job type starts its processing for them alone. Its notifications
   run inside its drain, so the shutdown waits for them (decision 39), and its stop unregisters it
   before the handler hears of the stop; the looks end with the last module.
 - **Failures.** A look the engine does not answer is never read as an empty one: nothing is
   remembered, a WARN says it once per outage, and the next look asks again. A failed read of one
-  job's instance skips that job only.
+  job's instance skips that job only. A notification handed over and not told, because its method
+  threw, its instance could not be read or its module stops, is handed over again: by the next
+  look first, and after each further failure by a look which waits twice as many looks, at most 64.
+  Every look starts at the first page, so a notification which failed at every look would take a
+  handler slot at every look before the ones behind it, and enough of them would keep every
+  notification behind them from ever running. The failure of a method is said at WARN with its
+  stack trace, and a failure right after another one of the method at DEBUG.
+- **Limits.** A cancellation is told only while the engine lists the terminated job: a
+  `history-time-to-live` shorter than the time from the cancellation to the next look which
+  reaches it, a node's downtime included, deletes the job first, and the cancellation is never
+  told. A creation and a cancellation reach the application one interval and the time of a look
+  after the look before, and later where every handler slot is taken or the engine does not
+  answer.
 - **A wake-up.** Once the core took a notification, it is handed the module's open-task probe of the
   process, as after every delivery of a job and as the Camunda 8 adapter does after a user-task
   listener. The probe answers `CANNOT_SAY` for a user task, so the poller is the only source of a

@@ -391,22 +391,25 @@ VanillaBP task definition. Wiring asks `workflowTaskHandlerExists` by the task d
 element id of each user task of a claimed process and remembers the type, as the deployed model
 gives it, of each one a method serves (`WiredProcess#userTaskTypes`); a marked one is never looked
 for. Notifications come from `ZenBpmUserTaskPoller` (one per adapter id, decision 12): every
-`user-task-poll-interval` the timing threads start a look on a virtual thread of its own, which lists
-`GET /v1/jobs?jobType=<scoped>&state=active` and `state=terminated` per type, page by page to the
-last (the engine filters by neither time nor key), skips a job of another element type, and hands
-each job and event not in its bounded seen-set (100,000, LRU, per node) to a handler slot with
-`tryExecute`. There `ZenBpmUserTaskNotifier` of the module whose claimed process the job's instance
-belongs to (instance cache) builds the context: `TaskEvent CREATED` resp. `CANCELED`, `taskKind =
-USER_TASK`, task id = job key, delivery id = `job.key + "-created"` resp. `"-canceled"`, the root
-as the workflow (decision 28), and after the core took it, the module's open-task probe as a
-wake-up. A terminated job never seen active is told as `CANCELED` only; the delivery record makes a
-restarted node harmless. A look which fails is never read as an empty one; a notification which
-threw, found no free slot or met the module's stop is told again at the next look. The stream is
-deliberately NOT subscribed to user-task types (decision 12): a lock would have to be renewed for the
-whole life of a user task, and a terminated job is never delivered. Because the poller reports every
-cancelled user task, the open-task probe of section 4.3 answers CANNOT_SAY for user-task
-definitions: the platform's contract forbids a second source for the same cancellation.
-`COMPLETE_USER_TASK` / `CANCEL_USER_TASK` are the job commands (S8.2.1).
+`user-task-poll-interval` the timing threads start a look on a virtual thread of its own, which
+lists `GET /v1/jobs?jobType=<scoped>&state=active` and `state=terminated` per type, page by page to
+the last (the engine filters by neither time nor key), skips a job of another element type, and
+hands each job and event not in its seen-set (per node; a delivery is forgotten once two complete
+looks in a row no longer list it) to a handler slot with `tryExecute`. There
+`ZenBpmUserTaskNotifier` of the module whose claimed process the job's instance belongs to (instance
+cache) builds the context: `TaskEvent CREATED` resp. `CANCELED`, `taskKind = USER_TASK`, task id =
+job key, delivery id = `job.key + "-created"` resp. `"-canceled"`, the root as the workflow
+(decision 28), and after the core took it, the module's open-task probe as a wake-up. A terminated
+job never seen active is told as `CANCELED` only; the delivery record makes a restarted node
+harmless. A look which fails is never read as an empty one; a notification which found no free slot
+waits for the next look, and one which threw or met the module's stop is told again by the next
+look, then after a wait which doubles with each failure, at most 64 looks. A job of a process no
+running module claims is not handed over again until a module starts. The stream is deliberately NOT
+subscribed to user-task types (decision 12): a lock would have to be renewed for the whole life of a
+user task, and a terminated job is never delivered. Because the poller reports every cancelled user
+task, the open-task probe of section 4.3 answers CANNOT_SAY for user-task definitions: the
+platform's contract forbids a second source for the same cancellation. `COMPLETE_USER_TASK` /
+`CANCEL_USER_TASK` are the job commands (S8.2.1).
 
 A process id a workflow service declares without a model (the old id of a renamed process) is
 served by `ZenBpmDeclaredProcessWorkers` (S6.4.1) when its module starts processing: the methods'

@@ -20,6 +20,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.locks.LockSupport;
 import java.util.regex.Pattern;
 
@@ -180,7 +181,7 @@ class ZenBpmUserTaskPollerTest {
     }
 
     @Test
-    @DisplayName("A notification which threw is not remembered, so the next look tells it again, and the one after it does not")
+    @DisplayName("A notification which threw is not remembered, so the next look tells it again, and the one after it does not; the failure is said at WARN")
     void aNotificationWhichThrewIsRetriedAtTheNextLook(final CapturedOutput output) {
         jobs.holds(ROOT, "default", null, "order-1", "\"id\": \"order-1\"");
         listsActive(userTask(51, ROOT));
@@ -197,7 +198,7 @@ class ZenBpmUserTaskPollerTest {
         assertTrue(output
                 .getOutOfThisTest()
                 .contains(
-                        "as CREATED threw; its transaction was rolled back, and the next look at the user tasks notifies it again"),
+                        "as CREATED threw; its transaction was rolled back, and a later look at the user tasks notifies it again: the next look first"),
                 output::getOutOfThisTest);
         assertEquals(1, jobs.invoker
                 .reports()
@@ -205,21 +206,173 @@ class ZenBpmUserTaskPollerTest {
     }
 
     @Test
-    @DisplayName("The set of the deliveries done with is bounded and forgets the one used longest ago first, which the platform's record answers then")
-    void theSeenDeliveriesAreBounded() {
+    @DisplayName("A delivery done with is forgotten once two looks which listed every job in a row listed it no more, and not after one, because a listing by pages may pass over a job")
+    void aDeliveryIsForgottenOnceTwoLooksListedItNoMore() {
         jobs.holds(ROOT, "default", null, "order-1", "\"id\": \"order-1\"");
-        startsPolling(Duration.ofHours(1), 1);
+        listsActive(userTask(51, ROOT));
+        startsPolling(Duration.ofHours(1));
+        looks();
+        listsActive();
+        looks();
         listsActive(userTask(51, ROOT));
         looks();
-        listsActive(userTask(52, ROOT));
-        looks();
-        listsActive(userTask(52, ROOT));
-        looks();
+        final var afterOneLookWithoutIt = deliveryIds();
+        listsActive();
+        looksTwice();
         listsActive(userTask(51, ROOT));
 
         looks();
 
-        assertEquals(List.of("51-created", "52-created", "51-created"), deliveryIds());
+        assertEquals(List.of("51-created"), afterOneLookWithoutIt);
+        assertEquals(List.of("51-created", "51-created"), deliveryIds());
+    }
+
+    @Test
+    @DisplayName("A look which ended without a free handler slot listed not every job, so it forgets nothing")
+    void aLookWhichListedNotEveryJobForgetsNothing() {
+        jobs.holds(ROOT, "default", null, "order-1", "\"id\": \"order-1\"");
+        listsActive(userTask(51, ROOT));
+        startsPolling(Duration.ofHours(1));
+        looks();
+        final var release = new CountDownLatch(1);
+        jobs.invoker.answers(context -> {
+            await(release);
+            return WorkflowTaskOutcome.completionPending();
+        });
+        listsActive(userTask(52, ROOT), userTask(53, ROOT), userTask(54, ROOT));
+        poller.look();
+        JobRunning.await(() -> jobs.invoker
+                .invocations()
+                .size() == 3, "both slots to run a notification");
+        poller.look();
+        release.countDown();
+        jobs.awaitFreeSlots();
+        listsActive(userTask(51, ROOT));
+
+        looks();
+
+        assertEquals(List.of("51-created", "52-created", "53-created"), deliveryIds()
+                .stream()
+                .sorted()
+                .toList());
+    }
+
+    @Test
+    @DisplayName("A look which lists more user tasks than any bound of the set hands none of them over a second time")
+    void aLongListingIsHandedOverOnce() {
+        jobs.holds(ROOT, "default", null, "order-1", "\"id\": \"order-1\"");
+        final var many = new ArrayList<String>();
+        for (var key = 1000; key < 1300; ++key) {
+            many.add(userTask(key, ROOT));
+        }
+        listed.put("active/1", page(many.size(), many));
+        startsPolling(Duration.ofHours(1));
+        for (var look = 0; (look < 1000) && (deliveryIds().size() < many.size()); ++look) {
+            looks();
+        }
+        final var handedOverOnce = deliveryIds().size();
+
+        looksTwice();
+
+        assertEquals(many.size(), handedOverOnce);
+        assertEquals(many.size(), deliveryIds().size());
+    }
+
+    @Test
+    @DisplayName("Notifications which keep failing wait longer after each failure, so they cannot take every handler slot at every look and the others get theirs; the failure of each is said at WARN once")
+    void notificationsWhichKeepFailingLeaveTheSlotsToTheOthers(final CapturedOutput output) {
+        jobs.holds(ROOT, "default", null, "order-1", "\"id\": \"order-1\"");
+        listsActive(userTask(51, ROOT), userTask(52, ROOT), userTask(53, ROOT));
+        listsTerminated(terminated(54, ROOT));
+        final var gate = new AtomicReference<CountDownLatch>();
+        jobs.invoker.answers(context -> {
+            if (Set
+                    .of("51", "52")
+                    .contains(context.getTaskId())) {
+                // held until the look met the full slots, so the look ends at 53
+                await(gate.get());
+                throw new IllegalStateException("the task list is down");
+            }
+            return WorkflowTaskOutcome.completionPending();
+        });
+        startsPolling(Duration.ofHours(1));
+
+        for (var look = 0; look < 3; ++look) {
+            gate.set(new CountDownLatch(1));
+            poller.look();
+            gate
+                    .get()
+                    .countDown();
+            jobs.awaitFreeSlots();
+        }
+
+        assertEquals(List.of("51-created", "51-created", "52-created", "52-created", "53-created", "54-canceled"),
+                deliveryIds()
+                        .stream()
+                        .sorted()
+                        .toList());
+        assertEquals(2, countOf(output.getOutOfThisTest(), "as CREATED threw"), output::getOutOfThisTest);
+    }
+
+    @Test
+    @DisplayName("A notification which keeps failing is handed over again at the latest after the longest wait")
+    void aNotificationWhichKeepsFailingIsRetriedAfterTheLongestWaitAtTheLatest() {
+        jobs.holds(ROOT, "default", null, "order-1", "\"id\": \"order-1\"");
+        listsActive(userTask(51, ROOT));
+        jobs.invoker.answers(context -> {
+            throw new IllegalStateException("the task list is down");
+        });
+        startsPolling(Duration.ofHours(1));
+
+        for (var look = 0; look < 300; ++look) {
+            looks();
+        }
+
+        // at the looks 1, 2, 4, 8, 16, 32, 64, and from then on every 64th: 128, 192, 256
+        assertEquals(10, deliveryIds().size());
+        assertEquals(64, ZenBpmUserTaskPoller.LONGEST_WAIT_IN_LOOKS);
+    }
+
+    @Test
+    @DisplayName("A user task of a workflow module which starts after the first look is told to it once it started, although a look before found nobody to tell")
+    void aUserTaskOfAModuleWhichStartsLaterIsToldOnceItStarted() {
+        jobs.holds(300, "billing__Invoice", "default", null, "invoice-1", "\"id\": \"invoice-1\"");
+        listsActive(userTask(61, 300));
+        startsPolling(Duration.ofHours(1));
+        looksTwice();
+        final var beforeBillingStarted = deliveryIds();
+
+        startsBillingSharingTheType();
+        looksTwice();
+
+        assertEquals(List.of(), beforeBillingStarted);
+        assertEquals(List.of("billing/61-created"), modulesAndDeliveryIds());
+    }
+
+    @Test
+    @DisplayName("A user task found to be nobody's while a workflow module starts which claims it is told to that module at the next look")
+    void aUserTaskFoundToBeNobodysWhileItsModuleStartsIsToldAtTheNextLook() {
+        final var reading = new CountDownLatch(1);
+        final var release = new CountDownLatch(1);
+        jobs.engine.answers("GET", "/v1/process-instances/300", exchange -> {
+            reading.countDown();
+            await(release);
+            FakeEngine.respond(exchange, 200, """
+                    {"key": 300, "processDefinitionKey": 4503599627370498, "bpmnProcessId": "billing__Invoice",
+                     "version": 3, "businessKey": "invoice-1", "createdAt": "2026-10-17T14:30:25.123Z",
+                     "state": "active", "processType": "default", "variables": {"id": "invoice-1"}}""");
+        });
+        listsActive(userTask(61, 300));
+        startsPolling(Duration.ofHours(1));
+        poller.look();
+        await(reading);
+
+        startsBillingSharingTheType();
+        release.countDown();
+        jobs.awaitFreeSlots();
+        looks();
+
+        assertEquals(List.of("billing/61-created"), modulesAndDeliveryIds());
     }
 
     @Test
@@ -253,7 +406,11 @@ class ZenBpmUserTaskPollerTest {
                                 ZenBPM[orders]: workflow module 'shop' has its user tasks of the job type(s) \
                                 shop__Order__approve looked for every PT5S (vanillabp.adapters.orders.user-task-poll-interval): \
                                 each look lists the active and the terminated jobs of each type, every page of them, so a look \
-                                reads more the more terminated user tasks the engine keeps"""),
+                                reads more the more terminated user tasks the engine keeps, until the history-time-to-live \
+                                of their workflows passed, and a cancellation is told only while the engine still lists its \
+                                job. A look starts one interval after the last one ended, so a creation or a cancellation \
+                                reaches the application one interval and the time of a look late, and later where every \
+                                handler slot is taken or the engine does not answer"""),
                 output::getOutOfThisTest);
     }
 
@@ -307,8 +464,7 @@ class ZenBpmUserTaskPollerTest {
         startsPolling(Duration.ofHours(1));
         // a cache which keeps nothing, so a second look at the job would read the instance again
         poller = new ZenBpmUserTaskPoller("orders", jobs.factory.rest(), jobs.factory
-                .executor(), new ZenBpmInstanceCache(jobs.factory.rest(), 0), Duration
-                        .ofHours(1), ZenBpmUserTaskPoller.SEEN_BOUND);
+                .executor(), new ZenBpmInstanceCache(jobs.factory.rest(), 0), Duration.ofHours(1));
         poller.register(notifier);
 
         looksTwice();
@@ -396,7 +552,7 @@ class ZenBpmUserTaskPollerTest {
     }
 
     @Test
-    @DisplayName("An instance which cannot be read, or which a lagging node does not know, skips its user task only, which the next look hands over again")
+    @DisplayName("An instance which cannot be read, or which a lagging node does not know, skips its user task only, which a later look hands over again")
     void anInstanceWhichCannotBeReadSkipsItsUserTaskOnly() {
         jobs.holds(ROOT, "default", null, "order-1", "\"id\": \"order-1\"");
         jobs.engine.answers("GET", "/v1/process-instances/300", 503, "{\"code\": \"UNAVAILABLE\", \"message\": \"x\"}");
@@ -409,7 +565,8 @@ class ZenBpmUserTaskPollerTest {
         jobs.holds(300, "default", null, "order-2", "\"id\": \"order-2\"");
         jobs.holds(400, "default", null, "order-3", "\"id\": \"order-3\"");
 
-        looks();
+        // 52 was not told twice, so it waits two looks
+        looksTwice();
 
         assertEquals(List.of("51-created"), beforeTheInstancesAreKnown);
         assertEquals(List.of("51-created", "52-created", "53-created"), deliveryIds()
@@ -419,7 +576,7 @@ class ZenBpmUserTaskPollerTest {
     }
 
     @Test
-    @DisplayName("A user task in a sub-process names the root as its workflow, and the aggregate the root names where only the root carries it; one whose root a lagging node does not know, or which cannot be read, waits for the next look")
+    @DisplayName("A user task in a sub-process names the root as its workflow, and the aggregate the root names where only the root carries it; one whose root a lagging node does not know, or which cannot be read, waits for a later look")
     void aUserTaskInASubProcessNamesTheRoot() {
         jobs.holds(ROOT, "default", null, "order-1", "\"id\": \"order-1\"");
         jobs.holds(200, "subprocess", ROOT, null, "");
@@ -434,7 +591,8 @@ class ZenBpmUserTaskPollerTest {
         final var beforeTheRootsAreKnown = deliveryIds();
         jobs.holds(501, "default", null, "order-2", "\"id\": \"order-2\"");
         jobs.holds(601, "default", null, "order-3", "\"id\": \"order-3\"");
-        looks();
+        // 52 was not told twice, so it waits two looks
+        looksTwice();
 
         assertEquals(List.of("51-created"), beforeTheRootsAreKnown);
         assertEquals(List.of("51-created", "52-created", "53-created"), deliveryIds()
@@ -744,13 +902,6 @@ class ZenBpmUserTaskPollerTest {
     // a fresh poller with its own set, as after a restart, of the module 'shop' with the process
     // 'Order' and its user task 'approve'; every handler of the module shares the same drain
     private void startsPolling(final Duration interval) {
-        startsPolling(interval, ZenBpmUserTaskPoller.SEEN_BOUND);
-    }
-
-    private void startsPolling(
-        final Duration interval,
-        final int seenBound
-    ) {
         jobs.invoker.servesUserTasks("approve");
         if (handler == null) {
             final var context = new ZenBpmProcessingContext("shop");
@@ -762,8 +913,21 @@ class ZenBpmUserTaskPollerTest {
             notifier = new ZenBpmUserTaskNotifier("orders", jobs.factory, collaborators, context, handler);
         }
         poller = new ZenBpmUserTaskPoller("orders", jobs.factory.rest(), jobs.factory.executor(), jobs.factory
-                .instances(), interval, seenBound);
+                .instances(), interval);
         poller.register(notifier);
+    }
+
+    // the workflow module 'billing', whose process 'Invoice' has a user task of the type of 'shop',
+    // as two modules share the engine's default type
+    private void startsBillingSharingTheType() {
+        final var billing = new ZenBpmProcessingContext("billing");
+        billing.recordWiring(new WiredProcess("Invoice", "billing__Invoice", Set.of(), true, false, Map.of(), Map.of(
+                USER_TASK_TYPE, "check")));
+        final var collaborators = TestCollaborators.withInvoker("orders", TestScoping.of(
+                NameClashAvoidance.USE_PREFIX), jobs.invoker);
+        final var billingHandler = new ZenBpmJobHandler("orders", jobs.factory, collaborators, billing, ZenBpmRetryBackoffResolver.NONE);
+        jobs.invoker.servesUserTasks("approve", "check");
+        poller.register(new ZenBpmUserTaskNotifier("orders", jobs.factory, collaborators, billing, billingHandler));
     }
 
     private void answersTheListings() {
@@ -805,6 +969,16 @@ class ZenBpmUserTaskPollerTest {
                 .stream()
                 .map(TestInvoker.Invocation::context)
                 .map(TaskInvocationContext::getDeliveryId)
+                .toList();
+    }
+
+    private List<String> modulesAndDeliveryIds() {
+        return jobs.invoker
+                .invocations()
+                .stream()
+                .map(invocation -> "%s/%s".formatted(invocation.workflowModuleId(), invocation
+                        .context()
+                        .getDeliveryId()))
                 .toList();
     }
 
