@@ -242,8 +242,9 @@ or `keep-workflow-start-while-aggregate-exists`), the open-task records, the ele
 removes the limit (GAPS 1). Under `message-start-lookup: scan` a step 4 follows where the search
 found no workflow which runs: `GET /v1/process-instances?bpmnProcessId=<scoped>&state=active`, then
 `state=failed`, page by page (the engine's largest page, 100 per partition), for each process of the
-scope whose newest version has a message start event, and an instance whose `variables[<id
-name>]` is the aggregate id is ACTIVE; the probe before a start is sent again reads every state
+scope of which a version the engine holds has a message start event, and an instance whose
+`variables[<id name>]` is the aggregate id is ACTIVE (a lookup over several pages may miss one while
+other instances of the process end, because the engine pages after filtering by state); the probe before a start is sent again reads every state
 from `createdFrom = plannedAt` instead. A lookup which would read more than
 `message-start-lookup-max-instances` instances is BPMS_UNAVAILABLE with a WARN naming the bound
 (`ZenBpmMessageStartScan`).

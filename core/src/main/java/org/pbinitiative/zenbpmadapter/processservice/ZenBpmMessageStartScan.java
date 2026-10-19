@@ -72,9 +72,10 @@ final class ZenBpmMessageStartScan {
     }
 
     /**
-     * The processes of the scope a lookup reads: those whose newest version has a message start
-     * event, as the deployment of this start read them; none where <code>message-start-lookup</code>
-     * is not <code>scan</code>.
+     * The processes of the scope a lookup reads: those of which a version the engine holds has a
+     * message start event, as the deployment of this start read them, because a workflow a message
+     * started on an older version runs on after a newer one dropped the event; none where
+     * <code>message-start-lookup</code> is not <code>scan</code>.
      *
      * @param scope The workflow module and the processes asked about
      * @param scopedIds The ids, as the engine knows them, of the processes of the scope

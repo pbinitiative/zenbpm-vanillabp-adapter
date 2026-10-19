@@ -188,24 +188,31 @@ deduplicated, and a publication repeated after its answer was lost may correlate
 
 A workflow is started by a message in two phases as well, and how it is found afterwards is
 `message-start-lookup`. ZenBPM gives a workflow it starts by a message no business key and names no
-instance in its answer (see [`GAPS.md`](./GAPS.md)). Under `start-row`, the default, phase one
-refuses where the application calls a message the newest version of no process of the workflow
-module starts with, read again from the engine before it refuses, naming `correlateMessage` where a
-model waits for the name; phase two publishes the message under its scoped name without a
-correlation key, with the values the aggregate shares and its id, and reports nothing: the start
+instance in its answer (see [`GAPS.md`](./GAPS.md)). Unless `refuse` is set, phase one refuses
+where the application calls a message the newest version of no process of the workflow module
+starts with, read again from the engine before it refuses, naming `correlateMessage` where a model
+waits for the name; phase two publishes the message under its scoped name without a correlation key,
+with the values the aggregate shares and its id, and reports nothing. Where the modeller maps the
+outputs of a message start event, the deployment adds an output of the id variable, because the
+engine hands the instance the mapped variables only (decision 48). Under `start-row`, the default, the start
 marker behind the message start event reports the instance's key, which the platform writes into the
-start row of the aggregate, and every later operation finds the workflow through that key. The start
-row does not cover an application without a delivery log, the moments between the publication and
-the commit of the marker's report, in which only the node which published knows the workflow, or a
-start sent again after its answer was lost before the marker wrote the row, which publishes once more
-and may start a second workflow. How long the row lives is
+start row of the aggregate, and every later operation on the running workflow finds it through that
+key. The start row does not cover an application without a delivery log, the moments between the
+publication and the commit of the marker's report, in which only the node which published knows the
+workflow, or a start sent again after its answer was lost before the marker wrote the row, which
+publishes once more and may start a second workflow. Nor does it cover a workflow which ended: the
+key finds a running instance only, so where the platform asks which adapter holds a workflow a
+message started and which ended, it is answered as unknown to the engine, in every mode, which the
+platform's contract for adapters does not allow. How long the row lives is
 `vanillabp.delivery.workflow-start-retention` (`P30D` by default, `0` keeps rows for good) or
 `vanillabp.delivery.keep-workflow-start-while-aggregate-exists`. Under `scan`, an opt-in, the probes
-in addition read the instances of the processes a message starts where nothing else finds the
-workflow, and find a running one by its id variable, also before a start is sent again, at most
-`message-start-lookup-max-instances` instances (`1000` by default), beyond which they answer that the
-engine is unavailable; a workflow of such a process which ended stays unknown to them, which the
-platform's contract for adapters does not allow, and the start of the application warns so. Under
+in addition read the instances of the processes a version of which has a message start event where
+nothing else finds the workflow, and find a running one by its id variable, also before a start is
+sent again, at most `message-start-lookup-max-instances` instances (`1000` by default), beyond which
+they answer that the engine is unavailable. A workflow which ended stays unknown to them as well, and
+the start of the application warns so. The engine hands out the running instances page by page, so a
+lookup over several pages may miss a workflow while other instances of its process end, and then
+answers as `start-row` does. Under
 `refuse` every start by a message is refused where the application calls, naming the key. Each start
 of the application names the processes a message starts and the value in force. ZenBPM loses starts
 when two start messages of one name reach it at the same moment, answering one of them as if it

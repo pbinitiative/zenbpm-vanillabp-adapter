@@ -988,3 +988,30 @@ passes the core's question whether the start happened already, the start row and
 `awarenessOfWorkflowForRedispatch`, which under `message-start-lookup: scan` finds a running
 workflow by its id variable. Where the platform hands no invoker of starts, so no marker is written,
 the third case costs a second workflow at each repetition.
+
+### 48. A message start event which maps its outputs passes the aggregate id on
+
+Decided by the implementation pipeline in place of the maintainers, as their policy for the
+autonomous run asks.
+
+The engine applies the output mappings of a message start event to the variables of the message
+before it creates the instance (pinned commit `bdd795a3`: `handleStartEventInstanceCreation` and
+`mapStartEventTriggerVariables` of `pkg/bpmn/start_event_instance_creation_handler.go`, through
+`PropagateMappedOutputsOrAll` of `pkg/bpmn/runtime/varholder.go`). Where the event maps no output,
+the instance gets every variable of the message; where it maps any, it gets the mapped ones only.
+A start by a message sends the aggregate id in its variables, because the engine takes no business
+key with a message (GAPS 1), and the start marker behind the event (decision 26) is how the core
+learns which aggregate the instance belongs to. An output mapping a modeller wrote for a business
+variable would drop the id, and the marker would hand the core a start which names no aggregate:
+the core takes it for a workflow started past VanillaBP, and without a method to build an
+aggregate for such a start the marker's job ends in an incident, while the aggregate the
+application saved never gets its start row.
+
+So while wiring a claimed process whose start the platform hears, every message start event of
+the process itself which maps outputs, but none to the aggregate's id variable, gets one more
+output, `source="=<id variable>" target="<id variable>"`, behind the modeller's. An event without
+outputs is left as it is, because it passes every variable on by itself, and so is an event whose
+modeller maps the id variable, whose mapping is theirs. A message which does not carry the id
+variable, sent past VanillaBP, still starts the instance: the engine maps the missing variable to
+nothing, as it does for any source the message does not hold, and the marker reports the start as
+one nobody named, as before.

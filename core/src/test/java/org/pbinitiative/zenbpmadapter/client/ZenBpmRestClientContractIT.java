@@ -32,6 +32,7 @@ import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.Stream;
 
@@ -100,6 +101,7 @@ class ZenBpmRestClientContractIT {
         client.deployBpmn(fixture("contract-received.bpmn"));
         client.deployBpmn(fixture("contract-started.bpmn"));
         client.deployBpmn(fixture("contract-start-fails.bpmn"));
+        client.deployBpmn(fixture("contract-start-mapped.bpmn"));
         decision = client.deployDmn(fixture("contract-decision.dmn"));
     }
 
@@ -430,6 +432,44 @@ class ZenBpmRestClientContractIT {
                 () -> assertEquals(aggregateId, job
                         .inputVariables()
                         .get("orderId")));
+    }
+
+    @Test
+    @DisplayName("A message start event which maps outputs starts its instance with the mapped variables only, and one whose source the message does not carry maps it to nothing and starts the instance all the same")
+    void aMessageStartWhichMapsOutputsHandsOnTheMappedVariablesOnly() {
+        final var aggregateId = uniqueBusinessKey();
+        final var amountWithoutTheId = ThreadLocalRandom
+                .current()
+                .nextLong(1_000_000, 1_000_000_000);
+
+        client.publishMessage("contract-start-mapped", null, Map.of("orderId", aggregateId, "amount", 1000, "note",
+                "not mapped"));
+        client.publishMessage("contract-start-mapped", null, Map.of("amount", amountWithoutTheId));
+
+        final var withTheId = eventually(() -> runningInstanceOf("contract-start-mapped", aggregateId));
+        final var withoutTheId = eventually(() -> client
+                .instances(InstanceFilter
+                        .anyInstance()
+                        .withBpmnProcessId("contract-start-mapped")
+                        .withState(ProcessInstanceRef.State.ACTIVE))
+                .items()
+                .stream()
+                .filter(instance -> Long
+                        .valueOf(amountWithoutTheId)
+                        .equals(instance
+                                .variables()
+                                .get("amount")))
+                .findFirst());
+        assertAll(
+                () -> assertEquals(1000L, withTheId
+                        .variables()
+                        .get("amount")),
+                () -> assertFalse(withTheId
+                        .variables()
+                        .containsKey("note"), withTheId::toString),
+                () -> assertNull(withoutTheId
+                        .variables()
+                        .get("orderId"), withoutTheId::toString));
     }
 
     @Test

@@ -25,10 +25,13 @@ import lombok.extern.slf4j.Slf4j;
  * Reads which messages the models the engine holds for the processes one workflow module deployed
  * wait for and start with, and which of those processes have a message start event, so phase one
  * of a correlation and of a start by a message can judge a message name without asking the engine,
- * see decision 42 in the repository's DECISIONS.md.
+ * see decision 42 in the repository's DECISIONS.md, and the lookup of <code>scan</code> knows
+ * which processes to read.
  * <p>
  * Every version counts for the messages waited for, because a workflow still running may run on
- * an older one and wait for a message a later version renamed or dropped. Only the newest version
+ * an older one and wait for a message a later version renamed or dropped. For the same reason every
+ * version counts for the processes which have a message start event: a workflow a message started
+ * on an older version still runs after a newer one dropped the event. Only the newest version
  * counts for the messages a process starts with, because the engine hands a message to the start
  * events of the newest version alone: it removes the start subscriptions of the one before when a
  * newer one is deployed. The version this start deployed is the newest one, and it is read from the
@@ -86,7 +89,7 @@ final class ZenBpmHeldMessages {
                 read(workflowModuleId, process.version(), process.scopedBpmnProcessId(), process.xml(), awaited,
                         starting, startedByMessage);
                 if (process.version() > 1) {
-                    readTheOtherVersions(workflowModuleId, process, awaited);
+                    readTheOtherVersions(workflowModuleId, process, awaited, startedByMessage);
                 }
             } catch (final RuntimeException e) {
                 log.debug("ZenBPM[{}]: the models the engine holds as '{}' could not be read", adapterId, process
@@ -134,8 +137,7 @@ final class ZenBpmHeldMessages {
                     final var isTheNewest = version.version() == newest;
                     read(workflowModuleId, version.version(), scopedBpmnProcessId, rest
                             .processDefinition(version.key())
-                            .bpmnData(), awaited, isTheNewest ? starting : new TreeSet<>(),
-                            isTheNewest ? startedByMessage : new TreeSet<>());
+                            .bpmnData(), awaited, isTheNewest ? starting : new TreeSet<>(), startedByMessage);
                 }
             } catch (final RuntimeException e) {
                 log.debug("ZenBPM[{}]: the models the engine holds as '{}' could not be read again", adapterId,
@@ -147,11 +149,13 @@ final class ZenBpmHeldMessages {
         return new ModuleMessages(scopedBpmnProcessIds, awaited, starting, startedByMessage, unread);
     }
 
-    // an older version holds no start subscription, so only what it waits for counts
+    // an older version holds no start subscription, so what it starts with does not count, but
+    // whether it has a message start event does
     private void readTheOtherVersions(
         final String workflowModuleId,
         final DeployedProcess process,
-        final Set<String> awaited
+        final Set<String> awaited,
+        final Set<String> startedByMessage
     ) {
         final var rest = factory.rest();
         for (final var version : rest.processDefinitions(process.scopedBpmnProcessId(), false)) {
@@ -160,7 +164,7 @@ final class ZenBpmHeldMessages {
             }
             read(workflowModuleId, version.version(), process.scopedBpmnProcessId(), rest
                     .processDefinition(version.key())
-                    .bpmnData(), awaited, new TreeSet<>(), new TreeSet<>());
+                    .bpmnData(), awaited, new TreeSet<>(), startedByMessage);
         }
     }
 

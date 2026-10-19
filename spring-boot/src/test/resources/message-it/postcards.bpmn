@@ -8,6 +8,11 @@
   <bpmn:message id="Message_Stamped" name="stamped" />
   <bpmn:process id="Postcards" isExecutable="true">
     <bpmn:startEvent id="Posted" name="Posted">
+      <bpmn:extensionElements>
+        <zenbpm:ioMapping>
+          <zenbpm:output source="=status" target="status" />
+        </zenbpm:ioMapping>
+      </bpmn:extensionElements>
       <bpmn:outgoing>Flow_ToAwaitStamp</bpmn:outgoing>
       <bpmn:messageEventDefinition id="Posted_Definition" messageRef="Message_PostcardPosted" />
     </bpmn:startEvent>

@@ -290,7 +290,7 @@ class ZenBpmDeployingTest {
     }
 
     @Test
-    @DisplayName("The messages every version the engine holds of a deployed process waits for are remembered for the workflow module, as the engine holds them, and those the deployed version starts with, not those of an older one; the deployed version is read from the answer of the deployment")
+    @DisplayName("The messages every version the engine holds of a deployed process waits for are remembered for the workflow module, as the engine holds them, and those the deployed version starts with, not those of an older one; a process an older version of which has a message start event counts as started by a message; the deployed version is read from the answer of the deployment")
     void theMessagesOfEveryHeldVersionAreRemembered() throws Exception {
         engine.answers("POST", "/v1/process-definitions", 201, "{\"processDefinitionKey\":11}");
         engine.answers("GET", "/v1/process-definitions/11", 200, definition(11, 2, heldOrder("shop__paid")));
@@ -312,7 +312,7 @@ class ZenBpmDeployingTest {
 
             assertAll(
                     () -> assertEquals(Optional.of(new ModuleMessages(List.of("shop__Order"), Set.of("shop__paid",
-                            "shop__settled"), Set.of(), Set.of(), List.of())), deployedProcesses(registry)
+                            "shop__settled"), Set.of(), Set.of("shop__Order"), List.of())), deployedProcesses(registry)
                                     .messagesOf("shop")),
                     () -> assertEquals(List.of(
                             "GET /v1/process-definitions/11",
@@ -368,8 +368,8 @@ class ZenBpmDeployingTest {
     }
 
     @Test
-    @DisplayName("Read again, a process counts as started by a message only where its newest version has a message start event, not where only the version this start deployed has one")
-    void readAgainAProcessIsStartedByAMessageWhereItsNewestVersionIs() throws Exception {
+    @DisplayName("Read again, a process counts as started by a message where an older version has a message start event and the newest has none, because a workflow a message started may still run on the older one")
+    void readAgainAProcessIsStartedByAMessageWhereAnOlderVersionIs() throws Exception {
         engine.answers("POST", "/v1/process-definitions", 201, "{\"processDefinitionKey\":11}");
         engine.answers("GET", "/v1/process-definitions/11", 200, definition(11, 1, heldOrder("shop__paid")
                 .replace("<bpmn:process id=\"shop__Order\" isExecutable=\"true\">", """
@@ -389,7 +389,7 @@ class ZenBpmDeployingTest {
                                {"key": 12, "version": 2, "bpmnProcessId": "shop__Order"}], "totalCount": 2}""");
             engine.answers("GET", "/v1/process-definitions/12", 200, definition(12, 2, heldOrder("shop__paid")));
 
-            assertEquals(Set.of(), deployedProcesses(registry)
+            assertEquals(Set.of("shop__Order"), deployedProcesses(registry)
                     .messagesReadAgain("shop")
                     .orElseThrow()
                     .startedByMessage());
@@ -497,7 +497,13 @@ class ZenBpmDeployingTest {
                     .setMessageStartLookup(lookup);
             final var deploymentService = deploymentService(registry, TestScoping.of(NameClashAvoidance.USE_PREFIX),
                     TestWiring.claiming("Order"));
-            deploymentService.deployResources("shop", prepared(deploymentService, ORDER));
+            deploymentService.deployResources("shop", prepared(deploymentService, ORDER.replace(
+                    "<bpmn:process id=\"Order\" isExecutable=\"true\">", """
+                            <bpmn:message id="Message_Ordered" name="ordered" />
+                            <bpmn:process id="Order" isExecutable="true">
+                              <bpmn:startEvent id="Ordered">
+                                <bpmn:messageEventDefinition messageRef="Message_Ordered" />
+                              </bpmn:startEvent>""")));
         }
 
         final var named = "INFO  o.p.z.d.ZenBpmDeploymentService - ZenBPM[orders]: workflow module 'shop' has processes a message starts: 'Order'. vanillabp.adapters.orders.message-start-lookup is '%s': "
@@ -515,11 +521,13 @@ class ZenBpmDeployingTest {
                     its start marker writes into the start row of the aggregate. Before the marker ran, in an \
                     application without a delivery log, and once the row is removed, it is not found, and a start \
                     sent again after its answer was lost may start a second workflow; 'scan' finds a running one in \
-                    those cases as well.""";
+                    those cases as well. Once it ended, it is answered as unknown to the engine, which the platform's \
+                    contract for adapters does not allow.""";
             case SCAN -> """
                     startWorkflowByMessage starts them, and the workflow it starts is found through the instance key \
                     its start marker writes into the start row of the aggregate, and where the row does not know it, \
-                    by reading their instances.""";
+                    by reading their instances. Once it ended, it is answered as unknown to the engine, which the \
+                    platform's contract for adapters does not allow.""";
             case REFUSE -> """
                     startWorkflowByMessage is refused for them. Set the key to 'start-row', the default, or to 'scan' \
                     to start them.""";
@@ -533,8 +541,8 @@ class ZenBpmDeployingTest {
                                 find it by its id variable, at most 1000 \
                                 (vanillabp.adapters.orders.message-start-lookup-max-instances), and answers BPMS_UNAVAILABLE \
                                 where it would have to read more. A workflow of them which ended is not read where the platform \
-                                asks which adapter holds a workflow, so it is answered as unknown to the engine, which the \
-                                platform's contract for adapters does not allow: an operation on it is then treated as one on \
+                                asks which adapter holds a workflow, so it is answered as unknown to the engine, as under \
+                                'start-row', which the platform's contract for adapters does not allow: an operation on it is then treated as one on \
                                 a workflow the engine never held. The lookup is an opt-in until ZenBPM gives a workflow it \
                                 starts by a message a business key.""")
                 : List.of(named + what);
@@ -542,10 +550,20 @@ class ZenBpmDeployingTest {
     }
 
     @Test
-    @DisplayName("A workflow module whose processes no message starts says nothing about message-start-lookup")
+    @DisplayName("A workflow module whose deployed processes no message starts says nothing about message-start-lookup, also where an older version the engine holds had a message start event")
     void aModuleNoMessageStartsSaysNothingAboutTheLookup(final CapturedOutput output) throws Exception {
         engine.answers("POST", "/v1/process-definitions", 201, "{\"processDefinitionKey\":11}");
-        engine.answers("GET", "/v1/process-definitions/11", 200, definition(11, 1, heldOrder("shop__paid")));
+        engine.answers("GET", "/v1/process-definitions/11", 200, definition(11, 2, heldOrder("shop__paid")));
+        engine.answers("GET", "/v1/process-definitions", 200, """
+                {"items": [{"key": 9, "version": 1, "bpmnProcessId": "shop__Order"},
+                           {"key": 11, "version": 2, "bpmnProcessId": "shop__Order"}], "totalCount": 2}""");
+        engine.answers("GET", "/v1/process-definitions/9", 200, definition(9, 1, heldOrder("shop__paid")
+                .replace("<bpmn:process id=\"shop__Order\" isExecutable=\"true\">", """
+                        <bpmn:message id="Message_Ordered" name="shop__ordered" />
+                        <bpmn:process id="shop__Order" isExecutable="true">
+                          <bpmn:startEvent id="Ordered">
+                            <bpmn:messageEventDefinition messageRef="Message_Ordered" />
+                          </bpmn:startEvent>""")));
 
         try (var registry = registry()) {
             final var deploymentService = deploymentService(registry, TestScoping.of(NameClashAvoidance.USE_PREFIX),

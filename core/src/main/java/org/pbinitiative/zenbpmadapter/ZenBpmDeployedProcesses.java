@@ -271,8 +271,9 @@ public final class ZenBpmDeployedProcesses {
      *            boundary events, receive tasks and the start events of event sub-processes
      * @param starting The names of the messages the newest version of a process starts it with:
      *            the engine hands a message to the start events of the newest version only
-     * @param startedByMessage The ids, as the engine knows them, of the processes whose newest
-     *            version has a message start event
+     * @param startedByMessage The ids, as the engine knows them, of the processes of which a
+     *            version the engine holds has a message start event, so a workflow a message
+     *            started may run on it
      * @param unread What could not be read, each with the reason; empty where every model was read
      */
     public record ModuleMessages(

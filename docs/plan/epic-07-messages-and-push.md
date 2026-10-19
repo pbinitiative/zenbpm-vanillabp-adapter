@@ -320,7 +320,9 @@ the core hands that key to every election about the workflow (decision 25).
      bounded by `message-start-lookup-max-instances` (default 1000, then `BPMS_UNAVAILABLE` with a
      WARN naming the bound). A completed workflow of this kind answers `UNKNOWN_TO_BPMS`, which the
      contract does not allow (`ADAPTER-AUTHORS.md` 4.1); that is why `scan` is an opt-in and goes
-     away with E13.4.
+     away with E13.4. (The reviews of the batch found that `start-row` answers the same for a
+     completed workflow, because the start row's key finds a running instance only; see the answers
+     to the two reviews below.)
    - `refuse`: no start by message at all.
 4. What the start row cannot cover, named in GAPS 1 and the wiki:
    - an application without a delivery log writes no start row;
@@ -425,9 +427,11 @@ image, then held by the ITs below). What did not fit, and what was decided:
    the probes count as running, so the election's lookup reads `active` and then `failed`. The
    probe before a start is sent again reads every state from `createdFrom = plannedAt`, as its
    business-key search does (a workflow which ended quickly is found too), and only what runs where
-   nobody knows that moment. The processes read are those of the scope whose newest version has a
-   message start event, as this start's deployment read them (`ModuleMessages#startedByMessage`,
-   new); a module which deployed nothing in this start is not read. The bound counts every instance
+   nobody knows that moment. The processes read are those of the scope of which a version the
+   engine holds has a message start event, as this start's deployment read them
+   (`ModuleMessages#startedByMessage`, new; corrected after the reviews, which found that a
+   newest-only rule lost the running workflows of an older version); a module which deployed
+   nothing in this start is not read. The bound counts every instance
    read, processes and pages together; a workflow found within it is found. The WARN of a lookup
    which reached it is logged once until a lookup stays within the bound again.
 5. **When the core asks the redispatch probe.** In the resolved core,
@@ -492,7 +496,8 @@ New tests: `ZenBpmProcessServiceTest` (6: one per value of `message-start-lookup
 `#theScanReadsOnlyWhatTheSearchLeavesOpen`, `#aLookupStopsAtTheBound`,
 `#theRedispatchLookupCountsFromThePlannedMoment`); `ZenBpmDeployingTest` (5:
 `#theProcessesAMessageStartsAreNamedOnce` for each value, `#aModuleNoMessageStartsSaysNothingAboutTheLookup`,
-`#readAgainAProcessIsStartedByAMessageWhereItsNewestVersionIs`); `ZenBpmAdapterConfigurationTest`
+`#readAgainAProcessIsStartedByAMessageWhereAnOlderVersionIs`, renamed after the reviews);
+`ZenBpmAdapterConfigurationTest`
 (the bound's defect); against the pinned engine `ZenBpmRestClientContractIT` (3:
 `#aStartMessageIsAnsweredWithoutTheInstanceItStarted`,
 `#aStartMessageIsA404AlsoWhereItsInstanceFailsBehindTheStart`,
@@ -525,6 +530,70 @@ integration tests, Spring Boot 14 unit and 53 integration tests, smoke test 38, 
 Quarkus deployment 52, Quarkus integration tests 10, coverage gate 37). The gate measures 100 % of
 28,397 instructions for Spring Boot and 100 % of 28,267 for Quarkus, and `bin/check-deploy-safety.sh`
 passes.
+
+**Answers to two reviews of S7.1.2, 2026-10-19.** Claude (approve after two documentation fixes: 2
+Minor, 1 Nit) and Copilot (changes requested: 2 Major) reviewed `f5e2786` in their own worktrees;
+both built it green with 100 % coverage on both platforms, and Copilot probed the pinned image
+through the adapter's own deployment. Every finding was checked against the engine at the pin, the
+resolved platform and the code. Five distinct findings, all valid:
+
+1. **A message start event which maps outputs dropped the aggregate id** (Copilot 1, Major).
+   Valid: the engine applies the output mappings of a message start event to the message before it
+   creates the instance, and where any exist, only the mapped variables reach it
+   (`mapStartEventTriggerVariables` of `pkg/bpmn/start_event_instance_creation_handler.go`,
+   `PropagateMappedOutputsOrAll` of `pkg/bpmn/runtime/varholder.go`). The marker then saw a start
+   nobody named and ended in an incident, and the aggregate got no start row. Fixed: while wiring,
+   every message start event of a process whose start is heard which maps outputs, but none to the
+   id variable, gets an output of it behind the modeller's (`ZenBpmMessageStarts`, decision 48).
+   `ZenBpmRestClientContractIT#aMessageStartWhichMapsOutputsHandsOnTheMappedVariablesOnly` (fixture
+   `contract-start-mapped.bpmn`) holds the two engine facts the fix relies on: an unmapped variable
+   is dropped, and a source the message does not carry maps to nothing and starts the instance all
+   the same, so a message sent past VanillaBP still starts. `message-it/postcards.bpmn` now maps
+   `status` on its start event, so `ZenBpmMessageIT#aMessageStartedWorkflowIsFoundThroughItsStartRow`
+   is the end-to-end regression; `ZenBpmMessageStartsTest` (3) covers the rewrite.
+2. **The scan forgot the running workflows of an older version** (Copilot 2, Major). Valid:
+   `ZenBpmHeldMessages` filled `startedByMessage` from the newest version only, so a newer version
+   without a message start stopped the lookup from reading the process at all, which Copilot
+   reproduced (`ACTIVE` before, `UNKNOWN_TO_BPMS` after, the old instance still running). Which
+   version takes a NEW start message is a newest-only question (decision 42); which processes may
+   HOLD a workflow a message started is not. Fixed: every held version counts for
+   `startedByMessage`, at boot and when read again; the startup INFO names the processes whose model
+   this start deployed has a message start event, so it does not claim that a message starts a
+   process whose newest version dropped the event. Item 4 of the fit check corrected in place.
+   Tests: `ZenBpmDeployingTest#theMessagesOfEveryHeldVersionAreRemembered`,
+   `#readAgainAProcessIsStartedByAMessageWhereAnOlderVersionIs` (renamed; it had pinned the defect),
+   `#aModuleNoMessageStartsSaysNothingAboutTheLookup` (an older version with a message start, no
+   INFO) and `#theProcessesAMessageStartsAreNamedOnce` (it deploys a model with a message start
+   now). The Implementor's mutant "an older version's message start counted when read again" is
+   the intended behaviour now; its inverse is killed below.
+3. **An ended message-started workflow is unknown under `start-row` as well** (Claude 1, Minor).
+   Valid: `ZenBpmProcessService#theEngineRunsTheWorkflowOfTheKey` keeps a running instance only,
+   and the business-key search never finds a workflow without a key; the merged
+   `ZenBpmWorkflowProbesTest#whateverElseTheKeyLeadsToFallsThroughToTheSearch` pins it. So the limit
+   belongs to every mode which starts by a message, not to `scan`. The README, GAPS 1, the INFO of
+   `start-row` and `scan`, the WARN of `scan` and instruction 3 say so now. The key is not made to
+   answer `COMPLETED`: that would supersede decision 25 for one case, and E13.4 is the cure.
+4. **The scan's offset paging can skip a running workflow while others end** (Claude 2, Minor).
+   Valid from the engine's source (`FindProcessInstancesPage` filters by state, then pages by
+   offset); not reproduced. Named as a limit in the README, GAPS 1 and architecture 4.2: a miss
+   answers what `start-row` answers. Keyset paging without a state filter would read the ended
+   instances against the bound, so it is not built.
+5. **The README tied phase one's check to `start-row`** (Claude 3, Nit). Reworded: "Unless `refuse`
+   is set".
+
+Seen to fail, each restored afterwards (7 of 7 mutants of the fixes, against green unmutated runs):
+the deployment's call of the rewrite switched off (against the engine:
+`ZenBpmMessageIT#aMessageStartedWorkflowIsFoundThroughItsStartRow`); an output the modeller maps to
+the id ignored; an event without outputs given one; every start event rewritten instead of the
+message starts; older versions not counted at boot; older versions not counted when read again;
+the startup INFO for every deployed model.
+
+`TZ=Etc/UTC mvn clean install` on OpenJDK 25.0.2 after the fixes builds green with every
+integration test run and none skipped (engine test support 12 unit and 5 integration tests, core
+1,038 unit and 90 integration tests, Spring Boot 14 unit and 53 integration tests, smoke test 38,
+Quarkus runtime 13, Quarkus deployment 52, Quarkus integration tests 10, coverage gate 37). The gate
+measures 100 % of 28,494 instructions for Spring Boot and 100 % of 28,364 for Quarkus, and
+`bin/check-deploy-safety.sh` passes.
 
 ## F7.2 The pushed aggregate
 
