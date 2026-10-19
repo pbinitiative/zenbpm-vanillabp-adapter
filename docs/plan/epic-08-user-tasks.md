@@ -245,6 +245,38 @@ engine-test-support 12 + 5 ITs; core 1,099 + 92 ITs; Spring Boot 14 + 65 ITs; sm
 Quarkus runtime 13, deployment 52, integration tests 15; coverage gate 37. Coverage per platform:
 Spring Boot 100.00 % (0 of 31,295 instructions missed), Quarkus 100.00 % (0 of 31,165 missed).
 
+**Answers to CodeRabbit's review of pull request #61, 2026-10-19.** One inline comment and two
+concerns its summary retained, each checked against the code and the platform at `f9505797`:
+
+1. *A service task of a declared id which shares a polled type stands still unnamed (inline,
+   Minor).* Valid: where one held version gives a type to a user task and another to a task, the
+   task's job is taken by neither the stream nor the poller, and the start's line, which named the
+   definition as not served before this story, named it only as polled. The line names it as not
+   served again, asserted by
+   `ZenBpmDeclaredProcessWorkersTest#aTypeAUserTaskOfAnyVersionCarriesIsPolledAndNotSubscribed`,
+   which was red first; 2 of 2 mutants killed.
+2. *A creation told after the cancellation (summary, resilience).* Valid on one node: the
+   platform's record runs a creation without looking for a closed record of the task
+   (`DeliveryRecords#answerToARepeatedDelivery` looks up the delivery's own key), and a node of the
+   engine which lags behind (GAPS 20) may list a job active which a look before listed terminated.
+   A job told as cancelled is never told as created afterwards on the node
+   (`ZenBpmUserTaskPollerTest#aCancelledUserTaskIsNeverToldAsCreatedAfterwards`, red first, its
+   mutant killed). Across two nodes of the application it stays a limit, named in decision 12.
+3. *The sets grow with the jobs of other applications of the shared default type (summary,
+   availability).* Not changed: the sets hold what a look lists, which a look reads anyway, and the
+   engine has no authentication (GAPS 12), so anybody who can reach it can make it list more. A
+   user task with a task definition of its own gets a scoped type under `use-prefix`, which only
+   this module's user tasks carry.
+4. *Docstring coverage 43.10 % (pre-merge warning).* Not valid here: the conventions of the
+   VanillaBP adapters, which this repository follows, ask for names which read like sentences and
+   comments which say why; the public API carries javadoc, and private methods and test methods
+   are not documented for a count.
+
+Clean build of these fixes, 2026-10-19 (`TZ=Etc/UTC mvn clean install`, none skipped, then
+`bin/check-deploy-safety.sh`, green): core 1,100 + 92 ITs, Spring Boot 14 + 65 ITs, the other
+modules as above. Coverage: Spring Boot 100.00 % (0 of 31,342 instructions missed), Quarkus
+100.00 % (0 of 31,212 missed).
+
 ## F8.2 Completing and cancelling
 
 ### S8.2.1 `COMPLETE_USER_TASK` and `CANCEL_USER_TASK`

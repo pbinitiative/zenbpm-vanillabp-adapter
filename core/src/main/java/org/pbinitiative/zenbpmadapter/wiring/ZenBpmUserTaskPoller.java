@@ -57,8 +57,9 @@ import lombok.extern.slf4j.Slf4j;
  * the engine lists, however much that is, and no delivery is handed over a second time because the
  * set ran full. A job seen active is still handed over as cancelled once it is terminated, and a
  * terminated job never seen active, after a restart or where the user task came and went between
- * two looks, is handed over as cancelled only. Across a restart the platform's record of deliveries
- * answers a notification it took before, by its delivery id.
+ * two looks, is handed over as cancelled only. A job told as cancelled is never handed over as
+ * created afterwards, where a node which lags behind lists it active again. Across a restart the
+ * platform's record of deliveries answers a notification it took before, by its delivery id.
  * <p>
  * <b>Which module.</b> On a handler slot the facts of the job's instance are read through the
  * instance cache of the adapter id, and the job goes to the module which claims the instance's
@@ -328,7 +329,7 @@ public final class ZenBpmUserTaskPoller {
         final Retry retry;
         final long startsSoFar;
         synchronized (seen) {
-            if (seen.contains(delivery) || nobodys.contains(delivery)) {
+            if (seen.contains(delivery) || nobodys.contains(delivery) || toldAsCancelled(delivery)) {
                 return true;
             }
             retry = retries.get(delivery);
@@ -445,6 +446,13 @@ public final class ZenBpmUserTaskPoller {
                 .filter(Objects::nonNull)
                 .findFirst()
                 .orElse(null);
+    }
+
+    // called holding seen: a node which lags behind may list a job active which a look before
+    // listed terminated, and a creation told after the cancellation would set a person to work
+    // on a task which is gone
+    private boolean toldAsCancelled(final Delivery delivery) {
+        return seen.contains(new Delivery(delivery.jobKey(), TaskEvent.Event.CANCELED));
     }
 
     // a delivery which neither this look nor the one before listed: its job left the state or was

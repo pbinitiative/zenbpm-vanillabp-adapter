@@ -181,6 +181,25 @@ class ZenBpmUserTaskPollerTest {
     }
 
     @Test
+    @DisplayName("A user task told as cancelled is never told as created afterwards, although a node lagging behind lists its job active again")
+    void aCancelledUserTaskIsNeverToldAsCreatedAfterwards() {
+        jobs.holds(ROOT, "default", null, "order-1", "\"id\": \"order-1\"");
+        listsTerminated(terminated(51, ROOT));
+        startsPolling(Duration.ofHours(1));
+        looks();
+        // a node lagging behind answers the next look
+        listsTerminated();
+        listsActive(userTask(51, ROOT));
+        looks();
+        listsActive();
+        listsTerminated(terminated(51, ROOT));
+
+        looks();
+
+        assertEquals(List.of("51-canceled"), deliveryIds());
+    }
+
+    @Test
     @DisplayName("A notification which threw is not remembered, so the next look tells it again, and the one after it does not; the failure is said at WARN")
     void aNotificationWhichThrewIsRetriedAtTheNextLook(final CapturedOutput output) {
         jobs.holds(ROOT, "default", null, "order-1", "\"id\": \"order-1\"");

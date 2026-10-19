@@ -128,7 +128,9 @@ maintainers, as their policy for the autonomous run asks.
   `terminated`; a `terminated` job never seen `active`, after a restart or where the user task came
   and went between two looks, is told as `CANCELED` only, because a creation told for a task already
   gone would set a person to work on it. The core runs a method which takes `CANCELED` for such a
-  task as well, and records it.
+  task as well, and records it. For the same reason a job told as `CANCELED` is never told as
+  `CREATED` afterwards, where a node which lags behind (GAPS 20) lists it active again: the core
+  checks no closed record before it runs a creation.
 - **Once per application.** The delivery id is the job key and the event, `<key>-created` and
   `<key>-canceled`, which no delivery of a job of the stream, a key alone, can be. The core answers a
   notification it recorded from its record, so a restarted node tells nothing twice, as long as the
@@ -157,7 +159,9 @@ maintainers, as their policy for the autonomous run asks.
   reaches it, a node's downtime included, deletes the job first, and the cancellation is never
   told. A creation and a cancellation reach the application one interval and the time of a look
   after the look before, and later where every handler slot is taken or the engine does not
-  answer.
+  answer. Two nodes of the application know nothing of each other's set: where a user task came
+  and went between two looks, one node may tell the cancellation and another, reading a lagging
+  node of the engine, the creation after it.
 - **A wake-up.** Once the core took a notification, it is handed the module's open-task probe of the
   process, as after every delivery of a job and as the Camunda 8 adapter does after a user-task
   listener. The probe answers `CANNOT_SAY` for a user task, so the poller is the only source of a

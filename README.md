@@ -150,8 +150,9 @@ handler slot is taken or the engine does not answer. One which threw is told aga
 and after each further failure by a look which waits twice as many looks, at most 64, so it cannot
 take the handler slots from the others; its failure is logged at WARN, and a failure right after
 another at DEBUG. A user task whose workflow module starts after the first look is told once it
-started. A cancelled user task wakes its workflow up, so a service task left open in a cancelled
-instance is told as cancelled as well. A shutdown
+started. A user task told as cancelled is not told as created afterwards by the same node, even
+where a lagging node of the engine lists it active again. A cancelled user task wakes its workflow
+up, so a service task left open in a cancelled instance is told as cancelled as well. A shutdown
 unsubscribes the job types of each workflow module and then waits for the handlers which still run,
 those of every module of an adapter id together, at most `shutdown-grace` (`PT20S` by default;
 above thirty seconds the start warns that the runtime's shutdown budget has to grow with it), and

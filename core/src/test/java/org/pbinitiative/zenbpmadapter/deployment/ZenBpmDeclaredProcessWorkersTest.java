@@ -504,7 +504,7 @@ class ZenBpmDeclaredProcessWorkersTest {
     }
 
     @Test
-    @DisplayName("A type a held model gives to a user task is polled and not subscribed, although another version gives it to a task, because the job stream cannot tell the two jobs apart")
+    @DisplayName("A type a held model gives to a user task is polled and not subscribed, although another version gives it to a task, because the job stream cannot tell the two jobs apart; the tasks of that version are named as not served")
     void aTypeAUserTaskOfAnyVersionCarriesIsPolledAndNotSubscribed(final CapturedOutput output) throws Exception {
         final var held = "shop__%s".formatted(DECLARED);
         theEngineHolds(held, model(held, "shop__%s__charge".formatted(DECLARED), null), model(held,
@@ -536,7 +536,15 @@ class ZenBpmDeclaredProcessWorkersTest {
                         .getOutOfThisTest()
                         .contains("""
                                 and the user-task poller for the task definition(s) [charge], which a user task of a \
-                                model held under that id carries"""), output::getOutOfThisTest));
+                                model held under that id carries"""), output::getOutOfThisTest),
+                () -> assertTrue(output
+                        .getOutOfThisTest()
+                        .contains(
+                                """
+                                        Not served: the tasks of the task definition(s) [charge] in the versions which give its \
+                                        type to a task, because a user task of another version carries the type, which the job \
+                                        stream never takes, and the user-task poller passes a task's job over."""),
+                        output::getOutOfThisTest));
     }
 
     @Test

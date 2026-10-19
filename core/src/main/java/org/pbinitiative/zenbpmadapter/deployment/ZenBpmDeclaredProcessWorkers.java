@@ -152,6 +152,7 @@ final class ZenBpmDeclaredProcessWorkers {
         final var served = new LinkedHashMap<String, String>();
         final var userTasks = new LinkedHashMap<String, String>();
         final var heldNowhere = new TreeSet<String>();
+        final var sharedWithATask = new TreeSet<String>();
         for (final var taskDefinition : new TreeSet<>(taskDefinitions)) {
             final var jobType = scoping.scopedTaskDefinition(workflowModuleId, bpmnProcessId, taskDefinition,
                     adapterId);
@@ -161,6 +162,13 @@ final class ZenBpmDeclaredProcessWorkers {
             final var userTaskTypes = userTaskTypesOf(taskDefinition, jobType, types);
             if (!userTaskTypes.isEmpty()) {
                 userTaskTypes.forEach(userTaskType -> userTasks.put(userTaskType, taskDefinition));
+                // a task of another version which carries the type is served by nobody: the job
+                // stream does not take the type, and the poller passes a task's job over
+                if (userTaskTypes
+                        .stream()
+                        .anyMatch(types.taskTypes()::contains)) {
+                    sharedWithATask.add(taskDefinition);
+                }
                 continue;
             }
             if (types
@@ -172,7 +180,7 @@ final class ZenBpmDeclaredProcessWorkers {
             heldNowhere.add(taskDefinition);
         }
         report(workflowModuleId, bpmnProcessId, scopedProcessId, served, types.startMarkers(), subscribedBefore,
-                userTasks, heldNowhere);
+                userTasks, heldNowhere, sharedWithATask);
         return new DeclaredProcess(bpmnProcessId, scopedProcessId, served, types.startMarkers(), userTasks);
     }
 
@@ -266,7 +274,8 @@ final class ZenBpmDeclaredProcessWorkers {
         final Map<String, BpmsStartTrigger.Kind> startMarkers,
         final Set<String> subscribedBefore,
         final Map<String, String> userTasks,
-        final Set<String> heldNowhere
+        final Set<String> heldNowhere,
+        final Set<String> sharedWithATask
     ) {
         final var subscribed = new TreeSet<String>();
         final var sharing = new TreeSet<String>();
@@ -294,6 +303,12 @@ final class ZenBpmDeclaredProcessWorkers {
         if (!heldNowhere.isEmpty()) {
             notServed.add("the task definition(s) %s, which no model held under that id names".formatted(
                     heldNowhere));
+        }
+        if (!sharedWithATask.isEmpty()) {
+            notServed.add("""
+                    the tasks of the task definition(s) %s in the versions which give its type to a task, because a \
+                    user task of another version carries the type, which the job stream never takes, and the \
+                    user-task poller passes a task's job over""".formatted(sharedWithATask));
         }
         final var line = """
                 workflow module '%s' declares BPMN process '%s' without deploying a model under it, and the engine \
