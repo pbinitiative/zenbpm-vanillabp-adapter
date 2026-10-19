@@ -303,7 +303,7 @@ class ZenBpmDeploymentServiceIT {
     }
 
     @Test
-    @DisplayName("A process id declared without a model is served by the types the models the engine holds under it give to a task and to no user task, in any version, a task without a task definition passed over")
+    @DisplayName("A process id declared without a model is served by the types the models the engine holds under it give to a task and to no user task, in any version, a task without a task definition passed over; a type a held model gives to a user task is handed to the user-task poller")
     void aDeclaredIdIsServedOnlyByTypesNoHeldUserTaskCarries(final CapturedOutput output) {
         rest.deployBpmn(heldUnderTheDeclaredId(
                 """
@@ -335,13 +335,17 @@ class ZenBpmDeploymentServiceIT {
                         .wiredProcesses()
                         .get("Old")
                         .jobTypes()),
+                () -> assertEquals(Map.of("declared-it__Old__ship", "ship"), context
+                        .wiredProcesses()
+                        .get("Old")
+                        .userTaskTypes()),
                 () -> assertTrue(output
                         .getOutOfThisTest()
                         .contains(
                                 """
-                                        its workflows are served by the job types [declared-it__Old__pack] subscribed for it. \
-                                        Not served: the task definition(s) [ship], which a user task of a model held under that \
-                                        id carries"""),
+                                        its workflows are served by the job types [declared-it__Old__pack] subscribed for it and \
+                                        the user-task poller for the task definition(s) [ship], which a user task of a model held \
+                                        under that id carries"""),
                         output::getOutOfThisTest),
                 () -> assertFalse(output
                         .getOutOfThisTest()

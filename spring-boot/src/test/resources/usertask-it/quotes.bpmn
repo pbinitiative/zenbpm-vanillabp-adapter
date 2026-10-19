@@ -1,0 +1,94 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" id="usertask-it-quotes"
+    xmlns:zenbpm="http://zenbpm.pbinitiative.org/1.0" targetNamespace="http://bpmn.io/schema/bpmn"
+    xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI"
+    xmlns:dc="http://www.omg.org/spec/DD/20100524/DC"
+    xmlns:di="http://www.omg.org/spec/DD/20100524/DI">
+  <bpmn:process id="Quoting" isExecutable="true">
+    <bpmn:startEvent id="Start">
+      <bpmn:outgoing>Flow_ToSplit</bpmn:outgoing>
+    </bpmn:startEvent>
+    <bpmn:parallelGateway id="Split">
+      <bpmn:incoming>Flow_ToSplit</bpmn:incoming>
+      <bpmn:outgoing>Flow_ToQuote</bpmn:outgoing>
+      <bpmn:outgoing>Flow_ToPrice</bpmn:outgoing>
+    </bpmn:parallelGateway>
+    <bpmn:userTask id="QuoteIt" name="Quote">
+      <bpmn:extensionElements>
+        <zenbpm:taskDefinition type="quote" />
+      </bpmn:extensionElements>
+      <bpmn:incoming>Flow_ToQuote</bpmn:incoming>
+      <bpmn:outgoing>Flow_ToQuoted</bpmn:outgoing>
+    </bpmn:userTask>
+    <bpmn:serviceTask id="Price" name="Price the quote">
+      <bpmn:extensionElements>
+        <zenbpm:taskDefinition type="price" />
+      </bpmn:extensionElements>
+      <bpmn:incoming>Flow_ToPrice</bpmn:incoming>
+      <bpmn:outgoing>Flow_ToPriced</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:endEvent id="Quoted">
+      <bpmn:incoming>Flow_ToQuoted</bpmn:incoming>
+    </bpmn:endEvent>
+    <bpmn:endEvent id="Priced">
+      <bpmn:incoming>Flow_ToPriced</bpmn:incoming>
+    </bpmn:endEvent>
+    <bpmn:sequenceFlow id="Flow_ToSplit" sourceRef="Start" targetRef="Split" />
+    <bpmn:sequenceFlow id="Flow_ToQuote" sourceRef="Split" targetRef="QuoteIt" />
+    <bpmn:sequenceFlow id="Flow_ToPrice" sourceRef="Split" targetRef="Price" />
+    <bpmn:sequenceFlow id="Flow_ToQuoted" sourceRef="QuoteIt" targetRef="Quoted" />
+    <bpmn:sequenceFlow id="Flow_ToPriced" sourceRef="Price" targetRef="Priced" />
+  </bpmn:process>
+  <bpmndi:BPMNDiagram id="BPMNDiagram_1">
+    <bpmndi:BPMNPlane id="BPMNPlane_1" bpmnElement="Quoting">
+      <bpmndi:BPMNShape id="Start_di" bpmnElement="Start">
+        <dc:Bounds x="160" y="80" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Split_di" bpmnElement="Split">
+        <dc:Bounds x="256" y="80" width="50" height="50" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="QuoteIt_di" bpmnElement="QuoteIt">
+        <dc:Bounds x="366" y="80" width="100" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Price_di" bpmnElement="Price">
+        <dc:Bounds x="366" y="210" width="100" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Quoted_di" bpmnElement="Quoted">
+        <dc:Bounds x="526" y="80" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Priced_di" bpmnElement="Priced">
+        <dc:Bounds x="526" y="166" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNEdge id="Flow_ToSplit_di" bpmnElement="Flow_ToSplit">
+        <di:waypoint x="196" y="98" />
+        <di:waypoint x="226" y="98" />
+        <di:waypoint x="226" y="105" />
+        <di:waypoint x="256" y="105" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_ToQuote_di" bpmnElement="Flow_ToQuote">
+        <di:waypoint x="306" y="105" />
+        <di:waypoint x="336" y="105" />
+        <di:waypoint x="336" y="120" />
+        <di:waypoint x="366" y="120" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_ToPrice_di" bpmnElement="Flow_ToPrice">
+        <di:waypoint x="306" y="105" />
+        <di:waypoint x="336" y="105" />
+        <di:waypoint x="336" y="250" />
+        <di:waypoint x="366" y="250" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_ToQuoted_di" bpmnElement="Flow_ToQuoted">
+        <di:waypoint x="466" y="120" />
+        <di:waypoint x="496" y="120" />
+        <di:waypoint x="496" y="98" />
+        <di:waypoint x="526" y="98" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_ToPriced_di" bpmnElement="Flow_ToPriced">
+        <di:waypoint x="466" y="250" />
+        <di:waypoint x="496" y="250" />
+        <di:waypoint x="496" y="184" />
+        <di:waypoint x="526" y="184" />
+      </bpmndi:BPMNEdge>
+    </bpmndi:BPMNPlane>
+  </bpmndi:BPMNDiagram>
+</bpmn:definitions>

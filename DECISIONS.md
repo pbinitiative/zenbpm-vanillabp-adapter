@@ -79,6 +79,71 @@ that status decides, even when the HTTP client then timed out on the body.
 *Superseded by decision 30, which keeps this rule and adds the `404` of a start to the permanent
 answers.*
 
+### 12. User-task notifications are polled, not streamed
+
+A ZenBPM user task is a job, typed by its `zenbpm:taskDefinition` or, where it names none, by the
+engine's default `user-task-type`, which the scoping leaves as it is, so every application on the
+engine shares it. Subscribing that type on the job stream would lock the job for the whole life of
+the user task, renewed by the adapter for days, and it would still not say when a user task is
+taken away, because the stream never hands out a job the engine terminated. At the pinned commit
+`bdd795a3` a cancelled instance and an interrupting boundary event set the job `terminated`
+(`handleProcessInstanceInnerCancel` in `pkg/bpmn/engine.go`, `pkg/bpmn/events.go`), and nothing is
+pushed. So the stream never subscribes a user task's type, and one `ZenBpmUserTaskPoller` per
+adapter id lists the jobs instead.
+
+The parts below the plan left open were decided by the implementation pipeline in place of the
+maintainers, as their policy for the autonomous run asks.
+
+- **What is looked for.** Wiring asks the platform whether a method serves each user task of a
+  claimed process, by its task definition and by its element id, and remembers the job type of
+  each one served as the deployed model gives it. A user task no method serves, one marked
+  `implemented-externally`, is never looked for. The user tasks of a process id a module declares
+  without a model are those of the task definitions the held models give to a user task, read
+  where decision 41 reads them. Each distinct type is looked for once per adapter id.
+- **A look.** Every `user-task-poll-interval` (`PT5S` by default) the poller lists the `active` and
+  the `terminated` jobs of each type, page by page to the last. The engine filters jobs by neither
+  time nor key, and a key cursor would miss a job created long ago and terminated late, so a look
+  costs more the more terminated user tasks the engine keeps: their jobs are deleted only with
+  their instance's history (`DeleteProcessInstancesJobs` in
+  `internal/cluster/partition/partition_persistence.go`), which an engine without
+  `PERSISTENCE_INSTANCE_HISTORY_TTL` keeps forever, unless `history-time-to-live` is set. A job of
+  another element type which shares the type, a task of an older version, is left to the stream.
+  `PT0S` switches the looks off, and the start warns about it and about an interval below a second.
+- **Whose user task.** A job names no process, so the instance cache reads its instance, and the
+  job goes to the module which claims the instance's process and looks for the type in it. A job of
+  a process this application does not claim is never handed to the core.
+- **Once per node.** A job and its event, once the core took the notification or there is nobody to
+  notify, go into a bounded set of 100,000 deliveries, which forgets the one used longest ago
+  first. A job seen `active` is still told as `CANCELED` once it is `terminated`; a `terminated` job
+  never seen `active`, after a restart or where the user task came and went between two looks, is
+  told as `CANCELED` only, because a creation told for a task already gone would set a person to
+  work on it. The core runs a method which takes `CANCELED` for such a task as well, and records it.
+- **Once per application.** The delivery id is the job key and the event, `<key>-created` and
+  `<key>-canceled`, which no delivery of a job of the stream, a key alone, can be. The core answers a
+  notification it recorded from its record, so a restarted node tells nothing twice, as long as the
+  record lives. A record the core no longer holds, after `vanillabp.delivery.retention` or once the
+  end of its workflow released it, is told again after a restart where the engine still lists the
+  job: keep `history-time-to-live` below the retention to rule that out.
+- **Threads.** The looks are timed by the timing threads of the adapter id and run on a virtual
+  thread of their own; the next look is timed when one ends. Each notification is handed to a
+  handler slot with `tryExecute`, which never waits: where no slot is free the look ends, and one
+  which threw or found the module stopping is not remembered, so the next look hands it over again.
+  A job whose notification still runs is not handed over twice.
+- **Start and stop.** A module is registered with the poller once its job types are subscribed, and
+  a module with user tasks and no job type starts its processing for them alone. Its notifications
+  run inside its drain, so the shutdown waits for them (decision 39), and its stop unregisters it
+  before the handler hears of the stop; the looks end with the last module.
+- **Failures.** A look the engine does not answer is never read as an empty one: nothing is
+  remembered, a WARN says it once per outage, and the next look asks again. A failed read of one
+  job's instance skips that job only.
+- **A wake-up.** Once the core took a notification, it is handed the module's open-task probe of the
+  process, as after every delivery of a job and as the Camunda 8 adapter does after a user-task
+  listener. The probe answers `CANNOT_SAY` for a user task, so the poller is the only source of a
+  user task's `CANCELED`, and the platform's contract allows no second one.
+
+A notification cannot raise a BPMN error into the workflow; a method which raises one is warned
+about and the user task waits on.
+
 ### 13. A class opens its fields one by one, not as a whole
 
 The deployment service, the process service and the engine client of this adapter hold many

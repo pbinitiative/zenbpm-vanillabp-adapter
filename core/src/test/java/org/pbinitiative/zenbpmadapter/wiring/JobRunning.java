@@ -104,7 +104,7 @@ final class JobRunning implements AutoCloseable {
         factory = new ZenBpmClientFactory("orders", configuration, () -> "shop");
         dispatcher = new ZenBpmJobDispatcher("orders", factory);
         handler = handlerOf("shop", NameClashAvoidance.USE_PREFIX, new WiredProcess("Order", "shop__Order", Set.of(
-                JOB_TYPE), true, false, Map.of("Placed", BpmsStartTrigger.Kind.TIMER)));
+                JOB_TYPE), true, false, Map.of("Placed", BpmsStartTrigger.Kind.TIMER), Map.of()));
         dispatcher.register(handler);
     }
 

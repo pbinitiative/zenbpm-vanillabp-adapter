@@ -92,6 +92,37 @@ class ZenBpmDeploymentWiringTest {
             </bpmn:definitions>
             """;
 
+    // user tasks of every kind of type: one with a task definition, one without, one whose task
+    // definition is written as the engine's default, and one no method serves
+    private static final String USER_TASKS = """
+            <bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL"
+                xmlns:zenbpm="http://zenbpm.pbinitiative.org/1.0" id="orders">
+              <bpmn:process id="Orders" isExecutable="true">
+                <bpmn:userTask id="Approve">
+                  <bpmn:extensionElements>
+                    <zenbpm:taskDefinition type="approve" />
+                  </bpmn:extensionElements>
+                </bpmn:userTask>
+                <bpmn:userTask id="Check" />
+                <bpmn:userTask id="Review">
+                  <bpmn:extensionElements>
+                    <zenbpm:taskDefinition type="user-task-type" />
+                  </bpmn:extensionElements>
+                </bpmn:userTask>
+                <bpmn:userTask id="Sign">
+                  <bpmn:extensionElements>
+                    <zenbpm:taskDefinition type="sign" />
+                  </bpmn:extensionElements>
+                </bpmn:userTask>
+                <bpmn:serviceTask id="Ship">
+                  <bpmn:extensionElements>
+                    <zenbpm:taskDefinition type="ship" />
+                  </bpmn:extensionElements>
+                </bpmn:serviceTask>
+              </bpmn:process>
+            </bpmn:definitions>
+            """;
+
     @Test
     @DisplayName("A claimed process gets every wiring call once, with what the modeller wrote, and the context remembers its scoped id and the job types this application serves")
     void aClaimedProcessGetsEveryWiringCallOnce() {
@@ -135,9 +166,36 @@ class ZenBpmDeploymentWiringTest {
                 () -> assertEquals(Map.of("Orders", new WiredProcess("Orders", "shop__Orders", Set.of(
                         "shop__Orders__charge", "shop__Orders__ship", "shop__Orders__pack"), true, true, Map.of("Start",
                                 BpmsStartTrigger.Kind.NONE, "Placed", BpmsStartTrigger.Kind.MESSAGE, "EveryNight",
-                                BpmsStartTrigger.Kind.TIMER))),
+                                BpmsStartTrigger.Kind.TIMER), Map.of())),
                         context
                                 .wiredProcesses()));
+    }
+
+    @Test
+    @DisplayName("Wiring remembers the job type of each user task a method serves, by its task definition or its element id, as the engine knows it from the deployed model: scoped where the model names a task definition, the engine's default where it names none, also where a task definition is written as that default; a user task no method serves is never looked for, and the job stream subscribes none of them")
+    void wiringRemembersTheUserTasksAMethodServes() {
+        final var deploymentService = deploymentService(TestCollaborators.of(ADAPTER_ID, TestScoping.of(
+                NameClashAvoidance.USE_PREFIX),
+                TestWiring
+                        .claiming("Orders")
+                        .wiring(),
+                TestStarts.everyProcessStartingAWorkflow(), TestCollaborators.servingUserTasks(
+                        "approve", "Check", "Review")));
+
+        final var context = wire(deploymentService, "orders.bpmn", USER_TASKS, "Orders");
+
+        assertAll(
+                () -> assertEquals(Map.of(
+                        "shop__Orders__approve", "approve",
+                        "user-task-type", "user-task-type",
+                        "shop__Orders__user-task-type", "user-task-type"),
+                        context
+                                .wiredProcesses()
+                                .get("Orders")
+                                .userTaskTypes()),
+                () -> assertEquals(Set.of("shop__Orders__approve", "user-task-type", "shop__Orders__user-task-type"),
+                        context.userTaskTypes()),
+                () -> assertEquals(Set.of("shop__Orders__ship"), context.jobTypes()));
     }
 
     @Test
@@ -280,7 +338,7 @@ class ZenBpmDeploymentWiringTest {
 
         assertEquals(
                 new WiredProcess("Orders", "Orders", Set.of("charge", "notify", "ship", "pack"), false, false, Map
-                        .of()),
+                        .of(), Map.of()),
                 context
                         .wiredProcesses()
                         .get("Orders"));

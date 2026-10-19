@@ -210,6 +210,16 @@ model subscribes its start markers where a held model carries them (decision 46,
 `ZenBpmDeclaredProcessWorkers`); its workflows reach their END marker far more often, so the end
 marker's type of such a process needs the same.
 
+*Note from S8.1.1, 2026-10-19.* The user-task poller (decision 12) tells a terminated user task
+as `CANCELED` whenever its job is listed and the node has not told it yet, and after a restart the
+platform's record answers. Where this story's end marker makes the core release the records of an
+ended workflow (`vanillabp.delivery.release-on-workflow-end`), a user task the end of its workflow
+took away is told again after the next restart, because the engine still lists its terminated job
+until the instance's history is deleted. Decide here whether the poller leaves out a terminated job
+whose instance ended at an end event (the end already cancels the open tasks of the workflow,
+platform decision 73), and test it with `ZenBpmUserTaskRestartIT`. A cancelled instance runs no
+marker, so its user tasks keep being told by the poller (GAPS 9).
+
 **Tests**: `ZenBpmWorkflowEndedHandlerTest`; Spring `ZenBpmLifecycleIT#theEndOfAWorkflowIsReportedWithItsEndEvent`
 (two end events, each reported with its own id), `#aCancelledWorkflowReportsNothing`,
 `#theEndCancelsTheTasksStillOpen` (a task waiting in a parallel branch inside an embedded

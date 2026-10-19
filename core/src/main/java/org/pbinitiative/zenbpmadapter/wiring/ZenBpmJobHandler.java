@@ -298,6 +298,17 @@ public final class ZenBpmJobHandler {
     }
 
     /**
+     * What the core asks about the other open tasks of a workflow of a claimed process of the
+     * module, the one every delivery of the process hands it.
+     *
+     * @param plainProcessId The process as the application knows it
+     * @return The probe, <code>null</code> where the module holds no such process
+     */
+    ZenBpmOpenTaskProbe probeOf(final String plainProcessId) {
+        return probes.get(plainProcessId);
+    }
+
+    /**
      * Runs one job, on a handler thread.
      *
      * @param received The job as the job stream received it
@@ -408,13 +419,13 @@ public final class ZenBpmJobHandler {
 
     // the id variable first: it is what VanillaBP reads the aggregate by, and the business key is
     // reported beside it, so the core refuses an instance whose two name different aggregates
-    private Optional<Aggregate> aggregateNamedIn(
+    private Optional<NamedAggregate> aggregateNamedIn(
         final InstanceFacts facts,
         final String idVariableName,
         final long workflowId,
         final Delivery delivery
     ) {
-        final var named = Aggregate.namedIn(facts, idVariableName);
+        final var named = NamedAggregate.in(facts, idVariableName);
         if (named.isPresent() || (facts.key() == workflowId)) {
             return named;
         }
@@ -422,14 +433,14 @@ public final class ZenBpmJobHandler {
         // the engine started and VanillaBP named only later has them in its root alone
         return delivery.retry
                 .read("instance", () -> instances.facts(workflowId, idVariableName), Optional::isEmpty)
-                .flatMap(root -> Aggregate.namedIn(root, idVariableName));
+                .flatMap(root -> NamedAggregate.in(root, idVariableName));
     }
 
     private boolean complete(
         final long jobKey,
         final List<Long> path,
         final String idVariableName,
-        final Aggregate aggregate,
+        final NamedAggregate aggregate,
         final Delivery delivery
     ) {
         final var variables = sharedValuesOf(idVariableName, aggregate, delivery);
@@ -458,7 +469,7 @@ public final class ZenBpmJobHandler {
         final ReceivedJob received,
         final List<Long> path,
         final String idVariableName,
-        final Aggregate aggregate,
+        final NamedAggregate aggregate,
         final WorkflowTaskOutcome outcome,
         final Delivery delivery
     ) {
@@ -502,7 +513,7 @@ public final class ZenBpmJobHandler {
     private void warnWhereNothingCaughtIt(
         final long jobKey,
         final String errorCode,
-        final Aggregate aggregate,
+        final NamedAggregate aggregate,
         final WorkflowTaskOutcome outcome,
         final Delivery delivery
     ) {
@@ -531,7 +542,7 @@ public final class ZenBpmJobHandler {
     // is answered from the record of this delivery, which parks the job again
     private boolean keepOpen(
         final ReceivedJob received,
-        final Aggregate aggregate,
+        final NamedAggregate aggregate,
         final WorkflowTaskOutcome outcome,
         final Delivery delivery,
         final ZenBpmLockRenewal.Renewal renewal
@@ -569,7 +580,7 @@ public final class ZenBpmJobHandler {
     // engine. Without retries: with retries left the job would come back only after its backoff
     private void failAsOverdue(
         final ReceivedJob received,
-        final Aggregate aggregate,
+        final NamedAggregate aggregate,
         final Duration openFor,
         final Delivery delivery
     ) {
@@ -607,7 +618,7 @@ public final class ZenBpmJobHandler {
 
     private Map<String, Object> sharedValuesOf(
         final String idVariableName,
-        final Aggregate aggregate,
+        final NamedAggregate aggregate,
         final Delivery delivery
     ) {
         return ZenBpmSharedValues.forCommand(idVariableName, aggregate.id(), invoker.syncedWorkflowAggregateValues(
@@ -619,7 +630,7 @@ public final class ZenBpmJobHandler {
         final long jobKey,
         final List<Long> path,
         final Map<String, Object> variables,
-        final Aggregate aggregate,
+        final NamedAggregate aggregate,
         final Delivery delivery,
         final String answer
     ) {
@@ -705,7 +716,7 @@ public final class ZenBpmJobHandler {
     // id, so a repeat after a lost answer counts once and the lock is released for the backoff
     private void failAThrownHandler(
         final ReceivedJob received,
-        final Aggregate aggregate,
+        final NamedAggregate aggregate,
         final RuntimeException thrown,
         final Delivery delivery
     ) {
@@ -796,34 +807,6 @@ public final class ZenBpmJobHandler {
     }
 
     /**
-     * The workflow aggregate an instance names.
-     *
-     * @param id The aggregate's id, as the variable or the business key carry it
-     * @param businessKey The business key of the instance, <code>null</code> where it has none
-     */
-    private record Aggregate(
-        String id,
-        String businessKey
-    ) {
-
-        private static Optional<Aggregate> namedIn(
-            final InstanceFacts facts,
-            final String idVariableName
-        ) {
-            final var variable = facts
-                    .variables()
-                    .get(idVariableName);
-            if (variable != null) {
-                return Optional.of(new Aggregate(String.valueOf(variable), facts.businessKey()));
-            }
-            return Optional
-                    .ofNullable(facts.businessKey())
-                    .map(businessKey -> new Aggregate(businessKey, businessKey));
-        }
-
-    }
-
-    /**
      * The invocation context of one delivery of a job, built from the job and the facts of its
      * instance; it asks the engine nothing.
      */
@@ -835,7 +818,7 @@ public final class ZenBpmJobHandler {
 
         private final String taskDefinition;
 
-        private final Aggregate aggregate;
+        private final NamedAggregate aggregate;
 
         private final long workflowId;
 
@@ -849,7 +832,7 @@ public final class ZenBpmJobHandler {
             final String adapterId,
             final ReceivedJob received,
             final String taskDefinition,
-            final Aggregate aggregate,
+            final NamedAggregate aggregate,
             final long workflowId,
             final int version,
             final boolean predatesDeployedVersion

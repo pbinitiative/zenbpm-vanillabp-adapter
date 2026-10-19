@@ -273,6 +273,24 @@ public final class ZenBpmProcessingContext {
     }
 
     /**
+     * The job types of the user tasks of the workflow module's claimed processes, and of the process
+     * ids it declares without a model, whose notifications the application wants, each once, in the
+     * order the processes were wired. The job stream never subscribes them: they are polled, see
+     * decision 12 in the repository's DECISIONS.md.
+     *
+     * @return The job types as the engine knows them
+     */
+    public Set<String> userTaskTypes() {
+        final var userTaskTypes = new LinkedHashSet<String>();
+        wiredProcesses
+                .values()
+                .forEach(wiredProcess -> userTaskTypes.addAll(wiredProcess
+                        .userTaskTypes()
+                        .keySet()));
+        return Collections.unmodifiableSet(userTaskTypes);
+    }
+
+    /**
      * Remembers the <code>job-timeout</code> of a task a claimed process of the module serves, by
      * the job type the task's jobs come under, and ends the deployment where another task of the
      * module comes under the same job type with another one: the engine locks the jobs of a type for
@@ -395,6 +413,10 @@ public final class ZenBpmProcessingContext {
      *            triggers it, see {@link ZenBpmMarkerTasks}; empty where the model gives none, which
      *            it does where the process starts no workflow of its own, or where the module
      *            brings no model for it
+     * @param userTaskTypes The job types of its user tasks whose notifications the application
+     *            wants, as the engine knows them, each with the task definition the application knows
+     *            it by; a user task nobody is notified about is left out, and so is every one where the
+     *            module brings no model and no method names its task definition
      */
     public record WiredProcess(
         String bpmnProcessId,
@@ -402,15 +424,18 @@ public final class ZenBpmProcessingContext {
         Set<String> jobTypes,
         boolean reportsItsStart,
         boolean reportsItsEnd,
-        Map<String, BpmsStartTrigger.Kind> startMarkers
+        Map<String, BpmsStartTrigger.Kind> startMarkers,
+        Map<String, String> userTaskTypes
     ) {
 
         /**
-         * Copies the job types and the start markers, so what was found stays what it was.
+         * Copies the job types, the start markers and the user-task types, so what was found stays
+         * what it was.
          */
         public WiredProcess {
             jobTypes = Collections.unmodifiableSet(new LinkedHashSet<>(jobTypes));
             startMarkers = Collections.unmodifiableMap(new LinkedHashMap<>(startMarkers));
+            userTaskTypes = Collections.unmodifiableMap(new LinkedHashMap<>(userTaskTypes));
         }
 
         /**

@@ -5,6 +5,7 @@
 package org.pbinitiative.zenbpmadapter;
 
 import java.lang.reflect.Proxy;
+import java.util.Set;
 
 import io.vanillabp.integration.adapter.spi.AdapterCollaborators;
 import io.vanillabp.integration.adapter.spi.NameClashAvoidanceSupport;
@@ -79,7 +80,7 @@ public final class TestCollaborators {
         return AdapterCollaborators
                 .forAdapter(adapterId)
                 .workflowTaskWiring(workflowTaskWiring)
-                .workflowTaskInvoker(unused(WorkflowTaskInvoker.class))
+                .workflowTaskInvoker(servingUserTasks())
                 .scoping(scoping)
                 .workflowAggregateSync(unused(WorkflowAggregateSync.class))
                 .preCommitRegistrar(unused(PreCommitRegistrar.class))
@@ -105,7 +106,7 @@ public final class TestCollaborators {
         return AdapterCollaborators
                 .forAdapter(adapterId)
                 .workflowTaskWiring(unused(WorkflowTaskWiring.class))
-                .workflowTaskInvoker(unused(WorkflowTaskInvoker.class))
+                .workflowTaskInvoker(servingUserTasks())
                 .scoping(scoping)
                 .workflowAggregateSync(workflowAggregateSync)
                 .preCommitRegistrar(unused(PreCommitRegistrar.class))
@@ -133,7 +134,7 @@ public final class TestCollaborators {
         return AdapterCollaborators
                 .forAdapter(adapterId)
                 .workflowTaskWiring(workflowTaskWiring)
-                .workflowTaskInvoker(unused(WorkflowTaskInvoker.class))
+                .workflowTaskInvoker(servingUserTasks())
                 .scoping(scoping)
                 .workflowAggregateSync(workflowAggregateSync)
                 .preCommitRegistrar(unused(PreCommitRegistrar.class))
@@ -161,7 +162,7 @@ public final class TestCollaborators {
         return AdapterCollaborators
                 .forAdapter(adapterId)
                 .workflowTaskWiring(workflowTaskWiring)
-                .workflowTaskInvoker(unused(WorkflowTaskInvoker.class))
+                .workflowTaskInvoker(servingUserTasks())
                 .scoping(scoping)
                 .workflowAggregateSync(unused(WorkflowAggregateSync.class))
                 .preCommitRegistrar(unused(PreCommitRegistrar.class))
@@ -188,11 +189,65 @@ public final class TestCollaborators {
         return AdapterCollaborators
                 .forAdapter(adapterId)
                 .workflowTaskWiring(workflowTaskWiring)
-                .workflowTaskInvoker(unused(WorkflowTaskInvoker.class))
+                .workflowTaskInvoker(servingUserTasks())
                 .scoping(scoping)
                 .workflowAggregateSync(unused(WorkflowAggregateSync.class))
                 .preCommitRegistrar(unused(PreCommitRegistrar.class))
                 .build();
+    }
+
+    /**
+     * A complete set of collaborators, of which the scoping, the wiring, the two invokers of the
+     * lifecycle of a workflow and the question whether a method serves a user task may be called:
+     * what the wiring of a process with user tasks meets.
+     *
+     * @param adapterId The adapter id they are handed to
+     * @param scoping The platform's name-clash scoping, as the test wants it to answer
+     * @param workflowTaskWiring The platform's wiring, as the test wants it to answer
+     * @param starts The invokers of starts and ends, as the test wants them to answer
+     * @param workflowTaskInvoker The platform's core, as the test wants it to answer
+     * @return The collaborators
+     */
+    public static AdapterCollaborators of(
+        final String adapterId,
+        final NameClashAvoidanceSupport scoping,
+        final WorkflowTaskWiring workflowTaskWiring,
+        final TestStarts starts,
+        final WorkflowTaskInvoker workflowTaskInvoker
+    ) {
+        return AdapterCollaborators
+                .forAdapter(adapterId)
+                .workflowTaskWiring(workflowTaskWiring)
+                .workflowTaskInvoker(workflowTaskInvoker)
+                .scoping(scoping)
+                .workflowAggregateSync(unused(WorkflowAggregateSync.class))
+                .preCommitRegistrar(unused(PreCommitRegistrar.class))
+                .workflowEndedInvoker(starts.endedInvoker())
+                .bpmsInitiatedStartInvoker(starts.startInvoker())
+                .build();
+    }
+
+    /**
+     * The platform's core as the wiring of a process meets it: it answers whether a method serves a
+     * user task, by its task definition or its element id, and nothing else may be called.
+     *
+     * @param served The task definitions and element ids a method serves
+     * @return The core
+     */
+    public static WorkflowTaskInvoker servingUserTasks(final String... served) {
+        final var servedOnes = Set.of(served);
+        return (WorkflowTaskInvoker) Proxy.newProxyInstance(TestCollaborators.class.getClassLoader(), new Class<?>[]{
+                WorkflowTaskInvoker.class
+        }, (
+            proxy,
+            method,
+            arguments) -> {
+            if ("workflowTaskHandlerExists".equals(method.getName())) {
+                return servedOnes.contains((String) arguments[2]);
+            }
+            throw new AssertionError("WorkflowTaskInvoker.%s is not expected to be called".formatted(method
+                    .getName()));
+        });
     }
 
     /**
