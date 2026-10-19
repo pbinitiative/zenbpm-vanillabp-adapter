@@ -184,8 +184,45 @@ on something it does not find, such as a called process which is not deployed, s
 is repeated as well, and is received a second time where the workflow waits for it again within the
 window (decision 43). ZenBPM deduplicates no message: a second correlation with the same correlation
 id is not planned while the first still waits in the outbox, a correlation without one is never
-deduplicated, and a publication repeated after its answer was lost may correlate twice. What is
-built next, and in which order, is the implementation plan in [`docs/`](docs/README.md).
+deduplicated, and a publication repeated after its answer was lost may correlate twice.
+
+A workflow is started by a message in two phases as well, and how it is found afterwards is
+`message-start-lookup`. ZenBPM gives a workflow it starts by a message no business key and names no
+instance in its answer (see [`GAPS.md`](./GAPS.md)). Unless `refuse` is set, phase one refuses
+where the application calls a message the newest version of no process of the workflow module
+starts with, read again from the engine before it refuses, naming `correlateMessage` where a model
+waits for the name; phase two publishes the message under its scoped name without a correlation key,
+with the values the aggregate shares and its id, and reports nothing. Where the modeller maps the
+outputs of a message start event, the deployment adds an output of the id variable, because the
+engine hands the instance the mapped variables only (decision 48). Under `start-row`, the default, the start
+marker behind the message start event reports the instance's key, which the platform writes into the
+start row of the aggregate, and every later operation on the running workflow finds it through that
+key. The start row does not cover an application without a delivery log, the moments between the
+publication and the commit of the marker's report, in which only the node which published knows the
+workflow, or a start sent again after its answer was lost before the marker wrote the row, which
+publishes once more and may start a second workflow. Nor does it cover a workflow which ended: the
+key finds a running instance only, so where the platform asks which adapter holds a workflow a
+message started and which ended, it is answered as unknown to the engine, in every mode, which the
+platform's contract for adapters does not allow. How long the row lives is
+`vanillabp.delivery.workflow-start-retention` (`P30D` by default, `0` keeps rows for good) or
+`vanillabp.delivery.keep-workflow-start-while-aggregate-exists`. Under `scan`, an opt-in, the probes
+in addition read the instances of the processes a version of which has a message start event where
+nothing else finds the workflow, and find a running one by its id variable, also before a start is
+sent again, at most `message-start-lookup-max-instances` instances (`1000` by default), beyond which
+they answer that the engine is unavailable. A workflow which ended stays unknown to them as well, and
+the start of the application warns so. The engine hands out the running instances page by page, so a
+lookup over several pages may miss a workflow while other instances of its process end, and then
+answers as `start-row` does. Under
+`refuse` every start by a message is refused where the application calls, naming the key. Each start
+of the application names the processes a message starts and the value in force. ZenBPM loses starts
+when two start messages of one name reach it at the same moment, answering one of them as if it
+started a workflow, so each node publishes the start messages of one name one after the other;
+several nodes of an application may still lose such a start unseen. A start message no start event
+takes is answered `404`, also where another node took the start event at that moment, so it is
+repeated with the outbox's backoff and blocked after `vanillabp.outbox.block-after-attempts`
+(decision 47).
+
+What is built next, and in which order, is the implementation plan in [`docs/`](docs/README.md).
 
 ## Modules
 
@@ -291,6 +328,10 @@ Where the status says less than it seems:
   which a wrong "unknown" turns into a second workflow. A message may be correlated twice, because
   the engine does not deduplicate messages, and a failure without a delivery token counts twice. The
   caller of such a call decides whether it accepts the duplicate.
+- A `404` from `POST /v1/messages` reads as nobody waits, which a correlation hands back to the
+  outbox without counting an attempt. For a start message it means that no start event took the
+  message, so the start's handler throws it as an ordinary failure, which is repeated with the
+  outbox's backoff and counted (decision 47 in [`DECISIONS.md`](./DECISIONS.md)).
 - A `404` or `409` is read from its status, method and path alone. A proxy in front of the engine
   which answers `404` to a call of a job, for example because its routes leave out a path, is read
   as a gone job like the engine's own answer.

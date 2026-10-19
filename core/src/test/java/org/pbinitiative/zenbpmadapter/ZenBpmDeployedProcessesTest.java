@@ -94,9 +94,10 @@ class ZenBpmDeployedProcessesTest {
         deployed.recordServed("billing", "billing__Invoice");
         final var servedWithModelsOnly = deployed.servesAProcessItDeployedNoModelFor("shop");
         deployed.recordServed("shop", "shop__OrderBeforeTheRename");
-        final var messages = new ModuleMessages(List.of("shop__Order"), Set.of("shop__paid"), Set.of(), List.of());
+        final var messages = new ModuleMessages(List.of("shop__Order"), Set.of("shop__paid"), Set.of(), Set.of(), List
+                .of());
         final var readAgain = new ModuleMessages(List.of("shop__Order"), Set.of("shop__paid", "shop__settled"), Set
-                .of(), List.of());
+                .of(), Set.of(), List.of());
         deployed.recordMessages("shop", messages, () -> readAgain);
         final var keptBeforeReadingAgain = deployed.messagesOf("shop");
 

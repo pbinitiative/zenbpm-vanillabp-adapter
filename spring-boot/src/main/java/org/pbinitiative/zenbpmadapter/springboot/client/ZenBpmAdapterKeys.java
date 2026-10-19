@@ -57,6 +57,8 @@ public class ZenBpmAdapterKeys {
 
     private MessageStartLookup messageStartLookup;
 
+    private Integer messageStartLookupMaxInstances;
+
     private Boolean acceptUnscopedIdentifiers;
 
     /**
@@ -382,7 +384,8 @@ public class ZenBpmAdapterKeys {
     }
 
     /**
-     * <code>message-start-lookup</code>: what the adapter does when it is asked for workflows a message started.
+     * <code>message-start-lookup</code>: how a workflow <code>startWorkflowByMessage</code> started is found,
+     * <code>start-row</code>, <code>scan</code> or <code>refuse</code>.
      *
      * @return The value, or <code>null</code> where the application did not set the key
      */
@@ -391,12 +394,33 @@ public class ZenBpmAdapterKeys {
     }
 
     /**
-     * <code>message-start-lookup</code>: what the adapter does when it is asked for workflows a message started.
+     * <code>message-start-lookup</code>: how a workflow <code>startWorkflowByMessage</code> started is found,
+     * <code>start-row</code>, <code>scan</code> or <code>refuse</code>.
      *
      * @param messageStartLookup The value as bound
      */
     public void setMessageStartLookup(final MessageStartLookup messageStartLookup) {
         this.messageStartLookup = messageStartLookup;
+    }
+
+    /**
+     * <code>message-start-lookup-max-instances</code>: how many instances one lookup of
+     * <code>message-start-lookup: scan</code> reads at most.
+     *
+     * @return The value, or <code>null</code> where the application did not set the key
+     */
+    public Integer getMessageStartLookupMaxInstances() {
+        return messageStartLookupMaxInstances;
+    }
+
+    /**
+     * <code>message-start-lookup-max-instances</code>: how many instances one lookup of
+     * <code>message-start-lookup: scan</code> reads at most.
+     *
+     * @param messageStartLookupMaxInstances The value as bound
+     */
+    public void setMessageStartLookupMaxInstances(final Integer messageStartLookupMaxInstances) {
+        this.messageStartLookupMaxInstances = messageStartLookupMaxInstances;
     }
 
     /**
@@ -444,6 +468,7 @@ public class ZenBpmAdapterKeys {
         configuration.setHistoryTimeToLive(historyTimeToLive);
         configuration.setInstanceCacheMaxEntries(instanceCacheMaxEntries);
         configuration.setMessageStartLookup(messageStartLookup);
+        configuration.setMessageStartLookupMaxInstances(messageStartLookupMaxInstances);
         configuration.setAcceptUnscopedIdentifiers(acceptUnscopedIdentifiers);
     }
 

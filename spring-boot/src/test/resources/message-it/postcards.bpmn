@@ -1,0 +1,54 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" id="message-it-postcards"
+    xmlns:zenbpm="http://zenbpm.pbinitiative.org/1.0" targetNamespace="http://bpmn.io/schema/bpmn"
+    xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI"
+    xmlns:dc="http://www.omg.org/spec/DD/20100524/DC"
+    xmlns:di="http://www.omg.org/spec/DD/20100524/DI">
+  <bpmn:message id="Message_PostcardPosted" name="postcardPosted" />
+  <bpmn:message id="Message_Stamped" name="stamped" />
+  <bpmn:process id="Postcards" isExecutable="true">
+    <bpmn:startEvent id="Posted" name="Posted">
+      <bpmn:extensionElements>
+        <zenbpm:ioMapping>
+          <zenbpm:output source="=status" target="status" />
+        </zenbpm:ioMapping>
+      </bpmn:extensionElements>
+      <bpmn:outgoing>Flow_ToAwaitStamp</bpmn:outgoing>
+      <bpmn:messageEventDefinition id="Posted_Definition" messageRef="Message_PostcardPosted" />
+    </bpmn:startEvent>
+    <bpmn:sequenceFlow id="Flow_ToAwaitStamp" sourceRef="Posted" targetRef="AwaitStamp" />
+    <bpmn:receiveTask id="AwaitStamp" name="Await the stamp" messageRef="Message_Stamped">
+      <bpmn:incoming>Flow_ToAwaitStamp</bpmn:incoming>
+      <bpmn:outgoing>Flow_ToDelivered</bpmn:outgoing>
+    </bpmn:receiveTask>
+    <bpmn:sequenceFlow id="Flow_ToDelivered" sourceRef="AwaitStamp" targetRef="Delivered" />
+    <bpmn:endEvent id="Delivered" name="Delivered">
+      <bpmn:incoming>Flow_ToDelivered</bpmn:incoming>
+    </bpmn:endEvent>
+  </bpmn:process>
+  <bpmndi:BPMNDiagram id="BPMNDiagram_1">
+    <bpmndi:BPMNPlane id="BPMNPlane_1" bpmnElement="Postcards">
+      <bpmndi:BPMNShape id="Posted_di" bpmnElement="Posted">
+        <dc:Bounds x="160" y="80" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="AwaitStamp_di" bpmnElement="AwaitStamp">
+        <dc:Bounds x="256" y="80" width="100" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Delivered_di" bpmnElement="Delivered">
+        <dc:Bounds x="416" y="80" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNEdge id="Flow_ToAwaitStamp_di" bpmnElement="Flow_ToAwaitStamp">
+        <di:waypoint x="196" y="98" />
+        <di:waypoint x="226" y="98" />
+        <di:waypoint x="226" y="120" />
+        <di:waypoint x="256" y="120" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_ToDelivered_di" bpmnElement="Flow_ToDelivered">
+        <di:waypoint x="356" y="120" />
+        <di:waypoint x="386" y="120" />
+        <di:waypoint x="386" y="98" />
+        <di:waypoint x="416" y="98" />
+      </bpmndi:BPMNEdge>
+    </bpmndi:BPMNPlane>
+  </bpmndi:BPMNDiagram>
+</bpmn:definitions>

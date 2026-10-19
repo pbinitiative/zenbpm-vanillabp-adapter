@@ -24,6 +24,7 @@ import org.pbinitiative.zenbpmadapter.ZenBpmProcessingContext;
 import org.pbinitiative.zenbpmadapter.ZenBpmProcessingContext.StartedProcessing;
 import org.pbinitiative.zenbpmadapter.ZenBpmProcessingContext.WiredProcess;
 import org.pbinitiative.zenbpmadapter.client.ZenBpmAdapterConfiguration;
+import org.pbinitiative.zenbpmadapter.client.ZenBpmAdapterConfiguration.MessageStartLookup;
 import org.pbinitiative.zenbpmadapter.client.ZenBpmClientFactory;
 import org.pbinitiative.zenbpmadapter.client.ZenBpmClientRegistry;
 import org.pbinitiative.zenbpmadapter.client.ZenBpmEngineWait;
@@ -36,6 +37,7 @@ import org.pbinitiative.zenbpmadapter.model.ZenBpmBpmnModel;
 import org.pbinitiative.zenbpmadapter.model.ZenBpmCallActivities;
 import org.pbinitiative.zenbpmadapter.model.ZenBpmCorrelationKeys;
 import org.pbinitiative.zenbpmadapter.model.ZenBpmMarkerTasks;
+import org.pbinitiative.zenbpmadapter.model.ZenBpmMessageStarts;
 import org.pbinitiative.zenbpmadapter.model.ZenBpmModelReader;
 import org.pbinitiative.zenbpmadapter.model.ZenBpmModelWriter;
 import org.pbinitiative.zenbpmadapter.model.ZenBpmMultiInstanceItems;
@@ -593,7 +595,9 @@ public class ZenBpmDeploymentService implements AdapterDeploymentService<ZenBpmB
      * deploys one file per request. Only where it took every file are the versions registered with
      * the platform and remembered in {@link ZenBpmClientFactory#deployedProcesses()}, together
      * with the messages every version the engine holds of those processes waits for and starts
-     * with, see {@link ZenBpmHeldMessages}; the identifiers the files declare go to the platform,
+     * with, see {@link ZenBpmHeldMessages}, and an INFO names the processes a message starts and
+     * what <code>message-start-lookup</code> does with them, with a WARN under <code>scan</code>;
+     * the identifiers the files declare go to the platform,
      * which warns where two workflow modules share one. Which of them the engine held before is not
      * reported: a definition carries no owner, so this application's own earlier deployments could
      * not be told from those of another application.
@@ -634,10 +638,16 @@ public class ZenBpmDeploymentService implements AdapterDeploymentService<ZenBpmB
                     unchangedOrNot(resource)));
         }
         final var versions = new ArrayList<ZenBpmDeployedProcesses.DeployedProcess>();
+        final var startedByAMessage = new ArrayList<String>();
         for (final var model : context
                 .bpmnFiles()
                 .values()) {
             final var bpmnProcessId = model.bpmnProcessId();
+            if (!model
+                    .messageStarts()
+                    .isEmpty()) {
+                startedByAMessage.add("'%s'".formatted(bpmnProcessId));
+            }
             final var file = "BPMN file '%s' of workflow module '%s' (process '%s')".formatted(model.filename(),
                     workflowModuleId, bpmnProcessId);
             final var resource = answerTo(file, () -> rest.deployBpmn(ZenBpmModelWriter.bytesOf(model)));
@@ -663,6 +673,7 @@ public class ZenBpmDeploymentService implements AdapterDeploymentService<ZenBpmB
                     .deployedProcesses()
                     .recordMessages(workflowModuleId, messages, () -> heldMessages.again(workflowModuleId, messages
                             .scopedBpmnProcessIds()));
+            reportTheStartsByAMessage(workflowModuleId, startedByAMessage);
         }
         log.info("ZenBPM[{}]: workflow module '{}' is deployed to the engine at {}:\n  {}", adapterId,
                 workflowModuleId, factory
@@ -924,6 +935,13 @@ public class ZenBpmDeploymentService implements AdapterDeploymentService<ZenBpmB
     ) {
         final var jobType = ZenBpmMarkerTasks.startMarkerJobType(scopedProcessId);
         ZenBpmMarkerTasks.insertStartMarkers(model, jobType);
+        if (!model
+                .messageStarts()
+                .isEmpty()) {
+            ZenBpmMessageStarts.keepTheAggregateId(model, collaborators
+                    .workflowTaskWiring()
+                    .resolveWorkflowAggregateIdName(workflowModuleId, bpmnProcessId));
+        }
         recordTheJobTimeoutOfTheStartMarkers(workflowModuleId, bpmnProcessId, jobType, context);
         final var startMarkers = new LinkedHashMap<String, BpmsStartTrigger.Kind>();
         model
@@ -1059,6 +1077,57 @@ public class ZenBpmDeploymentService implements AdapterDeploymentService<ZenBpmB
                 so a workflow would wait there for good. Give each of them a task definition, \
                 <zenbpm:taskDefinition type="..." />, and serve that type with a @WorkflowTask method."""
                 .formatted(filename, workflowModuleId, bpmnProcessId, String.join("\n", untyped)));
+    }
+
+    // once per workflow module and start of the application, so whoever reads the log learns what
+    // a start by a message gets before the first one is made; the processes are those whose version
+    // this start deployed has a message start event, because only those a message starts now
+    private void reportTheStartsByAMessage(
+        final String workflowModuleId,
+        final List<String> startedByAMessage
+    ) {
+        if (startedByAMessage.isEmpty()) {
+            return;
+        }
+        final var configuration = factory.configuration();
+        final var lookup = configuration.getMessageStartLookup();
+        final var key = ZenBpmAdapterConfiguration.propertyKey(adapterId, "message-start-lookup");
+        final var processes = String.join(", ", startedByAMessage);
+        final var what = switch (lookup) {
+            case START_ROW -> """
+                    startWorkflowByMessage starts them, and the workflow it starts is found through the instance \
+                    key its start marker writes into the start row of the aggregate. Before the marker ran, in an \
+                    application without a delivery log, and once the row is removed, it is not found, and a start \
+                    sent again after its answer was lost may start a second workflow; '%s' finds a running one in \
+                    those cases as well. Once it ended, it is answered as unknown to the engine, which the \
+                    platform's contract for adapters does not allow.""".formatted(MessageStartLookup.SCAN.configured());
+            case SCAN -> """
+                    startWorkflowByMessage starts them, and the workflow it starts is found through the instance \
+                    key its start marker writes into the start row of the aggregate, and where the row does not \
+                    know it, by reading their instances. Once it ended, it is answered as unknown to the engine, \
+                    which the platform's contract for adapters does not allow.""";
+            case REFUSE -> """
+                    startWorkflowByMessage is refused for them. Set the key to '%s', the default, or to '%s' to \
+                    start them.""".formatted(MessageStartLookup.START_ROW.configured(), MessageStartLookup.SCAN
+                    .configured());
+        };
+        log.info("ZenBPM[{}]: workflow module '{}' has processes a message starts: {}. {} is '{}': {}", adapterId,
+                workflowModuleId, processes, key, lookup.configured(), what);
+        if (lookup != MessageStartLookup.SCAN) {
+            return;
+        }
+        log.warn("""
+                ZenBPM[{}]: {} is '{}': where the start row does not know a workflow of the processes {} of \
+                workflow module '{}', a probe reads their instances to find it by its id variable, at most {} \
+                ({}), and answers BPMS_UNAVAILABLE where it would have to read more. A workflow of them which \
+                ended is not read where the platform asks which adapter holds a workflow, so it is answered as \
+                unknown to the engine, as under 'start-row', which the platform's contract for adapters does \
+                not allow: an operation on it is then treated as one on a workflow the engine never held. The \
+                lookup is an opt-in until ZenBPM gives a workflow it starts by a message a business key.""", adapterId,
+                key, lookup
+                        .configured(),
+                processes, workflowModuleId, configuration.getMessageStartLookupMaxInstances(),
+                ZenBpmAdapterConfiguration.propertyKey(adapterId, "message-start-lookup-max-instances"));
     }
 
     // every start event of the process itself, NONE and MESSAGE included, so the platform can judge

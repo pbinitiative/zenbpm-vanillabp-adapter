@@ -239,7 +239,15 @@ A workflow the engine started itself (a timer start, or a message start without 
 no business key, so step 1 is the only way to it. It works while the core still knows the instance
 key: the start row (`vanillabp.delivery.workflow-start-retention`, `P30D` by default, `0` keeps it,
 or `keep-workflow-start-while-aggregate-exists`), the open-task records, the election cache. E13.4
-removes the limit (GAPS 1).
+removes the limit (GAPS 1). Under `message-start-lookup: scan` a step 4 follows where the search
+found no workflow which runs: `GET /v1/process-instances?bpmnProcessId=<scoped>&state=active`, then
+`state=failed`, page by page (the engine's largest page, 100 per partition), for each process of the
+scope of which a version the engine holds has a message start event, and an instance whose
+`variables[<id name>]` is the aggregate id is ACTIVE (a lookup over several pages may miss one while
+other instances of the process end, because the engine pages after filtering by state); the probe before a start is sent again reads every state
+from `createdFrom = plannedAt` instead. A lookup which would read more than
+`message-start-lookup-max-instances` instances is BPMS_UNAVAILABLE with a WARN naming the bound
+(`ZenBpmMessageStartScan`).
 
 `awarenessOfTask` / `awarenessOfUserTask`: a task id which is no positive number -> UNKNOWN without
 a request; `GET /v1/jobs/{key}`; 404 -> UNKNOWN; a 502 -> `GET /system/status`, a key of a partition
@@ -344,11 +352,15 @@ outbox's own backoff, as the platform treats a zero window. A correlation to a w
 is skipped by the core's own probe before either phase; one to a workflow which passed the waiting
 element is answered 404 like one which has not reached it, and so repeated until the window ran out
 (GAPS 5). `START_WORKFLOW_BY_MESSAGE`
-publishes without a key and with the id variable; `POST /v1/messages` returns no instance key, so
-phase two reports none. The `vanillabp__started` marker after the message start event (decision 26)
+publishes without a key, with the shared values and the id variable; `POST /v1/messages` returns no
+instance key, so phase two reports none. The `vanillabp__started` marker after the message start event (decision 26)
 reports the instance key to the core, which writes it into the start row. The instance itself has no
 business key (GAPS 1, E13.4); `message-start-lookup: scan` stays an opt-in for what the start row
-cannot cover until E13.4 lands.
+cannot cover until E13.4 lands, and `refuse` refuses every start by a message in phase one. Phase
+one judges the name by the start messages of the newest version of the module's processes, read
+again before a refusal, as for a correlation (decision 42). Start messages of one name which reach
+the engine at the same moment lose starts (GAPS 30), so each node publishes them one after the other,
+and a `404` is an ordinary failure, repeated with the outbox's backoff (decision 47).
 
 ### 4.5 Aggregate push
 
@@ -454,8 +466,8 @@ and are re-parked by whichever node receives them next.
 | `instance-cache-max-entries` | adapter | `10000` | |
 | `name-clash-avoidance` | adapter, module, workflow | `by-adapter` (the platform's default) | refused while deploying, so every application sets `use-prefix` or `none` (decision 24); `none` warns; two ids on one `rest-address` boot only where their modes at the adapter level differ, the setup of a prefix migration |
 | `accept-unscoped-identifiers` | adapter, module | `false` | silences the `none` warning |
-| `message-start-lookup` | adapter | `start-row` (S7.1.2) | `scan` adds the bounded client-side lookup of message-started workflows for what the start row cannot cover (GAPS 1); an opt-in until E13.4 lands, then removed |
-| `message-start-lookup-max-instances` | adapter | `1000` | the bound of that scan |
+| `message-start-lookup` | adapter | `start-row` | `scan` adds the bounded client-side lookup of message-started workflows for what the start row cannot cover (GAPS 1); an opt-in until E13.4 lands, then removed; `refuse` starts no workflow by a message; each start names the processes a message starts and the value in force, `scan` with a WARN |
+| `message-start-lookup-max-instances` | adapter | `1000` | the bound of that scan; below `1` ends the start |
 | `async-task-max-age-action` | adapter | `report` | `incident` fails an overdue asynchronous task's job with `retries: 0`, so the engine raises an incident; any other value ends the start |
 | `deployment-failure` | adapter | `fail` | core key |
 

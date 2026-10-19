@@ -54,16 +54,16 @@ import lombok.extern.slf4j.Slf4j;
  * What the core asks of one ZenBPM adapter id at runtime: one instance per configured adapter
  * id, built by the platform modules.
  * <p>
- * This version of the adapter starts workflows, completes and cancels the tasks the application
- * left open, correlates messages, answers every probe, counts the open tasks of a process and says
- * what the engine does with the values a workflow carries. It serves every operation the core
- * requires of each adapter, so the core accepts it while the application starts. Every other
- * handler and every method of the viewer/history API throw: where the adapter id has no clients,
- * the message of its validation, which names the keys to set; otherwise an
- * {@link UnsupportedOperationException} which says that the call is not built yet. Nothing pretends to have done the work. The operations a BPMS may
- * lack, sending a signal and telling the BPMS about a changed aggregate, are left out, so the core
- * answers them as not supported. A probe of an adapter id without clients throws the message of
- * its validation as well.
+ * This version of the adapter starts workflows, also by a message, completes and cancels the tasks
+ * the application left open, correlates messages, answers every probe, counts the open tasks of a
+ * process and says what the engine does with the values a workflow carries. It serves every
+ * operation the core requires of each adapter, so the core accepts it while the application
+ * starts. Every other handler and every method of the viewer/history API throw: where the adapter
+ * id has no clients, the message of its validation, which names the keys to set; otherwise an
+ * {@link UnsupportedOperationException} which says that the call is not built yet. Nothing
+ * pretends to have done the work. The operations a BPMS may lack, sending a signal and telling the
+ * BPMS about a changed aggregate, are left out, so the core answers them as not supported. A probe
+ * of an adapter id without clients throws the message of its validation as well.
  * <p>
  * A start asks the engine nothing in phase one, because there is nothing to ask before an
  * instance exists. Phase two starts the latest version of the process under the id the engine
@@ -78,7 +78,12 @@ import lombok.extern.slf4j.Slf4j;
  * <p>
  * A message is checked against the models of the workflow module in phase one, without asking the
  * engine, and published in phase two, where a publication nothing waits for yet is handed back to
- * the outbox, see {@link ZenBpmMessageCorrelation}.
+ * the outbox, see {@link ZenBpmMessageCorrelation}. A start by a message is checked the same way
+ * and published without a correlation key, and the engine names no instance it started, so its
+ * start marker reports the workflow, see {@link ZenBpmMessageStart}. Under
+ * <code>message-start-lookup: scan</code> the probes for a workflow read the instances of the
+ * processes a message starts where nothing else finds the workflow, see
+ * {@link ZenBpmMessageStartScan}.
  * <p>
  * Each field has an accessor of its own and no Lombok getter on the class, see decision 13 in the
  * repository's DECISIONS.md.
@@ -105,10 +110,18 @@ public class ZenBpmProcessService<A> implements MigratableProcessService<A> {
 
     private final Map<PhaseOperation, PhaseOperationHandler<A>> phaseOperations;
 
+    private final ZenBpmMessageStartScan messageStartScan;
+
     /**
      * Whether the last probe which asked the engine failed.
      */
     private final AtomicBoolean probesFail = new AtomicBoolean();
+
+    /**
+     * Whether the last lookup of a workflow started by a message reached
+     * <code>message-start-lookup-max-instances</code>.
+     */
+    private final AtomicBoolean lookupsReachTheBound = new AtomicBoolean();
 
     /**
      * Builds the process service of one adapter id.
@@ -156,7 +169,11 @@ public class ZenBpmProcessService<A> implements MigratableProcessService<A> {
         final var messages = new ZenBpmMessageCorrelation<A>(adapterId, factory, collaborators, this::variablesOf);
         handlers.put(PhaseOperation.CORRELATE_MESSAGE, PhaseOperationHandler.of(messages::checkTheMessage,
                 messages::correlate));
+        final var messageStarts = new ZenBpmMessageStart<A>(adapterId, factory, collaborators, this::variablesOf);
+        handlers.put(PhaseOperation.START_WORKFLOW_BY_MESSAGE, PhaseOperationHandler.of(messageStarts::checkTheStart,
+                messageStarts::start));
         this.phaseOperations = Collections.unmodifiableMap(handlers);
+        this.messageStartScan = new ZenBpmMessageStartScan(adapterId, factory);
     }
 
     @Override
@@ -191,8 +208,8 @@ public class ZenBpmProcessService<A> implements MigratableProcessService<A> {
 
     /**
      * A handler for every operation the core requires of each adapter: the start of a workflow,
-     * the completion and the cancellation of a task, the correlation of a message, and a handler
-     * which throws for every other.
+     * also by a message, the completion and the cancellation of a task, the correlation of a
+     * message, and a handler which throws for every other.
      *
      * @return The handlers, which cannot be changed
      */
@@ -387,6 +404,13 @@ public class ZenBpmProcessService<A> implements MigratableProcessService<A> {
      * A search which fails is {@link WorkflowAwareness#BPMS_UNAVAILABLE}, never
      * {@link WorkflowAwareness#UNKNOWN_TO_BPMS}; the first failure after an answer is logged at
      * WARN, the next ones at DEBUG until the engine answers a probe again.
+     * <p>
+     * Under <code>message-start-lookup: scan</code>, where the search finds no workflow which
+     * runs, the instances which run of the processes of the scope a message starts are read, and
+     * one whose id variable names the aggregate is {@link WorkflowAwareness#ACTIVE}, see
+     * {@link ZenBpmMessageStartScan}. A lookup which would read more than
+     * <code>message-start-lookup-max-instances</code> is {@link WorkflowAwareness#BPMS_UNAVAILABLE},
+     * logged at WARN once until a lookup stays within the bound again.
      *
      * @param scope The workflow module and the processes asked about
      * @param aggregatePersistence The persistence of the aggregate, which names its id variable
@@ -412,12 +436,16 @@ public class ZenBpmProcessService<A> implements MigratableProcessService<A> {
             probeAnswered();
             return WorkflowAwareness.ACTIVE;
         }
+        final var subject = "the workflow of aggregate '%s'".formatted(aggregateId);
         try {
-            final var found = awarenessByBusinessKey(rest, scopedIds, aggregateId, null);
+            final var found = withTheLookupOfAMessageStart(awarenessByBusinessKey(rest, scopedIds, aggregateId,
+                    null), rest, scope, scopedIds, aggregatePersistence, aggregateId, null);
             probeAnswered();
             return found;
+        } catch (final ZenBpmMessageStartScan.BoundReached bound) {
+            return boundReached(subject, bound);
         } catch (final RuntimeException failure) {
-            return unavailable("the workflow of aggregate '%s'".formatted(aggregateId), failure);
+            return unavailable(subject, failure);
         }
     }
 
@@ -457,7 +485,11 @@ public class ZenBpmProcessService<A> implements MigratableProcessService<A> {
      * instance created earlier in that millisecond does not count. That costs a second workflow at
      * worst, which at-least-once delivery allows, and never a lost one. For the same reason the
      * moment is not moved back for a clock which is behind. A workflow started by a message has no
-     * business key and is not found here.
+     * business key and is not found by the search. Under <code>message-start-lookup: scan</code>,
+     * where the search finds nothing, the instances of the processes of the scope a message starts
+     * are read: every one created from <code>plannedAt</code>, ended ones included, or those which
+     * run where <code>plannedAt</code> is <code>null</code>; one whose id variable names the
+     * aggregate counts as the search's would, see {@link ZenBpmMessageStartScan}.
      *
      * @param scope The workflow module and the processes asked about
      * @param aggregatePersistence The persistence of the aggregate
@@ -478,13 +510,17 @@ public class ZenBpmProcessService<A> implements MigratableProcessService<A> {
         final var rest = clients();
         final var scopedIds = scopedIdsOf(scope);
         final var aggregateId = String.valueOf(workflowAggregateId);
+        final var subject = "the workflow of aggregate '%s' before its start is sent again".formatted(aggregateId);
+        final var createdFrom = createdFromOf(plannedAt);
         try {
-            final var found = awarenessByBusinessKey(rest, scopedIds, aggregateId, createdFromOf(plannedAt));
+            final var found = withTheLookupOfAMessageStart(awarenessByBusinessKey(rest, scopedIds, aggregateId,
+                    createdFrom), rest, scope, scopedIds, aggregatePersistence, aggregateId, createdFrom);
             probeAnswered();
             return found;
+        } catch (final ZenBpmMessageStartScan.BoundReached bound) {
+            return boundReached(subject, bound);
         } catch (final RuntimeException failure) {
-            return unavailable("the workflow of aggregate '%s' before its start is sent again".formatted(aggregateId),
-                    failure);
+            return unavailable(subject, failure);
         }
     }
 
@@ -768,6 +804,49 @@ public class ZenBpmProcessService<A> implements MigratableProcessService<A> {
             }
         }
         return answer;
+    }
+
+    // a workflow the engine started by a message has no business key, so under the scan its
+    // instances are read where the search found none which runs
+    private WorkflowAwareness withTheLookupOfAMessageStart(
+        final WorkflowAwareness found,
+        final ZenBpmRestClient rest,
+        final WorkflowScope scope,
+        final Set<String> scopedIds,
+        final AggregatePersistenceAware<A> aggregatePersistence,
+        final String aggregateId,
+        final Instant createdFrom
+    ) {
+        if (found == WorkflowAwareness.ACTIVE) {
+            return found;
+        }
+        final var toScan = messageStartScan.processesToScan(scope, scopedIds);
+        if (toScan.isEmpty()) {
+            return found;
+        }
+        final var scanned = messageStartScan.find(rest, toScan, aggregatePersistence.getAggregateIdName(),
+                aggregateId, createdFrom);
+        lookupsReachTheBound.set(false);
+        return scanned == WorkflowAwareness.UNKNOWN_TO_BPMS ? found : scanned;
+    }
+
+    // a bound which is too low fails every lookup of a large process, so its first WARN is worth
+    // it and the others are not, until a lookup stays within the bound again
+    private WorkflowAwareness boundReached(
+        final String subject,
+        final ZenBpmMessageStartScan.BoundReached bound
+    ) {
+        probeAnswered();
+        if (lookupsReachTheBound.compareAndSet(false, true)) {
+            log.warn(
+                    "ZenBPM[{}]: the lookup of {} among the workflows started by a message reports BPMS_UNAVAILABLE: {}; further lookups which reach the bound are logged at DEBUG until one stays within it",
+                    adapterId, subject, bound.getMessage());
+        } else {
+            log.debug(
+                    "ZenBPM[{}]: the lookup of {} among the workflows started by a message reports BPMS_UNAVAILABLE: {}",
+                    adapterId, subject, bound.getMessage());
+        }
+        return WorkflowAwareness.BPMS_UNAVAILABLE;
     }
 
     // one page holds every instance of an aggregate but in a case nobody plans for; where it does

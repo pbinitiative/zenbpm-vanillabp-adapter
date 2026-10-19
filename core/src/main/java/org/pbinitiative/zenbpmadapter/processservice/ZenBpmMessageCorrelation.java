@@ -5,9 +5,7 @@
 package org.pbinitiative.zenbpmadapter.processservice;
 
 import java.util.Map;
-import java.util.Optional;
 import java.util.TreeSet;
-import java.util.function.BiFunction;
 import java.util.function.Function;
 
 import org.pbinitiative.zenbpmadapter.ZenBpmDeployedProcesses;
@@ -114,13 +112,15 @@ final class ZenBpmMessageCorrelation<A> {
             throw new IllegalStateException(unconfigured.get());
         }
         final var workflowModuleId = request.workflowModuleId();
-        final var kept = everyModelOf(workflowModuleId, ZenBpmDeployedProcesses::messagesOf);
+        final var kept = ZenBpmKnownMessages.everyModelOf(factory, workflowModuleId,
+                ZenBpmDeployedProcesses::messagesOf);
         if (kept.isEmpty() || passes(kept.get(), request)) {
             return;
         }
         // another node may have deployed a newer version since this start, so a refusal rests only
         // on the models the engine holds now
-        final var now = everyModelOf(workflowModuleId, ZenBpmDeployedProcesses::messagesReadAgain);
+        final var now = ZenBpmKnownMessages.everyModelOf(factory, workflowModuleId,
+                ZenBpmDeployedProcesses::messagesReadAgain);
         if (now.isEmpty() || passes(now.get(), request)) {
             return;
         }
@@ -167,7 +167,7 @@ final class ZenBpmMessageCorrelation<A> {
         final var window = factory
                 .configuration()
                 .getWorkflowVisibilityTimeout();
-        final var name = nameAsWritten(request.messageName(), scopedName);
+        final var name = ZenBpmKnownMessages.nameAsWritten(request.messageName(), scopedName);
         final var workflow = request.bpmnProcessId();
         final var workflowModuleId = request.workflowModuleId();
         final var aggregateId = request.workflowAggregateId();
@@ -199,23 +199,6 @@ final class ZenBpmMessageCorrelation<A> {
         return retryLater;
     }
 
-    // the messages of the models, only where every model the engine holds for the module's
-    // processes is known: one which is not may be the one which waits
-    private Optional<ModuleMessages> everyModelOf(
-        final String workflowModuleId,
-        final BiFunction<ZenBpmDeployedProcesses, String, Optional<ModuleMessages>> messages
-    ) {
-        final var deployed = factory.deployedProcesses();
-        if (deployed.servesAProcessItDeployedNoModelFor(workflowModuleId)) {
-            return Optional.empty();
-        }
-        return messages
-                .apply(deployed, workflowModuleId)
-                .filter(known -> known
-                        .unread()
-                        .isEmpty());
-    }
-
     // a start event of the newest version takes the message wherever no workflow waits for it under
     // its key yet, so a name it starts with never passes, even where an older version waits for it
     private boolean passes(
@@ -236,7 +219,7 @@ final class ZenBpmMessageCorrelation<A> {
     ) {
         final var workflowModuleId = request.workflowModuleId();
         final var scopedName = scopedNameOf(workflowModuleId, request.messageName());
-        final var name = nameAsWritten(request.messageName(), scopedName);
+        final var name = ZenBpmKnownMessages.nameAsWritten(request.messageName(), scopedName);
         final var workflow = request.bpmnProcessId();
         if (known
                 .starting()
@@ -281,15 +264,6 @@ final class ZenBpmMessageCorrelation<A> {
         return collaborators
                 .scoping()
                 .scopedIdentifier(workflowModuleId, messageName, adapterId);
-    }
-
-    private static String nameAsWritten(
-        final String messageName,
-        final String scopedName
-    ) {
-        return scopedName.equals(messageName)
-                ? "'%s'".formatted(messageName)
-                : "'%s' (scoped: '%s')".formatted(messageName, scopedName);
     }
 
     private static Object awaitedOf(final ModuleMessages known) {

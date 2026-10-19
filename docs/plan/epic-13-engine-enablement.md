@@ -108,6 +108,15 @@ failure.
   business-key search finds every workflow; with (a) `startWorkflowByMessage` sends it as well. The
   `scan` mode and `message-start-lookup-max-instances` are removed; GAPS 1 closed.
 
+*Note from S7.1.2, 2026-10-19.* The `scan` mode is built (`ZenBpmMessageStartScan`, decision 47
+for the start itself), and the third acceptance criterion of S7.1.2 ("E13.4's twin replaces the scan
+by the business-key search, and `scan` is removed then") is left open for whoever lands this item.
+S7.1.2 found a second gap at the pin which the engine half of this item could close together with
+(a): start messages of one name which arrive at the same moment lose starts, some answered `201`
+without a workflow (GAPS 30). A start message answered with the key of the instance it started
+would let the adapter report the start and see a start which started nothing; one which waits for
+the renewed subscription would make the lock per name of decision 47 unnecessary.
+
 ## E13.5 User-task lifecycle events
 
 - [ ] **Engine:** a stream subscription kind (or a dedicated RPC) delivering `created`, `assigned`,

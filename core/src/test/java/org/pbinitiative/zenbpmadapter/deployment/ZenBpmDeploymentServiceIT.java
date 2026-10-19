@@ -366,7 +366,7 @@ class ZenBpmDeploymentServiceIT {
 
         assertAll(
                 () -> assertEquals(Optional.of(new ModuleMessages(List.of("messages-it__Payment"), Set.of(
-                        "messages-it__paid", "messages-it__settled"), Set.of(), List.of())), factory
+                        "messages-it__paid", "messages-it__settled"), Set.of(), Set.of(), List.of())), factory
                                 .deployedProcesses()
                                 .messagesOf("messages-it")),
                 () -> assertDoesNotThrow(() -> correlation.phaseOne(correlationOf("paid"))),
@@ -402,7 +402,8 @@ class ZenBpmDeploymentServiceIT {
 
         assertAll(
                 () -> assertEquals(Optional.of(new ModuleMessages(List.of("starting-it__Refund"), Set.of(
-                        "starting-it__reused", "starting-it__remain"), Set.of("starting-it__reused"), List.of())),
+                        "starting-it__reused", "starting-it__remain"), Set
+                                .of("starting-it__reused"), Set.of("starting-it__Refund"), List.of())),
                         registry
                                 .getFactory(ADAPTER_ID)
                                 .deployedProcesses()
@@ -440,7 +441,7 @@ class ZenBpmDeploymentServiceIT {
                 () -> assertDoesNotThrow(() -> correlation().phaseOne(correlationOf("rolling-it", "Return",
                         "newMessage"))),
                 () -> assertEquals(Optional.of(new ModuleMessages(List.of("rolling-it__Return"), Set.of(
-                        "rolling-it__oldMessage", "rolling-it__newMessage"), Set.of(), List.of())), registry
+                        "rolling-it__oldMessage", "rolling-it__newMessage"), Set.of(), Set.of(), List.of())), registry
                                 .getFactory(ADAPTER_ID)
                                 .deployedProcesses()
                                 .messagesOf("rolling-it")),

@@ -71,6 +71,43 @@ final class ZenBpmInputMappings {
     }
 
     /**
+     * Passes a variable on through the outputs of an element: one output mapping
+     * <code>source="=&lt;name&gt;" target="&lt;name&gt;"</code> behind the element's last one, where
+     * the element maps outputs and none to the name. An element without outputs passes on every
+     * variable by itself, so it is left as it is.
+     *
+     * @param element The element
+     * @param name The name of the variable
+     */
+    static void passOn(
+        final Element element,
+        final String name
+    ) {
+        Element lastOutput = null;
+        for (final var ioMapping : ZenBpmModelReader.extensions(element, "ioMapping")) {
+            for (var child = ioMapping.getFirstChild(); child != null; child = child.getNextSibling()) {
+                if (child instanceof Element output && "output".equals(output.getLocalName())) {
+                    if (name.equals(output.getAttribute("target"))) {
+                        return;
+                    }
+                    lastOutput = output;
+                }
+            }
+        }
+        if (lastOutput == null) {
+            return;
+        }
+        final var output = element
+                .getOwnerDocument()
+                .createElementNS(lastOutput.getNamespaceURI(), qualified(lastOutput.getPrefix(), "output"));
+        output.setAttribute("source", "=%s".formatted(name));
+        output.setAttribute("target", name);
+        lastOutput
+                .getParentNode()
+                .insertBefore(output, lastOutput.getNextSibling());
+    }
+
+    /**
      * Adds an extension element of the engine's namespace to an element, into its
      * <code>extensionElements</code>, which is added where the element has none.
      *

@@ -23,7 +23,8 @@ import java.util.function.Supplier;
  * process. That is what decides whose task a job is, wherever a job is met.
  * <p>
  * And it knows per workflow module which messages the models the engine holds for its deployed
- * processes wait for and start with, so a correlation is judged without asking the engine.
+ * processes wait for and start with, and which of those processes a message starts, so a
+ * correlation and a start by a message are judged without asking the engine.
  * <p>
  * The client factory of the adapter id keeps it, because every service of the adapter id holds
  * that factory. It is filled while the application starts and read from any thread afterwards.
@@ -270,12 +271,16 @@ public final class ZenBpmDeployedProcesses {
      *            boundary events, receive tasks and the start events of event sub-processes
      * @param starting The names of the messages the newest version of a process starts it with:
      *            the engine hands a message to the start events of the newest version only
+     * @param startedByMessage The ids, as the engine knows them, of the processes of which a
+     *            version the engine holds has a message start event, so a workflow a message
+     *            started may run on it
      * @param unread What could not be read, each with the reason; empty where every model was read
      */
     public record ModuleMessages(
         List<String> scopedBpmnProcessIds,
         Set<String> awaited,
         Set<String> starting,
+        Set<String> startedByMessage,
         List<String> unread
     ) {
 
@@ -286,6 +291,7 @@ public final class ZenBpmDeployedProcesses {
             scopedBpmnProcessIds = List.copyOf(scopedBpmnProcessIds);
             awaited = Set.copyOf(awaited);
             starting = Set.copyOf(starting);
+            startedByMessage = Set.copyOf(startedByMessage);
             unread = List.copyOf(unread);
         }
 

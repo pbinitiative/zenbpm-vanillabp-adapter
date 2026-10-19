@@ -946,3 +946,72 @@ workflow started right before the rename may still wait at its marker. A start m
 definition, so the held models are read for it also where every method serving the id is wired by
 element id. Where no held model carries one, or where the platform hands no invoker of starts and
 nothing could answer the marker's job, nothing of the kind is subscribed.
+
+### 47. A start by a message is published one at a time per name, and its `404` is an ordinary failure
+
+Decided by the implementation pipeline in place of the maintainers, as their policy for the
+autonomous run asks.
+
+The engine starts a workflow by a message through the subscription of the start event (pinned
+commit `bdd795a3`): `publishDefinitionMessageByName` of `internal/cluster/node.go` reads the
+subscription the name points to under the empty key, and `handleStartEventInstanceCreation` of
+`pkg/bpmn/start_event_instance_creation_handler.go` marks it consumed and creates a new one before
+it creates the instance. Two start messages of one name which arrive at the same moment both read
+the old subscription, and the second finds it consumed: under the lock of that subscription, where
+the engine starts nothing and answers `201`, or when it looks the subscription up by its key, where
+it answers `404`. Against the pinned image, 40 start messages of one name sent at once were
+answered 26 times `201` and 14 times `404`, and started 5 workflows; sent one after the other, 40
+started 40. The answer names no instance (GAPS 1), so a `201` which started nothing cannot be told
+from one which did, and nothing can repeat it.
+
+So each node of the application publishes the start messages of one name one after the other: one
+lock per name as the engine holds it, shared by every adapter id, held for the publication only;
+the aggregate is loaded before. The outbox dispatches the entries of different aggregates on
+parallel lanes, so without the lock a single node loses starts. The nodes of an application still
+publish at the same moment, which is what remains (GAPS 30).
+
+The plan made a `404` of a start message permanent. At the pin three things answer it: no start
+event takes the name (nothing deployed starts the process with it, or another node deployed a
+version without it after phase one judged the name, decision 42); a start on another node which
+took the subscription at the same moment; and a workflow the engine created and failed right
+behind the start event on something it does not find, which `Server.PublishMessage` of
+`internal/cluster/server/server.go` answers as for a correlation (GAPS 29). A repetition cures the
+second, which a permanent answer would block; only a deployment cures the first, which a retry-later
+without counting would wait out for hours, the answer decision 43 gives a correlation, whose `404`
+mostly means "not yet". The third does not happen to a process this adapter wired: its start marker
+stands right behind every start event (decision 26), so the engine stops at the marker's job before
+anything behind it runs, and answers `201`. So a `404` of a start message is an ordinary failure:
+the engine's answer stays the cause of an exception which names the deployment, the start on
+another node and `vanillabp.outbox.block-after-attempts`; it is repeatable and counted, so the
+outbox repeats it with its backoff and blocks the entry after its attempts. A repetition first
+passes the core's question whether the start happened already, the start row and then
+`awarenessOfWorkflowForRedispatch`, which under `message-start-lookup: scan` finds a running
+workflow by its id variable. Where the platform hands no invoker of starts, so no marker is written,
+the third case costs a second workflow at each repetition.
+
+### 48. A message start event which maps its outputs passes the aggregate id on
+
+Decided by the implementation pipeline in place of the maintainers, as their policy for the
+autonomous run asks.
+
+The engine applies the output mappings of a message start event to the variables of the message
+before it creates the instance (pinned commit `bdd795a3`: `handleStartEventInstanceCreation` and
+`mapStartEventTriggerVariables` of `pkg/bpmn/start_event_instance_creation_handler.go`, through
+`PropagateMappedOutputsOrAll` of `pkg/bpmn/runtime/varholder.go`). Where the event maps no output,
+the instance gets every variable of the message; where it maps any, it gets the mapped ones only.
+A start by a message sends the aggregate id in its variables, because the engine takes no business
+key with a message (GAPS 1), and the start marker behind the event (decision 26) is how the core
+learns which aggregate the instance belongs to. An output mapping a modeller wrote for a business
+variable would drop the id, and the marker would hand the core a start which names no aggregate:
+the core takes it for a workflow started past VanillaBP, and without a method to build an
+aggregate for such a start the marker's job ends in an incident, while the aggregate the
+application saved never gets its start row.
+
+So while wiring a claimed process whose start the platform hears, every message start event of
+the process itself which maps outputs, but none to the aggregate's id variable, gets one more
+output, `source="=<id variable>" target="<id variable>"`, behind the modeller's. An event without
+outputs is left as it is, because it passes every variable on by itself, and so is an event whose
+modeller maps the id variable, whose mapping is theirs. A message which does not carry the id
+variable, sent past VanillaBP, still starts the instance: the engine maps the missing variable to
+nothing, as it does for any source the message does not hold, and the marker reports the start as
+one nobody named, as before.

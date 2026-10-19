@@ -226,13 +226,13 @@ class ZenBpmMessageDeclarationTest {
                                 "billing__payed"), Set.of()))),
                 Arguments.of("a version of a process could not be read",
                         (Consumer<ZenBpmDeployedProcesses>) deployed -> keep(deployed, "shop", new ModuleMessages(List
-                                .of("shop__Order"), Set.of("shop__paid"), Set.of(), List.of(
+                                .of("shop__Order"), Set.of("shop__paid"), Set.of(), Set.of(), List.of(
                                         "the versions of process 'shop__Order' (status 500)")))),
                 Arguments.of("a version of a process could not be read again before the refusal",
                         (Consumer<ZenBpmDeployedProcesses>) deployed -> deployed.recordMessages("shop", messages(Set
                                 .of("shop__paid"), Set.of()),
                                 () -> new ModuleMessages(List.of("shop__Order"), Set.of(
-                                        "shop__paid"), Set.of(), List.of(
+                                        "shop__paid"), Set.of(), Set.of(), List.of(
                                                 "the versions of process 'shop__Order' (status 500)")))),
                 Arguments.of(
                         "the workflow module serves a process it deployed no model for, the old id of a renamed one",
@@ -301,7 +301,7 @@ class ZenBpmMessageDeclarationTest {
         final Set<String> awaited,
         final Set<String> starting
     ) {
-        return new ModuleMessages(List.of("shop__Order", "shop__Invoice"), awaited, starting, List.of());
+        return new ModuleMessages(List.of("shop__Order", "shop__Invoice"), awaited, starting, Set.of(), List.of());
     }
 
     private ZenBpmClientFactory configured() {

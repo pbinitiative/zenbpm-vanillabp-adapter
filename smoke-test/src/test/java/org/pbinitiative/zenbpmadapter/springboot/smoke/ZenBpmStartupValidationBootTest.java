@@ -238,6 +238,21 @@ class ZenBpmStartupValidationBootTest {
     }
 
     @Test
+    @DisplayName("A message-start-lookup-max-instances below one ends the start, naming the key and its default")
+    void theBoundOfTheLookupOfAMessageStartIsValidated() {
+        final var failure = rootOf(assertThrows(Exception.class, () -> run("vanillabp.prioritized-adapters=zenbpm",
+                "vanillabp.adapters.zenbpm.rest-address=http://localhost:8080",
+                "vanillabp.adapters.zenbpm.message-start-lookup=scan",
+                "vanillabp.adapters.zenbpm.message-start-lookup-max-instances=0").close()));
+
+        assertTrue(failure
+                .getMessage()
+                .contains(
+                        "  - vanillabp.adapters.zenbpm.message-start-lookup-max-instances is 0 and has to be at least 1; the default is 1000"),
+                failure.getMessage());
+    }
+
+    @Test
     @DisplayName("An address defect of an adapter id nowhere first with policy 'warn' boots degraded, with a warning")
     void anAddressDefectWhichMayDegradeBootsDegraded(final CapturedOutput output) {
         try (var context = run(degraded())) {

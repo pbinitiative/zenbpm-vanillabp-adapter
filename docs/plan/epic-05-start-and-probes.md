@@ -343,7 +343,12 @@ what they showed is written here as well):
    in milliseconds); an instance found -> ACTIVE or COMPLETED by its state; a `null` `plannedAt`
    counts every instance; nothing found -> UNKNOWN; a failed query -> BPMS_UNAVAILABLE, never
    ACTIVE. A message-started workflow has no business key and is never found here; S7.1.2 says what
-   that means for a re-dispatched message start.
+   that means for a re-dispatched message start. *Answered by S7.1.2, 2026-10-19:* the core asks
+   this probe only where no start row written for the entry exists, so under
+   `message-start-lookup: start-row`, the default, a start sent again before its marker wrote the
+   row publishes once more and may start a second workflow (GAPS 1); under `scan` the probe also
+   reads the instances of the processes of the scope a message starts, every one created from
+   `plannedAt`, and finds the workflow by its id variable.
 4. `workflowVisibilityDelay()` = `WorkflowVisibilityDelay.of(workflow-visibility-timeout, PT0.25S)`.
    The per-id form `workflowVisibilityDelay(workflowId)` keeps its default, which answers the same:
    a `404` for a key the engine just answered must not shorten the window, because a follower may

@@ -23,12 +23,16 @@ import java.math.BigInteger;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.BlockingQueue;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.Stream;
 
@@ -41,6 +45,7 @@ import org.pbinitiative.zenbpmadapter.client.api.CreateInstanceRequest;
 import org.pbinitiative.zenbpmadapter.client.api.DeployedResource;
 import org.pbinitiative.zenbpmadapter.client.api.HistoryEntry;
 import org.pbinitiative.zenbpmadapter.client.api.InstanceFilter;
+import org.pbinitiative.zenbpmadapter.client.api.JobFilter;
 import org.pbinitiative.zenbpmadapter.client.api.JobRef;
 import org.pbinitiative.zenbpmadapter.client.api.ProcessDefinitionRef;
 import org.pbinitiative.zenbpmadapter.client.api.ProcessInstanceRef;
@@ -94,6 +99,9 @@ class ZenBpmRestClientContractIT {
         client.deployBpmn(fixture("contract-parent.bpmn"));
         client.deployBpmn(fixture("contract-locked.bpmn"));
         client.deployBpmn(fixture("contract-received.bpmn"));
+        client.deployBpmn(fixture("contract-started.bpmn"));
+        client.deployBpmn(fixture("contract-start-fails.bpmn"));
+        client.deployBpmn(fixture("contract-start-mapped.bpmn"));
         decision = client.deployDmn(fixture("contract-decision.dmn"));
     }
 
@@ -401,6 +409,141 @@ class ZenBpmRestClientContractIT {
     }
 
     @Test
+    @DisplayName("A start message without a key starts the newest version, is answered without the instance it started, and the instance and the job of its first task carry the message's variables; a search of the process's running instances reads them")
+    void aStartMessageIsAnsweredWithoutTheInstanceItStarted() {
+        final var aggregateId = uniqueBusinessKey();
+
+        client.publishMessage("contract-started", null, Map.of("orderId", aggregateId, "amount", 1000));
+
+        final var started = eventually(() -> runningInstanceOf("contract-started", aggregateId));
+        final var job = eventually(() -> client
+                .jobs(JobFilter
+                        .anyJob()
+                        .withJobType("contract-started-marker")
+                        .withProcessInstanceKey(started.key()))
+                .items()
+                .stream()
+                .findFirst());
+        assertAll(
+                () -> assertNull(started.businessKey()),
+                () -> assertEquals(1000L, started
+                        .variables()
+                        .get("amount")),
+                () -> assertEquals(aggregateId, job
+                        .inputVariables()
+                        .get("orderId")));
+    }
+
+    @Test
+    @DisplayName("A message start event which maps outputs starts its instance with the mapped variables only, and one whose source the message does not carry maps it to nothing and starts the instance all the same")
+    void aMessageStartWhichMapsOutputsHandsOnTheMappedVariablesOnly() {
+        final var aggregateId = uniqueBusinessKey();
+        final var amountWithoutTheId = ThreadLocalRandom
+                .current()
+                .nextLong(1_000_000, 1_000_000_000);
+
+        client.publishMessage("contract-start-mapped", null, Map.of("orderId", aggregateId, "amount", 1000, "note",
+                "not mapped"));
+        client.publishMessage("contract-start-mapped", null, Map.of("amount", amountWithoutTheId));
+
+        final var withTheId = eventually(() -> runningInstanceOf("contract-start-mapped", aggregateId));
+        final var withoutTheId = eventually(() -> client
+                .instances(InstanceFilter
+                        .anyInstance()
+                        .withBpmnProcessId("contract-start-mapped")
+                        .withState(ProcessInstanceRef.State.ACTIVE))
+                .items()
+                .stream()
+                .filter(instance -> Long
+                        .valueOf(amountWithoutTheId)
+                        .equals(instance
+                                .variables()
+                                .get("amount")))
+                .findFirst());
+        assertAll(
+                () -> assertEquals(1000L, withTheId
+                        .variables()
+                        .get("amount")),
+                () -> assertFalse(withTheId
+                        .variables()
+                        .containsKey("note"), withTheId::toString),
+                () -> assertNull(withoutTheId
+                        .variables()
+                        .get("orderId"), withoutTheId::toString));
+    }
+
+    @Test
+    @DisplayName("A start message nothing starts with is a 404, and so is one whose instance the engine created and failed right behind the start event on a process it does not hold")
+    void aStartMessageIsA404AlsoWhereItsInstanceFailsBehindTheStart() {
+        final var aggregateId = uniqueBusinessKey();
+
+        final var nothingStarts = assertThrows(ZenBpmApiException.class, () -> client.publishMessage(
+                "contract-never-started", null, Map.of("orderId", aggregateId)));
+        final var failsBehind = assertThrows(ZenBpmApiException.class, () -> client.publishMessage(
+                "contract-start-fails", null, Map.of("orderId", aggregateId)));
+
+        final var failed = eventually(() -> client
+                .instances(InstanceFilter
+                        .anyInstance()
+                        .withBpmnProcessId("contract-start-fails")
+                        .withState(ProcessInstanceRef.State.FAILED))
+                .items()
+                .stream()
+                .filter(instance -> aggregateId.equals(instance
+                        .variables()
+                        .get("orderId")))
+                .findFirst());
+        assertAll(
+                () -> assertEquals(404, nothingStarts.getStatus()),
+                () -> assertTrue(ZenBpmErrors.nobodyWaits(nothingStarts)),
+                () -> assertEquals(404, failsBehind.getStatus()),
+                () -> assertTrue(ZenBpmErrors.nobodyWaits(failsBehind)),
+                () -> assertEquals("contract-start-fails", failed.bpmnProcessId()));
+    }
+
+    @Test
+    @DisplayName("Start messages of one name published at the same moment lose starts: the engine answers some of them 201 and starts nothing for them, and others 404")
+    void startMessagesOfOneNamePublishedAtOnceLoseStarts() throws Exception {
+        // the race needs requests which meet inside the engine, so a round which happens to send
+        // them one after the other proves nothing and the next round is sent
+        var lostOnA201 = false;
+        var answered404 = false;
+        for (var round = 0; (round < 5) && !(lostOnA201 && answered404); ++round) {
+            final var answered = new ArrayList<String>();
+            try (var publishers = Executors.newFixedThreadPool(40)) {
+                final var publications = new ArrayList<Future<String>>();
+                for (var publication = 0; publication < 40; ++publication) {
+                    final var aggregateId = uniqueBusinessKey();
+                    publications.add(publishers.submit(() -> {
+                        try {
+                            client.publishMessage("contract-started", null, Map.of("orderId", aggregateId));
+                            return aggregateId;
+                        } catch (final ZenBpmApiException refusal) {
+                            return "%d".formatted(refusal.getStatus());
+                        }
+                    }));
+                }
+                for (final var publication : publications) {
+                    answered.add(publication.get(30, TimeUnit.SECONDS));
+                }
+            }
+            Thread.sleep(500);
+            answered404 |= answered.contains("404");
+            lostOnA201 |= answered
+                    .stream()
+                    .filter(answer -> answer.startsWith("order-"))
+                    .anyMatch(aggregateId -> runningInstanceOf("contract-started", aggregateId).isEmpty());
+        }
+
+        final var lost = lostOnA201;
+        final var refused = answered404;
+        assertAll(
+                () -> assertTrue(lost,
+                        "five rounds of 40 start messages at once lost no start answered 201: has the engine fixed the race?"),
+                () -> assertTrue(refused, "five rounds of 40 start messages at once were never answered 404"));
+    }
+
+    @Test
     @DisplayName("A job failed with an error code nothing catches fails with an incident")
     void aJobFailedWithAnUncaughtErrorCode() {
         final var started = start(client, uniqueBusinessKey());
@@ -498,6 +641,31 @@ class ZenBpmRestClientContractIT {
             channel
                     .shutdownNow()
                     .awaitTermination(10, TimeUnit.SECONDS);
+        }
+    }
+
+    // the instance of a process a start message started for an aggregate, found by its variable as
+    // the scan finds it
+    private static Optional<ProcessInstanceRef> runningInstanceOf(
+        final String bpmnProcessId,
+        final String aggregateId
+    ) {
+        for (var page = 1;; ++page) {
+            final var read = client.instances(InstanceFilter
+                    .anyInstance()
+                    .withBpmnProcessId(bpmnProcessId)
+                    .withState(ProcessInstanceRef.State.ACTIVE)
+                    .withPage(page));
+            final var found = read
+                    .items()
+                    .stream()
+                    .filter(instance -> aggregateId.equals(instance
+                            .variables()
+                            .get("orderId")))
+                    .findFirst();
+            if (found.isPresent() || read.last()) {
+                return found;
+            }
         }
     }
 

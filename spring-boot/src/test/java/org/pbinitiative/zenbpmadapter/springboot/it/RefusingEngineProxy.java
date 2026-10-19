@@ -32,7 +32,9 @@ import com.sun.net.httpserver.HttpServer;
  * a leader for the job's partition does with <code>502</code>, or one which failed with
  * <code>500</code>. So a test makes exactly the call of the adapter fail which its case is about,
  * while everything else the adapter sends reaches the engine, and no switch in the adapter's code
- * is needed for it.
+ * is needed for it. A test may also have the answer of a request lost: the request reaches the
+ * engine, which carries it out, and the adapter gets the status the test chose instead of the
+ * engine's answer. And the proxy writes down every request it received.
  */
 final class RefusingEngineProxy implements AutoCloseable {
 
@@ -45,6 +47,16 @@ final class RefusingEngineProxy implements AutoCloseable {
      * The read of one job.
      */
     static final Pattern JOB_READ = Pattern.compile("GET /v1/jobs/\\d+");
+
+    /**
+     * The publication of a message.
+     */
+    static final Pattern PUBLICATION = Pattern.compile("POST /v1/messages");
+
+    /**
+     * The read of one process instance.
+     */
+    static final Pattern INSTANCE_READ = Pattern.compile("GET /v1/process-instances/\\d+");
 
     /**
      * The extension of a job's lock.
@@ -65,6 +77,8 @@ final class RefusingEngineProxy implements AutoCloseable {
     private final List<Refusal> refusals = new CopyOnWriteArrayList<>();
 
     private final List<String> refused = new CopyOnWriteArrayList<>();
+
+    private final List<String> received = new CopyOnWriteArrayList<>();
 
     private HttpServer server;
 
@@ -108,7 +122,24 @@ final class RefusingEngineProxy implements AutoCloseable {
         final int status,
         final int times
     ) {
-        refusals.add(new Refusal(request, status, new AtomicInteger(times)));
+        refusals.add(new Refusal(request, status, new AtomicInteger(times), false));
+    }
+
+    /**
+     * Loses the answers of the requests a pattern matches from now on: each is passed on to the
+     * engine, which carries it out, and answered with the status instead of the engine's answer.
+     *
+     * @param request Whose answer is lost: the method, a blank and the path, e.g.
+     *            {@link #PUBLICATION}
+     * @param status The status the proxy answers with, e.g. <code>502</code>
+     * @param times How many of those answers are lost, {@link #ALWAYS} for every one
+     */
+    void loseTheAnswer(
+        final Pattern request,
+        final int status,
+        final int times
+    ) {
+        refusals.add(new Refusal(request, status, new AtomicInteger(times), true));
     }
 
     /**
@@ -125,15 +156,25 @@ final class RefusingEngineProxy implements AutoCloseable {
     void startAfresh() {
         refuseNothing();
         refused.clear();
+        received.clear();
     }
 
     /**
-     * The requests the proxy refused.
+     * The requests the proxy refused, or whose answer it lost.
      *
      * @return Each as its method, a blank and its path, in the order received
      */
     List<String> refused() {
         return List.copyOf(refused);
+    }
+
+    /**
+     * Every request the proxy received, refused ones included.
+     *
+     * @return Each as its method, a blank and its path, in the order received
+     */
+    List<String> received() {
+        return List.copyOf(received);
     }
 
     @Override
@@ -164,12 +205,18 @@ final class RefusingEngineProxy implements AutoCloseable {
             final var request = "%s %s".formatted(exchange.getRequestMethod(), exchange
                     .getRequestURI()
                     .getRawPath());
+            received.add(request);
             final var refusal = refusals
                     .stream()
                     .filter(candidate -> candidate.takes(request))
                     .findFirst();
             if (refusal.isPresent()) {
                 refused.add(request);
+                if (refusal
+                        .get()
+                        .passedOn()) {
+                    passedOn(exchange);
+                }
                 respond(exchange, refusal
                         .get()
                         .status(), "application/json",
@@ -238,7 +285,8 @@ final class RefusingEngineProxy implements AutoCloseable {
     private record Refusal(
         Pattern request,
         int status,
-        AtomicInteger left
+        AtomicInteger left,
+        boolean passedOn
     ) {
 
         // a refusal which applies takes one of the requests it may refuse

@@ -1,0 +1,56 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" xmlns:zenbpm="http://zenbpm.pbinitiative.org/1.0" id="Definitions_ContractStartMapped" targetNamespace="http://bpmn.io/schema/bpmn"
+    xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI"
+    xmlns:dc="http://www.omg.org/spec/DD/20100524/DC"
+    xmlns:di="http://www.omg.org/spec/DD/20100524/DI">
+  <bpmn:message id="Message_StartMapped" name="contract-start-mapped" />
+  <bpmn:process id="contract-start-mapped" isExecutable="true">
+    <bpmn:startEvent id="StartMapped">
+      <bpmn:extensionElements>
+        <zenbpm:ioMapping>
+          <zenbpm:output source="=amount" target="amount" />
+          <zenbpm:output source="=orderId" target="orderId" />
+        </zenbpm:ioMapping>
+      </bpmn:extensionElements>
+      <bpmn:outgoing>Flow_ToMarker</bpmn:outgoing>
+      <bpmn:messageEventDefinition id="StartMapped_Definition" messageRef="Message_StartMapped" />
+    </bpmn:startEvent>
+    <bpmn:sequenceFlow id="Flow_ToMarker" sourceRef="StartMapped" targetRef="Marker" />
+    <bpmn:serviceTask id="Marker" name="Report the start">
+      <bpmn:extensionElements>
+        <zenbpm:taskDefinition type="contract-start-mapped-marker" />
+      </bpmn:extensionElements>
+      <bpmn:incoming>Flow_ToMarker</bpmn:incoming>
+      <bpmn:outgoing>Flow_ToEnd</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:sequenceFlow id="Flow_ToEnd" sourceRef="Marker" targetRef="EndEvent" />
+    <bpmn:endEvent id="EndEvent">
+      <bpmn:incoming>Flow_ToEnd</bpmn:incoming>
+    </bpmn:endEvent>
+  </bpmn:process>
+  <bpmndi:BPMNDiagram id="BPMNDiagram_1">
+    <bpmndi:BPMNPlane id="BPMNPlane_1" bpmnElement="contract-start-mapped">
+      <bpmndi:BPMNShape id="StartMapped_di" bpmnElement="StartMapped">
+        <dc:Bounds x="160" y="80" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Marker_di" bpmnElement="Marker">
+        <dc:Bounds x="256" y="80" width="100" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="EndEvent_di" bpmnElement="EndEvent">
+        <dc:Bounds x="416" y="80" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNEdge id="Flow_ToMarker_di" bpmnElement="Flow_ToMarker">
+        <di:waypoint x="196" y="98" />
+        <di:waypoint x="226" y="98" />
+        <di:waypoint x="226" y="120" />
+        <di:waypoint x="256" y="120" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_ToEnd_di" bpmnElement="Flow_ToEnd">
+        <di:waypoint x="356" y="120" />
+        <di:waypoint x="386" y="120" />
+        <di:waypoint x="386" y="98" />
+        <di:waypoint x="416" y="98" />
+      </bpmndi:BPMNEdge>
+    </bpmndi:BPMNPlane>
+  </bpmndi:BPMNDiagram>
+</bpmn:definitions>

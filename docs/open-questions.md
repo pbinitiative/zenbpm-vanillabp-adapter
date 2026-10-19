@@ -211,6 +211,11 @@ markers of decision 26 record the instance key of a message-started workflow, so
 has to refuse such a start by default; the scan only covers what that record does not reach (GAPS
 1).
 
+**Built by S7.1.2, 2026-10-19:** `start-row` is the default, `scan` the opt-in with
+`message-start-lookup-max-instances` (`1000`), whose startup WARN names the bound and that a
+workflow of such a process which ended stays unknown to the probe, and `refuse` refuses every start
+by a message.
+
 ### 13. Repository, organisation, coordinates and licence
 
 **Decided (2026-09-13):** the repository is `github.com/pbinitiative/zenbpm-vanillabp-adapter`

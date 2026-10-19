@@ -97,7 +97,8 @@ class ZenBpmAdapterConfigurationTest {
         assertEquals(Duration.ofSeconds(5), configuration.getUserTaskPollInterval());
         assertNull(configuration.getHistoryTimeToLive());
         assertEquals(10_000, configuration.getInstanceCacheMaxEntries());
-        assertEquals(MessageStartLookup.REFUSE, configuration.getMessageStartLookup());
+        assertEquals(MessageStartLookup.START_ROW, configuration.getMessageStartLookup());
+        assertEquals(1_000, configuration.getMessageStartLookupMaxInstances());
         assertFalse(configuration.isAcceptUnscopedIdentifiers());
     }
 
@@ -122,6 +123,7 @@ class ZenBpmAdapterConfigurationTest {
         configuration.setHistoryTimeToLive(Duration.ofDays(30));
         configuration.setInstanceCacheMaxEntries(0);
         configuration.setMessageStartLookup(MessageStartLookup.SCAN);
+        configuration.setMessageStartLookupMaxInstances(1);
         configuration.setAcceptUnscopedIdentifiers(true);
 
         assertEquals(Kind.COMPLETE, configuration
@@ -147,6 +149,7 @@ class ZenBpmAdapterConfigurationTest {
         assertEquals(Duration.ofDays(30), configuration.getHistoryTimeToLive());
         assertEquals(0, configuration.getInstanceCacheMaxEntries());
         assertEquals(MessageStartLookup.SCAN, configuration.getMessageStartLookup());
+        assertEquals(1, configuration.getMessageStartLookupMaxInstances());
         assertTrue(configuration.isAcceptUnscopedIdentifiers());
 
         configuration.setGrpcPlaintext(null);
@@ -163,6 +166,7 @@ class ZenBpmAdapterConfigurationTest {
         configuration.setUserTaskPollInterval(null);
         configuration.setInstanceCacheMaxEntries(null);
         configuration.setMessageStartLookup(null);
+        configuration.setMessageStartLookupMaxInstances(null);
         configuration.setAcceptUnscopedIdentifiers(null);
 
         final var defaults = configured("https://zenbpm");
@@ -180,6 +184,7 @@ class ZenBpmAdapterConfigurationTest {
         assertEquals(defaults.getUserTaskPollInterval(), configuration.getUserTaskPollInterval());
         assertEquals(defaults.getInstanceCacheMaxEntries(), configuration.getInstanceCacheMaxEntries());
         assertEquals(defaults.getMessageStartLookup(), configuration.getMessageStartLookup());
+        assertEquals(defaults.getMessageStartLookupMaxInstances(), configuration.getMessageStartLookupMaxInstances());
         assertEquals(defaults.isAcceptUnscopedIdentifiers(), configuration.isAcceptUnscopedIdentifiers());
     }
 
@@ -985,7 +990,10 @@ class ZenBpmAdapterConfigurationTest {
                         "is PT2562047H47M17S, but the engine takes at most PT2562047H47M16S, about 292 years; write a shorter time, or remove the key",
                         c -> c.setHistoryTimeToLive(ZenBpmTimeToLive.LONGEST.plusSeconds(1))),
                 defect("instance-cache-max-entries", "a negative number", "must not be negative; the default is 10000",
-                        c -> c.setInstanceCacheMaxEntries(-1)));
+                        c -> c.setInstanceCacheMaxEntries(-1)),
+                defect("message-start-lookup-max-instances", "none",
+                        "is 0 and has to be at least 1; the default is 1000",
+                        c -> c.setMessageStartLookupMaxInstances(0)));
     }
 
     static Stream<Arguments> keysWithoutADefault() {
