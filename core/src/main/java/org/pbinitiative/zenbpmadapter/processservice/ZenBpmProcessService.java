@@ -55,15 +55,15 @@ import lombok.extern.slf4j.Slf4j;
  * id, built by the platform modules.
  * <p>
  * This version of the adapter starts workflows, also by a message, completes and cancels the tasks
- * the application left open, correlates messages, answers every probe, counts the open tasks of a
- * process and says what the engine does with the values a workflow carries. It serves every
- * operation the core requires of each adapter, so the core accepts it while the application
- * starts. Every other handler and every method of the viewer/history API throw: where the adapter
- * id has no clients, the message of its validation, which names the keys to set; otherwise an
- * {@link UnsupportedOperationException} which says that the call is not built yet. Nothing
- * pretends to have done the work. The operations a BPMS may lack, sending a signal and telling the
- * BPMS about a changed aggregate, are left out, so the core answers them as not supported. A probe
- * of an adapter id without clients throws the message of its validation as well.
+ * the application left open, correlates messages, pushes a changed aggregate, answers every probe,
+ * counts the open tasks of a process and says what the engine does with the values a workflow
+ * carries. It serves every operation the core requires of each adapter, so the core accepts it
+ * while the application starts. Every other handler and every method of the viewer/history API
+ * throw: where the adapter id has no clients, the message of its validation, which names the keys
+ * to set; otherwise an {@link UnsupportedOperationException} which says that the call is not built
+ * yet. Nothing pretends to have done the work. Sending a signal, which ZenBPM cannot, is left out,
+ * so the core answers it as not supported. A probe of an adapter id without clients throws the
+ * message of its validation as well.
  * <p>
  * A start asks the engine nothing in phase one, because there is nothing to ask before an
  * instance exists. Phase two starts the latest version of the process under the id the engine
@@ -84,6 +84,9 @@ import lombok.extern.slf4j.Slf4j;
  * <code>message-start-lookup: scan</code> the probes for a workflow read the instances of the
  * processes a message starts where nothing else finds the workflow, see
  * {@link ZenBpmMessageStartScan}.
+ * <p>
+ * A changed aggregate is written into the workflow's root and every instance which runs below it,
+ * or into the instance the task the application names waits in, see {@link ZenBpmAggregatePush}.
  * <p>
  * Each field has an accessor of its own and no Lombok getter on the class, see decision 13 in the
  * repository's DECISIONS.md.
@@ -111,6 +114,8 @@ public class ZenBpmProcessService<A> implements MigratableProcessService<A> {
     private final Map<PhaseOperation, PhaseOperationHandler<A>> phaseOperations;
 
     private final ZenBpmMessageStartScan messageStartScan;
+
+    private final ZenBpmRunningWorkflows runningWorkflows;
 
     /**
      * Whether the last probe which asked the engine failed.
@@ -172,8 +177,11 @@ public class ZenBpmProcessService<A> implements MigratableProcessService<A> {
         final var messageStarts = new ZenBpmMessageStart<A>(adapterId, factory, collaborators, this::variablesOf);
         handlers.put(PhaseOperation.START_WORKFLOW_BY_MESSAGE, PhaseOperationHandler.of(messageStarts::checkTheStart,
                 messageStarts::start));
-        this.phaseOperations = Collections.unmodifiableMap(handlers);
         this.messageStartScan = new ZenBpmMessageStartScan(adapterId, factory);
+        this.runningWorkflows = new ZenBpmRunningWorkflows(adapterId);
+        final var pushes = new ZenBpmAggregatePush<A>(adapterId, factory, collaborators, this::variablesOf, runningWorkflows, messageStartScan);
+        handlers.put(PhaseOperation.AGGREGATE_CHANGED, PhaseOperationHandler.of(pushes::checkNothing, pushes::push));
+        this.phaseOperations = Collections.unmodifiableMap(handlers);
     }
 
     @Override
@@ -209,7 +217,8 @@ public class ZenBpmProcessService<A> implements MigratableProcessService<A> {
     /**
      * A handler for every operation the core requires of each adapter: the start of a workflow,
      * also by a message, the completion and the cancellation of a task, the correlation of a
-     * message, and a handler which throws for every other.
+     * message, and a handler which throws for every other; and one for the push of a changed
+     * aggregate, which the core does not require.
      *
      * @return The handlers, which cannot be changed
      */
@@ -432,7 +441,11 @@ public class ZenBpmProcessService<A> implements MigratableProcessService<A> {
         final var rest = clients();
         final var scopedIds = scopedIdsOf(scope);
         final var aggregateId = String.valueOf(workflowAggregateId);
-        if (theEngineRunsTheWorkflowOfTheKey(rest, scopedIds, aggregatePersistence, aggregateId, workflowId)) {
+        // the key only shortens a YES, so whatever else it leads to, a failure included, is left to
+        // the search
+        if (runningWorkflows
+                .ofTheKey(rest, scopedIds, aggregatePersistence.getAggregateIdName(), aggregateId, workflowId)
+                .isPresent()) {
             probeAnswered();
             return WorkflowAwareness.ACTIVE;
         }
@@ -754,35 +767,6 @@ public class ZenBpmProcessService<A> implements MigratableProcessService<A> {
         return jobElements;
     }
 
-    // the key only shortens a YES, so whatever else it leads to, a failure included, is left to
-    // the search
-    private boolean theEngineRunsTheWorkflowOfTheKey(
-        final ZenBpmRestClient rest,
-        final Set<String> scopedIds,
-        final AggregatePersistenceAware<A> aggregatePersistence,
-        final String aggregateId,
-        final String workflowId
-    ) {
-        final var key = ZenBpmKeys.keyOf(workflowId);
-        if (key.isEmpty()) {
-            return false;
-        }
-        try {
-            final var idVariableName = aggregatePersistence.getAggregateIdName();
-            return rest
-                    .instance(key.getAsLong())
-                    .filter(instance -> isRunning(instance.state()))
-                    .filter(instance -> scopedIds.contains(instance.bpmnProcessId()))
-                    .filter(instance -> isTheWorkflowOf(aggregateId, idVariableName, instance))
-                    .isPresent();
-        } catch (final RuntimeException failure) {
-            log.debug(
-                    "ZenBPM[{}]: the engine could not be asked for workflow '{}' of aggregate '{}', so the search answers",
-                    adapterId, workflowId, aggregateId, failure);
-            return false;
-        }
-    }
-
     private WorkflowAwareness awarenessByBusinessKey(
         final ZenBpmRestClient rest,
         final Set<String> scopedIds,
@@ -862,7 +846,7 @@ public class ZenBpmProcessService<A> implements MigratableProcessService<A> {
         if (page
                 .items()
                 .stream()
-                .anyMatch(instance -> isRunning(instance.state()))) {
+                .anyMatch(instance -> ZenBpmRunningWorkflows.isRunning(instance.state()))) {
             return WorkflowAwareness.ACTIVE;
         }
         if (page.last()) {
@@ -879,26 +863,6 @@ public class ZenBpmProcessService<A> implements MigratableProcessService<A> {
                         .withSize(1))
                 .totalCount();
         return (active + failed) > 0 ? WorkflowAwareness.ACTIVE : WorkflowAwareness.COMPLETED;
-    }
-
-    // an instance with an incident can still be acted on: an operator resolves it, or it is
-    // cancelled
-    private static boolean isRunning(final ProcessInstanceRef.State state) {
-        return (state == ProcessInstanceRef.State.ACTIVE) || (state == ProcessInstanceRef.State.FAILED);
-    }
-
-    private static boolean isTheWorkflowOf(
-        final String aggregateId,
-        final String idVariableName,
-        final ProcessInstanceRef instance
-    ) {
-        if (aggregateId.equals(instance.businessKey())) {
-            return true;
-        }
-        final var idVariable = instance
-                .variables()
-                .get(idVariableName);
-        return (idVariable != null) && aggregateId.equals(String.valueOf(idVariable));
     }
 
     // the engine reads whole milliseconds, so a moment inside one is moved to the next

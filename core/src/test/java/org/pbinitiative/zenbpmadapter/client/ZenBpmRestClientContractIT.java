@@ -102,6 +102,7 @@ class ZenBpmRestClientContractIT {
         client.deployBpmn(fixture("contract-started.bpmn"));
         client.deployBpmn(fixture("contract-start-fails.bpmn"));
         client.deployBpmn(fixture("contract-start-mapped.bpmn"));
+        client.deployBpmn(fixture("contract-iterations.bpmn"));
         decision = client.deployDmn(fixture("contract-decision.dmn"));
     }
 
@@ -338,6 +339,29 @@ class ZenBpmRestClientContractIT {
     }
 
     @Test
+    @DisplayName("A job keeps the variables it was created with: a variable patched into its instance afterwards is the instance's, not the job's")
+    void aJobKeepsTheVariablesItWasCreatedWith() {
+        final var started = start(client, uniqueBusinessKey());
+        final var job = waitingJobOf(client, started);
+
+        client.patchVariables(started.key(), Map.of("note", "pushed"));
+
+        assertAll(
+                () -> assertEquals("pushed", client
+                        .instance(started.key())
+                        .orElseThrow()
+                        .variables()
+                        .get("note")),
+                () -> assertEquals(job.inputVariables(), client
+                        .job(job.key())
+                        .orElseThrow()
+                        .inputVariables()),
+                () -> assertFalse(job
+                        .inputVariables()
+                        .containsKey("note"), job::toString));
+    }
+
+    @Test
     @DisplayName("A job completed twice is answered normally, and a message moves the instance to its end")
     void aJobCompletedTwiceAndAMessage() {
         final var businessKey = uniqueBusinessKey();
@@ -406,6 +430,53 @@ class ZenBpmRestClientContractIT {
                         .stream()
                         .anyMatch(entry -> "Wait_Taken".equals(entry.elementId()) && entry.completedAt() != null),
                         history::toString));
+    }
+
+    @Test
+    @DisplayName("An iteration of a multi-instance sub-process which waited reads only its own variables: its gateway does not see a variable its workflow carried from the start; a write of an instance which ended is answered 409, also below a root which runs")
+    void anIterationWhichWaitedReadsOnlyItsOwnVariables() {
+        final var started = client.createInstance(CreateInstanceRequest
+                .latestVersionOf("contract-iterations")
+                .withBusinessKey(uniqueBusinessKey())
+                .withVariables(Map.of("approved", true)));
+        final var body = eventually(() -> client
+                .children(started.key())
+                .stream()
+                .findFirst());
+
+        final var iterations = eventually(() -> {
+            final var ended = client
+                    .children(body.key())
+                    .stream()
+                    .filter(iteration -> iteration.state() == ProcessInstanceRef.State.COMPLETED)
+                    .toList();
+            return ended.size() == 2 ? Optional.of(ended) : Optional.empty();
+        });
+        final var waitsLong = eventually(() -> client
+                .instance(started.key())
+                .filter(instance -> instance.state() == ProcessInstanceRef.State.ACTIVE)
+                .filter(instance -> client
+                        .children(started.key())
+                        .stream()
+                        .allMatch(child -> child.state() == ProcessInstanceRef.State.COMPLETED)));
+        final var write = assertThrows(ZenBpmApiException.class, () -> client.patchVariables(iterations
+                .getFirst()
+                .key(), Map.of("approved", false)));
+
+        assertAll(
+                () -> assertEquals(Boolean.TRUE, waitsLong
+                        .variables()
+                        .get("approved")),
+                () -> assertTrue(iterations
+                        .stream()
+                        .allMatch(iteration -> client
+                                .history(iteration.key(), 1)
+                                .items()
+                                .stream()
+                                .anyMatch(entry -> "Iteration_Held".equals(entry.elementId()))),
+                        iterations::toString),
+                () -> assertEquals(409, write.getStatus()),
+                () -> assertTrue(ZenBpmErrors.variablesFoundTheInstanceEnded(write)));
     }
 
     @Test

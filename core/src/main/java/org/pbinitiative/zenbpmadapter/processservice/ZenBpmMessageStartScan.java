@@ -9,6 +9,7 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Optional;
 import java.util.Set;
 
 import org.pbinitiative.zenbpmadapter.ZenBpmDeployedProcesses.ModuleMessages;
@@ -122,12 +123,47 @@ final class ZenBpmMessageStartScan {
         final String aggregateId,
         final Instant createdFrom
     ) {
+        final var found = lookUp(rest, scopedIds, idVariableName, aggregateId, createdFrom);
+        if (found.running() != null) {
+            return WorkflowAwareness.ACTIVE;
+        }
+        return found.endedOnes() ? WorkflowAwareness.COMPLETED : WorkflowAwareness.UNKNOWN_TO_BPMS;
+    }
+
+    /**
+     * The instance which runs the workflow of an aggregate, among the running instances of the
+     * given processes.
+     *
+     * @param rest The REST client of the adapter id
+     * @param scopedIds The processes to read, as the engine knows them
+     * @param idVariableName The name of the aggregate's id variable
+     * @param aggregateId The id of the aggregate
+     * @return The first instance read whose id variable names the aggregate, empty where none does
+     * @throws BoundReached Where more instances would have to be read than
+     *             <code>message-start-lookup-max-instances</code> allows
+     */
+    Optional<ProcessInstanceRef> running(
+        final ZenBpmRestClient rest,
+        final Set<String> scopedIds,
+        final String idVariableName,
+        final String aggregateId
+    ) {
+        return Optional.ofNullable(lookUp(rest, scopedIds, idVariableName, aggregateId, null).running());
+    }
+
+    private Found lookUp(
+        final ZenBpmRestClient rest,
+        final Set<String> scopedIds,
+        final String idVariableName,
+        final String aggregateId,
+        final Instant createdFrom
+    ) {
         final var bound = factory
                 .configuration()
                 .getMessageStartLookupMaxInstances();
         final var states = createdFrom == null ? RUNNING : EVERY_STATE;
         var read = 0;
-        var answer = WorkflowAwareness.UNKNOWN_TO_BPMS;
+        var endedOnes = false;
         for (final var scopedId : scopedIds) {
             for (final var state : states) {
                 var filter = InstanceFilter
@@ -145,10 +181,10 @@ final class ZenBpmMessageStartScan {
                         if (!namesTheAggregate(instance, idVariableName, aggregateId)) {
                             continue;
                         }
-                        if (isRunning(instance.state())) {
-                            return WorkflowAwareness.ACTIVE;
+                        if (ZenBpmRunningWorkflows.isRunning(instance.state())) {
+                            return new Found(instance, endedOnes);
                         }
-                        answer = WorkflowAwareness.COMPLETED;
+                        endedOnes = true;
                     }
                     if (page.last()) {
                         break;
@@ -157,7 +193,7 @@ final class ZenBpmMessageStartScan {
                 }
             }
         }
-        return answer;
+        return new Found(null, endedOnes);
     }
 
     private static boolean namesTheAggregate(
@@ -169,10 +205,6 @@ final class ZenBpmMessageStartScan {
                 .variables()
                 .get(idVariableName);
         return (idVariable != null) && aggregateId.equals(String.valueOf(idVariable));
-    }
-
-    private static boolean isRunning(final ProcessInstanceRef.State state) {
-        return (state == ProcessInstanceRef.State.ACTIVE) || (state == ProcessInstanceRef.State.FAILED);
     }
 
     /**
@@ -205,6 +237,19 @@ final class ZenBpmMessageStartScan {
                     MessageStartLookup.START_ROW.configured()));
         }
 
+    }
+
+    /**
+     * What a lookup found.
+     *
+     * @param running The first instance read which runs the workflow, <code>null</code> where none
+     *            does
+     * @param endedOnes Whether an instance of the workflow which ended was read before
+     */
+    private record Found(
+        ProcessInstanceRef running,
+        boolean endedOnes
+    ) {
     }
 
 }

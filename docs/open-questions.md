@@ -35,6 +35,13 @@ starts by a timer has no business key either, because the application names it n
 Meanwhile the start marker records the instance key of every such workflow in the application's
 start row (decision 26), which is enough while that row lives; GAPS 1 lists what it does not reach.
 
+**Built (2026-10-19, S7.1.2 and S7.2.1):** the last sentence of "Found" and the "Plan meanwhile"
+are what was found and planned before, and no longer hold. `message-start-lookup` is `start-row` by
+default: a workflow a message started is found through the instance key its start marker reported,
+so `correlateMessage`, `completeTask` and `aggregateChanged` reach it while its start row lives;
+`scan` is the opt-in for what the row does not reach, and `refuse` refuses every start by a message.
+What stays open is GAPS 1.
+
 ### 2. Can the job lock be configured per subscription, and can a worker extend or acknowledge it?
 
 **Found.** `jobLockDuration = 30 s` and `maxActiveJobsPerClient = 10` are constants

@@ -16,6 +16,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -35,6 +36,8 @@ import org.pbinitiative.zenbpmadapter.test.EngineUnderTest;
 import org.testcontainers.DockerClientFactory;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
+import com.fasterxml.jackson.databind.JsonNode;
+
 import io.quarkus.test.QuarkusProdModeTest;
 import io.restassured.RestAssured;
 import io.restassured.specification.RequestSpecification;
@@ -50,7 +53,11 @@ import io.vanillabp.integration.test.utils.SuppressOutputExtension;
  * <code>TaskMatrix</code>, <code>TaskOutcomes</code>, <code>TaskTakenAway</code> and
  * <code>TaskFailures</code>, copies of the Spring Boot task fixtures, have their tasks served the
  * same way: the outcomes of a handler, a task left open and completed later, a task the engine took
- * away, and a handler which throws.
+ * away, and a handler which throws. The processes <code>Letters</code>, <code>Postcards</code> and
+ * <code>Shipments</code>, copies of the Spring Boot message and push fixtures, take messages
+ * published after and before their workflows wait for them, are started by a message and found
+ * through their start row, and decide on a value the application pushed, into the workflow or into
+ * the scope of a task.
  * <p>
  * The Spring Boot integration tests prove the same, and that is the point: a correct core says
  * nothing about whether the glue of a platform ever calls it, which is why coverage is measured per
@@ -123,6 +130,9 @@ class ZenBpmWorkflowLifecycleTest {
                     .addAsResource("zenbpm-e2e/processes/zenbpm/TaskOutcomes.bpmn")
                     .addAsResource("zenbpm-e2e/processes/zenbpm/TaskTakenAway.bpmn")
                     .addAsResource("zenbpm-e2e/processes/zenbpm/TaskFailures.bpmn")
+                    .addAsResource("zenbpm-e2e/processes/zenbpm/Letters.bpmn")
+                    .addAsResource("zenbpm-e2e/processes/zenbpm/Postcards.bpmn")
+                    .addAsResource("zenbpm-e2e/processes/zenbpm/Shipments.bpmn")
                     .addAsResource("workflow-module-descriptor/workflow-module", "META-INF/workflow-module"))
             // the surefire configuration of this module hands 'jacoco.agent' to this JVM
             .setJVMArgs(testCoverageJavaAgent(quarkusProdModeTestDefaults()))
@@ -390,9 +400,200 @@ class ZenBpmWorkflowLifecycleTest {
                         .size()));
     }
 
+    @Test
+    @DisplayName("A correlation resumes the workflow which waits for the message, and the message carries the values the aggregate shares now")
+    void correlateMessageResumesTheWorkflow() {
+        final var id = uniqueAggregateId();
+
+        post("introspect/messages/letters/%s?scenario=await".formatted(id));
+        final var instanceKey = awaitTheRootOf(id);
+        await(() -> waitingElementsOf(instanceKey).contains("AwaitGoAhead"), "the letter '%s' to await the go-ahead"
+                .formatted(id));
+        post("introspect/messages/letters/%s/go-ahead".formatted(id));
+        final var ended = awaitTheEndOfInstance(instanceKey);
+
+        assertAll(
+                () -> assertEquals("completed", ended
+                        .path("state")
+                        .asText()),
+                () -> assertEquals("approved", ended
+                        .path("variables")
+                        .path("status")
+                        .asText()),
+                () -> assertTrue(visited(instanceKey).contains("Sent"), () -> visited(instanceKey).toString()));
+    }
+
+    @Test
+    @DisplayName("A message published before the workflow waits for it is repeated every workflow-visibility-timeout without counting, until it correlates once the workflow passed its timer")
+    void aMessagePublishedBeforeTheSubscriptionIsRepeatedUntilItCorrelates() {
+        final var id = uniqueAggregateId();
+        final var startedAt = Instant.now();
+
+        post("introspect/messages/letters/%s?scenario=delay".formatted(id));
+        final var instanceKey = awaitTheRootOf(id);
+        post("introspect/messages/letters/%s/go-ahead".formatted(id));
+        awaitTheEndOfInstance(instanceKey);
+        final var tookFromTheStart = Duration.between(startedAt, Instant.now());
+
+        final var handedBack = applicationLog()
+                .lines()
+                .filter(line -> line.contains("for aggregate '%s' cannot run yet - the outbox entry".formatted(id)))
+                .toList();
+        assertAll(
+                () -> assertTrue(visited(instanceKey).contains("SentLater"), () -> visited(instanceKey).toString()),
+                () -> assertTrue(tookFromTheStart.compareTo(Duration.ofSeconds(5)) >= 0, tookFromTheStart::toString),
+                () -> assertFalse(handedBack.isEmpty(), APPLICATION_LOG::toString),
+                () -> assertTrue(handedBack
+                        .stream()
+                        .allMatch(line -> line.contains("is dispatched again in PT2S")), handedBack::toString));
+    }
+
+    @Test
+    @DisplayName("A workflow started by a message under the default message-start-lookup start-row is found through the start row its start marker wrote, so a correlation reaches it")
+    void startWorkflowByMessageIsFoundThroughItsStartRow() {
+        final var id = uniqueAggregateId();
+
+        post("introspect/messages/postcards/%s".formatted(id));
+        final var startRow = await(() -> Optional
+                .of(object("introspect/messages/postcards/%s/start-row".formatted(id)))
+                .filter(row -> !row.isEmpty()), "the start row of postcard '%s'".formatted(id));
+        final var instanceKey = (String) startRow.get("workflowId");
+        await(() -> waitingElementsOf(instanceKey).contains("AwaitStamp"), "the postcard '%s' to await the stamp"
+                .formatted(id));
+        final var started = ENGINE.json("/v1/process-instances/%s".formatted(instanceKey));
+        post("introspect/messages/postcards/%s/stamp".formatted(id));
+        final var ended = awaitTheEndOfInstance(instanceKey);
+
+        assertAll(
+                () -> assertEquals("Postcards", startRow.get("bpmnProcessId")),
+                () -> assertEquals("zenbpm", startRow.get("adapterId")),
+                () -> assertEquals("zenbpm-e2e__Postcards", started
+                        .path("bpmnProcessId")
+                        .asText()),
+                () -> assertTrue(started
+                        .path("businessKey")
+                        .asText()
+                        .isEmpty(), started::toPrettyString),
+                () -> assertEquals(id, started
+                        .path("variables")
+                        .path("id")
+                        .asText()),
+                () -> assertEquals("completed", ended
+                        .path("state")
+                        .asText()),
+                () -> assertEquals("stamped", ended
+                        .path("variables")
+                        .path("status")
+                        .asText()));
+    }
+
+    @Test
+    @DisplayName("A push of the workflow reaches the gateway behind the timer the workflow waits at, which takes the branch of the pushed value")
+    void aGlobalPushReachesTheGateway() {
+        final var id = uniqueAggregateId();
+
+        post("introspect/messages/shipments/%s?scenario=gateway".formatted(id));
+        final var instanceKey = awaitTheRootOf(id);
+        await(() -> waitingElementsOf(instanceKey).contains("WaitToShip"), "the shipment '%s' to wait".formatted(id));
+        post("introspect/messages/shipments/%s/push".formatted(id));
+        final var ended = awaitTheEndOfInstance(instanceKey);
+
+        final var visited = visited(instanceKey);
+        assertAll(
+                () -> assertTrue(visited.contains("Shipped"), visited::toString),
+                () -> assertFalse(visited.contains("Held"), visited::toString),
+                () -> assertTrue(ended
+                        .path("variables")
+                        .path("approved")
+                        .asBoolean(), ended::toPrettyString));
+    }
+
+    @Test
+    @DisplayName("A push into the scope of a task writes the instance of the sub-process the task waits in and leaves the root's values as they were; the completion then writes them everywhere")
+    void aTaskScopedPushReachesTheChildScope() {
+        final var id = uniqueAggregateId();
+
+        post("introspect/messages/shipments/%s?scenario=task".formatted(id));
+        final var instanceKey = awaitTheRootOf(id);
+        await(() -> Optional.ofNullable((String) object("introspect/messages/shipments/%s".formatted(id)).get(
+                "inspection")), "the inspection of shipment '%s' to be left open".formatted(id));
+        final var inspection = ENGINE
+                .json("/v1/process-instances/%s/child-processes".formatted(instanceKey))
+                .path("partitions")
+                .path(0)
+                .path("items")
+                .path(0)
+                .path("key")
+                .asText();
+        post("introspect/messages/shipments/%s/push-into-the-inspection".formatted(id));
+        await(() -> ENGINE
+                .json("/v1/process-instances/%s".formatted(inspection))
+                .path("variables")
+                .path("approved")
+                .asBoolean(), "the sub-process's instance to carry the pushed value");
+        final var rootAfterThePush = ENGINE
+                .json("/v1/process-instances/%s".formatted(instanceKey))
+                .path("variables")
+                .path("approved");
+        post("introspect/messages/shipments/%s/inspection".formatted(id));
+        awaitTheEndOfInstance(instanceKey);
+
+        final var visited = visited(instanceKey);
+        assertAll(
+                () -> assertTrue(rootAfterThePush.isBoolean(), rootAfterThePush::toString),
+                () -> assertFalse(rootAfterThePush.asBoolean(), rootAfterThePush::toString),
+                () -> assertTrue(visited.contains("InspectedForShipping"), visited::toString));
+    }
+
     // the ids of every test are new, because all tests of the class share one engine
     private static String uniqueAggregateId() {
         return "e2e-%s".formatted(UUID.randomUUID());
+    }
+
+    // the root instance of the aggregate's workflow: the instances below it carry the business key
+    // as well
+    private static String awaitTheRootOf(final String id) {
+        return await(() -> {
+            final var roots = new ArrayList<String>();
+            ENGINE
+                    .json("/v1/process-instances?businessKey=%s".formatted(id))
+                    .path("partitions")
+                    .forEach(partition -> partition
+                            .path("items")
+                            .forEach(instance -> {
+                                if (instance
+                                        .path("parentProcessInstanceKey")
+                                        .isMissingNode()) {
+                                    roots.add(instance
+                                            .path("key")
+                                            .asText());
+                                }
+                            }));
+            return roots
+                    .stream()
+                    .findFirst();
+        }, "the workflow of aggregate '%s'".formatted(id));
+    }
+
+    private static JsonNode awaitTheEndOfInstance(final String instanceKey) {
+        return await(() -> Optional
+                .of(ENGINE.json("/v1/process-instances/%s".formatted(instanceKey)))
+                .filter(instance -> !"active".equals(instance
+                        .path("state")
+                        .asText())),
+                "instance %s to end".formatted(instanceKey));
+    }
+
+    // the elements an instance is in now
+    private static List<String> waitingElementsOf(final String instanceKey) {
+        final var waiting = new ArrayList<String>();
+        ENGINE
+                .json("/v1/process-instances/%s".formatted(instanceKey))
+                .path("activeElementInstances")
+                .forEach(element -> waiting.add(element
+                        .path("elementId")
+                        .asText()));
+        return waiting;
     }
 
     private static Map<String, Object> awaitTheInstanceOf(final String id) {
