@@ -1,0 +1,100 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" id="zenbpm-e2e-reviews"
+    xmlns:zenbpm="http://zenbpm.pbinitiative.org/1.0" targetNamespace="http://bpmn.io/schema/bpmn"
+    xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI"
+    xmlns:dc="http://www.omg.org/spec/DD/20100524/DC"
+    xmlns:di="http://www.omg.org/spec/DD/20100524/DI">
+  <bpmn:error id="Error_Withdrawn" name="Withdrawn" errorCode="withdrawn" />
+  <bpmn:process id="Reviewing" isExecutable="true">
+    <bpmn:startEvent id="Start">
+      <bpmn:outgoing>Flow_ToReview</bpmn:outgoing>
+    </bpmn:startEvent>
+    <bpmn:userTask id="Review" name="Review the paper">
+      <bpmn:extensionElements>
+        <zenbpm:taskDefinition type="review" />
+      </bpmn:extensionElements>
+      <bpmn:incoming>Flow_ToReview</bpmn:incoming>
+      <bpmn:outgoing>Flow_ToDecision</bpmn:outgoing>
+    </bpmn:userTask>
+    <bpmn:boundaryEvent id="Withdrawn" name="Withdrawn" attachedToRef="Review">
+      <bpmn:outgoing>Flow_ToReviewWithdrawn</bpmn:outgoing>
+      <bpmn:errorEventDefinition id="Withdrawn_Definition" errorRef="Error_Withdrawn" />
+    </bpmn:boundaryEvent>
+    <bpmn:exclusiveGateway id="Decision" name="Accepted?" default="Flow_ToRejected">
+      <bpmn:incoming>Flow_ToDecision</bpmn:incoming>
+      <bpmn:outgoing>Flow_ToAccepted</bpmn:outgoing>
+      <bpmn:outgoing>Flow_ToRejected</bpmn:outgoing>
+    </bpmn:exclusiveGateway>
+    <bpmn:endEvent id="Accepted">
+      <bpmn:incoming>Flow_ToAccepted</bpmn:incoming>
+    </bpmn:endEvent>
+    <bpmn:endEvent id="Rejected">
+      <bpmn:incoming>Flow_ToRejected</bpmn:incoming>
+    </bpmn:endEvent>
+    <bpmn:endEvent id="ReviewWithdrawn">
+      <bpmn:incoming>Flow_ToReviewWithdrawn</bpmn:incoming>
+    </bpmn:endEvent>
+    <bpmn:sequenceFlow id="Flow_ToReview" sourceRef="Start" targetRef="Review" />
+    <bpmn:sequenceFlow id="Flow_ToDecision" sourceRef="Review" targetRef="Decision" />
+    <bpmn:sequenceFlow id="Flow_ToAccepted" sourceRef="Decision" targetRef="Accepted">
+      <bpmn:conditionExpression>=accepted</bpmn:conditionExpression>
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="Flow_ToRejected" sourceRef="Decision" targetRef="Rejected" />
+    <bpmn:sequenceFlow id="Flow_ToReviewWithdrawn" sourceRef="Withdrawn" targetRef="ReviewWithdrawn" />
+  </bpmn:process>
+  <bpmndi:BPMNDiagram id="BPMNDiagram_1">
+    <bpmndi:BPMNPlane id="BPMNPlane_1" bpmnElement="Reviewing">
+      <bpmndi:BPMNShape id="Start_di" bpmnElement="Start">
+        <dc:Bounds x="160" y="80" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Review_di" bpmnElement="Review">
+        <dc:Bounds x="256" y="80" width="100" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Decision_di" bpmnElement="Decision">
+        <dc:Bounds x="416" y="80" width="50" height="50" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Accepted_di" bpmnElement="Accepted">
+        <dc:Bounds x="526" y="80" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Rejected_di" bpmnElement="Rejected">
+        <dc:Bounds x="526" y="166" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="ReviewWithdrawn_di" bpmnElement="ReviewWithdrawn">
+        <dc:Bounds x="160" y="252" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Withdrawn_di" bpmnElement="Withdrawn">
+        <dc:Bounds x="330" y="142" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNEdge id="Flow_ToReview_di" bpmnElement="Flow_ToReview">
+        <di:waypoint x="196" y="98" />
+        <di:waypoint x="226" y="98" />
+        <di:waypoint x="226" y="120" />
+        <di:waypoint x="256" y="120" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_ToDecision_di" bpmnElement="Flow_ToDecision">
+        <di:waypoint x="356" y="120" />
+        <di:waypoint x="386" y="120" />
+        <di:waypoint x="386" y="105" />
+        <di:waypoint x="416" y="105" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_ToAccepted_di" bpmnElement="Flow_ToAccepted">
+        <di:waypoint x="466" y="105" />
+        <di:waypoint x="496" y="105" />
+        <di:waypoint x="496" y="98" />
+        <di:waypoint x="526" y="98" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_ToRejected_di" bpmnElement="Flow_ToRejected">
+        <di:waypoint x="466" y="105" />
+        <di:waypoint x="496" y="105" />
+        <di:waypoint x="496" y="184" />
+        <di:waypoint x="526" y="184" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_ToReviewWithdrawn_di" bpmnElement="Flow_ToReviewWithdrawn">
+        <di:waypoint x="348" y="178" />
+        <di:waypoint x="348" y="308" />
+        <di:waypoint x="178" y="308" />
+        <di:waypoint x="178" y="288" />
+      </bpmndi:BPMNEdge>
+    </bpmndi:BPMNPlane>
+  </bpmndi:BPMNDiagram>
+</bpmn:definitions>

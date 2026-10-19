@@ -57,7 +57,11 @@ import io.vanillabp.integration.test.utils.SuppressOutputExtension;
  * <code>Shipments</code>, copies of the Spring Boot message and push fixtures, take messages
  * published after and before their workflows wait for them, are started by a message and found
  * through their start row, and decide on a value the application pushed, into the workflow or into
- * the scope of a task.
+ * the scope of a task. The process <code>Reviewing</code>, a copy of the Spring Boot user-task
+ * fixture, has a user task which the adapter looks for every second, tells the application of once
+ * when it is created, and which the application completes, after which the gateway behind it decides
+ * on what the application shared, or cancels with a BPMN error, which the error boundary event of
+ * the user task catches and which the application is told of once as a cancellation.
  * <p>
  * The Spring Boot integration tests prove the same, and that is the point: a correct core says
  * nothing about whether the glue of a platform ever calls it, which is why coverage is measured per
@@ -133,6 +137,7 @@ class ZenBpmWorkflowLifecycleTest {
                     .addAsResource("zenbpm-e2e/processes/zenbpm/Letters.bpmn")
                     .addAsResource("zenbpm-e2e/processes/zenbpm/Postcards.bpmn")
                     .addAsResource("zenbpm-e2e/processes/zenbpm/Shipments.bpmn")
+                    .addAsResource("zenbpm-e2e/processes/zenbpm/Reviews.bpmn")
                     .addAsResource("workflow-module-descriptor/workflow-module", "META-INF/workflow-module"))
             // the surefire configuration of this module hands 'jacoco.agent' to this JVM
             .setJVMArgs(testCoverageJavaAgent(quarkusProdModeTestDefaults()))
@@ -545,6 +550,63 @@ class ZenBpmWorkflowLifecycleTest {
                 () -> assertTrue(visited.contains("InspectedForShipping"), visited::toString));
     }
 
+    @Test
+    @DisplayName("A user task is told to the application once as created, with its job key as the task id, and its completion continues the workflow: the gateway behind it decides on what the application changed before the completion, and nothing is told as cancelled")
+    void userTaskNotificationAndCompletion() {
+        final var id = uniqueAggregateId();
+
+        post("introspect/user-tasks/reviews/%s".formatted(id));
+        final var instanceKey = (String) awaitTheInstanceOf(id).get("key");
+        final var taskId = await(() -> Optional.ofNullable((String) review(id).get("reviewTaskId")),
+                "the creation of the review of '%s' to be told".formatted(id));
+        watchThreeLooks();
+        final var creationsBefore = review(id).get("creations");
+        post("introspect/user-tasks/reviews/%s/acceptance".formatted(id));
+        awaitTheEndOf(id);
+        watchThreeLooks();
+
+        final var visited = visited(instanceKey);
+        final var review = review(id);
+        assertAll(
+                () -> assertEquals(1, creationsBefore, review::toString),
+                () -> assertEquals("USER_TASK", ENGINE
+                        .json("/v1/jobs/%s".formatted(taskId))
+                        .path("elementType")
+                        .asText()),
+                () -> assertEquals(taskId, jobOf(instanceKey, "Review").get("key")),
+                () -> assertEquals("COMPLETED", awaitTheInstanceOf(id).get("state")),
+                () -> assertTrue(visited.containsAll(List.of("Decision", "Accepted")), visited::toString),
+                () -> assertFalse(visited.contains("Rejected"), visited::toString),
+                () -> assertEquals("COMPLETED", jobOf(instanceKey, "Review").get("state")),
+                () -> assertEquals(1, review.get("creations"), review::toString),
+                () -> assertEquals(0, review.get("cancellations"), review::toString));
+    }
+
+    @Test
+    @DisplayName("A user task the application cancels with a BPMN error is caught by the error boundary event of the user task, and the application is told once that it was cancelled")
+    void userTaskCancellationByError() {
+        final var id = uniqueAggregateId();
+
+        post("introspect/user-tasks/reviews/%s".formatted(id));
+        final var instanceKey = (String) awaitTheInstanceOf(id).get("key");
+        await(() -> Optional.ofNullable((String) review(id).get("reviewTaskId")),
+                "the creation of the review of '%s' to be told".formatted(id));
+        post("introspect/user-tasks/reviews/%s/withdrawal?errorCode=withdrawn".formatted(id));
+        awaitTheEndOf(id);
+        await(() -> ((Integer) review(id).get("cancellations")) > 0, "the cancellation to be told");
+        watchThreeLooks();
+
+        final var visited = visited(instanceKey);
+        final var review = review(id);
+        assertAll(
+                () -> assertEquals("COMPLETED", awaitTheInstanceOf(id).get("state")),
+                () -> assertTrue(visited.containsAll(List.of("Withdrawn", "ReviewWithdrawn")), visited::toString),
+                () -> assertFalse(visited.contains("Decision"), visited::toString),
+                () -> assertEquals("TERMINATED", jobOf(instanceKey, "Review").get("state")),
+                () -> assertEquals(1, review.get("creations"), review::toString),
+                () -> assertEquals(1, review.get("cancellations"), review::toString));
+    }
+
     // the ids of every test are new, because all tests of the class share one engine
     private static String uniqueAggregateId() {
         return "e2e-%s".formatted(UUID.randomUUID());
@@ -657,6 +719,18 @@ class ZenBpmWorkflowLifecycleTest {
                 .json("/v1/jobs/%s".formatted(jobKey))
                 .path("deliveryToken")
                 .asLong();
+    }
+
+    private static Map<String, Object> review(final String id) {
+        return object("introspect/user-tasks/reviews/%s".formatted(id));
+    }
+
+    // long enough for three looks of the user-task poller, which application.yaml times every
+    // second, each of which would tell a user task again
+    private static void watchThreeLooks() {
+        LockSupport.parkNanos(Duration
+                .ofMillis(3_500)
+                .toNanos());
     }
 
     private static Map<String, Object> reservation(final String id) {

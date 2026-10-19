@@ -16,6 +16,7 @@ vanillabp:
     zenbpm:
       name-clash-avoidance: use-prefix
       async-task-lock-renewal: PT2S
+      user-task-poll-interval: PT1S
   workflow-modules:
     zenbpm-e2e:
       workflows:

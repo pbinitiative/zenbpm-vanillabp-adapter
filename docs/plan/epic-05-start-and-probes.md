@@ -517,7 +517,8 @@ and what was decided:
    `completed|terminated` -> COMPLETED; failure -> BPMS_UNAVAILABLE. Non-advancing (a GET).
 2. `awarenessOfUserTask` = the same (a user task is a job). The core knows which kind a task id is
    from the delivery record (`TaskKind` `TASK` or `USER_TASK`, platform decision 106), which S6.1.1
-   and S8.1.1 report; the probes need not tell the kinds apart.
+   and S8.1.1 report; the probes need not tell the kinds apart. *Superseded 2026-10-19 by S8.2.1:*
+   each probe finds a job of its own kind only, see decision 51 and the fit check of S8.2.1.
 3. `openTaskCount(module, plainProcessId)`: `rest.processDefinitionStatistics(key)` for every version
    key `ZenBpmDeployedProcesses` and the catalog know, summing active element instances of job-producing
    elements; `null` where nothing was deployed. Never a job page (decision 14).
@@ -609,7 +610,8 @@ not fit, and what was decided:
   `GET /system/status`, and `#theOpenTasksOfEveryVersionAreCounted` lists the four reads of the
   count and no job page. Against the pinned engine, `ZenBpmProbesIT#aWaitingJobIsActiveForItsScopeOnly`
   asks both probes about a waiting job for two scopes, with the same answers before the test
-  completes the job itself.
+  completes the job itself. Since S8.2.1 (decision 51) the user-task probe answers the service
+  task's job as unknown.
 
 **Implemented 2026-10-17.** Core: `ZenBpmProcessService` answers `awarenessOfTask` and
 `awarenessOfUserTask` with one probe: no positive number is UNKNOWN without a request, the job by key

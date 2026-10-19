@@ -39,10 +39,10 @@ import io.vanillabp.integration.test.utils.CapturedOutput;
 import io.vanillabp.integration.test.utils.SuppressOutputExtension;
 
 /**
- * The probes which ask for a task, a service task and a user task alike, and the count of the open
- * tasks of a process. The engine is a fake which answers what each test tells it to and writes down
- * what it was asked, so every test also sees that a probe only reads. The module is scoped with a
- * prefix, so the scope's process is <code>shop__Order</code> at the engine.
+ * The probes which ask for a task and for a user task, each finding a job of its own kind only, and
+ * the count of the open tasks of a process. The engine is a fake which answers what each test tells
+ * it to and writes down what it was asked, so every test also sees that a probe only reads. The
+ * module is scoped with a prefix, so the scope's process is <code>shop__Order</code> at the engine.
  */
 @ExtendWith(SuppressOutputExtension.class)
 class ZenBpmTaskProbesTest {
@@ -79,7 +79,7 @@ class ZenBpmTaskProbesTest {
     @ValueSource(strings = {
             "active", "failed", "completed", "terminated"
     })
-    @DisplayName("A job of the scope is active while it waits or carries an incident and completed once it ended, for both probes, and only read")
+    @DisplayName("A job of the scope is active while it waits or carries an incident and completed once it ended, for the probe of a task and for the probe of a user task, and only read")
     void aJobOfTheScopeAnswersByItsState(final String state) {
         engine.answers("GET", JOB_PATH, 200, job(state));
         engine.answers("GET", INSTANCE_PATH, 200, instance("shop__Order"));
@@ -88,6 +88,7 @@ class ZenBpmTaskProbesTest {
                 .contains(state) ? WorkflowAwareness.ACTIVE : WorkflowAwareness.COMPLETED;
 
         final var task = processService.awarenessOfTask(SCOPE, "order-1", String.valueOf(JOB));
+        engine.answers("GET", JOB_PATH, 200, userTaskJob(state));
         final var userTask = processService.awarenessOfUserTask(SCOPE, "order-1", String.valueOf(JOB));
 
         assertAll(
@@ -98,16 +99,31 @@ class ZenBpmTaskProbesTest {
     }
 
     @Test
+    @DisplayName("A job of the other kind is unknown to a probe, whatever its state, without reading its instance: the job of a service task to the probe of a user task, and the job of a user task to the probe of a task")
+    void aJobOfTheOtherKindIsUnknown() {
+        engine.answers("GET", JOB_PATH, 200, job("active"));
+        final var userTask = processService.awarenessOfUserTask(SCOPE, "order-1", String.valueOf(JOB));
+        engine.answers("GET", JOB_PATH, 200, userTaskJob("completed"));
+        final var task = processService.awarenessOfTask(SCOPE, "order-1", String.valueOf(JOB));
+
+        assertAll(
+                () -> assertEquals(WorkflowAwareness.UNKNOWN_TO_BPMS, userTask),
+                () -> assertEquals(WorkflowAwareness.UNKNOWN_TO_BPMS, task),
+                () -> assertEquals(List.of("GET %s".formatted(JOB_PATH), "GET %s".formatted(JOB_PATH)), requests()));
+    }
+
+    @Test
     @DisplayName("A job of a process outside the scope is unknown")
     void aJobOutsideTheScopeIsUnknown() {
         engine.answers("GET", JOB_PATH, 200, job("active"));
         engine.answers("GET", INSTANCE_PATH, 200, instance("crm__Order"));
+        final var task = processService.awarenessOfTask(SCOPE, "order-1", String.valueOf(JOB));
+        engine.answers("GET", JOB_PATH, 200, userTaskJob("active"));
+        final var userTask = processService.awarenessOfUserTask(SCOPE, "order-1", String.valueOf(JOB));
 
         assertAll(
-                () -> assertEquals(WorkflowAwareness.UNKNOWN_TO_BPMS, processService.awarenessOfTask(SCOPE,
-                        "order-1", String.valueOf(JOB))),
-                () -> assertEquals(WorkflowAwareness.UNKNOWN_TO_BPMS, processService.awarenessOfUserTask(SCOPE,
-                        "order-1", String.valueOf(JOB))));
+                () -> assertEquals(WorkflowAwareness.UNKNOWN_TO_BPMS, task),
+                () -> assertEquals(WorkflowAwareness.UNKNOWN_TO_BPMS, userTask));
     }
 
     @Test
@@ -174,18 +190,20 @@ class ZenBpmTaskProbesTest {
     void everyOtherFailureIsUnavailable(
         final String what,
         final FakeEngine.Handler jobAnswer,
+        final FakeEngine.Handler userTaskJobAnswer,
         final FakeEngine.Handler instanceAnswer,
         final FakeEngine.Handler statusAnswer
     ) {
         engine.answers("GET", JOB_PATH, jobAnswer);
         engine.answers("GET", INSTANCE_PATH, instanceAnswer);
         engine.answers("GET", "/system/status", statusAnswer);
+        final var task = processService.awarenessOfTask(SCOPE, "order-1", String.valueOf(JOB));
+        engine.answers("GET", JOB_PATH, userTaskJobAnswer);
+        final var userTask = processService.awarenessOfUserTask(SCOPE, "order-1", String.valueOf(JOB));
 
         assertAll(
-                () -> assertEquals(WorkflowAwareness.BPMS_UNAVAILABLE, processService.awarenessOfTask(SCOPE,
-                        "order-1", String.valueOf(JOB))),
-                () -> assertEquals(WorkflowAwareness.BPMS_UNAVAILABLE, processService.awarenessOfUserTask(SCOPE,
-                        "order-1", String.valueOf(JOB))),
+                () -> assertEquals(WorkflowAwareness.BPMS_UNAVAILABLE, task),
+                () -> assertEquals(WorkflowAwareness.BPMS_UNAVAILABLE, userTask),
                 () -> assertTrue(engine
                         .requests()
                         .stream()
@@ -296,30 +314,37 @@ class ZenBpmTaskProbesTest {
         assertEquals(List.of(), requests());
     }
 
+    // the job's answer for each probe: the job of a task, and the job of a user task, where a job
+    // is found at all
     static Stream<Arguments> failures() {
         final var waiting = answer(200, job("active"));
+        final var waitingUserTask = answer(200, userTaskJob("active"));
         final var found = answer(200, instance("shop__Order"));
         final var onePartition = answer(200, status(1));
+        final var unavailable = answer(503, null);
+        final var locked = answer(500, """
+                {"code":"TECHNICAL_ERROR","message":"database is locked"}""");
+        final var noLeader = answer(502, """
+                {"code":"CLUSTER_ERROR","message":"no leader"}""");
+        final var partitionNotFound = answer(502, """
+                {"code":"CLUSTER_ERROR","message":"partition not found"}""");
         return Stream.of(
-                Arguments.of("a 503 for the job", answer(503, null), found, onePartition),
-                Arguments.of("a 500 for the job", answer(500, """
-                        {"code":"TECHNICAL_ERROR","message":"database is locked"}"""), found, onePartition),
-                Arguments.of("a 502 for a key of a partition the engine has", answer(502, """
-                        {"code":"CLUSTER_ERROR","message":"no leader"}"""), found, onePartition),
-                Arguments.of("a 502 for the job and no status", answer(502, """
-                        {"code":"CLUSTER_ERROR","message":"partition not found"}"""), found, answer(503, null)),
-                Arguments.of("a 502 for the job and a status without partitions", answer(502, """
-                        {"code":"CLUSTER_ERROR","message":"partition not found"}"""), found, answer(200,
-                        statusWith(""))),
-                Arguments.of("a 502 for the job and a status whose partitions are null", answer(502, """
-                        {"code":"CLUSTER_ERROR","message":"partition not found"}"""), found, answer(200,
-                        statusWith(", \"partitions\": null"))),
-                Arguments.of("a 502 for the job and a status naming no partition", answer(502, """
-                        {"code":"CLUSTER_ERROR","message":"partition not found"}"""), found, answer(200,
-                        statusWith(", \"partitions\": {}"))),
-                Arguments.of("a job whose instance the engine does not know", waiting, answer(404, """
+                Arguments.of("a 503 for the job", unavailable, unavailable, found, onePartition),
+                Arguments.of("a 500 for the job", locked, locked, found, onePartition),
+                Arguments.of("a 502 for a key of a partition the engine has", noLeader, noLeader, found,
+                        onePartition),
+                Arguments.of("a 502 for the job and no status", partitionNotFound, partitionNotFound, found,
+                        unavailable),
+                Arguments.of("a 502 for the job and a status without partitions", partitionNotFound,
+                        partitionNotFound, found, answer(200, statusWith(""))),
+                Arguments.of("a 502 for the job and a status whose partitions are null", partitionNotFound,
+                        partitionNotFound, found, answer(200, statusWith(", \"partitions\": null"))),
+                Arguments.of("a 502 for the job and a status naming no partition", partitionNotFound,
+                        partitionNotFound, found, answer(200, statusWith(", \"partitions\": {}"))),
+                Arguments.of("a job whose instance the engine does not know", waiting, waitingUserTask, answer(404, """
                         {"code":"NOT_FOUND","message":"process instance not found"}"""), onePartition),
-                Arguments.of("a job whose instance cannot be read", waiting, answer(503, null), onePartition));
+                Arguments.of("a job whose instance cannot be read", waiting, waitingUserTask, unavailable,
+                        onePartition));
     }
 
     private List<String> requests() {
@@ -340,6 +365,13 @@ class ZenBpmTaskProbesTest {
     private static String job(final String state) {
         return """
                 {"key": %d, "elementId": "Task_Work", "type": "work", "elementType": "SERVICE_TASK",
+                 "processInstanceKey": %d, "elementInstanceKey": 4503599627370599, "state": "%s",
+                 "createdAt": "2026-10-17T10:00:00Z", "inputVariables": {}}""".formatted(JOB, INSTANCE, state);
+    }
+
+    private static String userTaskJob(final String state) {
+        return """
+                {"key": %d, "elementId": "Approve", "type": "user-task-type", "elementType": "USER_TASK",
                  "processInstanceKey": %d, "elementInstanceKey": 4503599627370599, "state": "%s",
                  "createdAt": "2026-10-17T10:00:00Z", "inputVariables": {}}""".formatted(JOB, INSTANCE, state);
     }

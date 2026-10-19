@@ -23,13 +23,17 @@ import org.pbinitiative.zenbpmadapter.client.api.JobRef;
 import io.vanillabp.integration.adapter.spi.AdapterCollaborators;
 import io.vanillabp.integration.adapter.spi.PhaseOneRequest;
 import io.vanillabp.integration.adapter.spi.PhaseTwoRequest;
+import io.vanillabp.integration.adapter.spi.workflowtask.TaskKind;
 import io.vanillabp.spi.process.TaskNotFoundException;
 import lombok.extern.slf4j.Slf4j;
 
 /**
  * What the application reports about a task it left open for its asynchronous completion, in both
  * phases: its completion, and its cancellation with a BPMN error. A task is a job of the engine, and
- * the task id is the job's key.
+ * the task id is the job's key. A user task is a job as well, so one instance of this class serves
+ * the tasks and another the user tasks, each with the word for its kind in every message. Each
+ * finds no job of the other kind, as the platform hands the id of each kind to a command of its own
+ * and other engines keep the two apart, see decision 51 in the repository's DECISIONS.md.
  * <p>
  * <b>Phase one</b> asks the engine, right before the caller's transaction commits, whether the job
  * still waits and whose it is, and asks nothing when the application calls: the later the check,
@@ -75,6 +79,18 @@ final class ZenBpmTaskOutcomes<A> {
 
     private final String adapterId;
 
+    private final TaskKind kind;
+
+    /**
+     * What the messages call the kind: "task" or "user task".
+     */
+    private final String word;
+
+    /**
+     * The word which starts a sentence: "Task" or "User task".
+     */
+    private final String capitalWord;
+
     private final ZenBpmClientFactory factory;
 
     private final AdapterCollaborators collaborators;
@@ -82,9 +98,10 @@ final class ZenBpmTaskOutcomes<A> {
     private final Function<PhaseTwoRequest<A>, Map<String, Object>> variables;
 
     /**
-     * The handlers of the tasks of one adapter id.
+     * The handlers of the tasks, or of the user tasks, of one adapter id.
      *
      * @param adapterId The adapter id
+     * @param kind The kind of task the handlers end
      * @param factory The factory of the adapter id
      * @param collaborators What the platform hands to the adapter id
      * @param variables The values the aggregate of a request shares, and its id, as a start sends
@@ -92,11 +109,15 @@ final class ZenBpmTaskOutcomes<A> {
      */
     ZenBpmTaskOutcomes(
         final String adapterId,
+        final TaskKind kind,
         final ZenBpmClientFactory factory,
         final AdapterCollaborators collaborators,
         final Function<PhaseTwoRequest<A>, Map<String, Object>> variables
     ) {
         this.adapterId = adapterId;
+        this.kind = kind;
+        this.word = wordFor(kind);
+        this.capitalWord = "%S%s".formatted(word.substring(0, 1), word.substring(1));
         this.factory = factory;
         this.collaborators = collaborators;
         this.variables = variables;
@@ -147,7 +168,7 @@ final class ZenBpmTaskOutcomes<A> {
         }
         try {
             rest.completeJob(key, values);
-            log.debug("ZenBPM[{}]: completed task {} of workflow aggregate '{}'", adapterId, key, request
+            log.debug("ZenBPM[{}]: completed {} {} of workflow aggregate '{}'", adapterId, word, key, request
                     .workflowAggregateId());
         } catch (final RuntimeException e) {
             if (!ZenBpmErrors.isGoneJob(e)) {
@@ -186,18 +207,20 @@ final class ZenBpmTaskOutcomes<A> {
                 .scopedIdentifier(request.workflowModuleId(), request.bpmnErrorCode(), adapterId);
         // the engine puts the message into the incident only, which it raises where nothing catches
         // the code, and appends the code to it
-        final var message = """
-                Task %d (element '%s', workflow aggregate '%s') was cancelled with BPMN error '%s', which no error \
-                boundary event and no error event sub-process catches, its code""".formatted(key, job
+        final var element = job
                 .get()
-                .elementId(), request.workflowAggregateId(), request.bpmnErrorCode());
+                .elementId();
+        final var message = """
+                %s %d (element '%s', workflow aggregate '%s') was cancelled with BPMN error '%s', which no error \
+                boundary event and no error event sub-process catches, its code""".formatted(capitalWord, key, element,
+                request.workflowAggregateId(), request.bpmnErrorCode());
         try {
             rest.failJob(key, JobFailure
                     .withErrorCode(errorCode, message)
                     .withVariables(values)
                     .ofTheDelivery(0, factory.clientId()));
-            log.debug("ZenBPM[{}]: cancelled task {} of workflow aggregate '{}' with BPMN error '{}'", adapterId, key,
-                    request.workflowAggregateId(), request.bpmnErrorCode());
+            log.debug("ZenBPM[{}]: cancelled {} {} of workflow aggregate '{}' with BPMN error '{}'", adapterId, word,
+                    key, request.workflowAggregateId(), request.bpmnErrorCode());
         } catch (final RuntimeException e) {
             if (!ZenBpmErrors.isGoneJob(e)) {
                 throw e;
@@ -210,6 +233,16 @@ final class ZenBpmTaskOutcomes<A> {
         }
         endTheCountOfAParkedJob(job.get());
         warnWhereNothingCaughtIt(rest, key, errorCode, request);
+    }
+
+    /**
+     * What the messages call a kind of task.
+     *
+     * @param kind The kind
+     * @return "task" or "user task"
+     */
+    static String wordFor(final TaskKind kind) {
+        return kind == TaskKind.USER_TASK ? "user task" : "task";
     }
 
     private void registerTheCheck(
@@ -241,6 +274,9 @@ final class ZenBpmTaskOutcomes<A> {
         }
         final var rest = factory.rest();
         final var job = jobOf(rest, key.getAsLong(), taskId, operation);
+        if (job.isAUserTask() != (kind == TaskKind.USER_TASK)) {
+            throw ofTheOtherKind(job, taskId, operation);
+        }
         switch (job.state()) {
             case COMPLETED, TERMINATED -> throw taskNotFound(taskId, operation, """
                     the engine holds it as %s: it was completed or cancelled meanwhile, by another call, an event of \
@@ -249,12 +285,10 @@ final class ZenBpmTaskOutcomes<A> {
                     .name()
                     .toLowerCase()));
             case FAILED -> throw new IllegalStateException("""
-                    ZenBPM adapter '%s': task '%s' carries an incident at the engine, which takes neither a completion \
-                    nor a cancellation of the task until the incident is resolved, so the transaction which %s it is \
-                    rolled back. Resolve the incident first; where %s raised it, set that key back to 'report' before, \
-                    or the next delivery of the task raises it again."""
-                    .formatted(adapterId, taskId, operation, ZenBpmAdapterConfiguration.propertyKey(adapterId,
-                            "async-task-max-age-action")));
+                    ZenBPM adapter '%s': %s '%s' carries an incident at the engine, which takes neither a completion \
+                    nor a cancellation of the %s until the incident is resolved, so the transaction which %s it is \
+                    rolled back. Resolve the incident first; %s"""
+                    .formatted(adapterId, word, taskId, word, operation, whereTheIncidentComesFrom()));
             case ACTIVE -> refuseATaskOfAnotherModule(rest, job, workflowModuleId, taskId, operation);
         }
     }
@@ -279,10 +313,10 @@ final class ZenBpmTaskOutcomes<A> {
         }
         if (facts.isEmpty()) {
             throw new IllegalStateException("""
-                    ZenBPM adapter '%s': the engine holds task '%s', but the node asked does not know its process \
-                    instance %d, not even after %s, so whose task it is cannot be said, and the transaction which %s \
+                    ZenBPM adapter '%s': the engine holds %s '%s', but the node asked does not know its process \
+                    instance %d, not even after %s, so whose %s it is cannot be said, and the transaction which %s \
                     it is rolled back. Try again; where this lasts, raise %s."""
-                    .formatted(adapterId, taskId, job.instanceKey(), workflowVisibilityTimeout(), operation,
+                    .formatted(adapterId, word, taskId, job.instanceKey(), workflowVisibilityTimeout(), word, operation,
                             ZenBpmAdapterConfiguration.propertyKey(adapterId, "workflow-visibility-timeout")));
         }
         final var scopedProcessId = facts
@@ -297,12 +331,12 @@ final class ZenBpmTaskOutcomes<A> {
             return;
         }
         throw new IllegalStateException("""
-                ZenBPM adapter '%s': task '%s' is a task of process '%s' at the engine, which %s serves, not \
+                ZenBPM adapter '%s': %s '%s' is a %s of process '%s' at the engine, which %s serves, not \
                 workflow module '%s', so the transaction which %s it is rolled back. Call the process service of \
-                the workflow which the task belongs to."""
-                .formatted(adapterId, taskId, scopedProcessId, servingModule
+                the workflow which the %s belongs to."""
+                .formatted(adapterId, word, taskId, word, scopedProcessId, servingModule
                         .map("workflow module '%s'"::formatted)
-                        .orElse("no workflow module of this application"), workflowModuleId, operation));
+                        .orElse("no workflow module of this application"), workflowModuleId, operation, word));
     }
 
     private JobRef jobOf(
@@ -332,9 +366,9 @@ final class ZenBpmTaskOutcomes<A> {
         final RuntimeException failure
     ) {
         return new IllegalStateException("""
-                ZenBPM adapter '%s' could not ask the engine whether task '%s' still waits, so the transaction which \
+                ZenBPM adapter '%s' could not ask the engine whether %s '%s' still waits, so the transaction which \
                 %s it is rolled back. Try again once the engine at %s answers within %s."""
-                .formatted(adapterId, taskId, operation, ZenBpmAdapterConfiguration.propertyKey(adapterId,
+                .formatted(adapterId, word, taskId, operation, ZenBpmAdapterConfiguration.propertyKey(adapterId,
                         "rest-address"),
                         ZenBpmAdapterConfiguration.propertyKey(adapterId, "request-timeout")), failure);
     }
@@ -373,10 +407,29 @@ final class ZenBpmTaskOutcomes<A> {
         final String operation,
         final String why
     ) {
-        log.info("ZenBPM[{}]: the check before the commit found task '{}' gone: {}", adapterId, taskId, why);
+        log.info("ZenBPM[{}]: the check before the commit found {} '{}' gone: {}", adapterId, word, taskId, why);
         return new TaskNotFoundException("""
-                ZenBPM adapter '%s': task '%s' is gone, %s. So the transaction which %s it is rolled back."""
-                .formatted(adapterId, taskId, why, operation));
+                ZenBPM adapter '%s': %s '%s' is gone, %s. So the transaction which %s it is rolled back."""
+                .formatted(adapterId, word, taskId, why, operation));
+    }
+
+    // the platform asks with the id of the kind the caller named, and other engines find nothing
+    // of the other kind under it, so neither does this one, whatever the state of the job
+    private TaskNotFoundException ofTheOtherKind(
+        final JobRef job,
+        final String taskId,
+        final String operation
+    ) {
+        final var element = job.isAUserTask() ? "a user task" : "a %s, which is no user task".formatted(job
+                .elementType());
+        final var methods = job.isAUserTask() ? "completeUserTask or #cancelUserTask" : "completeTask or #cancelTask";
+        log.info("ZenBPM[{}]: the check before the commit found no {} '{}': its job is one of {}", adapterId, word,
+                taskId, element);
+        return new TaskNotFoundException("""
+                ZenBPM adapter '%s': there is no %s '%s': the engine holds a job under that key, but of element '%s', \
+                %s. So the transaction which %s it is rolled back. A job of that element is ended by \
+                ProcessService#%s."""
+                .formatted(adapterId, word, taskId, job.elementId(), element, operation, methods));
     }
 
     // a node which lags behind answers a job in an earlier state, never in a later one, so a job
@@ -391,8 +444,8 @@ final class ZenBpmTaskOutcomes<A> {
         final var job = rest
                 .job(key)
                 .orElseThrow(() -> new IllegalStateException(
-                        "ZenBPM adapter '%s': the engine node asked does not know task %d yet, so it is not %s now"
-                                .formatted(adapterId, key, answer)));
+                        "ZenBPM adapter '%s': the engine node asked does not know %s %d yet, so it is not %s now"
+                                .formatted(adapterId, word, key, answer)));
         if (job.state() == JobRef.State.ACTIVE) {
             return Optional.of(job);
         }
@@ -438,11 +491,22 @@ final class ZenBpmTaskOutcomes<A> {
         final String answer
     ) {
         return new IllegalStateException("""
-                ZenBPM adapter '%s': task %d carries an incident at the engine, which takes neither a completion nor a \
+                ZenBPM adapter '%s': %s %d carries an incident at the engine, which takes neither a completion nor a \
                 cancellation of it until the incident is resolved, so it is not %s now, and the outbox repeats it. \
-                Resolve the incident; where %s raised it, set that key back to 'report' before, or the next delivery \
-                of the task raises it again.""".formatted(adapterId, key, answer, ZenBpmAdapterConfiguration
-                .propertyKey(adapterId, "async-task-max-age-action")));
+                Resolve the incident; %s""".formatted(adapterId, word, key, answer, whereTheIncidentComesFrom()));
+    }
+
+    // a delivered task gets its incident from the incident action; a user task is never delivered,
+    // so its incident comes from a cancellation whose BPMN error nothing catches
+    private String whereTheIncidentComesFrom() {
+        if (kind == TaskKind.USER_TASK) {
+            return """
+                    where a cancellation by a BPMN error which no event of the model catches raised it, model an \
+                    event which catches the code, or the next such cancellation raises it again.""";
+        }
+        return """
+                where %s raised it, set that key back to 'report' before, or the next delivery of the task raises it \
+                again.""".formatted(ZenBpmAdapterConfiguration.propertyKey(adapterId, "async-task-max-age-action"));
     }
 
     // see decision 35 and decision 34 in the repository's DECISIONS.md: an update which finds no
@@ -459,9 +523,9 @@ final class ZenBpmTaskOutcomes<A> {
                 .instances()
                 .instancesUpToTheWorkflow(job.instanceKey())
                 .orElseThrow(() -> new IllegalStateException("""
-                        ZenBPM adapter '%s': an instance above instance %d of task %d is not known to the engine node \
-                        asked, which may lag behind, so the task is not %s now""".formatted(adapterId, job
-                        .instanceKey(), job.key(), answer)));
+                        ZenBPM adapter '%s': an instance above instance %d of %s %d is not known to the engine node \
+                        asked, which may lag behind, so it is not %s now""".formatted(adapterId, job.instanceKey(),
+                        word, job.key(), answer)));
         for (final var instanceKey : path) {
             try {
                 rest.patchVariables(instanceKey, values);
@@ -489,7 +553,7 @@ final class ZenBpmTaskOutcomes<A> {
         try {
             job = rest.job(key);
         } catch (final RuntimeException e) {
-            log.debug("ZenBPM[{}]: task {} could not be read after its cancellation: {}", adapterId, key, e
+            log.debug("ZenBPM[{}]: {} {} could not be read after its cancellation: {}", adapterId, word, key, e
                     .getMessage());
             return;
         }
@@ -501,9 +565,10 @@ final class ZenBpmTaskOutcomes<A> {
         }
         log.warn("""
                 ZenBPM[{}]: no error boundary event and no error event sub-process catches the BPMN error '{}' with \
-                which task {} (workflow aggregate '{}') was cancelled, whose code is '{}' at the engine, so the engine \
-                raised an incident on the task. Model an event which catches the code, or resolve or cancel the \
-                instance.""", adapterId, request.bpmnErrorCode(), key, request.workflowAggregateId(), errorCode);
+                which {} {} (workflow aggregate '{}') was cancelled, whose code is '{}' at the engine, so the engine \
+                raised an incident on the {}. Model an event which catches the code, or resolve or cancel the \
+                instance.""", adapterId, request.bpmnErrorCode(), word, key, request.workflowAggregateId(), errorCode,
+                word);
     }
 
     private void warnGone(
@@ -513,8 +578,9 @@ final class ZenBpmTaskOutcomes<A> {
         final String why
     ) {
         log.warn("""
-                ZenBPM[{}]: task {} of workflow aggregate '{}' is not {}: {}. The application's work is committed: \
-                this is what at-least-once delivery leaves over.""", adapterId, key, request.workflowAggregateId(),
+                ZenBPM[{}]: {} {} of workflow aggregate '{}' is not {}: {}. The application's work is committed: \
+                this is what at-least-once delivery leaves over.""", adapterId, word, key,
+                request.workflowAggregateId(),
                 answer, why);
     }
 

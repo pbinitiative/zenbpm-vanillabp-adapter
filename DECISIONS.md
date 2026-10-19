@@ -1160,3 +1160,60 @@ says nothing either (no delivery log, a row removed by retention), so skipping w
 handler which runs sees the variables of its job's creation either way. A job the engine answers
 `404` for is thrown and repeated by the outbox: the engine keeps a job until the history of its
 instance is removed, so the answer comes from a node which lags behind (decision 34).
+
+### 50. A user task the application cancelled is told as cancelled, as Camunda 7 tells it
+
+Decided by the implementation pipeline in place of the maintainers, as their policy for the
+autonomous run asks.
+
+`cancelUserTask` fails the user task's job with the BPMN error the application named, and the
+engine sets a job `terminated` once a boundary error event or an error event sub-process catches
+the code (`processBoundaryErrorEvent` in `pkg/bpmn/jobs_api.go`,
+`pkg/bpmn/engine_error_event_subprocess.go` at the pin). So the user-task poller lists it as
+terminated and tells the application `CANCELED` (delivery id `<key>-canceled`, decision 12), a
+moment after the application cancelled the user task itself.
+
+That notification is told. The Camunda 7 adapter does the same: `handleBpmnError` deletes the task,
+and its `delete` listener delivers `CANCELED` (`Camunda7TaskProcessingIT#cancelUserTaskRoutesBoundary`
+and its Quarkus twin assert it). The Camunda 8 adapter has no answer, because no cluster up to 8.9
+can cancel a Camunda-managed user task by BPMN error. The platform takes the notification without
+harm: it is a delivery of its own (the event is part of the delivery key), so it runs the method
+with `CANCELED` once and records it, and it closes the records of the user task which phase two of
+the cancellation closed already. A method which asks for `CANCELED` therefore hears of a
+cancellation it caused itself, as on Camunda 7, and one which must tell the two apart keeps what it
+did in its aggregate.
+
+Suppressing it was rejected. A node could remember the keys it failed, but only for a while and only
+on that node: the poller of another node of the application, or the same node after a restart,
+would still tell it, so the application could not rely on the silence and would need the
+aggregate's memory all the same. And a user task cancelled by an error the model does not catch
+raises an incident instead and stays `failed`, so it is told nothing.
+
+A completion is never told as a cancellation: the engine sets a completed job `completed`, which
+the poller does not list.
+
+### 51. The probes and the checks of a task and of a user task find no job of the other kind
+
+Decided by the implementation pipeline in place of the maintainers, as their policy for the
+autonomous run asks.
+
+A user task is a job of the engine, as a service task is, so one key could be handed to the
+commands of either kind and the engine would take it. The platform keeps the two apart: an
+application names a task id to `completeTask` or `cancelTask` and a user-task id to
+`completeUserTask` or `cancelUserTask`, the platform asks `awarenessOfTask` for the first and
+`awarenessOfUserTask` for the second, and on every other engine the two kinds of id live in
+namespaces of their own, so the command of the other kind finds nothing. Where the platform's record
+of deliveries says that the id belongs to the other kind, it does not answer the election from the
+record but asks the adapters, and it says so in its `TaskNotFoundException` only where every
+adapter answers that it does not know the task (`DeliveryRecords#locate`,
+`MigrationProcessService#unknownToEveryBpms`). An adapter which answered both probes alike would let
+`completeTask` complete a user task on ZenBPM, which fails on every other engine, and would cost the
+application the platform's message which names the right method.
+
+So both probes read the job and answer `UNKNOWN_TO_BPMS` where its element type says the other kind
+(`USER_TASK` is a user task, every other type a task), without reading its instance, and the check
+before the commit of each kind throws `TaskNotFoundException` for a job of the other kind, whatever
+its state, naming the element and the methods which end it. The check says the same where phase one
+runs without a probe, as it does where a record of the platform which names no kind answers the
+election. The handlers of both kinds are one class,
+built once per kind, whose messages say "task" or "user task".

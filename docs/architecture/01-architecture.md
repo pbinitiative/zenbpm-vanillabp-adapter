@@ -251,7 +251,9 @@ from `createdFrom = plannedAt` instead. A lookup which would read more than
 
 `awarenessOfTask` / `awarenessOfUserTask`: a task id which is no positive number -> UNKNOWN without
 a request; `GET /v1/jobs/{key}`; 404 -> UNKNOWN; a 502 -> `GET /system/status`, a key of a partition
-it does not report -> UNKNOWN, a status naming no partition tells nothing (decision 32); then the job's instance through the cache; instance not
+it does not report -> UNKNOWN, a status naming no partition tells nothing (decision 32); a job of
+the other kind -> UNKNOWN without reading its instance (`elementType` `USER_TASK` is a user task,
+every other type a task, decision 51); then the job's instance through the cache; instance not
 in scope -> UNKNOWN; job `active` or `failed` -> ACTIVE, `completed` or `terminated` -> COMPLETED;
 every other failure -> BPMS_UNAVAILABLE. `openTaskCount(module, process)`: the versions under the
 scoped id (`GET /v1/process-definitions`), per version its model (`GET
@@ -409,7 +411,13 @@ subscribed to user-task types (decision 12): a lock would have to be renewed for
 user task, and a terminated job is never delivered. Because the poller reports every cancelled user
 task, the open-task probe of section 4.3 answers CANNOT_SAY for user-task definitions: the
 platform's contract forbids a second source for the same cancellation. `COMPLETE_USER_TASK` /
-`CANCEL_USER_TASK` are the job commands (S8.2.1).
+`CANCEL_USER_TASK` are the job commands of `COMPLETE_TASK` / `CANCEL_TASK` (section 4.3,
+`ZenBpmTaskOutcomes`, built once per kind, whose messages say "user task"), and their check before
+the commit refuses a job which is no user task as not found, as the task's check refuses a user task
+(decision 51). The engine sets the job of a user task `terminated` once a boundary error event or an
+error event sub-process catches the code of `cancelUserTask`, so the poller then tells the
+application `CANCELED`, once, as the Camunda 7 adapter does (decision 50); a completed user task is
+not told as cancelled.
 
 A process id a workflow service declares without a model (the old id of a renamed process) is
 served by `ZenBpmDeclaredProcessWorkers` (S6.4.1) when its module starts processing: the methods'
