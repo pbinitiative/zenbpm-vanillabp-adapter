@@ -536,3 +536,33 @@ notifier, which the Spring Boot tests prove, and the platform glue under test is
 the invoker. E8 is complete; with it E7, E8 and the start half of E9 are merged, which is milestone
 M4 "It talks". Left for the engine, out of the run's scope: E13.5 (user-task events on the stream)
 and E13.2 (outputs without the `PATCH` before `complete`).
+
+**S8.2.1 and S8.3.1 done 2026-10-20**, merged to `main` as `b85b5f8` (pull request #63: stories
+`842ff84` and `03c8804`; two reviews, whose five findings, two Minor and three Nits of Claude's,
+were all valid and fixed in `bdf48cd`, while Copilot approved without findings; CodeRabbit's review
+had no actionable comment and no retained concern, and its docstring-coverage warning and its note
+on the two requests of phase two, decision 35, were answered without a change). F8.2 and F8.3 are
+complete, and so is E8. On `b85b5f8` (GitHub keeps run logs for 90 days, so what they showed is
+written here as well):
+
+- `Checks`, run
+  [39335612875](https://github.com/pbinitiative/zenbpm-vanillabp-adapter/actions/runs/39335612875):
+  green on both JDKs. `bin/check-engine-copies.sh` (in the JDK 25 job) reported both copies as the
+  engine's files of `bdd795a3...`. On both JDKs `ZenBpmTaskOutcomesTest` ran 42 tests,
+  `ZenBpmTaskProbesTest` 27, `ZenBpmProcessServiceTest` 23, `ZenBpmProbesIT` 10,
+  `ZenBpmUserTaskIT` 10, `ZenBpmTaskProcessingIT` 20 and `ZenBpmWorkflowLifecycleTest` 16, none
+  skipped (engine test support 12 unit and 5 integration tests, core 1,111 unit and 92 integration
+  tests, Spring Boot 14 unit and 70 integration tests, smoke test 38, Quarkus runtime 13, Quarkus
+  deployment 52, Quarkus integration tests 17, coverage gate 37). The gate measured 100 % on both
+  platforms: of 31,636 instructions for Spring Boot and 31,506 for Quarkus on JDK 25, of 31,626 and
+  31,496 on JDK 21.
+- `Publish snapshots`, run
+  [39335613025](https://github.com/pbinitiative/zenbpm-vanillabp-adapter/actions/runs/39335613025):
+  green. The core snapshot it published to GitHub Packages, `2.0.0-20261019.223210-59`, holds the
+  main classes the stories changed (`ZenBpmTaskOutcomes` with `whereTheIncidentComesFrom` and
+  `ofTheOtherKind`, `JobRef` with `isAUserTask`, `ZenBpmProcessService`, `ZenBpmUserTaskPoller`;
+  the stories add no main class) and no test class, fake, fixture or BPMN file;
+  `quarkus/integration-tests`, the smoke test, the engine test support and the coverage modules
+  skipped deployment. Both report pages (`spring-boot-report/index.html`,
+  `quarkus-report/index.html`) answer HTTP 200 and show 0 of 31,636 (Spring Boot) and 0 of 31,506
+  (Quarkus) instructions missed.
