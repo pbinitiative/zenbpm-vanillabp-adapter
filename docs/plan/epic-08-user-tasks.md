@@ -277,6 +277,35 @@ Clean build of these fixes, 2026-10-19 (`TZ=Etc/UTC mvn clean install`, none ski
 modules as above. Coverage: Spring Boot 100.00 % (0 of 31,342 instructions missed), Quarkus
 100.00 % (0 of 31,212 missed).
 
+**S8.1.1 done 2026-10-19**, merged to `main` as `fff448b` (pull request #61: story `8c7e171`; two
+reviews, whose seven distinct findings were all valid and fixed in `785205c`; CodeRabbit's review,
+whose inline comment and one retained concern were valid and fixed in `ef3d7a6`, after which it
+raised no objection, while its other retained concern and its docstring-coverage warning were
+answered without a change). F8.1 is complete; E8 goes on with S8.2.1 and S8.3.1. On `fff448b`
+(GitHub keeps run logs for 90 days, so what they showed is written here as well):
+
+- `Checks`, run
+  [39297280141](https://github.com/pbinitiative/zenbpm-vanillabp-adapter/actions/runs/39297280141):
+  green on both JDKs. `bin/check-engine-copies.sh` (in the JDK 25 job) reported both copies as the
+  engine's files of `bdd795a3...`. On both JDKs `ZenBpmUserTaskPollerTest` ran 34 tests,
+  `ZenBpmDeclaredProcessWorkersTest` 20, `ZenBpmWorkflowProcessingTest` 12,
+  `ZenBpmDeploymentWiringTest` 19, `ZenBpmDeploymentServiceTest` 30, `ZenBpmJobHandlerTest` 32,
+  `ZenBpmAdapterConfigurationTest` 118, `ZenBpmUserTaskIT` 5 and `ZenBpmUserTaskRestartIT` 2, none
+  skipped (engine test support 12 unit and 5 integration tests, core 1,100 unit and 92 integration
+  tests, Spring Boot 14 unit and 65 integration tests, smoke test 38, Quarkus runtime 13, Quarkus
+  deployment 52, Quarkus integration tests 15, coverage gate 37). The gate measured 100 % on both
+  platforms: of 31,342 instructions for Spring Boot and 31,212 for Quarkus on JDK 25, of 31,332 and
+  31,202 on JDK 21.
+- `Publish snapshots`, run
+  [39297280111](https://github.com/pbinitiative/zenbpm-vanillabp-adapter/actions/runs/39297280111):
+  green. The core snapshot it published to GitHub Packages, `2.0.0-20261019.174845-57`, holds the
+  story's new main classes (`ZenBpmUserTaskPoller` with its records `Delivery`, `Retry`, `Modules`,
+  `Polling` and `TimedLook`, `ZenBpmUserTaskNotifier` with `Outcome` and `Notification`,
+  `NamedAggregate`) and no test class, fake, fixture or BPMN file; `quarkus/integration-tests`,
+  the smoke test, the engine test support and the coverage modules skipped deployment. Both report
+  pages (`spring-boot-report/index.html`, `quarkus-report/index.html`) answer HTTP 200 and show 0
+  of 31,342 (Spring Boot) and 0 of 31,212 (Quarkus) instructions missed.
+
 ## F8.2 Completing and cancelling
 
 ### S8.2.1 `COMPLETE_USER_TASK` and `CANCEL_USER_TASK`
