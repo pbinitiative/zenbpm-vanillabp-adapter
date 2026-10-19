@@ -1,0 +1,77 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" id="push-it-ratings"
+    xmlns:zenbpm="http://zenbpm.pbinitiative.org/1.0" targetNamespace="http://bpmn.io/schema/bpmn"
+    xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI"
+    xmlns:dc="http://www.omg.org/spec/DD/20100524/DC"
+    xmlns:di="http://www.omg.org/spec/DD/20100524/DI">
+  <bpmn:process id="Ratings" isExecutable="true">
+    <bpmn:startEvent id="RatingAsked">
+      <bpmn:outgoing>Flow_ToWaitToRate</bpmn:outgoing>
+    </bpmn:startEvent>
+    <bpmn:intermediateCatchEvent id="WaitToRate" name="Five seconds">
+      <bpmn:incoming>Flow_ToWaitToRate</bpmn:incoming>
+      <bpmn:outgoing>Flow_ToRateApproved</bpmn:outgoing>
+      <bpmn:timerEventDefinition id="WaitToRate_Definition">
+        <bpmn:timeDuration>PT5S</bpmn:timeDuration>
+      </bpmn:timerEventDefinition>
+    </bpmn:intermediateCatchEvent>
+    <bpmn:exclusiveGateway id="RateApproved" name="Approved?" default="Flow_ToRatedAndHeld">
+      <bpmn:incoming>Flow_ToRateApproved</bpmn:incoming>
+      <bpmn:outgoing>Flow_ToRatedForShipping</bpmn:outgoing>
+      <bpmn:outgoing>Flow_ToRatedAndHeld</bpmn:outgoing>
+    </bpmn:exclusiveGateway>
+    <bpmn:endEvent id="RatedForShipping">
+      <bpmn:incoming>Flow_ToRatedForShipping</bpmn:incoming>
+    </bpmn:endEvent>
+    <bpmn:endEvent id="RatedAndHeld">
+      <bpmn:incoming>Flow_ToRatedAndHeld</bpmn:incoming>
+    </bpmn:endEvent>
+    <bpmn:sequenceFlow id="Flow_ToWaitToRate" sourceRef="RatingAsked" targetRef="WaitToRate" />
+    <bpmn:sequenceFlow id="Flow_ToRateApproved" sourceRef="WaitToRate" targetRef="RateApproved" />
+    <bpmn:sequenceFlow id="Flow_ToRatedForShipping" sourceRef="RateApproved" targetRef="RatedForShipping">
+      <bpmn:conditionExpression>=approved = true</bpmn:conditionExpression>
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="Flow_ToRatedAndHeld" sourceRef="RateApproved" targetRef="RatedAndHeld" />
+  </bpmn:process>
+  <bpmndi:BPMNDiagram id="BPMNDiagram_1">
+    <bpmndi:BPMNPlane id="BPMNPlane_1" bpmnElement="Ratings">
+      <bpmndi:BPMNShape id="RatingAsked_di" bpmnElement="RatingAsked">
+        <dc:Bounds x="160" y="80" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="WaitToRate_di" bpmnElement="WaitToRate">
+        <dc:Bounds x="256" y="80" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="RateApproved_di" bpmnElement="RateApproved">
+        <dc:Bounds x="352" y="80" width="50" height="50" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="RatedForShipping_di" bpmnElement="RatedForShipping">
+        <dc:Bounds x="462" y="80" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="RatedAndHeld_di" bpmnElement="RatedAndHeld">
+        <dc:Bounds x="462" y="166" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNEdge id="Flow_ToWaitToRate_di" bpmnElement="Flow_ToWaitToRate">
+        <di:waypoint x="196" y="98" />
+        <di:waypoint x="256" y="98" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_ToRateApproved_di" bpmnElement="Flow_ToRateApproved">
+        <di:waypoint x="292" y="98" />
+        <di:waypoint x="322" y="98" />
+        <di:waypoint x="322" y="105" />
+        <di:waypoint x="352" y="105" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_ToRatedForShipping_di" bpmnElement="Flow_ToRatedForShipping">
+        <di:waypoint x="402" y="105" />
+        <di:waypoint x="432" y="105" />
+        <di:waypoint x="432" y="98" />
+        <di:waypoint x="462" y="98" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_ToRatedAndHeld_di" bpmnElement="Flow_ToRatedAndHeld">
+        <di:waypoint x="402" y="105" />
+        <di:waypoint x="432" y="105" />
+        <di:waypoint x="432" y="184" />
+        <di:waypoint x="462" y="184" />
+      </bpmndi:BPMNEdge>
+    </bpmndi:BPMNPlane>
+  </bpmndi:BPMNDiagram>
+</bpmn:definitions>

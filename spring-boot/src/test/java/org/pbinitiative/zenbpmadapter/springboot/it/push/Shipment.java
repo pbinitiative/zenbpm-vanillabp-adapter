@@ -42,6 +42,12 @@ public class Shipment {
      */
     public static final String TASK = "task";
 
+    /**
+     * The path which calls the process <code>Ratings</code> on an aggregate of its own, whose
+     * gateway follows a timer.
+     */
+    public static final String CALLED = "called";
+
     @Id
     private String id;
 

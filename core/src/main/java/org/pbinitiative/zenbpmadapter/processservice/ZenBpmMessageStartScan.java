@@ -181,7 +181,7 @@ final class ZenBpmMessageStartScan {
                         if (!namesTheAggregate(instance, idVariableName, aggregateId)) {
                             continue;
                         }
-                        if (isRunning(instance.state())) {
+                        if (ZenBpmRunningWorkflows.isRunning(instance.state())) {
                             return new Found(instance, endedOnes);
                         }
                         endedOnes = true;
@@ -205,10 +205,6 @@ final class ZenBpmMessageStartScan {
                 .variables()
                 .get(idVariableName);
         return (idVariable != null) && aggregateId.equals(String.valueOf(idVariable));
-    }
-
-    private static boolean isRunning(final ProcessInstanceRef.State state) {
-        return (state == ProcessInstanceRef.State.ACTIVE) || (state == ProcessInstanceRef.State.FAILED);
     }
 
     /**
@@ -242,7 +238,6 @@ final class ZenBpmMessageStartScan {
         }
 
     }
-
 
     /**
      * What a lookup found.

@@ -659,9 +659,9 @@ inside a sub-process; the sub-process' child instance carries the value, the roo
   `ZenBpmAggregateChangedIT#aTaskScopedPushWritesTheChildInstance`, against the pinned engine: the
   task inside the sub-process `Inspection` is left open, the application approves the shipment and
   pushes into the task's scope; the sub-process's instance carries `approved = true`, the root still
-  carries `false`, and the proxy in front of the engine saw no write of the root between the start
-  and the completion; the completion then writes the values everywhere and the gateway inside the
-  sub-process takes the approved branch. At the SPI:
+  carries `false`, and the proxy in front of the engine saw no write of the root from the moment the
+  task was left open until right before the completion; the completion then writes the values
+  everywhere and the gateway inside the sub-process takes the approved branch. At the SPI:
   `ZenBpmAggregatePushTest#aTaskScopedPushWritesTheInstanceTheTaskWaitsInAndNothingElse` (one read
   of the job, one write of its instance, nothing else).
 
@@ -703,7 +703,8 @@ then held by the tests below). What did not fit, and what was decided:
    sequential iteration which starts later only through an input mapping of the element. Decided
    the recommended answer, recorded as decision 49: write the root, then every instance below it
    which is `active` or `failed`, at any depth, each before the instances below it are read; do not
-   enter a called instance which names another aggregate (decision 45). Against a push of the root
+   enter a called instance of another aggregate (decision 45; how that is told was corrected after
+   the reviews, see their answers below). Against a push of the root
    alone (the mutant below), `#aGlobalPushReachesAGatewayInsideASubProcess` and
    `#aGlobalPushReachesTheGatewayOfEveryIteration` fail with the gateway on its held branch.
 3. **What `PATCH /v1/process-instances/{key}/variables` answers** (brief). `204` for an instance
@@ -720,13 +721,15 @@ then held by the tests below). What did not fit, and what was decided:
    `ZenBpmProcessService`): the instance runs, belongs to the process and names the aggregate;
    anything else falls through. The business-key search reads root instances only, because the
    engine hands a business key on to every instance it starts below the root, and reads `active`,
-   then `failed`. Beyond the story, under `message-start-lookup: scan` the push also finds a workflow
-   a message started by its id variable, as the probes do (`ZenBpmMessageStartScan#running`, the
-   scan's loop shared with `#find`), so a push reaches every workflow the election found. The scope
-   is the request's process, as on Camunda 8.
+   then `failed` (corrected after the reviews: a workflow a call activity started counts as well,
+   see their answers below). Beyond the story, under `message-start-lookup: scan` the push also
+   finds a workflow a message started by its id variable, as the probes do
+   (`ZenBpmMessageStartScan#running`, the scan's loop shared with `#find`), so a push reaches every
+   workflow the election found. The scope is the request's process, as on Camunda 8.
 5. **A task-scoped push** (instruction 2, brief question 2). As recommended: the job's own
    `processInstanceKey` and nothing else; a task id which is no key of the engine, a job the engine
-   does not know, and an instance which ended are each a warned no-op, and the root is not written
+   does not know (corrected after the reviews: repeated, see their answers below), and an instance
+   which ended are each a warned no-op, and the root is not written
    instead. `ZenBpmAggregateChangedIT#aTaskScopedPushWritesTheChildInstance` holds the acceptance
    criterion through the proxy: the sub-process's instance carries the value, the root keeps
    `false`, and no write of the root was sent.
@@ -794,6 +797,79 @@ integration tests, Spring Boot 14 unit and 57 integration tests, smoke test 38, 
 Quarkus deployment 52, Quarkus integration tests 10, coverage gate 37). The gate measures 100 % of
 29,064 instructions for Spring Boot and 100 % of 28,934 for Quarkus, and `bin/check-deploy-safety.sh`
 passes.
+
+**Answers to two reviews of S7.2.1 and S7.3.1, 2026-10-19.** Claude (changes requested: 1 Major,
+1 Minor, 3 Nits) and Copilot (changes requested: 2 Major) reviewed `20b9ed4` in their own
+worktrees. Both built it green with 100 % coverage on both platforms, and both probed the pinned
+image. Every finding was checked against the engine at the pin, the resolved platform and the
+code. Six distinct findings, all valid:
+
+1. **The walk entered a called workflow of another aggregate** (Claude 1 and Copilot 1, Major).
+   Valid. The engine hands a called instance a copy of its caller's variables (`createCallActivity`
+   of `pkg/bpmn/sub_process.go`, `NewVariableHolder` of `pkg/bpmn/runtime/varholder.go`), and
+   decision 45 empties only the business key and the called process's own id variable. Where the two
+   aggregates name their ids differently, the called instance still carries the caller's id
+   variable, so `isTheWorkflowOf` took it as this aggregate's. Both reviewers reproduced it on the
+   pinned image; Copilot's probe showed a shared value of the same name overwritten. The unit test's
+   fixture carried no variables, which the engine never produces. Fixed: where a workflow service
+   claims the called process, the platform's wiring decides
+   (`WorkflowTaskWiring#workflowsShareTheWorkflowAggregate` of the process of the instance which
+   called it and the called process, both made plain with
+   `NameClashAvoidanceSupport#plainProcessId`), the knowledge decision 45 rewrites the call with
+   while deploying. A called process the platform does not know is judged as before, by its business
+   key or id variable. Decision 49 says so (new in this batch, so corrected in place, not
+   superseded). Tests:
+   `ZenBpmAggregateChangedIT#aGlobalPushLeavesAWorkflowCalledOnAnAggregateOfItsOwnAlone` against the
+   engine. `Shipments` gained the path `called`, which calls `Ratings` (`push-it/ratings.bpmn`, with
+   its diagram, decision 29) on the aggregate `Rating`, whose id is `ratingId` and which shares
+   `approved` as the shipment does. After a push of the shipment, the called instance got no write
+   beyond its start marker's, and its gateway took the held branch. At the SPI, the fixture of
+   `ZenBpmAggregatePushTest` now carries the caller's id as the engine does, and
+   `#aCalledProcessThePlatformDoesNotKnowIsJudgedByWhatItCarries` holds the fallback.
+2. **The business-key search dropped a called workflow** (Copilot 2, Major). Valid. At the pin
+   the engine's search returns the instances a process was started with and those a call activity
+   started, and leaves embedded sub-processes and iterations out unless asked
+   (`GetProcessInstances` of `internal/cluster/server/server.go`), and the probe takes what it
+   returns. The push kept only instances without a parent. A called workflow found by its own
+   business key was therefore `ACTIVE` to the election and not found by the push, which warned and
+   consumed the entry. Copilot reproduced it. Fixed: the search passes over embedded sub-processes
+   and iterations by their type, so a called workflow is a root, as decision 28 reads it.
+   `#theBusinessKeySearchFindsACalledWorkflow`; the search fixture of
+   `#aKeyWhichLeadsElsewhereLeavesTheRootToTheSearch` returns a sub-process and an iteration too.
+   This is held at the SPI only, from the engine's source; no engine IT was added.
+3. **A task-scoped push consumed the entry on the job's `404`** (Claude 2, Minor). Valid. The
+   engine reads a job on a follower of its partition (`ZenNode.GetJob` of
+   `internal/cluster/node.go`), and it deletes a job only with the history of its instance
+   (`DeleteProcessInstancesJobs` of `internal/sql/queries/job.sql`). So the `404` comes from a node
+   which lags behind, or from a key it never held, not from a task which ended (decision 34). Fixed:
+   the push throws, naming the task and that the outbox repeats it.
+   `#aTaskTheNodeDoesNotKnowYetIsRepeated`; `#aTaskScopeWhichIsGoneIsAWarnedNoOp` keeps the ended
+   instance and the foreign id.
+4. **Not skipping a held task was recorded only in the plan** (Claude 3, Nit). Valid. Decision 49
+   now says why the push is not skipped while a handler holds the task, against instruction 2.
+5. **The task-scoped IT checked a narrower window than the criterion said** (Claude 4, Nit).
+   Valid. The proxy's list is now read right before the completion, and the acceptance criterion
+   names the window it checks: from the task left open until right before the completion.
+6. **A third private `isRunning` and a double blank line in `ZenBpmMessageStartScan`** (Claude 5,
+   Nit). Valid. The scan uses `ZenBpmRunningWorkflows#isRunning`.
+
+The Quarkus twin `Shipments.bpmn` stays without the path `called`: the case is a Spring Boot IT
+of the walk, which the core shares with Quarkus. Its unit cases count for both platforms.
+
+Seen to fail, each restored afterwards (7 of 7 mutants of the fixes, against green unmutated runs):
+the wiring ignored, so the old rule decides (against the engine:
+`#aGlobalPushLeavesAWorkflowCalledOnAnAggregateOfItsOwnAlone`, the called instance written and its
+gateway on the approved branch; and at the SPI); the wiring asked about a called process it does
+not claim; the process of the caller taken for the called one; the job's `404` a no-op again; the
+root search by the parent again; iterations not passed over; embedded sub-processes not passed
+over.
+
+`TZ=Etc/UTC mvn clean install` on OpenJDK 25.0.2 after the fixes builds green with every
+integration test run and none skipped (engine test support 12 unit and 5 integration tests, core
+1,057 unit and 92 integration tests, Spring Boot 14 unit and 58 integration tests, smoke test 38,
+Quarkus runtime 13, Quarkus deployment 52, Quarkus integration tests 15, coverage gate 37). The gate
+measures 100 % of 29,128 instructions for Spring Boot and 100 % of 28,998 for Quarkus, and
+`bin/check-deploy-safety.sh` passes.
 
 ## F7.3 Quarkus twins
 

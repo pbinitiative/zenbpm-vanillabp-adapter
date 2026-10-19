@@ -38,8 +38,10 @@ import lombok.extern.slf4j.Slf4j;
  * A push of the workflow, without a task, writes the workflow's root first and then every instance
  * below it which runs, at any depth, each before the instances below it are read, so an instance
  * started meanwhile copies the new values from its parent. The walk does not enter an instance a call
- * activity started which names another aggregate, because what runs there is not this aggregate's
- * business, see decision 49 in the repository's DECISIONS.md. The root is the instance of the key
+ * activity started on another aggregate, because what runs there is not this aggregate's business,
+ * see decision 49 in the repository's DECISIONS.md. Where the platform knows the called process, it
+ * says whether the called process shares the aggregate of its caller; for any other called process,
+ * the instance's business key or id variable has to name the aggregate. The root is the instance of the key
  * VanillaBP wrote down for the workflow where it runs the workflow, else the root instance the
  * aggregate's business key finds, else, under <code>message-start-lookup: scan</code>, the running
  * instance of a process a message starts whose id variable names the aggregate. Where none runs,
@@ -50,9 +52,11 @@ import lombok.extern.slf4j.Slf4j;
  * instance of the sub-process or the iteration the task runs in, and nothing else: the root and
  * every other branch keep their values, and the task's completion writes the values up to the root
  * later. The job is read for its instance, because the row VanillaBP keeps of a task names the
- * workflow and not the instance the task waits in. A job the engine does not know, or one whose
- * instance ended, makes the push a warned no-op: writing the root instead would be a push of the
- * workflow, which the application did not ask for. The push is not skipped while a handler holds
+ * workflow and not the instance the task waits in. A job whose instance ended makes the push a
+ * warned no-op: writing the root instead would be a push of the workflow, which the application did
+ * not ask for. A job the engine answers <code>404</code> for is thrown, so the outbox repeats the
+ * push: the engine keeps a job until the history of its instance is removed, so the answer comes
+ * from a node which lags behind. The push is not skipped while a handler holds
  * the task: no field of the task's row says so, and the handler sees the job's variables of its
  * creation either way.
  * <p>
@@ -163,9 +167,8 @@ final class ZenBpmAggregatePush<A> {
             warnNothingRuns(request);
             return;
         }
-        final var below = pushIntoTheInstancesBelow(rest, root
-                .get()
-                .key(), idVariableName, aggregateId, values);
+        final var below = pushIntoTheInstancesBelow(rest, request.workflowModuleId(), root.get(), idVariableName,
+                aggregateId, values);
         log.info("ZenBPM[{}]: pushed the changed aggregate '{}' into workflow {} and the instances {} below it",
                 adapterId, aggregateId, root
                         .get()
@@ -177,23 +180,25 @@ final class ZenBpmAggregatePush<A> {
     // instances below it are read, and a called instance of another aggregate is not entered
     private List<Long> pushIntoTheInstancesBelow(
         final ZenBpmRestClient rest,
-        final long root,
+        final String workflowModuleId,
+        final ProcessInstanceRef root,
         final String idVariableName,
         final String aggregateId,
         final Map<String, Object> values
     ) {
         final var written = new ArrayList<Long>();
-        final var parents = new ArrayDeque<Long>();
+        final var parents = new ArrayDeque<ProcessInstanceRef>();
         parents.add(root);
         while (!parents.isEmpty()) {
-            for (final var child : rest.children(parents.poll())) {
-                if (!ZenBpmRunningWorkflows.isRunning(child.state()) || isCalledOnAnotherAggregate(child,
-                        idVariableName, aggregateId)) {
+            final var parent = parents.poll();
+            for (final var child : rest.children(parent.key())) {
+                if (!ZenBpmRunningWorkflows.isRunning(child.state()) || isCalledOnAnotherAggregate(workflowModuleId,
+                        parent, child, idVariableName, aggregateId)) {
                     continue;
                 }
                 if (wrote(rest, child.key(), values)) {
                     written.add(child.key());
-                    parents.add(child.key());
+                    parents.add(child);
                 }
             }
         }
@@ -210,10 +215,14 @@ final class ZenBpmAggregatePush<A> {
             warnTheScopeIsGone(request, "it is no key of this engine");
             return;
         }
+        // the engine keeps a job until the history of its instance is removed, so a 404 comes from
+        // a node which lags behind, see decision 34 in the repository's DECISIONS.md
         final var job = rest.job(key.getAsLong());
         if (job.isEmpty()) {
-            warnTheScopeIsGone(request, "the engine does not know it");
-            return;
+            throw new IllegalStateException(
+                    "ZenBPM[%s]: the engine does not know task '%s' of workflow '%s' of workflow module '%s' yet, so the changed aggregate '%s' is not pushed into its scope now; a node which lags behind answers so for a task handed out a moment ago, and the outbox repeats the push"
+                            .formatted(adapterId, taskId, request.bpmnProcessId(), request.workflowModuleId(), request
+                                    .workflowAggregateId()));
         }
         final var scope = job
                 .get()
@@ -259,13 +268,28 @@ final class ZenBpmAggregatePush<A> {
         }
     }
 
-    private static boolean isCalledOnAnotherAggregate(
+    // the engine hands a called instance a copy of its caller's variables, so the caller's id
+    // variable says nothing about the aggregate of the called process: where the platform knows the
+    // called process, it tells whether the two share the aggregate, as it does for the rewrite of
+    // the call while deploying, see decision 45 in the repository's DECISIONS.md
+    private boolean isCalledOnAnotherAggregate(
+        final String workflowModuleId,
+        final ProcessInstanceRef parent,
         final ProcessInstanceRef child,
         final String idVariableName,
         final String aggregateId
     ) {
-        return (child.processType() == ProcessInstanceRef.ProcessType.CALL_ACTIVITY) && !ZenBpmRunningWorkflows
-                .isTheWorkflowOf(aggregateId, idVariableName, child);
+        if (child.processType() != ProcessInstanceRef.ProcessType.CALL_ACTIVITY) {
+            return false;
+        }
+        final var scoping = collaborators.scoping();
+        final var wiring = collaborators.workflowTaskWiring();
+        final var called = scoping.plainProcessId(workflowModuleId, child.bpmnProcessId(), adapterId);
+        if (wiring.isClaimedByAWorkflowService(workflowModuleId, called)) {
+            return !wiring.workflowsShareTheWorkflowAggregate(workflowModuleId, scoping.plainProcessId(
+                    workflowModuleId, parent.bpmnProcessId(), adapterId), called);
+        }
+        return !ZenBpmRunningWorkflows.isTheWorkflowOf(aggregateId, idVariableName, child);
     }
 
     private void warnNothingRuns(final PhaseTwoRequest<A> request) {

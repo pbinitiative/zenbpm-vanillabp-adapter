@@ -84,9 +84,12 @@ final class ZenBpmRunningWorkflows {
     }
 
     /**
-     * The root instance which runs under the aggregate's business key, of a process of the scope.
-     * The engine hands the business key of an instance on to the instances it starts below it, so
-     * only an instance without a parent counts. One whose state the search reads first wins: an
+     * The root instance which runs under the aggregate's business key, of a process of the scope:
+     * an instance the process was started with, or one a call activity started, because a called
+     * process runs a workflow of its own, as the probes find it. The engine hands the business key
+     * of an instance on to the instances of its embedded sub-processes and multi-instance elements,
+     * which are part of the workflow and not its root; its search leaves them out unless asked, and
+     * they are passed over here all the same. One whose state the search reads first wins: an
      * instance which waits, else one with an incident.
      *
      * @param rest The REST client of the adapter id
@@ -102,8 +105,6 @@ final class ZenBpmRunningWorkflows {
     ) {
         for (final var scopedId : scopedIds) {
             for (final var state : RUNNING) {
-                // the instances below a root are created after it, so their keys are higher and the
-                // root comes first
                 final var root = rest
                         .instances(InstanceFilter
                                 .anyInstance()
@@ -112,7 +113,7 @@ final class ZenBpmRunningWorkflows {
                                 .withState(state))
                         .items()
                         .stream()
-                        .filter(instance -> instance.parentKey() == null)
+                        .filter(ZenBpmRunningWorkflows::isTheRootOfAWorkflow)
                         .findFirst();
                 if (root.isPresent()) {
                     return root;
@@ -153,6 +154,11 @@ final class ZenBpmRunningWorkflows {
                 .variables()
                 .get(idVariableName);
         return (idVariable != null) && aggregateId.equals(String.valueOf(idVariable));
+    }
+
+    private static boolean isTheRootOfAWorkflow(final ProcessInstanceRef instance) {
+        return (instance.processType() != ProcessInstanceRef.ProcessType.SUBPROCESS) && (instance
+                .processType() != ProcessInstanceRef.ProcessType.MULTI_INSTANCE);
     }
 
 }

@@ -1035,19 +1035,33 @@ So a push without a task writes the workflow's root and then every instance belo
 (`active` or `failed`), at any depth: embedded and event sub-processes, multi-instance bodies and
 their iterations, and called instances. Each instance is written before the instances below it are
 read, so one started meanwhile copies the new values from its parent. An instance a call activity
-started which names another aggregate, by business key or id variable, is not written and not
-entered (decision 45 starts such a process without the caller's name): what runs there is not this
+started on another aggregate is not written and not entered: what runs there is not this
 aggregate's business, as the Camunda 8 adapter stops at a called process which does not carry the
+aggregate. The engine hands a called instance a copy of its caller's variables, the caller's id
+variable included, and decision 45 empties only the business key and the called process's own id
+variable, so neither the caller's id variable nor the business key can tell. Where a workflow
+service claims the called process, the platform's wiring decides, as it does for the rewrite of
+decision 45 while deploying: the called instance is entered only where the called process shares
+the aggregate of the process of the instance which called it. A called process the platform does
+not know is entered only where its business key or the aggregate's id variable names the
 aggregate. An instance which ended between its reading and its writing (`409`) is passed over with
 everything below it; a `404` is thrown, because a node which lags behind answers it for an
 instance it does not know yet (decision 34), and the outbox repeats the push.
 
-The root is the instance of the key VanillaBP wrote down for the workflow, where it runs, belongs
-to the process and names the aggregate (decision 25), else the root instance the business-key
-search finds, else, under `message-start-lookup: scan`, the running instance of a process a message
-starts whose id variable names the aggregate, as the probes find a workflow. Where none runs, the
-push is a warned no-op, because the core found the workflow when it dispatched the push.
+The root is the instance of the key VanillaBP wrote down for the workflow, where it runs, belongs to
+the process and names the aggregate (decision 25), else the instance the business-key search finds
+which the process was started with or a call activity started (a called process runs a workflow of
+its own; the probes find it too), not an embedded sub-process or an iteration, else, under
+`message-start-lookup: scan`, the running instance of a process a message starts whose id variable
+names the aggregate, as the probes find a workflow. Where none runs, the push is a warned no-op,
+because the core found the workflow when it dispatched the push.
 
 The cost is one read of the children per instance which runs, a leaf included, and one write per
 instance which runs. A push into the scope of a task stays a write of the instance the task's job
 waits in and nothing else: the task's completion writes the values up to the root (decision 35).
+It is not skipped while a handler holds the task, which the plan asked for: no field of the row the
+core hands over (`PhaseTwoRequest#taskRecord()`) says that a handler holds it, and a missing row
+says nothing either (no delivery log, a row removed by retention), so skipping would lose pushes; a
+handler which runs sees the variables of its job's creation either way. A job the engine answers
+`404` for is thrown and repeated by the outbox: the engine keeps a job until the history of its
+instance is removed, so the answer comes from a node which lags behind (decision 34).

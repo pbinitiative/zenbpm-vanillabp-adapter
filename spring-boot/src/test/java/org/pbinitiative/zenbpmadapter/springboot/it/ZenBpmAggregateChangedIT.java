@@ -50,8 +50,9 @@ import io.vanillabp.spi.process.ProcessService;
  * a push without a task writes the values the aggregate shares into the workflow's root and into
  * every instance below it which runs, so a gateway behind a timer takes the branch of the pushed
  * value, in the root, inside an embedded sub-process and inside every iteration of a multi-instance
- * sub-process, each of which reads a copy of its own; a push into the scope of a task writes the
- * instance the task waits in and leaves the root as it was.
+ * sub-process, each of which reads a copy of its own, but not inside a workflow the root called on
+ * an aggregate of its own; a push into the scope of a task writes the instance the task waits in
+ * and leaves the root as it was.
  * <p>
  * The application {@link PushItApplication} runs with <code>push-it.yaml</code>. Its process
  * <code>Shipments</code> has a path per scenario of {@link Shipment}, each of which decides on
@@ -172,6 +173,7 @@ class ZenBpmAggregateChangedIT {
         eventually(() -> Boolean.TRUE.equals(variableOf(inspection, "approved")),
                 "the sub-process's instance to carry the pushed value");
         final var rootAfterThePush = variableOf(instance, "approved");
+        // read again right before the completion, which writes the root itself
         final var patchesAfterThePush = patchesOf(instance);
         approveAnd(shipmentId, shipment -> processService.completeTask(shipment, taskId));
         awaitTheEndOf(instance);
@@ -180,6 +182,29 @@ class ZenBpmAggregateChangedIT {
                 () -> assertEquals(Boolean.FALSE, rootAfterThePush),
                 () -> assertEquals(patchesBefore, patchesAfterThePush),
                 () -> assertEquals(Set.of("InspectedForShipping"), endsOf(inspection)));
+    }
+
+    @Test
+    @DisplayName("A push of the workflow does not enter a workflow it called on an aggregate of its own, although that one carries a copy of the caller's id variable and shares a value of the same name: its gateway keeps its own value")
+    void aGlobalPushLeavesAWorkflowCalledOnAnAggregateOfItsOwnAlone() {
+        final var shipmentId = uniqueShipmentId();
+        final var instance = start(shipmentId, Shipment.CALLED);
+        final var rating = awaitTheChildrenWaitingAt(instance, "WaitToRate", 1).getFirst();
+        final var ratingId = eventually(() -> Optional.ofNullable(variableOf(rating, "ratingId")),
+                "the called workflow's start marker to name its own aggregate");
+        // the start marker wrote the rating's id into its instance
+        final var ratingPatchesBefore = patchesOf(rating);
+
+        approveAnd(shipmentId, shipment -> processService.aggregateChanged(shipment));
+        awaitTheEndOf(instance);
+
+        assertAll(
+                () -> assertEquals("rating-%s".formatted(shipmentId), ratingId),
+                () -> assertEquals(shipmentId, variableOf(rating, "id")),
+                () -> assertEquals(List.of(patchOf(instance)), patchesOf(instance)),
+                () -> assertEquals(List.of(patchOf(rating)), ratingPatchesBefore),
+                () -> assertEquals(ratingPatchesBefore, patchesOf(rating)),
+                () -> assertEquals(Set.of("RatedAndHeld"), endsOf(rating)));
     }
 
     @DynamicPropertySource

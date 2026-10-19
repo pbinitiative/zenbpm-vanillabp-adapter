@@ -14,7 +14,18 @@
       <bpmn:outgoing>Flow_ToPacking</bpmn:outgoing>
       <bpmn:outgoing>Flow_ToBoxing</bpmn:outgoing>
       <bpmn:outgoing>Flow_ToInspection</bpmn:outgoing>
+      <bpmn:outgoing>Flow_ToRate</bpmn:outgoing>
     </bpmn:exclusiveGateway>
+    <bpmn:callActivity id="Rate" name="Rate the shipment">
+      <bpmn:extensionElements>
+        <zenbpm:calledElement processId="Ratings" />
+      </bpmn:extensionElements>
+      <bpmn:incoming>Flow_ToRate</bpmn:incoming>
+      <bpmn:outgoing>Flow_ToRated</bpmn:outgoing>
+    </bpmn:callActivity>
+    <bpmn:endEvent id="Rated">
+      <bpmn:incoming>Flow_ToRated</bpmn:incoming>
+    </bpmn:endEvent>
     <bpmn:intermediateCatchEvent id="WaitToShip" name="Five seconds">
       <bpmn:incoming>Flow_ToWaitToShip</bpmn:incoming>
       <bpmn:outgoing>Flow_ToShipApproved</bpmn:outgoing>
@@ -153,6 +164,10 @@
     <bpmn:sequenceFlow id="Flow_ToInspection" sourceRef="Scenario" targetRef="Inspection">
       <bpmn:conditionExpression>=scenario = "task"</bpmn:conditionExpression>
     </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="Flow_ToRate" sourceRef="Scenario" targetRef="Rate">
+      <bpmn:conditionExpression>=scenario = "called"</bpmn:conditionExpression>
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="Flow_ToRated" sourceRef="Rate" targetRef="Rated" />
     <bpmn:sequenceFlow id="Flow_ToShipApproved" sourceRef="WaitToShip" targetRef="ShipApproved" />
     <bpmn:sequenceFlow id="Flow_ToShipped" sourceRef="ShipApproved" targetRef="Shipped">
       <bpmn:conditionExpression>=approved = true</bpmn:conditionExpression>
@@ -170,74 +185,80 @@
       <bpmndi:BPMNShape id="Scenario_di" bpmnElement="Scenario">
         <dc:Bounds x="256" y="80" width="50" height="50" />
       </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Rate_di" bpmnElement="Rate">
+        <dc:Bounds x="547" y="80" width="100" height="80" />
+      </bpmndi:BPMNShape>
       <bpmndi:BPMNShape id="WaitToShip_di" bpmnElement="WaitToShip">
-        <dc:Bounds x="579" y="80" width="36" height="36" />
+        <dc:Bounds x="579" y="210" width="36" height="36" />
       </bpmndi:BPMNShape>
       <bpmndi:BPMNShape id="Packing_di" bpmnElement="Packing" isExpanded="true">
-        <dc:Bounds x="398" y="166" width="398" height="182" />
+        <dc:Bounds x="398" y="296" width="398" height="182" />
       </bpmndi:BPMNShape>
       <bpmndi:BPMNShape id="PackingStarted_di" bpmnElement="PackingStarted">
-        <dc:Bounds x="428" y="196" width="36" height="36" />
+        <dc:Bounds x="428" y="326" width="36" height="36" />
       </bpmndi:BPMNShape>
       <bpmndi:BPMNShape id="WaitToPack_di" bpmnElement="WaitToPack">
-        <dc:Bounds x="524" y="196" width="36" height="36" />
+        <dc:Bounds x="524" y="326" width="36" height="36" />
       </bpmndi:BPMNShape>
       <bpmndi:BPMNShape id="PackApproved_di" bpmnElement="PackApproved">
-        <dc:Bounds x="620" y="196" width="50" height="50" />
+        <dc:Bounds x="620" y="326" width="50" height="50" />
       </bpmndi:BPMNShape>
       <bpmndi:BPMNShape id="PackedForShipping_di" bpmnElement="PackedForShipping">
-        <dc:Bounds x="730" y="196" width="36" height="36" />
+        <dc:Bounds x="730" y="326" width="36" height="36" />
       </bpmndi:BPMNShape>
       <bpmndi:BPMNShape id="PackedAndHeld_di" bpmnElement="PackedAndHeld">
-        <dc:Bounds x="730" y="282" width="36" height="36" />
+        <dc:Bounds x="730" y="412" width="36" height="36" />
       </bpmndi:BPMNShape>
       <bpmndi:BPMNShape id="Boxing_di" bpmnElement="Boxing" isExpanded="true">
-        <dc:Bounds x="398" y="398" width="398" height="182" />
+        <dc:Bounds x="398" y="528" width="398" height="182" />
       </bpmndi:BPMNShape>
       <bpmndi:BPMNShape id="BoxingStarted_di" bpmnElement="BoxingStarted">
-        <dc:Bounds x="428" y="428" width="36" height="36" />
+        <dc:Bounds x="428" y="558" width="36" height="36" />
       </bpmndi:BPMNShape>
       <bpmndi:BPMNShape id="WaitToBox_di" bpmnElement="WaitToBox">
-        <dc:Bounds x="524" y="428" width="36" height="36" />
+        <dc:Bounds x="524" y="558" width="36" height="36" />
       </bpmndi:BPMNShape>
       <bpmndi:BPMNShape id="BoxApproved_di" bpmnElement="BoxApproved">
-        <dc:Bounds x="620" y="428" width="50" height="50" />
+        <dc:Bounds x="620" y="558" width="50" height="50" />
       </bpmndi:BPMNShape>
       <bpmndi:BPMNShape id="BoxedForShipping_di" bpmnElement="BoxedForShipping">
-        <dc:Bounds x="730" y="428" width="36" height="36" />
+        <dc:Bounds x="730" y="558" width="36" height="36" />
       </bpmndi:BPMNShape>
       <bpmndi:BPMNShape id="BoxedAndHeld_di" bpmnElement="BoxedAndHeld">
-        <dc:Bounds x="730" y="514" width="36" height="36" />
+        <dc:Bounds x="730" y="644" width="36" height="36" />
       </bpmndi:BPMNShape>
       <bpmndi:BPMNShape id="Inspection_di" bpmnElement="Inspection" isExpanded="true">
-        <dc:Bounds x="366" y="630" width="462" height="182" />
+        <dc:Bounds x="366" y="760" width="462" height="182" />
       </bpmndi:BPMNShape>
       <bpmndi:BPMNShape id="InspectionStarted_di" bpmnElement="InspectionStarted">
-        <dc:Bounds x="396" y="660" width="36" height="36" />
+        <dc:Bounds x="396" y="790" width="36" height="36" />
       </bpmndi:BPMNShape>
       <bpmndi:BPMNShape id="Inspect_di" bpmnElement="Inspect">
-        <dc:Bounds x="492" y="660" width="100" height="80" />
+        <dc:Bounds x="492" y="790" width="100" height="80" />
       </bpmndi:BPMNShape>
       <bpmndi:BPMNShape id="InspectApproved_di" bpmnElement="InspectApproved">
-        <dc:Bounds x="652" y="660" width="50" height="50" />
+        <dc:Bounds x="652" y="790" width="50" height="50" />
       </bpmndi:BPMNShape>
       <bpmndi:BPMNShape id="InspectedForShipping_di" bpmnElement="InspectedForShipping">
-        <dc:Bounds x="762" y="660" width="36" height="36" />
+        <dc:Bounds x="762" y="790" width="36" height="36" />
       </bpmndi:BPMNShape>
       <bpmndi:BPMNShape id="InspectedAndHeld_di" bpmnElement="InspectedAndHeld">
-        <dc:Bounds x="762" y="746" width="36" height="36" />
+        <dc:Bounds x="762" y="876" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Rated_di" bpmnElement="Rated">
+        <dc:Bounds x="895" y="80" width="36" height="36" />
       </bpmndi:BPMNShape>
       <bpmndi:BPMNShape id="ShipApproved_di" bpmnElement="ShipApproved">
-        <dc:Bounds x="888" y="80" width="50" height="50" />
+        <dc:Bounds x="888" y="166" width="50" height="50" />
       </bpmndi:BPMNShape>
       <bpmndi:BPMNShape id="Packed_di" bpmnElement="Packed">
-        <dc:Bounds x="895" y="180" width="36" height="36" />
-      </bpmndi:BPMNShape>
-      <bpmndi:BPMNShape id="Boxed_di" bpmnElement="Boxed">
         <dc:Bounds x="895" y="266" width="36" height="36" />
       </bpmndi:BPMNShape>
-      <bpmndi:BPMNShape id="Inspected_di" bpmnElement="Inspected">
+      <bpmndi:BPMNShape id="Boxed_di" bpmnElement="Boxed">
         <dc:Bounds x="895" y="352" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Inspected_di" bpmnElement="Inspected">
+        <dc:Bounds x="895" y="438" width="36" height="36" />
       </bpmndi:BPMNShape>
       <bpmndi:BPMNShape id="Shipped_di" bpmnElement="Shipped">
         <dc:Bounds x="998" y="80" width="36" height="36" />
@@ -246,72 +267,72 @@
         <dc:Bounds x="998" y="166" width="36" height="36" />
       </bpmndi:BPMNShape>
       <bpmndi:BPMNEdge id="Flow_ToWaitToPack_di" bpmnElement="Flow_ToWaitToPack">
-        <di:waypoint x="464" y="214" />
-        <di:waypoint x="524" y="214" />
+        <di:waypoint x="464" y="344" />
+        <di:waypoint x="524" y="344" />
       </bpmndi:BPMNEdge>
       <bpmndi:BPMNEdge id="Flow_ToPackApproved_di" bpmnElement="Flow_ToPackApproved">
-        <di:waypoint x="560" y="214" />
-        <di:waypoint x="590" y="214" />
-        <di:waypoint x="590" y="221" />
-        <di:waypoint x="620" y="221" />
+        <di:waypoint x="560" y="344" />
+        <di:waypoint x="590" y="344" />
+        <di:waypoint x="590" y="351" />
+        <di:waypoint x="620" y="351" />
       </bpmndi:BPMNEdge>
       <bpmndi:BPMNEdge id="Flow_ToPackShipped_di" bpmnElement="Flow_ToPackShipped">
-        <di:waypoint x="670" y="221" />
-        <di:waypoint x="700" y="221" />
-        <di:waypoint x="700" y="214" />
-        <di:waypoint x="730" y="214" />
+        <di:waypoint x="670" y="351" />
+        <di:waypoint x="700" y="351" />
+        <di:waypoint x="700" y="344" />
+        <di:waypoint x="730" y="344" />
       </bpmndi:BPMNEdge>
       <bpmndi:BPMNEdge id="Flow_ToPackHeld_di" bpmnElement="Flow_ToPackHeld">
-        <di:waypoint x="670" y="221" />
-        <di:waypoint x="700" y="221" />
-        <di:waypoint x="700" y="300" />
-        <di:waypoint x="730" y="300" />
+        <di:waypoint x="670" y="351" />
+        <di:waypoint x="700" y="351" />
+        <di:waypoint x="700" y="430" />
+        <di:waypoint x="730" y="430" />
       </bpmndi:BPMNEdge>
       <bpmndi:BPMNEdge id="Flow_ToWaitToBox_di" bpmnElement="Flow_ToWaitToBox">
-        <di:waypoint x="464" y="446" />
-        <di:waypoint x="524" y="446" />
+        <di:waypoint x="464" y="576" />
+        <di:waypoint x="524" y="576" />
       </bpmndi:BPMNEdge>
       <bpmndi:BPMNEdge id="Flow_ToBoxApproved_di" bpmnElement="Flow_ToBoxApproved">
-        <di:waypoint x="560" y="446" />
-        <di:waypoint x="590" y="446" />
-        <di:waypoint x="590" y="453" />
-        <di:waypoint x="620" y="453" />
+        <di:waypoint x="560" y="576" />
+        <di:waypoint x="590" y="576" />
+        <di:waypoint x="590" y="583" />
+        <di:waypoint x="620" y="583" />
       </bpmndi:BPMNEdge>
       <bpmndi:BPMNEdge id="Flow_ToBoxShipped_di" bpmnElement="Flow_ToBoxShipped">
-        <di:waypoint x="670" y="453" />
-        <di:waypoint x="700" y="453" />
-        <di:waypoint x="700" y="446" />
-        <di:waypoint x="730" y="446" />
+        <di:waypoint x="670" y="583" />
+        <di:waypoint x="700" y="583" />
+        <di:waypoint x="700" y="576" />
+        <di:waypoint x="730" y="576" />
       </bpmndi:BPMNEdge>
       <bpmndi:BPMNEdge id="Flow_ToBoxHeld_di" bpmnElement="Flow_ToBoxHeld">
-        <di:waypoint x="670" y="453" />
-        <di:waypoint x="700" y="453" />
-        <di:waypoint x="700" y="532" />
-        <di:waypoint x="730" y="532" />
+        <di:waypoint x="670" y="583" />
+        <di:waypoint x="700" y="583" />
+        <di:waypoint x="700" y="662" />
+        <di:waypoint x="730" y="662" />
       </bpmndi:BPMNEdge>
       <bpmndi:BPMNEdge id="Flow_ToInspect_di" bpmnElement="Flow_ToInspect">
-        <di:waypoint x="432" y="678" />
-        <di:waypoint x="462" y="678" />
-        <di:waypoint x="462" y="700" />
-        <di:waypoint x="492" y="700" />
+        <di:waypoint x="432" y="808" />
+        <di:waypoint x="462" y="808" />
+        <di:waypoint x="462" y="830" />
+        <di:waypoint x="492" y="830" />
       </bpmndi:BPMNEdge>
       <bpmndi:BPMNEdge id="Flow_ToInspectApproved_di" bpmnElement="Flow_ToInspectApproved">
-        <di:waypoint x="592" y="700" />
-        <di:waypoint x="622" y="700" />
-        <di:waypoint x="622" y="685" />
-        <di:waypoint x="652" y="685" />
+        <di:waypoint x="592" y="830" />
+        <di:waypoint x="622" y="830" />
+        <di:waypoint x="622" y="815" />
+        <di:waypoint x="652" y="815" />
       </bpmndi:BPMNEdge>
       <bpmndi:BPMNEdge id="Flow_ToInspectShipped_di" bpmnElement="Flow_ToInspectShipped">
-        <di:waypoint x="702" y="685" />
-        <di:waypoint x="732" y="685" />
-        <di:waypoint x="732" y="678" />
-        <di:waypoint x="762" y="678" />
+        <di:waypoint x="702" y="815" />
+        <di:waypoint x="732" y="815" />
+        <di:waypoint x="732" y="808" />
+        <di:waypoint x="762" y="808" />
       </bpmndi:BPMNEdge>
       <bpmndi:BPMNEdge id="Flow_ToInspectHeld_di" bpmnElement="Flow_ToInspectHeld">
-        <di:waypoint x="702" y="685" />
-        <di:waypoint x="732" y="685" />
-        <di:waypoint x="732" y="764" />
-        <di:waypoint x="762" y="764" />
+        <di:waypoint x="702" y="815" />
+        <di:waypoint x="732" y="815" />
+        <di:waypoint x="732" y="894" />
+        <di:waypoint x="762" y="894" />
       </bpmndi:BPMNEdge>
       <bpmndi:BPMNEdge id="Flow_ToScenario_di" bpmnElement="Flow_ToScenario">
         <di:waypoint x="196" y="98" />
@@ -322,62 +343,74 @@
       <bpmndi:BPMNEdge id="Flow_ToWaitToShip_di" bpmnElement="Flow_ToWaitToShip">
         <di:waypoint x="306" y="105" />
         <di:waypoint x="442" y="105" />
-        <di:waypoint x="442" y="98" />
-        <di:waypoint x="579" y="98" />
+        <di:waypoint x="442" y="228" />
+        <di:waypoint x="579" y="228" />
       </bpmndi:BPMNEdge>
       <bpmndi:BPMNEdge id="Flow_ToPacking_di" bpmnElement="Flow_ToPacking">
         <di:waypoint x="306" y="105" />
         <di:waypoint x="352" y="105" />
-        <di:waypoint x="352" y="257" />
-        <di:waypoint x="398" y="257" />
+        <di:waypoint x="352" y="387" />
+        <di:waypoint x="398" y="387" />
       </bpmndi:BPMNEdge>
       <bpmndi:BPMNEdge id="Flow_ToBoxing_di" bpmnElement="Flow_ToBoxing">
         <di:waypoint x="306" y="105" />
         <di:waypoint x="352" y="105" />
-        <di:waypoint x="352" y="489" />
-        <di:waypoint x="398" y="489" />
+        <di:waypoint x="352" y="619" />
+        <di:waypoint x="398" y="619" />
       </bpmndi:BPMNEdge>
       <bpmndi:BPMNEdge id="Flow_ToInspection_di" bpmnElement="Flow_ToInspection">
         <di:waypoint x="306" y="105" />
         <di:waypoint x="336" y="105" />
-        <di:waypoint x="336" y="721" />
-        <di:waypoint x="366" y="721" />
+        <di:waypoint x="336" y="851" />
+        <di:waypoint x="366" y="851" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_ToRate_di" bpmnElement="Flow_ToRate">
+        <di:waypoint x="306" y="105" />
+        <di:waypoint x="426" y="105" />
+        <di:waypoint x="426" y="120" />
+        <di:waypoint x="547" y="120" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_ToRated_di" bpmnElement="Flow_ToRated">
+        <di:waypoint x="647" y="120" />
+        <di:waypoint x="771" y="120" />
+        <di:waypoint x="771" y="98" />
+        <di:waypoint x="895" y="98" />
       </bpmndi:BPMNEdge>
       <bpmndi:BPMNEdge id="Flow_ToShipApproved_di" bpmnElement="Flow_ToShipApproved">
-        <di:waypoint x="615" y="98" />
-        <di:waypoint x="751" y="98" />
-        <di:waypoint x="751" y="105" />
-        <di:waypoint x="888" y="105" />
+        <di:waypoint x="615" y="228" />
+        <di:waypoint x="751" y="228" />
+        <di:waypoint x="751" y="191" />
+        <di:waypoint x="888" y="191" />
       </bpmndi:BPMNEdge>
       <bpmndi:BPMNEdge id="Flow_ToShipped_di" bpmnElement="Flow_ToShipped">
-        <di:waypoint x="938" y="105" />
-        <di:waypoint x="968" y="105" />
+        <di:waypoint x="938" y="191" />
+        <di:waypoint x="968" y="191" />
         <di:waypoint x="968" y="98" />
         <di:waypoint x="998" y="98" />
       </bpmndi:BPMNEdge>
       <bpmndi:BPMNEdge id="Flow_ToHeld_di" bpmnElement="Flow_ToHeld">
-        <di:waypoint x="938" y="105" />
-        <di:waypoint x="968" y="105" />
+        <di:waypoint x="938" y="191" />
+        <di:waypoint x="968" y="191" />
         <di:waypoint x="968" y="184" />
         <di:waypoint x="998" y="184" />
       </bpmndi:BPMNEdge>
       <bpmndi:BPMNEdge id="Flow_ToPacked_di" bpmnElement="Flow_ToPacked">
-        <di:waypoint x="796" y="257" />
-        <di:waypoint x="845" y="257" />
-        <di:waypoint x="845" y="198" />
-        <di:waypoint x="895" y="198" />
-      </bpmndi:BPMNEdge>
-      <bpmndi:BPMNEdge id="Flow_ToBoxed_di" bpmnElement="Flow_ToBoxed">
-        <di:waypoint x="796" y="489" />
-        <di:waypoint x="845" y="489" />
+        <di:waypoint x="796" y="387" />
+        <di:waypoint x="845" y="387" />
         <di:waypoint x="845" y="284" />
         <di:waypoint x="895" y="284" />
       </bpmndi:BPMNEdge>
-      <bpmndi:BPMNEdge id="Flow_ToInspected_di" bpmnElement="Flow_ToInspected">
-        <di:waypoint x="828" y="721" />
-        <di:waypoint x="861" y="721" />
-        <di:waypoint x="861" y="370" />
+      <bpmndi:BPMNEdge id="Flow_ToBoxed_di" bpmnElement="Flow_ToBoxed">
+        <di:waypoint x="796" y="619" />
+        <di:waypoint x="845" y="619" />
+        <di:waypoint x="845" y="370" />
         <di:waypoint x="895" y="370" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_ToInspected_di" bpmnElement="Flow_ToInspected">
+        <di:waypoint x="828" y="851" />
+        <di:waypoint x="861" y="851" />
+        <di:waypoint x="861" y="456" />
+        <di:waypoint x="895" y="456" />
       </bpmndi:BPMNEdge>
     </bpmndi:BPMNPlane>
   </bpmndi:BPMNDiagram>

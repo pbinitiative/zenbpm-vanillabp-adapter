@@ -24,6 +24,7 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
 import org.pbinitiative.zenbpmadapter.TestCollaborators;
 import org.pbinitiative.zenbpmadapter.TestScoping;
+import org.pbinitiative.zenbpmadapter.TestWiring;
 import org.pbinitiative.zenbpmadapter.ZenBpmDeployedProcesses.ModuleMessages;
 import org.pbinitiative.zenbpmadapter.client.FakeEngine;
 import org.pbinitiative.zenbpmadapter.client.ZenBpmAdapterConfiguration;
@@ -135,7 +136,7 @@ class ZenBpmAggregatePushTest {
     @ValueSource(strings = {
             "no instance", "an instance which ended", "an instance of another process", "an instance of another aggregate", "nothing, as there is no key"
     })
-    @DisplayName("Where the start row's key does not lead to the running workflow of the aggregate, the business-key search finds the root, an instance below it with the same business key passed over")
+    @DisplayName("Where the start row's key does not lead to the running workflow of the aggregate, the business-key search finds the root, an embedded sub-process or iteration with the same business key passed over")
     void aKeyWhichLeadsElsewhereLeavesTheRootToTheSearch(final String where) {
         final var workflowId = switch (where) {
             case "no instance" -> {
@@ -151,8 +152,9 @@ class ZenBpmAggregatePushTest {
             default -> null;
         };
         final var found = 4503599627370700L;
-        engine.answers("GET", SEARCH_PATH, 200, page(instance(found + 1, "shop__Order", "active", "subprocess", found,
-                "order-1", null), instance(found, "shop__Order", "active", "default", null, "order-1", "order-1")));
+        engine.answers("GET", SEARCH_PATH, 200, page(instance(found - 2, "shop__Order", "active", "subprocess", found,
+                "order-1", null), instance(found - 1, "shop__Order", "active", "multiInstance", found, "order-1", null),
+                instance(found, "shop__Order", "active", "default", null, "order-1", "order-1")));
         engine.answers("GET", childrenPath(found), 200, page());
         everyWriteIsTaken();
 
@@ -314,27 +316,73 @@ class ZenBpmAggregatePushTest {
     }
 
     @Test
-    @DisplayName("A push into the scope of a task the engine does not know, or whose instance ended, or whose id is no key of the engine, writes nothing else and says why")
+    @DisplayName("A push into the scope of a task whose instance ended, or whose id is no key of the engine, writes nothing else and says why")
     void aTaskScopeWhichIsGoneIsAWarnedNoOp(final CapturedOutput output) {
-        engine.answers("GET", "/v1/jobs/%d".formatted(JOB), 404, "{\"code\":\"NOT_FOUND\",\"message\":\"no job\"}");
-        final var otherJob = JOB + 1;
-        engine.answers("GET", "/v1/jobs/%d".formatted(otherJob), 200, job().replace(String.valueOf(JOB), String
-                .valueOf(otherJob)));
+        engine.answers("GET", "/v1/jobs/%d".formatted(JOB), 200, job());
         engine.answers("PATCH", variablesPath(PACKING), 409, ended());
 
         handler().phaseTwo(push(null, String.valueOf(JOB)));
-        handler().phaseTwo(push(null, String.valueOf(otherJob)));
         handler().phaseTwo(push(null, "a-task-of-another-engine"));
 
         final var log = output.getAllOfThisTest();
         final var notPushed = "ZenBPM[orders]: the changed aggregate 'order-1' is not pushed into the scope of task '%s' of workflow 'Order' of workflow module 'shop', because %s; the workflow's own scope is not written instead, and the outbox entry is consumed";
         assertAll(
                 () -> assertEquals(List.of(PACKING), written()),
-                () -> assertTrue(log.contains(notPushed.formatted(JOB, "the engine does not know it")), log),
-                () -> assertTrue(log.contains(notPushed.formatted(otherJob, "the instance %d it waits in ended"
+                () -> assertTrue(log.contains(notPushed.formatted(JOB, "the instance %d it waits in ended"
                         .formatted(PACKING))), log),
                 () -> assertTrue(log.contains(notPushed.formatted("a-task-of-another-engine",
                         "it is no key of this engine")), log));
+    }
+
+    @Test
+    @DisplayName("A push into the scope of a task the engine answers 404 for, as a node which lags behind does for a job it does not know yet, is thrown, so the outbox repeats the push; nothing is written")
+    void aTaskTheNodeDoesNotKnowYetIsRepeated() {
+        engine.answers("GET", "/v1/jobs/%d".formatted(JOB), 404, "{\"code\":\"NOT_FOUND\",\"message\":\"no job\"}");
+
+        final var failure = assertThrows(IllegalStateException.class, () -> handler().phaseTwo(push(null, String
+                .valueOf(JOB))));
+
+        assertAll(
+                () -> assertEquals(List.of(), written()),
+                () -> assertEquals(
+                        "ZenBPM[orders]: the engine does not know task '%d' of workflow 'Order' of workflow module 'shop' yet, so the changed aggregate 'order-1' is not pushed into its scope now; a node which lags behind answers so for a task handed out a moment ago, and the outbox repeats the push"
+                                .formatted(JOB),
+                        failure.getMessage()));
+    }
+
+    @Test
+    @DisplayName("A called instance of a process the platform does not know is entered where its business key or the id variable names the aggregate, and passed over where neither does")
+    void aCalledProcessThePlatformDoesNotKnowIsJudgedByWhatItCarries() {
+        final var audit = 4503599627370540L;
+        final var foreign = 4503599627370541L;
+        engine.answers("GET", SEARCH_PATH, 200, page(instance(ROOT, "shop__Order", "active", "default", null,
+                "order-1", "order-1")));
+        engine.answers("GET", childrenPath(ROOT), 200, page(instance(audit, "shop__Audit", "active", "callActivity",
+                ROOT, "order-1", "order-1"),
+                instance(foreign, "shop__Foreign", "active", "callActivity", ROOT,
+                        "", null)));
+        engine.answers("GET", childrenPath(audit), 200, page());
+        for (final var key : List.of(ROOT, audit, foreign)) {
+            engine.answers("PATCH", variablesPath(key), 204, null);
+        }
+
+        handler().phaseTwo(push(null, null));
+
+        assertEquals(List.of(ROOT, audit), written());
+    }
+
+    @Test
+    @DisplayName("The business-key search takes an instance a call activity started as the root, because a called process runs a workflow of its own, as the probes find it")
+    void theBusinessKeySearchFindsACalledWorkflow() {
+        final var caller = 4503599627370800L;
+        engine.answers("GET", SEARCH_PATH, 200, page(instance(ROOT, "shop__Order", "active", "callActivity", caller,
+                "order-1", "order-1")));
+        engine.answers("GET", childrenPath(ROOT), 200, page());
+        everyWriteIsTaken();
+
+        handler().phaseTwo(push(null, null));
+
+        assertEquals(List.of(ROOT), written());
     }
 
     @Test
@@ -347,7 +395,8 @@ class ZenBpmAggregatePushTest {
 
     // below the root: the sub-process Packing, which runs, Packed, which ended, and two called
     // instances; an iteration runs below Packing, and an instance below the called instance of
-    // another aggregate
+    // another aggregate. As the engine does, the called instance of another aggregate carries a copy
+    // of the caller's id variable and the empty business key decision 45 gives it
     private void aTreeOfInstancesRunsBelowTheRoot() {
         engine.answers("GET", childrenPath(ROOT), 200, page(instance(PACKING, "shop__Order", "active", "subprocess",
                 ROOT, "order-1", "order-1"),
@@ -356,12 +405,12 @@ class ZenBpmAggregatePushTest {
                 instance(CALLED_ON_THE_SAME_AGGREGATE, "shop__Billing", "active",
                         "callActivity", ROOT, "order-1", "order-1"),
                 instance(CALLED_ON_ANOTHER_AGGREGATE,
-                        "shop__Rating", "active", "callActivity", ROOT, "", null)));
+                        "shop__Rating", "active", "callActivity", ROOT, "", "order-1")));
         engine.answers("GET", childrenPath(PACKING), 200, page(instance(ITERATION, "shop__Order", "failed",
                 "multiInstance", PACKING, "order-1", null)));
         engine.answers("GET", childrenPath(CALLED_ON_THE_SAME_AGGREGATE), 200, page());
         engine.answers("GET", childrenPath(CALLED_ON_ANOTHER_AGGREGATE), 200, page(instance(BELOW_THE_OTHER_AGGREGATE,
-                "shop__Rating", "active", "subprocess", CALLED_ON_ANOTHER_AGGREGATE, "", null)));
+                "shop__Rating", "active", "subprocess", CALLED_ON_ANOTHER_AGGREGATE, "", "order-1")));
         engine.answers("GET", childrenPath(ITERATION), 200, page());
     }
 
@@ -386,6 +435,10 @@ class ZenBpmAggregatePushTest {
     private PhaseOperationHandler<Object> handler(final ZenBpmClientFactory factory) {
         return new ZenBpmProcessService<>("orders", factory, TestCollaborators.of("orders", TestScoping.of(
                 NameClashAvoidance.USE_PREFIX),
+                TestWiring
+                        .claiming("Order", "Billing", "Rating")
+                        .sharingTheAggregateWith("Billing")
+                        .wiring(),
                 new SharingTheAmount()), (
                     module,
                     process) -> null)
