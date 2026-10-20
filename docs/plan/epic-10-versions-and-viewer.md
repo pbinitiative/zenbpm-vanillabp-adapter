@@ -327,6 +327,32 @@ Spring Boot 14 + 89, smoke test 38, Quarkus runtime 13, deployment 52, integrati
 37; coverage 100 % on both platforms (0 of 35,801 instructions missed on Spring Boot, 0 of 35,671
 on Quarkus); `bin/check-deploy-safety.sh` green.
 
+**S10.1.1 and S10.2.1 done 2026-10-20**, merged to `main` as `daf69c5` (pull request #69: stories
+`8b48727` and `e256501`, review fixes `653180e`; CodeRabbit made no actionable comment). F10.1 is
+complete; E10 goes on with S10.3.1 and S10.4.1. On `daf69c5` (GitHub keeps run logs for 90 days, so
+what they showed is written here as well):
+
+- `Checks`, run
+  [39469719091](https://github.com/pbinitiative/zenbpm-vanillabp-adapter/actions/runs/39469719091):
+  green on both JDKs. `bin/check-engine-copies.sh` (in the JDK 25 job) reported both copies as the
+  engine's files of `bdd795a3...`. On both JDKs `ZenBpmProcessVersionIT` ran 5 tests,
+  `ZenBpmOldProcessVersionsIT` 1, `ZenBpmProcessVersionCatalogTest` 11, `ZenBpmProcessVersionsTest`
+  3, `ZenBpmStartupQuestionCostTest` 4, `ZenBpmRenamedProcessTest` 1, `ZenBpmHeldModelsTest` 4 and
+  `ZenBpmDeployingTest` 17, none skipped (engine test support 12 unit and 5 integration tests, core
+  1,203 unit and 100 integration tests, Spring Boot 14 unit and 89 integration tests, smoke test 38,
+  Quarkus runtime 13, Quarkus deployment 52, Quarkus integration tests 20, coverage gate 37). The
+  gate measured 100 % on both platforms: of 35,801 instructions for Spring Boot and 35,671 for
+  Quarkus on JDK 25, of 35,789 and 35,659 on JDK 21.
+- `Publish snapshots`, run
+  [39469719084](https://github.com/pbinitiative/zenbpm-vanillabp-adapter/actions/runs/39469719084):
+  green. The core snapshot it published to GitHub Packages, `2.0.0-20261020.175152-65`, holds the
+  batch's new main classes (`ZenBpmProcessVersions`, `ZenBpmOlderVersions` with `Carried`,
+  `ZenBpmHeldModels`) and the changed ones (`ZenBpmDeploymentService`, `ZenBpmClientFactory`,
+  `ZenBpmHeldMessages`, `ZenBpmDeclaredProcessWorkers`, `ZenBpmScoping`, `ZenBpmTaskParameters`,
+  `ZenBpmInputMappings`, `ZenBpmProcessService`), 250 classes, and no test class, fake, fixture
+  or BPMN file. Both report pages (`spring-boot-report/index.html`, `quarkus-report/index.html`)
+  answer HTTP 200 and show 0 of 35,801 (Spring Boot) and 0 of 35,671 (Quarkus) instructions missed.
+
 ## F10.3 The viewer
 
 ### S10.3.1 `ZenBpmWorkflowViewer`
