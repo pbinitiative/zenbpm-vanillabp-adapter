@@ -7,6 +7,7 @@ annotations, all delivered through model rewriting (decision 26) and the instanc
 started by timer (or somebody started past VanillaBP) gets the aggregate the application's
 `@WorkflowStartedByBpms` method builds and names, and is found afterwards (decision 25), and a task
 inside a parallel multi-instance sub-process binds element, index and total - on both platforms.
+Met on 2026-10-20, on both platforms; the tests which hold each clause are named after S9.5.1.
 
 Template: `Camunda8WorkflowEndedHandler`, `Camunda8BpmsInitiatedStartHandler`, `Camunda8MultiInstance`.
 Contract: `WorkflowEndedInvoker`, `BpmsInitiatedStartInvoker` (validate the start events while
@@ -699,7 +700,7 @@ fix. E9 goes on with S9.2.1 after E7 and E8, and the global order goes on with S
 
 ### S9.4.1 `ZenBpmMultiInstance` (engine-gated)
 
-- [ ] **Depends on:** S6.1.1. **Engine twin:** E13.7.
+- [x] **Depends on:** S6.1.1. **Engine twin:** E13.7.
 
 **Instructions**
 
@@ -732,17 +733,318 @@ the walk up the parent chain above.
 `ZenBpmLifecycleIT#theIterationIsReported` (`multi-instance.bpmn`: parallel MI sub-process over three
 ids with a service task binding `@MultiInstanceElement`, `@MultiInstanceIndex`, `@MultiInstanceTotal`).
 
+*Fit check, 2026-10-20, decided by the Implementor where it says so.* Checked against `main`
+(`03a2ada`), `ADAPTER-AUTHORS.md` (`getMultiInstances`; `multiInstanceElementNames`: "an id your
+model does not know belongs to a caller"), the platform as the adapter resolves it
+(`2.0.0-20261015.045823-21`: `TaskInvocationContext#getMultiInstances`, `MultiInstanceValue`, whose
+`total` is an `int`, `CoreParameterBinders` and `HandlerContexts#of`, which asks the adapter only
+where a parameter binds an iteration, `NestedMultiInstancesKeepTheirOrderTest`,
+`TheMultiInstanceShapeOfAHeldVersionTest`), Camunda 8's `Camunda8MultiInstance` (mappings written
+at deployment, `-1` for a total it cannot tell, the caller's levels of its decision 30), and the
+engine at the pin `bdd795a3` (source exported with `git archive`: `handleMultiInstanceActivity`,
+`startParallelMultiInstance`, `startSequentialMultiInstance` and
+`sortFlowElementInstancesSortByCreatedAtAndKey` of `pkg/bpmn/multi_instance.go`,
+`createInstanceWithStartingElements` of `pkg/bpmn/engine.go`, `FindInactiveInstancesToDelete` of
+`internal/sql/queries/process_instance.sql`, `openapi/api.yaml`, `WaitingJob` of `zenbpm.proto`);
+REST probes against the pinned image (parallel and sequential multi-instance sub-processes, parallel
+and sequential multi-instance service tasks, a multi-instance user task, nested multi-instance
+sub-processes, a multi-instance call activity, a collection written as a FEEL expression), then the
+tests below. What did not fit, and what was decided:
+
+1. **The instance tree** (open question 1(a); the plan's picture was wrong, settled by the engine's
+   code and the probes). The plan has one child instance of the process type `multiInstance` per
+   iteration, whose variables carry the item. The engine creates ONE body per activation of the
+   element, of the type `multiInstance`, under the instance the element stands in, holding a copy of
+   that instance's variables. An iteration of a sub-process is a child instance of the body of the
+   type `subprocess`, holding the item; an iteration of a call activity a child of the type
+   `callActivity`, the item among its copied variables; an iteration of a task (service, send, user)
+   is no instance at all but a job of the body, which carries the item. A sequential element has the
+   same body, its iterations created one after the other. Built: every `multiInstance` instance on
+   the way up is a body, and its iteration is the instance below it on the way up, or the job where
+   the job waits in the body itself. The javadoc of `ProcessInstanceRef.ProcessType`, which called
+   `MULTI_INSTANCE` one iteration, is corrected.
+2. **The index** (open question 1(b)). The engine hands an iteration the item at the number of
+   iterations the body created before it, and orders the outputs of the iterations by creation and
+   then by key. Children and jobs are listed by key, not by creation. An iteration which ended stays
+   listed: the engine's history clean-up deletes a child instance only once its parent ended, so an
+   iteration keeps its place while its body runs. Built: the index is the position of the job's
+   iteration among the body's children (`GET .../child-processes`) or jobs (`GET
+   /v1/jobs?processInstanceKey=`, new `ZenBpmRestClient#jobsOf`) ordered by `createdAt` and then
+   key. The job stream names no element instance (GAPS 15), so the iteration of a task is told by its
+   job key. Measured: `ZenBpmRestClientContractIT#theIterationsOfAMultiInstanceElementAreKeptInTheOrderOfTheirItems`.
+3. **The total** (open questions 1(c) and 5). The body holds a copy of the variables the collection
+   was evaluated against, so for a collection written as a bare variable the body's copy is exactly
+   what the engine iterates over; an iteration's own instance holds the item alone (GAPS 31). The
+   result of any other FEEL expression is kept only in the history row of the element in the parent
+   instance, which cannot be told apart from another activation of the same element.
+   `MultiInstanceValue#total` is an `int`, so the plan's `null` cannot reach the core, and Camunda 8
+   reports `-1` for a total it cannot tell. Decided `-1` with a DEBUG line; the README says so.
+   *Corrected after the reviews of the batch:* the body's copy is NOT what the engine iterates over.
+   The engine reads the collection of every iteration from the history row of the element's entry,
+   and the body's copy is written by every completion and push of the aggregate's values; the total
+   is now read from that history row, which also counts a FEEL expression. See the answers to the
+   reviews below.
+4. **Which element a body belongs to** (not foreseen, decided by the Implementor, decision 54). The
+   REST API names a body's element in its tokens only, which are gone once the body ended. Decided the
+   model: walking up, every body met is the next multi-instance element around the job from the
+   inside out (`ZenBpmBpmnModel#multiInstanceChainOf`), read from the model of the instance's own
+   version by its definition key, once per version, as decision 52 reads end events. A body the model
+   does not show ends the walk with a DEBUG line.
+5. **Mappings at deployment as Camunda 8 writes them** (open question 2, decided as recommended).
+   The engine has no `loopCounter` to map an index from, and a mapping of the total alone would still
+   leave the read of the index. Not built; decision 54 says why.
+6. **The iterations of a caller** (open question 3, decided as recommended, decision 54). The
+   engine's parent chain crosses a call activity: a called instance (`callActivity`) hangs under the
+   caller's body where the call activity iterates (probed), and the platform asks for the ids of a
+   caller's elements. Built: the walk goes on in the caller, from the call activity of the caller's
+   model which calls the process (as the engine knows it) and iterates exactly where the called
+   instance hangs under a body; where the caller's model holds more than one such call activity, the
+   walk stops there, and the caller's iterations are not told. *Corrected after the reviews:* where
+   there is more than one, the one the caller waits at is taken, and a WARN names the limit where
+   that still leaves none or several (see the answers below). A call activity which
+   names its process by an expression never matches.
+7. **User tasks** (open question 4, decided as recommended). The notifier's context answers
+   `getMultiInstances()` the same way (`ZenBpmUserTaskPollerTest#aUserTaskInAnIterationIsToldItsIteration`);
+   a notification holds no lock, so the attempts of the repetition alone bound its reads.
+8. **When it is read** (decided by the Implementor, decision 54). The core asks `getMultiInstances()`
+   only where a parameter binds an iteration, once per such parameter. Built: read on the first ask,
+   once per delivery, inside the core's invocation, through the delivery's command repetition; a read
+   which fails fails the invocation like a method which threw.
+9. **The cache** (open question 6). The iterations of a body are kept per workflow module, bounded
+   by `instance-cache-max-entries` (least recently used first), and read again whenever the iteration
+   asked about is missing, as a later iteration of a sequential element
+   (`ZenBpmMultiInstanceTest#aSequentialTaskFindsAnIterationCreatedLater`, against the engine
+   `ZenBpmLifecycleIT#theIterationsOfASequentialTaskAreReportedOneAfterTheOther`). Nothing else ends
+   an entry, because an iteration keeps its place. The model of each version is kept without a bound,
+   as the end markers' are. The instance cache itself is unchanged.
+10. **Nested elements.** Probed: an inner element's collection is evaluated in the outer iteration's
+    instance, which holds the item alone (GAPS 31), so a collection of the root iterates over
+    nothing there; a nested collection has to come from the item or be mapped in. The unit test of
+    nested iterations uses a collection mapped in.
+11. **Documents.** GAPS 16 is entered under the plan's number; the deviations row, the SPI mapping
+    row, the architecture's line and the README say what is built. Decision 54 is new. The box
+    "Superseded by E13.7" stays open: the walk stays until the engine hands out `loopCounter` and
+    `nrOfInstances` (E13.7 is out of the pipeline's scope).
+
+Built and added: `ZenBpmMultiInstanceTest` (19 cases at the story's commit, 27 after the reviews,
+against a fake engine in the pinned engine's
+shape: a body with copied variables, iterations as children or jobs, listed by key and not in the
+order they were created), `ZenBpmJobHandlerTest#theIterationsAreReadOnceWhereTheMethodAsksForThem`
+and `#aReadOfTheIterationsWhichFailsFailsTheJob`,
+`ZenBpmUserTaskPollerTest#aUserTaskInAnIterationIsToldItsIteration`,
+`ZenBpmRestClientTest#theJobsOfAnInstanceAreReadToTheEnd`,
+`ZenBpmRestClientContractIT#theIterationsOfAMultiInstanceElementAreKeptInTheOrderOfTheirItems`, and
+against the pinned image `ZenBpmLifecycleIT#theIterationIsReported` (`lifecycle-it/multi-instance.bpmn`,
+process `Picking`: a parallel multi-instance sub-process over three parcels, `=parcels` of the
+aggregate, with a service task binding `@MultiInstanceElement`, `@MultiInstanceIndex` and
+`@MultiInstanceTotal`), `#theIterationsOfASequentialTaskAreReportedOneAfterTheOther` and
+`#aCalledProcessIsToldTheIterationOfItsCaller` (`Labelling`, called on the same aggregate by a
+multi-instance call activity). The aggregate's list `parcels` is a declared aggregate value
+(`lifecycle-it.yaml`): the platform refuses a collection which travels undeclared.
+
 **Acceptance criteria**
 
-- [ ] Index counts from 0, total equals the collection size, element is the item.
-- [ ] Superseded by E13.7 once the engine hands out `loopCounter` and `nrOfInstances`.
+- [x] Index counts from 0, total equals the collection size, element is the item.
+  `ZenBpmLifecycleIT#theIterationIsReported` against the pinned image tells the three tasks
+  `a:0/3`, `b:1/3` and `c:2/3`, and so do `#theIterationsOfASequentialTaskAreReportedOneAfterTheOther`
+  (in that order) and `#aCalledProcessIsToldTheIterationOfItsCaller` (the caller's iteration).
+  Clean build of the story's commit (`TZ=Etc/UTC mvn clean install` on OpenJDK
+  25.0.2, Docker ITs included, none skipped): engine test support 12 + 5, core 1,167 + 97, Spring
+  Boot 14 + 83, smoke test 38, Quarkus runtime 13, deployment 52, integration tests 17, gate 37;
+  coverage 100 % on both platforms (0 of 34,305 instructions missed on Spring Boot, 0 of 34,175 on
+  Quarkus); `bin/check-deploy-safety.sh` green. Mutants: 20 written, 19 killed. At the unit level
+  18 of 19: the read again of a body which lacks the iteration, the failure for an iteration nobody lists,
+  the repetition of that read, the end of the walk at a body the model does not show, the switch to
+  the caller, the refusal of two candidate call activities, the filter of a caller's call activities
+  by whether they iterate (dropped altogether), the caller's call which does not iterate inside an
+  iteration, the total of an expression, the check for a list, the body kept, the model kept, the
+  model read only at a body, an unreadable model, the order outermost first, the read once per
+  delivery, the notification's iterations, the repetition of the notification's read. Against the
+  pinned engine 1 of 1: without the read again, `ZenBpmLifecycleIT#theIterationsOfASequentialTaskAreReportedOneAfterTheOther`
+  waits in vain for the second iteration. The one survivor, the order by key alone instead of by
+  creation and then key, is equivalent on what the engine produces: the leader generates an
+  iteration's key from the same clock and in the same order as its `createdAt`, so the two orders
+  agree; the order by creation is kept because the engine orders the iterations by it itself.
+- [ ] Superseded by E13.7 once the engine hands out `loopCounter` and `nrOfInstances`. Waits for
+  E13.7, which is out of the pipeline's scope; until then the walk of decision 54 answers.
+
+**Answers to two reviews of e09-f9.4-f9.5, 2026-10-20** (one by Claude, approve after 1 Major, with
+2 Minor and 1 Nit; one by Copilot, changes requested, 1 Major). Every claim was checked in the code
+of the branch and, for the engine, at the pin `bdd795a3` and against its image. The Major was
+raised by both, so four distinct findings remain; all four were valid and are fixed. Decision 54,
+new on this branch, was corrected in place before the merge; no new decision was needed.
+
+- **The total was read from a copy which the adapter itself overwrites** (Claude 1, Copilot 1,
+  Major). The fit check took the body's copy of the variables for what the engine iterates over.
+  It is not: `handleMultiInstanceActivity` of `pkg/bpmn/multi_instance.go` reads the collection of
+  every iteration from the history row which `startParallelMultiInstance` and
+  `startSequentialMultiInstance` save for the element's entry in the instance the element stands
+  in, under the name of the input element, and never reads the body. The body's copy is written by
+  every completion inside the body (the aggregate's values go into every instance up to the
+  workflow) and by every push (decision 49), so a list the application shortened or grew while the
+  iterations run gave a reader without a kept body (another node, a restart, an evicted entry,
+  `instance-cache-max-entries: 0`) a total other than the number of iterations; Copilot reproduced
+  `total=1` for three iterations with the branch's classes. Probed again: after a `PATCH` of the
+  body, the root's history row keeps the three items, under the key of the root's token at the
+  element, for the parallel sub-process and for the sequential task during its second iteration;
+  an expression is kept evaluated, under `""` where the element names no input element. The total
+  is now the size of that row's collection (`ZenBpmRestClient#tokensAt`, the history's
+  `inputVariables`), read once per body and kept with it; where the instance shows no token at the
+  element, the history holds no list, or two activations at once differ in size, it is `-1`. So a
+  collection written as a FEEL expression is counted as well, and the `-1` for an expression is
+  gone. Tests: `ZenBpmMultiInstanceIT#aCollectionChangedWhileTheIterationsRunKeepsItsTotal` (the
+  list changed in the body, and in the workflow during the sequential task, then readers which
+  keep nothing; on the old code it reports `1` for each of the three iterations) and
+  `#aCollectionWrittenAsAnExpressionIsCounted` (`-1` on the old code),
+  `ZenBpmRestClientContractIT#theCollectionOfAnActivationIsKeptInTheHistory`,
+  `ZenBpmRestClientTest#theTokensAtAnElementAreRead`, and in `ZenBpmMultiInstanceTest`
+  `#theTotalIsNotReadFromTheBodysCopy`,
+  `#aCollectionWrittenAsAnExpressionIsCountedAsTheEngineEvaluatedIt`,
+  `#anActivationWithoutATokenHasNoTotal`, `#anEntryTheHistoryDoesNotListHasNoTotal`,
+  `#theEntryIsFoundOnALaterPage`, `#twoActivationsOfOneSizeTellIt`,
+  `#twoActivationsOfWhichTheHistoryListsOneHaveNoTotal`,
+  `#twoActivationsOfDifferentSizesHaveNoTotal`.
+  Decision 54, GAPS 16, the deviations row, the SPI mapping row and the README say what is built.
+- **No test held the tie-break by key** (Claude 2, Minor). The case asked for the iteration with a
+  millisecond of its own; it now asks for one of the two created in the same millisecond, and the
+  mutant without the tie-break is killed.
+- **An ambiguous caller ended the walk with a DEBUG line only** (Claude 3, Minor). Where the
+  caller's model calls the process from more than one call activity, the one at which the instance
+  the called one hangs under waits is now taken: probed, a body of a multi-instance call activity
+  shows its tokens at the call activity, pinned by the contract test above. Where that still leaves
+  none or several, a WARN once per version and called process names the fix (call the process from
+  one call activity, or hand the item over as a `@TaskParam`).
+  Tests: `ZenBpmMultiInstanceTest#aCallerWithTwoCallsOfTheProcessIsToldTheOneItsBodyWaitsAt` and
+  `#aCallerWithTwoCallsOfTheProcessWhichWaitsAtNoneIsNotTold`.
+- **`instance-cache-max-entries` was described as bounding the instance facts alone** (Claude 4,
+  Nit). Its descriptions (the configuration's javadoc, the Spring Boot keys which become the
+  configuration metadata, the Quarkus properties) now name the iterations of the bodies each
+  workflow module keeps, and `0` keeping none.
+
+Mutants of the new guards, each against a green unmutated run, 11 of 11 killed by
+`ZenBpmMultiInstanceTest`: every history entry taken, no empty input-element name, missing entries
+ignored, the last page ignored (killed by the surefire timeout), the tokens not asked again, the
+history not read again, no narrowing by the waiting token, narrowing only above two candidates, the
+WARN every time, no tie-break, differing totals taken. Against the pinned engine, the class as it
+was at the story's commit fails both cases of `ZenBpmMultiInstanceIT`. Clean build after the fixes
+(`TZ=Etc/UTC mvn clean install` on OpenJDK 25.0.2, Docker ITs included, none skipped): engine test
+support 12 + 5, core 1,176 + 100, Spring Boot 14 + 83, smoke test 38, Quarkus runtime 13,
+deployment 52, integration tests 20, gate 37; coverage 100 % on both platforms (0 of 34,526
+instructions missed on Spring Boot, 0 of 34,396 on Quarkus); `bin/check-deploy-safety.sh` green.
+
+*CodeRabbit on pull request #67, 2026-10-20* (2 actionable comments on `9464bcc`, both valid, fixed
+in one commit after it):
+
+- **The history's input variables were not normalized** (Minor). `historyEntry` handed them on as
+  Jackson read them, while every other variable map of the client goes through `variables(...)`: a
+  whole number as a `Long`, nested lists and objects unmodifiable. Fixed;
+  `ZenBpmRestClientTest#aPageOfTheHistory` now reads a list of numbers and refuses to change it.
+- **A `-1` total was kept with the body** (Minor). Where the first ask met a node which lagged
+  behind, every later task of that body was told `-1` until the entry left the cache. A kept `-1` is
+  now read again at the next ask, and a total which was read stays, because the engine never
+  changes an activation's collection (`ZenBpmMultiInstanceTest#aTotalWhichCouldNotBeReadIsReadAgain`).
+  This goes further than the suggestion, which read it again only for a later sequential
+  iteration: a parallel body's next task gets the read as well.
+
+Mutants: 4 of 4 killed (no normalization, the `-1` kept, the iterations read again with the total,
+the total read on every ask). The pre-merge "docstring coverage" warning is CodeRabbit's generic
+measure; the repository's rule is javadoc on the public API, which `javadoc:javadoc-no-fork` checks
+in the build. Clean build after the fixes (`TZ=Etc/UTC mvn clean install`, OpenJDK 25.0.2, Docker
+ITs included, none skipped): engine test support 12 + 5, core 1,177 + 100, Spring Boot 14 + 83,
+smoke test 38, Quarkus runtime 13, deployment 52, integration tests 20, gate 37; coverage 100 % on
+both platforms (0 of 34,550 instructions missed on Spring Boot, 0 of 34,420 on Quarkus);
+`bin/check-deploy-safety.sh` green.
 
 ## F9.5 Quarkus twins
 
 ### S9.5.1 Lifecycle on Quarkus
 
-- [ ] **Depends on:** S9.4.1.
+- [x] **Depends on:** S9.4.1.
 
 `ZenBpmWorkflowLifecycleTest#theWorkflowEndIsReported`, `#theEngineStartsAWorkflowOnItsOwn` (the
 aggregate the method named, found afterwards through the start row, as S9.3.1),
 `#multiInstanceBindsElementIndexAndTotal`.
+
+*Fit check, 2026-10-20, decided by the Implementor where it says so.* Checked against `main`
+(`03a2ada`) with S9.4.1 on top, the Quarkus glue (`quarkus/runtime`: `ZenBpmDeploymentServiceProducer`
+hands the platform's `WorkflowEndedInvoker` and `BpmsInitiatedStartInvoker` through
+`AdapterCollaboratorsSupport.collaborators` to the same `ZenBpmDeploymentService` the Spring Boot
+glue builds; `quarkus/deployment`: `ZenBpmIntegrationProcessor` registers the producers and records
+nothing about processes), and the Spring Boot ITs of S9.1.1 to S9.4.1. What did not fit, and what
+was decided:
+
+1. **The build-time side** (the brief's question). The Quarkus extension wires nothing at build
+   time: the markers are written, `ZenBpmProcessingContext#jobTypes` is filled and a declared
+   process's held models are read by the core at the application's start, exactly as on Spring
+   Boot, from the collaborators the runtime producer hands it. What the glue could get wrong is
+   whether the platform's Quarkus integration hands the two invokers at all; the twins below prove
+   it does: the end marker's type is subscribed (`#theWorkflowEndIsReported` reads the start line,
+   which names `vanillabp__ended__zenbpm-e2e__Packing`), its job reaches the `@WorkflowEnded`
+   method, and the start marker of a workflow started past VanillaBP reaches the
+   `@WorkflowStartedByBpms` method.
+2. **The twins** (as the story names them, decided by the Implementor where the story leaves the
+   fixture open). The one prod-mode application of `ZenBpmWorkflowLifecycleTest` got two processes:
+   `Packing` (a copy of the Spring Boot `Picking` without its call activity: a parallel
+   multi-instance sub-process and a sequential multi-instance task over the aggregate's declared
+   list `items`, and a `@WorkflowEnded` method), and `Receiving` (started over the engine's REST API
+   without a business key; its `@WorkflowStartedByBpms` method builds the aggregate, and a message
+   correlated on it later reaches the workflow only through the start row).
+   `#theWorkflowEndIsReported`, `#theEngineStartsAWorkflowOnItsOwn` and
+   `#multiInstanceBindsElementIndexAndTotal` hold E9's three clauses on Quarkus. Started past
+   VanillaBP rather than by a timer: the start marker's handler does not tell the two apart beyond
+   the kind it reports, which the Spring Boot `#aTimerStartBuildsTheAggregate` holds, and a timer
+   would start a workflow at every boot of the shared application.
+3. **Spring Boot ITs without a Quarkus twin, and why none is needed.** Each of them proves a
+   decision the core takes alone, from the same collaborators, so the core's unit tests (counted on
+   both platforms) and the twins above, which prove the glue, cover them:
+   `ZenBpmLifecycleIT#aSecondDeliveryOfTheMarkerBuildsNothing`, `#theApplicationsOwnStartBuildsNothing`
+   (every Quarkus workflow the application starts passes its start marker already),
+   `#aProcessCalledOnAnAggregateOfItsOwnBuildsItsOwn` (a rewrite of `deployResources`),
+   `#aBranchWhichEndsWhileAnotherRunsReportsNothing`, `#theEndWaitsForAnEventSubProcessStillRunning`,
+   `#aCancelledWorkflowReportsNothing`, `#aReportWhichThrewIsRepeated`,
+   `#aWorkflowWhoseAggregateIsGoneEnds`, `#theEndCancelsTheTasksStillOpen`,
+   `#aCalledProcessIsToldTheIterationOfItsCaller`, `ZenBpmUserTaskRestartIT` and
+   `ZenBpmRenamedProcessIT` (a declared process's held models: read by
+   `ZenBpmDeclaredProcessWorkers` in the core, and a twin would need a second boot of the shared
+   prod-mode application).
+4. **The incident's cause sentence of the end marker.** It is the failure message the core's
+   `ZenBpmWorkflowEndedHandler` writes from the thrown exception
+   (`ZenBpmWorkflowEndedHandlerTest#aReportWhichThrowsFailsTheJob`); nothing of the platform's glue
+   takes part in it, so no Quarkus twin is needed.
+5. Decisions, GAPS: nothing new.
+
+**Acceptance** (the story names its three tests; recorded here as its criteria)
+
+- [x] On a booted Quarkus application against the pinned image:
+  `ZenBpmWorkflowLifecycleTest#theWorkflowEndIsReported` (the end event `Packed` reaches the
+  `@WorkflowEnded` method, the instance completes after it, and the start line names the end
+  markers' type), `#theEngineStartsAWorkflowOnItsOwn` (a start over `POST /v1/process-instances`
+  without a business key gets the aggregate `receipt-<order>` the `@WorkflowStartedByBpms` method
+  built, the start row names the instance, the id variable holds the id, and a correlation on the
+  aggregate completes the workflow) and `#multiInstanceBindsElementIndexAndTotal` (`a:0/3`,
+  `b:1/3`, `c:2/3` for the parallel sub-process and, in that order, for the sequential task).
+  Clean build of the story's commit (`TZ=Etc/UTC mvn clean install` on OpenJDK 25.0.2,
+  Docker ITs included, none skipped): engine test support 12 + 5, core 1,167 + 97, Spring Boot
+  14 + 83, smoke test 38, Quarkus runtime 13, deployment 52, integration tests 20, gate 37; coverage
+  100 % on both platforms (0 of 34,305 instructions missed on Spring Boot, 0 of 34,175 on Quarkus);
+  `bin/check-deploy-safety.sh` green. The story adds no production code and no guard, so it has no
+  mutant of its own; its three tests are the twins of the Spring Boot ITs.
+
+**E9 "Done when", checked 2026-10-20 at the end of the epic.** Met on both platforms:
+
+- *A workflow's end reaches the application with its end event id:* Spring Boot
+  `ZenBpmLifecycleIT#theEndOfAWorkflowIsReportedWithItsEndEvent`, Quarkus
+  `ZenBpmWorkflowLifecycleTest#theWorkflowEndIsReported`.
+- *A workflow the engine started by timer, or somebody started past VanillaBP, gets the aggregate
+  the application's `@WorkflowStartedByBpms` method builds and names, and is found afterwards
+  (decision 25):* Spring Boot `ZenBpmLifecycleIT#aTimerStartBuildsTheAggregate` and
+  `#aWorkflowStartedPastVanillaBpGetsAnAggregate`, Quarkus
+  `ZenBpmWorkflowLifecycleTest#theEngineStartsAWorkflowOnItsOwn` (past VanillaBP; the timer is held
+  on Spring Boot only, see point 2 of the fit check above).
+- *A task inside a parallel multi-instance sub-process binds element, index and total:* Spring Boot
+  `ZenBpmLifecycleIT#theIterationIsReported`, Quarkus
+  `ZenBpmWorkflowLifecycleTest#multiInstanceBindsElementIndexAndTotal`.
+
+What E9 leaves to the engine: E13.6 (end and cancellation notifications, GAPS 8 and 9), E13.7
+(`loopCounter` and `nrOfInstances`, GAPS 16) and E13.14 (the root key on a job, GAPS 22), all out of
+the pipeline's scope; the adapter's fallbacks above answer until then.

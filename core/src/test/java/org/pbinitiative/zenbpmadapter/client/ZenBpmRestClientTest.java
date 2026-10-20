@@ -20,6 +20,7 @@ import java.net.http.HttpTimeoutException;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -382,6 +383,24 @@ class ZenBpmRestClientTest {
                 () -> assertEquals(Optional.empty(), client.activeElementsOf(2)));
     }
 
+    @Test
+    @DisplayName("The keys of the tokens which stand at one element are read, and a 404 is no instance")
+    void theTokensAtAnElementAreRead() {
+        engine.answers("GET", "/v1/process-instances/1", 200,
+                """
+                        {"key": 1, "processDefinitionKey": 2, "version": 1, "createdAt": "2026-10-13T14:30:25.123Z",
+                         "state": "active", "processType": "default", "variables": {}, "activeElementInstances": [
+                           {"elementInstanceKey": 11, "createdAt": "2026-10-13T14:30:26Z", "state": "TokenStateWaiting", "elementId": "Parcels"},
+                           {"elementInstanceKey": 12, "createdAt": "2026-10-13T14:30:26Z", "state": "TokenStateWaiting", "elementId": "Pack"},
+                           {"elementInstanceKey": 13, "createdAt": "2026-10-13T14:30:27Z", "state": "TokenStateWaiting", "elementId": "Parcels"}]}""");
+        engine.answers("GET", "/v1/process-instances/2", 404, "{\"code\": \"NOT_FOUND\"}");
+
+        assertAll(
+                () -> assertEquals(Optional.of(List.of(11L, 13L)), client.tokensAt(1, "Parcels")),
+                () -> assertEquals(Optional.of(List.of()), client.tokensAt(1, "Ship")),
+                () -> assertEquals(Optional.empty(), client.tokensAt(2, "Parcels")));
+    }
+
     @ParameterizedTest(name = "{0} is {1}")
     @MethodSource("instanceStates")
     @DisplayName("Every state of an instance has its constant")
@@ -554,7 +573,8 @@ class ZenBpmRestClientTest {
     }
 
     @Test
-    @DisplayName("A page of the history is ordered by entry and says whether it is the last one")
+    @DisplayName("A page of the history is ordered by entry, carries what each element was handed, a whole number as a Long and a list unmodifiable as every variable, and says whether it is the last one")
+    @SuppressWarnings("unchecked")
     void aPageOfTheHistory() {
         engine.answers("GET", "/v1/process-instances/1/history", 200, """
                 {"items": [
@@ -562,16 +582,24 @@ class ZenBpmRestClientTest {
                    "completedAt": "2026-10-13T14:30:27Z", "elementId": "StartEvent_1",
                    "elementType": "START_EVENT", "inputVariables": {}},
                   {"key": 12, "processInstanceKey": 1, "createdAt": "2026-10-13T14:30:27Z",
-                   "elementId": "Task_Ship", "elementType": "SERVICE_TASK", "inputVariables": {}}
+                   "elementId": "Task_Ship", "elementType": "SERVICE_TASK",
+                   "inputVariables": {"copy": [1, 2], "parcels": ["a", "b"]}}
                 ], "page": 2, "size": 100, "count": 2, "totalCount": 102}""");
 
         final var page = client.history(1, 2);
 
         assertEquals(List.of(
                 new HistoryEntry(11, "StartEvent_1", "START_EVENT", 1, Instant.parse("2026-10-13T14:30:26Z"), Instant
-                        .parse("2026-10-13T14:30:27Z")),
-                new HistoryEntry(12, "Task_Ship", "SERVICE_TASK", 1, Instant.parse("2026-10-13T14:30:27Z"), null)),
+                        .parse("2026-10-13T14:30:27Z"), Map.of()),
+                new HistoryEntry(12, "Task_Ship", "SERVICE_TASK", 1, Instant.parse("2026-10-13T14:30:27Z"), null, Map
+                        .of("copy", List.of(1L, 2L), "parcels", List.of("a", "b")))),
                 page.items());
+        final var copies = (List<Object>) page
+                .items()
+                .getLast()
+                .inputVariables()
+                .get("copy");
+        assertThrows(UnsupportedOperationException.class, () -> copies.add(3L));
         assertEquals(102, page.totalCount());
         assertTrue(page.last());
         assertEquals(List.of("page=2&size=100&sortBy=createdAt&sortOrder=asc"), queries());
@@ -656,6 +684,30 @@ class ZenBpmRestClientTest {
         assertEquals(List.of(
                 "jobType=orders_order%23ship&state=terminated&processInstanceKey=4503599627370501&page=1&size=10&sortBy=key&sortOrder=asc"),
                 queries());
+    }
+
+    @Test
+    @DisplayName("The jobs of an instance are read page by page to the end, in every state")
+    void theJobsOfAnInstanceAreReadToTheEnd() {
+        engine.answers("GET", "/v1/jobs", exchange -> {
+            final var first = exchange
+                    .getRequestURI()
+                    .getRawQuery()
+                    .contains("page=1&");
+            final var items = first
+                    ? String.join(",", Collections.nCopies(JobFilter.MAXIMUM_SIZE, JOB))
+                    : JOB;
+            FakeEngine.respond(exchange, 200, """
+                    {"partitions": [{"partition": 1, "totalCount": %d, "items": [%s]}], "totalCount": %d}"""
+                    .formatted(JobFilter.MAXIMUM_SIZE + 1, items, JobFilter.MAXIMUM_SIZE + 1));
+        });
+
+        final var jobs = client.jobsOf(4503599627370501L);
+
+        assertEquals(JobFilter.MAXIMUM_SIZE + 1, jobs.size());
+        assertEquals(List.of(
+                "processInstanceKey=4503599627370501&page=1&size=100&sortBy=key&sortOrder=asc",
+                "processInstanceKey=4503599627370501&page=2&size=100&sortBy=key&sortOrder=asc"), queries());
     }
 
     @Test

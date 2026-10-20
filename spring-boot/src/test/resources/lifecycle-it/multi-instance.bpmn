@@ -1,0 +1,129 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL"
+    xmlns:zenbpm="http://zenbpm.pbinitiative.org/1.0" id="multi-instance" targetNamespace="http://bpmn.io/schema/bpmn"
+    xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI"
+    xmlns:dc="http://www.omg.org/spec/DD/20100524/DC"
+    xmlns:di="http://www.omg.org/spec/DD/20100524/DI">
+  <bpmn:process id="Picking" isExecutable="true">
+    <bpmn:startEvent id="Ordered" name="Ordered">
+      <bpmn:outgoing>Flow_ToParcels</bpmn:outgoing>
+    </bpmn:startEvent>
+    <bpmn:subProcess id="Parcels" name="Every parcel at once">
+      <bpmn:incoming>Flow_ToParcels</bpmn:incoming>
+      <bpmn:outgoing>Flow_ToWeighParcel</bpmn:outgoing>
+      <bpmn:multiInstanceLoopCharacteristics>
+        <bpmn:extensionElements>
+          <zenbpm:loopCharacteristics inputCollection="=parcels" inputElement="parcel" />
+        </bpmn:extensionElements>
+      </bpmn:multiInstanceLoopCharacteristics>
+      <bpmn:startEvent id="ParcelStarted">
+        <bpmn:outgoing>Flow_ToPickParcel</bpmn:outgoing>
+      </bpmn:startEvent>
+      <bpmn:serviceTask id="PickParcel" name="Pick the parcel">
+        <bpmn:extensionElements>
+          <zenbpm:taskDefinition type="pickParcel" />
+        </bpmn:extensionElements>
+        <bpmn:incoming>Flow_ToPickParcel</bpmn:incoming>
+        <bpmn:outgoing>Flow_ToParcelPicked</bpmn:outgoing>
+      </bpmn:serviceTask>
+      <bpmn:endEvent id="ParcelPicked">
+        <bpmn:incoming>Flow_ToParcelPicked</bpmn:incoming>
+      </bpmn:endEvent>
+      <bpmn:sequenceFlow id="Flow_ToPickParcel" sourceRef="ParcelStarted" targetRef="PickParcel" />
+      <bpmn:sequenceFlow id="Flow_ToParcelPicked" sourceRef="PickParcel" targetRef="ParcelPicked" />
+    </bpmn:subProcess>
+    <bpmn:serviceTask id="WeighParcel" name="Weigh one parcel after the other">
+      <bpmn:extensionElements>
+        <zenbpm:taskDefinition type="weighParcel" />
+      </bpmn:extensionElements>
+      <bpmn:incoming>Flow_ToWeighParcel</bpmn:incoming>
+      <bpmn:outgoing>Flow_ToLabelParcels</bpmn:outgoing>
+      <bpmn:multiInstanceLoopCharacteristics isSequential="true">
+        <bpmn:extensionElements>
+          <zenbpm:loopCharacteristics inputCollection="=parcels" inputElement="parcel" />
+        </bpmn:extensionElements>
+      </bpmn:multiInstanceLoopCharacteristics>
+    </bpmn:serviceTask>
+    <bpmn:callActivity id="LabelParcels" name="Label every parcel">
+      <bpmn:extensionElements>
+        <zenbpm:calledElement processId="Labelling" />
+      </bpmn:extensionElements>
+      <bpmn:incoming>Flow_ToLabelParcels</bpmn:incoming>
+      <bpmn:outgoing>Flow_ToPicked</bpmn:outgoing>
+      <bpmn:multiInstanceLoopCharacteristics>
+        <bpmn:extensionElements>
+          <zenbpm:loopCharacteristics inputCollection="=parcels" inputElement="parcel" />
+        </bpmn:extensionElements>
+      </bpmn:multiInstanceLoopCharacteristics>
+    </bpmn:callActivity>
+    <bpmn:endEvent id="Picked" name="Picked">
+      <bpmn:incoming>Flow_ToPicked</bpmn:incoming>
+    </bpmn:endEvent>
+    <bpmn:sequenceFlow id="Flow_ToParcels" sourceRef="Ordered" targetRef="Parcels" />
+    <bpmn:sequenceFlow id="Flow_ToWeighParcel" sourceRef="Parcels" targetRef="WeighParcel" />
+    <bpmn:sequenceFlow id="Flow_ToLabelParcels" sourceRef="WeighParcel" targetRef="LabelParcels" />
+    <bpmn:sequenceFlow id="Flow_ToPicked" sourceRef="LabelParcels" targetRef="Picked" />
+  </bpmn:process>
+  <bpmndi:BPMNDiagram id="BPMNDiagram_1">
+    <bpmndi:BPMNPlane id="BPMNPlane_1" bpmnElement="Picking">
+      <bpmndi:BPMNShape id="Ordered_di" bpmnElement="Ordered">
+        <dc:Bounds x="160" y="80" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Parcels_di" bpmnElement="Parcels" isExpanded="true">
+        <dc:Bounds x="256" y="80" width="352" height="140" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="ParcelStarted_di" bpmnElement="ParcelStarted">
+        <dc:Bounds x="286" y="110" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="PickParcel_di" bpmnElement="PickParcel">
+        <dc:Bounds x="382" y="110" width="100" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="ParcelPicked_di" bpmnElement="ParcelPicked">
+        <dc:Bounds x="542" y="110" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="WeighParcel_di" bpmnElement="WeighParcel">
+        <dc:Bounds x="668" y="80" width="100" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="LabelParcels_di" bpmnElement="LabelParcels">
+        <dc:Bounds x="828" y="80" width="100" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Picked_di" bpmnElement="Picked">
+        <dc:Bounds x="988" y="80" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNEdge id="Flow_ToPickParcel_di" bpmnElement="Flow_ToPickParcel">
+        <di:waypoint x="322" y="128" />
+        <di:waypoint x="352" y="128" />
+        <di:waypoint x="352" y="150" />
+        <di:waypoint x="382" y="150" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_ToParcelPicked_di" bpmnElement="Flow_ToParcelPicked">
+        <di:waypoint x="482" y="150" />
+        <di:waypoint x="512" y="150" />
+        <di:waypoint x="512" y="128" />
+        <di:waypoint x="542" y="128" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_ToParcels_di" bpmnElement="Flow_ToParcels">
+        <di:waypoint x="196" y="98" />
+        <di:waypoint x="226" y="98" />
+        <di:waypoint x="226" y="150" />
+        <di:waypoint x="256" y="150" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_ToWeighParcel_di" bpmnElement="Flow_ToWeighParcel">
+        <di:waypoint x="608" y="150" />
+        <di:waypoint x="638" y="150" />
+        <di:waypoint x="638" y="120" />
+        <di:waypoint x="668" y="120" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_ToLabelParcels_di" bpmnElement="Flow_ToLabelParcels">
+        <di:waypoint x="768" y="120" />
+        <di:waypoint x="828" y="120" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_ToPicked_di" bpmnElement="Flow_ToPicked">
+        <di:waypoint x="928" y="120" />
+        <di:waypoint x="958" y="120" />
+        <di:waypoint x="958" y="98" />
+        <di:waypoint x="988" y="98" />
+      </bpmndi:BPMNEdge>
+    </bpmndi:BPMNPlane>
+  </bpmndi:BPMNDiagram>
+</bpmn:definitions>

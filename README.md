@@ -186,7 +186,9 @@ its own: a service task whose job tells the platform that a workflow started (de
 [`DECISIONS.md`](./DECISIONS.md)). A workflow a timer started, or one somebody started past
 VanillaBP without a business key, gets the aggregate the application's `@WorkflowStartedByBpms`
 method builds and names. Its id is written into the instance before the workflow goes on, and the
-workflow is found later through the instance key of its start. A second delivery of the marker reads
+workflow is found later through the instance key of its start
+(`ZenBpmLifecycleIT#aWorkflowStartedPastVanillaBpGetsAnAggregate`, on Quarkus
+`ZenBpmWorkflowLifecycleTest#theEngineStartsAWorkflowOnItsOwn`). A second delivery of the marker reads
 that id from the instance, because the engine hands a job out with the variables it was created
 with, and builds nothing; it builds a second aggregate only where a node which has not seen the
 update yet answers that read (decision 46). A workflow the application started itself passes its
@@ -202,7 +204,8 @@ there the model hands on whatever name the called workflow is to start with.
 A claimed process whose end the application listens to, through a `@WorkflowEnded` method or
 `vanillabp.delivery.release-on-workflow-end`, gets an end marker in front of every none, message and
 terminate end event of its own (decision 52). Its job reports the end with the end event's id
-(`ZenBpmLifecycleIT#theEndOfAWorkflowIsReportedWithItsEndEvent`), after the platform told every task
+(`ZenBpmLifecycleIT#theEndOfAWorkflowIsReportedWithItsEndEvent`, on Quarkus
+`ZenBpmWorkflowLifecycleTest#theWorkflowEndIsReported`), after the platform told every task
 it believed open in the workflow as cancelled, a task inside an embedded sub-process included, and
 the instance ends only once the report committed (`#theEndCancelsTheTasksStillOpen`). An end event
 which ends one branch while another branch of the workflow still runs reports nothing, and the end
@@ -230,6 +233,39 @@ report (`#anEndNobodyListensToAnyMoreIsCompletedWithoutAReport`). A report costs
 transaction for the end and one for each task still open, a read of the instance's tokens and of its
 child instances, and a read of the model once per version; a message end event's own task runs after
 the report, and two branches whose end markers wait at the same time may report the end twice.
+
+A task inside a multi-instance element is told the iteration it runs in, through
+`@MultiInstanceElement`, `@MultiInstanceIndex` and `@MultiInstanceTotal` named after the id of the
+multi-instance element (decision 54). ZenBPM hands a job neither an index nor a total (see
+[`GAPS.md`](./GAPS.md)), so the adapter reads them from the instances the engine keeps of the
+element, only where a method asks for one and once for all its parameters
+(`ZenBpmJobHandlerTest#theIterationsAreReadOnceWhereTheMethodAsksForThem`). The element is the item
+of the iteration, the index counts from 0 in the order the engine handed out the items, and the
+total is the size of the collection the engine iterates over, as it evaluated it when the element
+was entered, also where the aggregate's list changed since
+(`ZenBpmMultiInstanceIT#aCollectionChangedWhileTheIterationsRunKeepsItsTotal`): for an iteration of
+a parallel multi-instance sub-process
+(`ZenBpmLifecycleIT#theIterationIsReported`) and of a sequential multi-instance task
+(`#theIterationsOfASequentialTaskAreReportedOneAfterTheOther`), on Quarkus both in
+`ZenBpmWorkflowLifecycleTest#multiInstanceBindsElementIndexAndTotal`. A collection written as an
+expression is counted as well (`ZenBpmMultiInstanceIT#aCollectionWrittenAsAnExpressionIsCounted`).
+Where two activations of the same element wait in one instance at once over collections of
+different sizes, the total is `-1`, as Camunda 8 reports a total it cannot tell
+(`ZenBpmMultiInstanceTest#twoActivationsOfDifferentSizesHaveNoTotal`). Nested iterations are told
+the outermost first (`#nestedIterationsAreToldOutermostFirst`). A task of a process which an
+iteration of a multi-instance call activity started is told the caller's iteration as well
+(`ZenBpmLifecycleIT#aCalledProcessIsToldTheIterationOfItsCaller`); where the caller's model calls
+the process from two call activities, from the one the caller waits at
+(`ZenBpmMultiInstanceTest#aCallerWithTwoCallsOfTheProcessIsToldTheOneItsBodyWaitsAt`), and where it
+waits at neither, the caller's iterations are not told, which a WARN says once
+(`#aCallerWithTwoCallsOfTheProcessWhichWaitsAtNoneIsNotTold`). A user task is told its
+iteration as a job is (`ZenBpmUserTaskPollerTest#aUserTaskInAnIterationIsToldItsIteration`). The
+reads cost the model once per version, the instance the element stands in and its history once per
+body (again at the next ask where the total could not be read,
+`ZenBpmMultiInstanceTest#aTotalWhichCouldNotBeReadIsReadAgain`), and the list of its iterations once per body and once more for every iteration of a sequential
+element; a read which fails fails
+the delivery like a method which threw
+(`ZenBpmJobHandlerTest#aReadOfTheIterationsWhichFailsFailsTheJob`).
 
 A message is correlated in two phases. Phase one never asks the engine whether
 something waits. It refuses where the application calls a message which no version the engine holds

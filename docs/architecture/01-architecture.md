@@ -283,7 +283,7 @@ ZenBpmJobHandler:
             businessKey = facts.businessKey,
             aggregateId = facts.variables[idName] ?? facts.businessKey, taskId = job.key,
             deliveryId = job.key, activationId = job.key, processVersion = facts.version, adapterId,
-            taskParameters = job.input_variables, multiInstances = from parent chain,
+            taskParameters = job.input_variables, multiInstances = read from the bodies above on first ask,
             predatesDeployedVersion = facts.version < deployed }
   outcome = workflowTaskInvoker.invokeWorkflowTask(module, plainProcess, context)   (own transaction)
   COMPLETED           → PATCH /process-instances/{key}/variables {shared values + id var} for the
@@ -598,7 +598,7 @@ org.pbinitiative.zenbpmadapter
   wiring/ZenBpmUserTaskNotifier        section 4.6: tells a module's application about a user task
   wiring/ZenBpmWorkflowEndedHandler    marker job -> WorkflowEndedInvoker
   wiring/ZenBpmBpmsInitiatedStartHandler marker job -> BpmsInitiatedStartInvoker
-  wiring/ZenBpmMultiInstance           iteration facts from the instance cache and child lists
+  wiring/ZenBpmMultiInstance           getMultiInstances: the body's iterations (children or jobs), decision 54
   wiring/ZenBpmDrain                   handlers in flight per module
   health/ZenBpmHealth
   observability/ZenBpmMetrics, MicrometerZenBpmMetrics

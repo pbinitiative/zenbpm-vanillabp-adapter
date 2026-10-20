@@ -73,10 +73,14 @@ public record ProcessInstanceRef(
         /** A start of the process itself: a request, a message or a timer. */
         DEFAULT,
 
-        /** One iteration of a multi-instance element. */
+        /**
+         * The body of one activation of a multi-instance element, which holds its iterations: the
+         * jobs of a multi-instance task, the child instances of a multi-instance sub-process or
+         * call activity.
+         */
         MULTI_INSTANCE,
 
-        /** An embedded sub-process. */
+        /** An embedded or event sub-process, or one iteration of a multi-instance sub-process. */
         SUBPROCESS,
 
         /** A call activity. */

@@ -12,6 +12,10 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.IOException;
+import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
@@ -37,6 +41,7 @@ import org.testcontainers.DockerClientFactory;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
 import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 
 import io.quarkus.test.QuarkusProdModeTest;
 import io.restassured.RestAssured;
@@ -61,7 +66,12 @@ import io.vanillabp.integration.test.utils.SuppressOutputExtension;
  * fixture, has a user task which the adapter looks for every second, tells the application of once
  * when it is created, and which the application completes, after which the gateway behind it decides
  * on what the application shared, or cancels with a BPMN error, which the error boundary event of
- * the user task catches and which the application is told of once as a cancellation.
+ * the user task catches and which the application is told of once as a cancellation. The process
+ * <code>Packing</code>, a copy of the Spring Boot multi-instance fixture, tells the tasks of a
+ * parallel multi-instance sub-process and of a sequential multi-instance task their item, index and
+ * total, and reports its end with its end event; the process <code>Receiving</code>, which somebody
+ * starts past VanillaBP, gets the aggregate the application's method builds and is found afterwards
+ * through its start row.
  * <p>
  * The Spring Boot integration tests prove the same, and that is the point: a correct core says
  * nothing about whether the glue of a platform ever calls it, which is why coverage is measured per
@@ -103,6 +113,8 @@ class ZenBpmWorkflowLifecycleTest {
 
     private static final EngineUnderTest ENGINE = new EngineUnderTest();
 
+    private static final ObjectMapper JSON = new ObjectMapper();
+
     // JUnit initializes the field below to register the extension before it decides that the class
     // is skipped without Docker, so nothing on the way may need the container then
     private static final boolean DOCKER_IS_THERE = DockerClientFactory
@@ -138,6 +150,8 @@ class ZenBpmWorkflowLifecycleTest {
                     .addAsResource("zenbpm-e2e/processes/zenbpm/Postcards.bpmn")
                     .addAsResource("zenbpm-e2e/processes/zenbpm/Shipments.bpmn")
                     .addAsResource("zenbpm-e2e/processes/zenbpm/Reviews.bpmn")
+                    .addAsResource("zenbpm-e2e/processes/zenbpm/Packing.bpmn")
+                    .addAsResource("zenbpm-e2e/processes/zenbpm/Receiving.bpmn")
                     .addAsResource("workflow-module-descriptor/workflow-module", "META-INF/workflow-module"))
             // the surefire configuration of this module hands 'jacoco.agent' to this JVM
             .setJVMArgs(testCoverageJavaAgent(quarkusProdModeTestDefaults()))
@@ -607,6 +621,84 @@ class ZenBpmWorkflowLifecycleTest {
                 () -> assertEquals(1, review.get("cancellations"), review::toString));
     }
 
+    @Test
+    @DisplayName("The end of a workflow reaches the application's @WorkflowEnded method with its end event, after which the instance completes, and the boot subscribed the type of the end markers")
+    void theWorkflowEndIsReported() {
+        final var id = uniqueAggregateId();
+        final var subscribed = applicationLog()
+                .lines()
+                .filter(line -> line
+                        .contains("ZenBPM[zenbpm]: workflow module 'zenbpm-e2e' subscribed the job type(s) "))
+                .findFirst()
+                .orElse("");
+
+        post("introspect/lifecycle/packings/%s".formatted(id));
+        final var endEvent = await(() -> Optional
+                .of((String) object("introspect/lifecycle/packings/%s".formatted(id)).get("endEvent"))
+                .filter(reported -> !reported.isEmpty()), "the end of packing '%s'".formatted(id));
+        final var ended = awaitTheEndOfInstance(awaitTheRootOf(id));
+
+        assertAll(
+                () -> assertEquals("Packed", endEvent),
+                () -> assertEquals("completed", ended
+                        .path("state")
+                        .asText()),
+                () -> assertTrue(subscribed.contains("vanillabp__ended__zenbpm-e2e__Packing"), subscribed));
+    }
+
+    @Test
+    @DisplayName("A workflow somebody started over the engine's REST API without a business key gets the aggregate the application's @WorkflowStartedByBpms method built and named, and is found afterwards through its start row, so a correlation reaches it")
+    void theEngineStartsAWorkflowOnItsOwn() throws IOException, InterruptedException {
+        final var orderRef = "order-%s".formatted(UUID.randomUUID());
+
+        final var started = startPastVanillaBp(orderRef);
+        final var receipt = await(() -> receiptOf(orderRef), "the receipt of order '%s'".formatted(orderRef));
+        final var startRow = await(() -> Optional
+                .of(object("introspect/lifecycle/receipts/%s/start-row".formatted(orderRef)))
+                .filter(row -> !row.isEmpty()), "the start row of order '%s'".formatted(orderRef));
+        await(() -> waitingElementsOf(started).contains("Unloaded"), "the receipt of order '%s' to await the unloading"
+                .formatted(orderRef));
+        post("introspect/lifecycle/receipts/%s/unloaded".formatted(orderRef));
+        final var ended = awaitTheEndOfInstance(started);
+
+        assertAll(
+                () -> assertEquals("receipt-%s".formatted(orderRef), receipt.get("id")),
+                () -> assertEquals(orderRef, receipt.get("orderRef")),
+                () -> assertEquals(started, startRow.get("workflowId")),
+                () -> assertEquals("Receiving", startRow.get("bpmnProcessId")),
+                () -> assertTrue(ended
+                        .path("businessKey")
+                        .asText()
+                        .isEmpty(), ended::toPrettyString),
+                () -> assertEquals("receipt-%s".formatted(orderRef), ended
+                        .path("variables")
+                        .path("id")
+                        .asText()),
+                () -> assertEquals("completed", ended
+                        .path("state")
+                        .asText()));
+    }
+
+    @Test
+    @DisplayName("The tasks of a parallel multi-instance sub-process over three items and of a sequential multi-instance task are told the item, the index counted from 0 and the total of their iteration")
+    void multiInstanceBindsElementIndexAndTotal() {
+        final var id = uniqueAggregateId();
+
+        post("introspect/lifecycle/packings/%s".formatted(id));
+        final var told = await(() -> Optional
+                .of(object("introspect/lifecycle/packings/%s".formatted(id)))
+                .filter(packing -> ((List<?>) packing.get("weighed")).size() == 3), "the weighing of packing '%s'"
+                        .formatted(id));
+
+        assertAll(
+                () -> assertEquals(List.of("a:0/3", "b:1/3", "c:2/3"), ((List<?>) told.get("packed"))
+                        .stream()
+                        .map(String::valueOf)
+                        .sorted()
+                        .toList()),
+                () -> assertEquals(List.of("a:0/3", "b:1/3", "c:2/3"), told.get("weighed")));
+    }
+
     // the ids of every test are new, because all tests of the class share one engine
     private static String uniqueAggregateId() {
         return "e2e-%s".formatted(UUID.randomUUID());
@@ -656,6 +748,38 @@ class ZenBpmWorkflowLifecycleTest {
                         .path("elementId")
                         .asText()));
         return waiting;
+    }
+
+    // the adapter's client is not on the test's classpath, and the engine's helper only reads
+    private static String startPastVanillaBp(final String orderRef) throws IOException, InterruptedException {
+        try (var client = HttpClient.newHttpClient()) {
+            final var answer = client.send(HttpRequest
+                    .newBuilder(URI.create("%s/v1/process-instances".formatted(ENGINE.restAddress())))
+                    .header("Content-Type", "application/json")
+                    .POST(HttpRequest.BodyPublishers.ofString("""
+                            {"bpmnProcessId": "zenbpm-e2e__Receiving", "variables": {"orderRef": "%s"}}"""
+                            .formatted(orderRef)))
+                    .build(), HttpResponse.BodyHandlers.ofString());
+            assertEquals(201, answer.statusCode(), answer::body);
+            return JSON
+                    .readTree(answer.body())
+                    .path("key")
+                    .asText();
+        }
+    }
+
+    // empty while the application built no receipt for the order
+    @SuppressWarnings("unchecked")
+    private static Optional<Map<String, Object>> receiptOf(final String orderRef) {
+        final var answer = api().get("introspect/lifecycle/receipts/%s".formatted(orderRef));
+        if (answer.statusCode() == 404) {
+            return Optional.empty();
+        }
+        return Optional.of(answer
+                .then()
+                .statusCode(200)
+                .extract()
+                .as(Map.class));
     }
 
     private static Map<String, Object> awaitTheInstanceOf(final String id) {

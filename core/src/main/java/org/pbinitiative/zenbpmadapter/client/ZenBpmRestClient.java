@@ -357,6 +357,35 @@ public class ZenBpmRestClient implements AutoCloseable {
     }
 
     /**
+     * The keys of the tokens which stand at one element of a process instance now (the
+     * <code>activeElementInstances</code> of <code>GET /v1/process-instances/{key}</code>). The
+     * token which waits for the iterations of a multi-instance element stands at that element under
+     * the key of the element's entry in the instance's history.
+     *
+     * @param key The process instance key
+     * @param elementId The element
+     * @return The keys, empty where the engine answers 404
+     * @throws ZenBpmApiException With status 502 where the key names a partition the engine does
+     *             not have: a key carries the partition which holds it
+     */
+    public Optional<List<Long>> tokensAt(
+        final long key,
+        final String elementId
+    ) {
+        final var call = new Call(GET, "/v1/process-instances/%d".formatted(key));
+        final var answer = call.send(SUCCESS_OR_NOT_FOUND);
+        if (answer.status() == 404) {
+            return Optional.empty();
+        }
+        return Optional.of(call.decoded(answer, ZenBpmWire.ProcessInstanceActivations.class, read -> read
+                .activeElementInstances()
+                .stream()
+                .filter(token -> elementId.equals(token.elementId()))
+                .map(ZenBpmWire.Activation::elementInstanceKey)
+                .toList()));
+    }
+
+    /**
      * One page of a search for process instances (<code>GET /v1/process-instances</code>),
      * ordered by key within each partition of the engine. The page size applies per partition;
      * {@link Page#totalCount()} counts every match.
@@ -479,6 +508,20 @@ public class ZenBpmRestClient implements AutoCloseable {
         return call.decoded(call.send(SUCCESS), ZenBpmWire.JobPartitionPage.class,
                 read -> partitionedPage(read.partitions(), read.totalCount(), filter.page(), filter.size(),
                         ZenBpmRestClient::jobRef));
+    }
+
+    /**
+     * The jobs of one process instance in every state (<code>GET /v1/jobs</code>), read page by
+     * page to the end. The jobs of its child instances are not among them.
+     *
+     * @param instanceKey The key of the instance
+     * @return The jobs, ordered by key within each partition of the engine
+     */
+    public List<JobRef> jobsOf(final long instanceKey) {
+        return everyPage(page -> jobs(JobFilter
+                .anyJob()
+                .withProcessInstanceKey(instanceKey)
+                .withPage(page)));
     }
 
     /**
@@ -805,7 +848,8 @@ public class ZenBpmRestClient implements AutoCloseable {
         final var completedAt = entry.completedAt() == null
                 ? null
                 : Instant.parse(entry.completedAt());
-        return new HistoryEntry(key, elementId, elementType, instanceKey, createdAt, completedAt);
+        return new HistoryEntry(key, elementId, elementType, instanceKey, createdAt, completedAt, variables(entry
+                .inputVariables()));
     }
 
     private static ProcessInstanceRef processInstanceRef(final ZenBpmWire.ProcessInstance instance) {

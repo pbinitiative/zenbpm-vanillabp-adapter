@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL"
+    xmlns:zenbpm="http://zenbpm.pbinitiative.org/1.0" id="receiving" targetNamespace="http://bpmn.io/schema/bpmn"
+    xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI"
+    xmlns:dc="http://www.omg.org/spec/DD/20100524/DC"
+    xmlns:di="http://www.omg.org/spec/DD/20100524/DI">
+  <bpmn:message id="Message_Unloaded" name="unloaded" />
+  <bpmn:process id="Receiving" isExecutable="true">
+    <bpmn:startEvent id="Arrived" name="Arrived">
+      <bpmn:outgoing>Flow_ToUnloaded</bpmn:outgoing>
+    </bpmn:startEvent>
+    <bpmn:intermediateCatchEvent id="Unloaded" name="Unloaded">
+      <bpmn:incoming>Flow_ToUnloaded</bpmn:incoming>
+      <bpmn:outgoing>Flow_ToReceived</bpmn:outgoing>
+      <bpmn:messageEventDefinition id="Unloaded_Definition" messageRef="Message_Unloaded" />
+    </bpmn:intermediateCatchEvent>
+    <bpmn:endEvent id="Received" name="Received">
+      <bpmn:incoming>Flow_ToReceived</bpmn:incoming>
+    </bpmn:endEvent>
+    <bpmn:sequenceFlow id="Flow_ToUnloaded" sourceRef="Arrived" targetRef="Unloaded" />
+    <bpmn:sequenceFlow id="Flow_ToReceived" sourceRef="Unloaded" targetRef="Received" />
+  </bpmn:process>
+  <bpmndi:BPMNDiagram id="BPMNDiagram_1">
+    <bpmndi:BPMNPlane id="BPMNPlane_1" bpmnElement="Receiving">
+      <bpmndi:BPMNShape id="Arrived_di" bpmnElement="Arrived">
+        <dc:Bounds x="160" y="80" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Unloaded_di" bpmnElement="Unloaded">
+        <dc:Bounds x="256" y="80" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Received_di" bpmnElement="Received">
+        <dc:Bounds x="352" y="80" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNEdge id="Flow_ToUnloaded_di" bpmnElement="Flow_ToUnloaded">
+        <di:waypoint x="196" y="98" />
+        <di:waypoint x="256" y="98" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_ToReceived_di" bpmnElement="Flow_ToReceived">
+        <di:waypoint x="292" y="98" />
+        <di:waypoint x="352" y="98" />
+      </bpmndi:BPMNEdge>
+    </bpmndi:BPMNPlane>
+  </bpmndi:BPMNDiagram>
+</bpmn:definitions>

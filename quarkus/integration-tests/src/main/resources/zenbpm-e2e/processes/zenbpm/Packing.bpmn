@@ -1,0 +1,109 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL"
+    xmlns:zenbpm="http://zenbpm.pbinitiative.org/1.0" id="packing" targetNamespace="http://bpmn.io/schema/bpmn"
+    xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI"
+    xmlns:dc="http://www.omg.org/spec/DD/20100524/DC"
+    xmlns:di="http://www.omg.org/spec/DD/20100524/DI">
+  <bpmn:process id="Packing" isExecutable="true">
+    <bpmn:startEvent id="Ordered" name="Ordered">
+      <bpmn:outgoing>Flow_ToItems</bpmn:outgoing>
+    </bpmn:startEvent>
+    <bpmn:subProcess id="Items" name="Every item at once">
+      <bpmn:incoming>Flow_ToItems</bpmn:incoming>
+      <bpmn:outgoing>Flow_ToWeighItem</bpmn:outgoing>
+      <bpmn:multiInstanceLoopCharacteristics>
+        <bpmn:extensionElements>
+          <zenbpm:loopCharacteristics inputCollection="=items" inputElement="item" />
+        </bpmn:extensionElements>
+      </bpmn:multiInstanceLoopCharacteristics>
+      <bpmn:startEvent id="ItemStarted">
+        <bpmn:outgoing>Flow_ToPackItem</bpmn:outgoing>
+      </bpmn:startEvent>
+      <bpmn:serviceTask id="PackItem" name="Pack the item">
+        <bpmn:extensionElements>
+          <zenbpm:taskDefinition type="packItem" />
+        </bpmn:extensionElements>
+        <bpmn:incoming>Flow_ToPackItem</bpmn:incoming>
+        <bpmn:outgoing>Flow_ToItemPacked</bpmn:outgoing>
+      </bpmn:serviceTask>
+      <bpmn:endEvent id="ItemPacked">
+        <bpmn:incoming>Flow_ToItemPacked</bpmn:incoming>
+      </bpmn:endEvent>
+      <bpmn:sequenceFlow id="Flow_ToPackItem" sourceRef="ItemStarted" targetRef="PackItem" />
+      <bpmn:sequenceFlow id="Flow_ToItemPacked" sourceRef="PackItem" targetRef="ItemPacked" />
+    </bpmn:subProcess>
+    <bpmn:serviceTask id="WeighItem" name="Weigh one item after the other">
+      <bpmn:extensionElements>
+        <zenbpm:taskDefinition type="weighItem" />
+      </bpmn:extensionElements>
+      <bpmn:incoming>Flow_ToWeighItem</bpmn:incoming>
+      <bpmn:outgoing>Flow_ToPacked</bpmn:outgoing>
+      <bpmn:multiInstanceLoopCharacteristics isSequential="true">
+        <bpmn:extensionElements>
+          <zenbpm:loopCharacteristics inputCollection="=items" inputElement="item" />
+        </bpmn:extensionElements>
+      </bpmn:multiInstanceLoopCharacteristics>
+    </bpmn:serviceTask>
+    <bpmn:endEvent id="Packed" name="Packed">
+      <bpmn:incoming>Flow_ToPacked</bpmn:incoming>
+    </bpmn:endEvent>
+    <bpmn:sequenceFlow id="Flow_ToItems" sourceRef="Ordered" targetRef="Items" />
+    <bpmn:sequenceFlow id="Flow_ToWeighItem" sourceRef="Items" targetRef="WeighItem" />
+    <bpmn:sequenceFlow id="Flow_ToPacked" sourceRef="WeighItem" targetRef="Packed" />
+  </bpmn:process>
+  <bpmndi:BPMNDiagram id="BPMNDiagram_1">
+    <bpmndi:BPMNPlane id="BPMNPlane_1" bpmnElement="Packing">
+      <bpmndi:BPMNShape id="Ordered_di" bpmnElement="Ordered">
+        <dc:Bounds x="160" y="80" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Items_di" bpmnElement="Items" isExpanded="true">
+        <dc:Bounds x="256" y="80" width="352" height="140" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="ItemStarted_di" bpmnElement="ItemStarted">
+        <dc:Bounds x="286" y="110" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="PackItem_di" bpmnElement="PackItem">
+        <dc:Bounds x="382" y="110" width="100" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="ItemPacked_di" bpmnElement="ItemPacked">
+        <dc:Bounds x="542" y="110" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="WeighItem_di" bpmnElement="WeighItem">
+        <dc:Bounds x="668" y="80" width="100" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Packed_di" bpmnElement="Packed">
+        <dc:Bounds x="828" y="80" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNEdge id="Flow_ToPackItem_di" bpmnElement="Flow_ToPackItem">
+        <di:waypoint x="322" y="128" />
+        <di:waypoint x="352" y="128" />
+        <di:waypoint x="352" y="150" />
+        <di:waypoint x="382" y="150" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_ToItemPacked_di" bpmnElement="Flow_ToItemPacked">
+        <di:waypoint x="482" y="150" />
+        <di:waypoint x="512" y="150" />
+        <di:waypoint x="512" y="128" />
+        <di:waypoint x="542" y="128" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_ToItems_di" bpmnElement="Flow_ToItems">
+        <di:waypoint x="196" y="98" />
+        <di:waypoint x="226" y="98" />
+        <di:waypoint x="226" y="150" />
+        <di:waypoint x="256" y="150" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_ToWeighItem_di" bpmnElement="Flow_ToWeighItem">
+        <di:waypoint x="608" y="150" />
+        <di:waypoint x="638" y="150" />
+        <di:waypoint x="638" y="120" />
+        <di:waypoint x="668" y="120" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_ToPacked_di" bpmnElement="Flow_ToPacked">
+        <di:waypoint x="768" y="120" />
+        <di:waypoint x="798" y="120" />
+        <di:waypoint x="798" y="98" />
+        <di:waypoint x="828" y="98" />
+      </bpmndi:BPMNEdge>
+    </bpmndi:BPMNPlane>
+  </bpmndi:BPMNDiagram>
+</bpmn:definitions>

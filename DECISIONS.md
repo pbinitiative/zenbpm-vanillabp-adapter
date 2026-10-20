@@ -1343,3 +1343,61 @@ application hears that cancellation twice
 (`ZenBpmUserTaskRestartIT#aUserTaskTheEndTookAwayIsToldTwiceWhereTheEndReleasesTheRecords`). The
 platform delivers every notification at least once, and a method which takes `CANCELED` has to bear
 a second one there.
+
+### 54. The iteration a task runs in is read from the multi-instance body, and only where a method asks for it
+
+Decided by the implementation pipeline in place of the maintainers, as their policy for the
+autonomous run asks.
+
+ZenBPM hands a job no index and no total of the iteration it runs in, and no `loopCounter` or
+`nrOfInstances` variable either (GAPS 16). What it keeps, measured on the pinned engine
+(`ZenBpmRestClientContractIT#theIterationsOfAMultiInstanceElementAreKeptInTheOrderOfTheirItems`), is
+one body per activation of a multi-instance element: an instance of the process type
+`multiInstance` under the instance the element stands in, which holds a copy of that instance's
+variables. An iteration of a multi-instance sub-process or call activity is a child instance of the
+body, which holds the item; an iteration of a multi-instance task is a job of the body, which carries
+the item. The body creates one iteration after the other, each with the item at the number of
+iterations created before it, and an iteration which ended stays listed until the body ended. The
+collection the iterations take their items from is evaluated once, when the element is entered,
+and kept in the history of the instance the element stands in, at the entry of the token which
+waits there for the iterations, under the name of the input element (`""` where the element names
+none); the engine reads it from there for every iteration, never from the body
+(`ZenBpmRestClientContractIT#theCollectionOfAnActivationIsKeptInTheHistory`).
+
+So `ZenBpmMultiInstance` answers `getMultiInstances()` by walking up from the job's instance: every
+body met is the next multi-instance element around the job, from the inside out, as the model of the
+instance's version tells it, read once per version. The index is the position of the job's
+iteration among the iterations of its body, ordered by the moment the engine created them and then
+by key; the element is the item of that iteration; the total is the size of the collection the
+engine iterates over, read from that entry of the history, whatever expression the modeller wrote.
+The body's copy of the variables is no source for it: a completion writes the aggregate's values
+into every instance up to the workflow and a push into every instance below it (decision 49), so
+the copy holds the aggregate's list as it is now, while the engine goes on with the list it
+evaluated (`ZenBpmMultiInstanceIT#aCollectionChangedWhileTheIterationsRunKeepsItsTotal`). Where
+the instance shows no token at the element, the history holds no list for it, or two activations of
+the element wait at once over collections of different sizes, the total is `-1`, as Camunda 8
+reports a total it cannot tell. The map is keyed by the ids of the multi-instance elements, the
+outermost first. The iterations of a body and its total are kept, bounded by
+`instance-cache-max-entries`; the iterations are read again where the iteration asked about is not
+among them yet, as the next iteration of a sequential element, and a total of `-1` is read again at
+the next ask, because a node which lagged behind may have caused it.
+
+Where the walk meets an instance a call activity started, it goes on in the caller: the called
+process runs in the caller's iterations, which the platform asks for as names the called model does
+not know. The caller's call activity is the one of the caller's model which calls the process and
+iterates exactly where the called instance hangs under a body; where the caller's model calls the
+process from more than one such call activity, the one at which the instance the called one hangs
+under waits. Where that leaves none or more than one, the walk stops there, the caller's iterations
+are not told, and a WARN says once per version and called process how to have them told.
+
+Camunda 8 writes input mappings at deployment instead, so that every job carries its index, total
+and element without a read. ZenBPM has no `loopCounter` for an index mapping to read, and decision 26
+keeps the rewriting of a model to what VanillaBP needs; a mapping of the total alone would still
+leave a read for the index. The core asks `getMultiInstances()` only where a parameter of the method
+binds an iteration, so the reads are made only then, on the handler thread inside the platform's
+transaction, once per delivery for all parameters of the method; a job outside every multi-instance
+element costs its walk up and no read of a model. A read which fails, through the delivery's
+repetition bounded by the job's lock, fails the method's invocation as an exception of the method
+would, so the job is failed with its `retry-backoff`. The notification of a user task reads its
+iterations the same way. Once the engine hands out `loopCounter` and `nrOfInstances`, the walk
+goes.
