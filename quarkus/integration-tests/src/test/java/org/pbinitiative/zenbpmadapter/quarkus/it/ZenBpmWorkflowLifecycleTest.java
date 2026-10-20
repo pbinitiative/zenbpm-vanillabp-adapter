@@ -16,6 +16,7 @@ import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
@@ -35,6 +36,9 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.junit.jupiter.api.extension.RegisterExtension;
+import org.pbinitiative.zenbpmadapter.client.ZenBpmAdapterConfiguration;
+import org.pbinitiative.zenbpmadapter.client.ZenBpmRestClient;
+import org.pbinitiative.zenbpmadapter.client.api.CreateInstanceRequest;
 import org.pbinitiative.zenbpmadapter.test.EngineLog;
 import org.pbinitiative.zenbpmadapter.test.EngineUnderTest;
 import org.testcontainers.DockerClientFactory;
@@ -46,6 +50,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import io.quarkus.test.QuarkusProdModeTest;
 import io.restassured.RestAssured;
 import io.restassured.specification.RequestSpecification;
+import io.vanillabp.integration.adapter.migration.workflowtask.DeployedProcessVersionsCheck;
 import io.vanillabp.integration.test.utils.OneFreePortPerJvm;
 import io.vanillabp.integration.test.utils.SuppressOutputExtension;
 
@@ -71,7 +76,15 @@ import io.vanillabp.integration.test.utils.SuppressOutputExtension;
  * parallel multi-instance sub-process and of a sequential multi-instance task their item, index and
  * total, and reports its end with its end event; the process <code>Receiving</code>, which somebody
  * starts past VanillaBP, gets the aggregate the application's method builds and is found afterwards
- * through its start row.
+ * through its start row. The process <code>Dispatching</code>, a copy of the Spring Boot viewer
+ * fixture, is shown by the viewer/history API: its definitions and that of the process it calls, the
+ * BPMN of both, its history and, through the history context of its call activity, the history of
+ * the instance it called. Version 1 of the processes <code>Sorting</code> and <code>Storing</code> is
+ * deployed before the application starts, and a workflow of <code>Storing</code> started on it, as an
+ * earlier version of the application would have, so the application deploys version 2 of each: a
+ * task of either version of <code>Sorting</code> runs the method of its version's tag, and the boot names
+ * the older version of <code>Storing</code>, its workflow, the task no method serves any more and
+ * what that workflow misses.
  * <p>
  * The Spring Boot integration tests prove the same, and that is the point: a correct core says
  * nothing about whether the glue of a platform ever calls it, which is why coverage is measured per
@@ -130,6 +143,62 @@ class ZenBpmWorkflowLifecycleTest {
         }
     }
 
+    /**
+     * Version 1 of <code>Sorting</code>, tagged <code>old-belt</code>, as an earlier version of the
+     * application deployed it, under the prefixed id and job type the adapter gives the process of
+     * the module.
+     */
+    private static final String SORTING_VERSION_ONE = """
+            <bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL"
+                xmlns:zenbpm="http://zenbpm.pbinitiative.org/1.0" id="sorting-v1" targetNamespace="x">
+              <bpmn:process id="zenbpm-e2e__Sorting" isExecutable="true">
+                <bpmn:extensionElements><zenbpm:versionTag value="old-belt" /></bpmn:extensionElements>
+                <bpmn:startEvent id="Start"><bpmn:outgoing>Flow_ToSort</bpmn:outgoing></bpmn:startEvent>
+                <bpmn:serviceTask id="Sort" name="Sort on the old belt">
+                  <bpmn:extensionElements><zenbpm:taskDefinition type="zenbpm-e2e__Sorting__sort" /></bpmn:extensionElements>
+                  <bpmn:incoming>Flow_ToSort</bpmn:incoming>
+                  <bpmn:outgoing>Flow_ToEnd</bpmn:outgoing>
+                </bpmn:serviceTask>
+                <bpmn:endEvent id="End"><bpmn:incoming>Flow_ToEnd</bpmn:incoming></bpmn:endEvent>
+                <bpmn:sequenceFlow id="Flow_ToSort" sourceRef="Start" targetRef="Sort" />
+                <bpmn:sequenceFlow id="Flow_ToEnd" sourceRef="Sort" targetRef="End" />
+              </bpmn:process>
+            </bpmn:definitions>
+            """;
+
+    /**
+     * Version 1 of <code>Storing</code>, whose task <code>weigh</code> the application serves no
+     * more; a workflow on it waits an hour at a timer before it, so it still runs while the
+     * application starts.
+     */
+    private static final String STORING_VERSION_ONE = """
+            <bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL"
+                xmlns:zenbpm="http://zenbpm.pbinitiative.org/1.0" id="storing-v1" targetNamespace="x">
+              <bpmn:process id="zenbpm-e2e__Storing" isExecutable="true">
+                <bpmn:startEvent id="Start"><bpmn:outgoing>Flow_ToWait</bpmn:outgoing></bpmn:startEvent>
+                <bpmn:intermediateCatchEvent id="Wait">
+                  <bpmn:incoming>Flow_ToWait</bpmn:incoming>
+                  <bpmn:outgoing>Flow_ToTask</bpmn:outgoing>
+                  <bpmn:timerEventDefinition><bpmn:timeDuration>PT1H</bpmn:timeDuration></bpmn:timerEventDefinition>
+                </bpmn:intermediateCatchEvent>
+                <bpmn:serviceTask id="Weigh">
+                  <bpmn:extensionElements><zenbpm:taskDefinition type="zenbpm-e2e__Storing__weigh" /></bpmn:extensionElements>
+                  <bpmn:incoming>Flow_ToTask</bpmn:incoming>
+                  <bpmn:outgoing>Flow_ToEnd</bpmn:outgoing>
+                </bpmn:serviceTask>
+                <bpmn:endEvent id="End"><bpmn:incoming>Flow_ToEnd</bpmn:incoming></bpmn:endEvent>
+                <bpmn:sequenceFlow id="Flow_ToWait" sourceRef="Start" targetRef="Wait" />
+                <bpmn:sequenceFlow id="Flow_ToTask" sourceRef="Wait" targetRef="Weigh" />
+                <bpmn:sequenceFlow id="Flow_ToEnd" sourceRef="Weigh" targetRef="End" />
+              </bpmn:process>
+            </bpmn:definitions>
+            """;
+
+    /**
+     * The key of version 1 of <code>Sorting</code>, deployed before the application starts.
+     */
+    private static final long SORTING_VERSION_ONE_KEY = DOCKER_IS_THERE ? deployTheVersionsBeforeTheChange() : 0;
+
     private static final int HTTP_PORT = OneFreePortPerJvm.getPort();
 
     @RegisterExtension
@@ -152,6 +221,10 @@ class ZenBpmWorkflowLifecycleTest {
                     .addAsResource("zenbpm-e2e/processes/zenbpm/Reviews.bpmn")
                     .addAsResource("zenbpm-e2e/processes/zenbpm/Packing.bpmn")
                     .addAsResource("zenbpm-e2e/processes/zenbpm/Receiving.bpmn")
+                    .addAsResource("zenbpm-e2e/processes/zenbpm/Dispatching.bpmn")
+                    .addAsResource("zenbpm-e2e/processes/zenbpm/Boxing.bpmn")
+                    .addAsResource("zenbpm-e2e/processes/zenbpm/Sorting.bpmn")
+                    .addAsResource("zenbpm-e2e/processes/zenbpm/Storing.bpmn")
                     .addAsResource("workflow-module-descriptor/workflow-module", "META-INF/workflow-module"))
             // the surefire configuration of this module hands 'jacoco.agent' to this JVM
             .setJVMArgs(testCoverageJavaAgent(quarkusProdModeTestDefaults()))
@@ -699,6 +772,112 @@ class ZenBpmWorkflowLifecycleTest {
                 () -> assertEquals(List.of("a:0/3", "b:1/3", "c:2/3"), told.get("weighed")));
     }
 
+    @Test
+    @DisplayName("The viewer serves the definitions of a workflow with a call activity, the BPMN the engine holds of both, its history, which names the instance the call activity started, and that instance's history and definitions through it")
+    void theViewerServesDefinitionXmlAndHistory() {
+        final var id = "dispatch-%s".formatted(UUID.randomUUID());
+
+        post("introspect/viewer/dispatches/%s".formatted(id));
+        final var history = await(() -> Optional
+                .of(object("introspect/viewer/dispatches/%s/history".formatted(id)))
+                .filter(read -> !"".equals(read.get("endTime"))), "the end of dispatch %s".formatted(id));
+        final var definitions = list("introspect/viewer/dispatches/%s/definitions".formatted(id));
+        final var dispatching = definitions.getFirst();
+        final var boxing = definitions.getLast();
+        final var dispatchingXml = bpmnXmlOf(dispatching);
+        final var boxingXml = bpmnXmlOf(boxing);
+        final var elements = elementsOf(history);
+        final var context = elements
+                .stream()
+                .filter(element -> "CallBoxing".equals(element.get("elementId")))
+                .map(element -> (String) element.get("context"))
+                .findFirst()
+                .orElse("");
+        final var boxingHistory = object("introspect/viewer/dispatches/%s/history?context=%s".formatted(id, context));
+        final var boxingDefinitions = list("introspect/viewer/dispatches/%s/definitions?context=%s".formatted(id,
+                context));
+
+        assertAll(
+                () -> assertEquals(2, definitions.size(), definitions::toString),
+                () -> assertTrue(String
+                        .valueOf(dispatching.get("id"))
+                        .startsWith("zenbpm#"), definitions::toString),
+                () -> assertEquals("Dispatching", dispatching.get("bpmnProcessId")),
+                () -> assertEquals("1", dispatching.get("version")),
+                () -> assertEquals(List.of(), dispatching.get("usedByElements")),
+                () -> assertEquals("Boxing", boxing.get("bpmnProcessId")),
+                () -> assertEquals(List.of("CallBoxing"), boxing.get("usedByElements")),
+                () -> assertTrue(dispatchingXml.contains("id=\"zenbpm-e2e__Dispatching\""), dispatchingXml),
+                () -> assertTrue(dispatchingXml.contains("id=\"vanillabp__ended__Dispatched\""), dispatchingXml),
+                () -> assertTrue(boxingXml.contains("id=\"zenbpm-e2e__Boxing\""), boxingXml),
+                () -> assertEquals(dispatching.get("id"), history.get("processDefinitionId")),
+                () -> assertEquals(List.of("Ordered", "Flow_ToInspect", "Inspect", "Flow_ToWrapping", "Wrapping",
+                        "WrappingStarted", "Flow_ToWrap", "Wrap", "Flow_ToWrapped", "Wrapped", "Flow_ToBoxing",
+                        "CallBoxing", "Flow_ToLabel", "Label", "Label", "Label", "Flow_ToDispatched", "Dispatched"),
+                        elements
+                                .stream()
+                                .map(element -> element.get("elementId"))
+                                .toList()),
+                () -> assertEquals(List.of("MULTI_INSTANCE", "SERVICE_TASK", "SERVICE_TASK"), elements
+                        .stream()
+                        .filter(element -> "Label".equals(element.get("elementId")))
+                        .map(element -> element.get("elementType"))
+                        .toList()),
+                () -> assertFalse(context.isEmpty(), elements::toString),
+                () -> assertEquals(boxing.get("id"), boxingHistory.get("processDefinitionId")),
+                () -> assertEquals(List.of("BoxingStarted", "Flow_ToBox", "Box", "Flow_ToBoxed", "Boxed"),
+                        elementsOf(boxingHistory)
+                                .stream()
+                                .map(element -> element.get("elementId"))
+                                .toList()),
+                () -> assertEquals(List.of(boxing.get("id")), boxingDefinitions
+                        .stream()
+                        .map(definition -> definition.get("id"))
+                        .toList()),
+                // a context which names no instance a call activity of the workflow started
+                () -> api()
+                        .get("introspect/viewer/dispatches/%s/history?context=no-key".formatted(id))
+                        .then()
+                        .statusCode(404));
+    }
+
+    @Test
+    @DisplayName("A task runs the method of the tag its version carries: one of version 1, which an earlier version of the application deployed under the tag old-belt, the method of version = \"old-belt\", and one of the version the application deployed the method of version = \"new-belt\"")
+    void aVersionedMethodRoutes() {
+        final var onTheLatestVersion = "sorting-%s".formatted(UUID.randomUUID());
+        final var onVersionOne = "sorting-%s".formatted(UUID.randomUUID());
+
+        post("introspect/sortings/%s".formatted(onTheLatestVersion));
+        post("introspect/sortings/%s/kept".formatted(onVersionOne));
+        startOnVersionOneOfSorting(onVersionOne);
+        final var latest = await(() -> servedBy(onTheLatestVersion), "the task of %s".formatted(onTheLatestVersion));
+        final var first = await(() -> servedBy(onVersionOne), "the task of %s".formatted(onVersionOne));
+        final var versions = ENGINE.json("/v1/process-definitions?bpmnProcessId=zenbpm-e2e__Sorting");
+
+        assertAll(
+                () -> assertEquals(2, versions
+                        .path("totalCount")
+                        .asInt(), versions::toPrettyString),
+                () -> assertEquals("new-belt", latest),
+                () -> assertEquals("old-belt", first));
+    }
+
+    @Test
+    @DisplayName("The boot names the older version of Storing, the workflow which still runs on it, its task which no method serves any more and what that workflow misses")
+    void theBootNamesAnOlderVersionItsWorkflowAndWhatItMisses() {
+        final var log = applicationLog();
+
+        assertAll(
+                () -> assertTrue(log.contains(DeployedProcessVersionsCheck.A_VERSION_OF_A_PROCESS.formatted("1",
+                        "Storing")), log),
+                () -> assertTrue(log.contains("1 workflow(s) %s".formatted(
+                        DeployedProcessVersionsCheck.STILL_RUN_ON_THIS_VERSION)), log),
+                () -> assertTrue(log.contains("'weigh'"), log),
+                () -> assertTrue(log.contains(DeployedProcessVersionsCheck.SERVED_BY_NO_METHOD), log),
+                () -> assertTrue(log.contains("the end of such a workflow is not reported to a @WorkflowEnded method"),
+                        log));
+    }
+
     // the ids of every test are new, because all tests of the class share one engine
     private static String uniqueAggregateId() {
         return "e2e-%s".formatted(UUID.randomUUID());
@@ -851,6 +1030,64 @@ class ZenBpmWorkflowLifecycleTest {
 
     // long enough for three looks of the user-task poller, which application.yaml times every
     // second, each of which would tell a user task again
+    // what an earlier version of the application left at the engine: version 1 of Sorting, and a
+    // workflow which waits on version 1 of Storing
+    private static long deployTheVersionsBeforeTheChange() {
+        final var configuration = new ZenBpmAdapterConfiguration();
+        configuration.setRestAddress(ENGINE.restAddress());
+        try (var rest = new ZenBpmRestClient("before-the-change", configuration)) {
+            final var sorting = rest.deployBpmn(SORTING_VERSION_ONE.getBytes(StandardCharsets.UTF_8));
+            rest.deployBpmn(STORING_VERSION_ONE.getBytes(StandardCharsets.UTF_8));
+            rest.createInstance(CreateInstanceRequest
+                    .latestVersionOf("zenbpm-e2e__Storing")
+                    .withBusinessKey("stock-before-the-change"));
+            return sorting.key();
+        }
+    }
+
+    // past the application, as a workflow an earlier version of it started would run on
+    private static void startOnVersionOneOfSorting(final String id) {
+        final var configuration = new ZenBpmAdapterConfiguration();
+        configuration.setRestAddress(ENGINE.restAddress());
+        try (var rest = new ZenBpmRestClient("on-version-one", configuration)) {
+            rest.createInstance(CreateInstanceRequest
+                    .version(SORTING_VERSION_ONE_KEY)
+                    .withBusinessKey(id)
+                    .withVariables(Map.of("id", id)));
+        }
+    }
+
+    private static Optional<String> servedBy(final String id) {
+        return Optional
+                .of(String.valueOf(object("introspect/sortings/%s".formatted(id)).get("servedBy")))
+                .filter(method -> !method.isEmpty());
+    }
+
+    private static String bpmnXmlOf(final Map<String, Object> definition) {
+        return api()
+                .pathParam("definitionId", definition.get("id"))
+                .get("introspect/viewer/definitions/{definitionId}")
+                .then()
+                .statusCode(200)
+                .extract()
+                .asString();
+    }
+
+    @SuppressWarnings("unchecked")
+    private static List<Map<String, Object>> elementsOf(final Map<String, Object> history) {
+        return (List<Map<String, Object>>) history.get("elements");
+    }
+
+    private static List<Map<String, Object>> list(final String path) {
+        return api()
+                .get(path)
+                .then()
+                .statusCode(200)
+                .extract()
+                .jsonPath()
+                .getList("$");
+    }
+
     private static void watchThreeLooks() {
         LockSupport.parkNanos(Duration
                 .ofMillis(3_500)

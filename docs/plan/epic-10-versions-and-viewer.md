@@ -515,6 +515,72 @@ README says what the viewer answers.
 
 ### S10.4.1 Versions and viewer on Quarkus
 
-- [ ] **Depends on:** S10.3.1.
+- [x] **Depends on:** S10.3.1.
 
 `ZenBpmWorkflowLifecycleTest#theViewerServesDefinitionXmlAndHistory`, `#aVersionedMethodRoutes`.
+
+*Fit check, 2026-10-20, decided by the Implementor where it says so.* Checked against the branch
+after S10.3.1, the Quarkus integration tests as they are (`ZenBpmWorkflowLifecycleTest`, one booted
+application per class against one engine), and the fit checks of S10.1.1 (item 6), S10.2.1 (item
+8) and S10.3.1 (item 10), which left their Quarkus twins to this story. What did not fit, and what
+was decided:
+
+1. **One boot, but versions need a history.** A prod-mode test boots its application once per
+   class, and the application deploys while it starts, so the older version a version test needs
+   has to be at the engine before that boot. Decided by the Implementor: the test's static
+   initializer, which already starts the engine before the application's runtime properties are
+   read, deploys version 1 of the processes `Sorting` and `Storing` over the engine's REST API,
+   under the prefixed ids and job types the adapter gives them, and starts a workflow on version 1
+   of `Storing`, as an earlier version of the application would have. The application then deploys
+   version 2 of each from its own files. No second application or class is needed.
+2. **`#aVersionedMethodRoutes`** routes by version **tags**, because E10's "Done when" names
+   `@WorkflowTask(version = "tag")`: version 1 carries the tag `old-belt`, the application's version
+   2 the tag `new-belt`, and `E2eSortingWorkflow` serves the task `sort` with one method per tag. A
+   workflow the application starts runs on version 2 and is served by the method of `new-belt`; a
+   workflow the test starts on version 1 over the engine's REST API, for an aggregate the
+   application kept, by the method of `old-belt`.
+3. **The twin of `ZenBpmOldProcessVersionsIT`** is `#theBootNamesAnOlderVersionItsWorkflowAndWhatItMisses`:
+   the application's log names version 1 of `Storing`, the workflow still running on it, its task
+   `weigh` which no method serves, and that such a workflow's end is not reported to a
+   `@WorkflowEnded` method, with the platform's published phrases. The part of the Spring Boot test
+   which boots again with `outfaded-versions` is not repeated: it is the platform's switch, not this
+   adapter's, and a second boot would need a second class with an engine of its own.
+4. **`#theViewerServesDefinitionXmlAndHistory`**: the process `Dispatching`, a copy of the Spring
+   Boot viewer fixture, under the endpoints `introspect/viewer/...` of `E2eViewerIntrospection`.
+   Nothing in the Quarkus build-time wiring had to change for the viewer or the versions (open
+   question 7 of the brief): the prod-mode tests pass against the extension as it was.
+
+**Acceptance criteria**
+
+- [x] The versions and the viewer work on a booted Quarkus application as on Spring Boot.
+  `ZenBpmWorkflowLifecycleTest` against the pinned image, three new cases:
+  `#theViewerServesDefinitionXmlAndHistory` (the definitions of `Dispatching` and of `Boxing`, used
+  by `CallBoxing`, both namespaced `zenbpm#`; the BPMN of both as the engine holds it, the end marker
+  included; the 18 elements of the history in the order entered, `Label` as `MULTI_INSTANCE` and twice
+  as `SERVICE_TASK`; the history and the definitions of the called instance through its context; a
+  context which is no key answered as not found), `#aVersionedMethodRoutes` (version 2, the
+  application's, served by the method of `new-belt`, version 1 by that of `old-belt`) and
+  `#theBootNamesAnOlderVersionItsWorkflowAndWhatItMisses`. Sensitivity checked: with the two tags
+  of the methods swapped and no workflow started on version 1 of `Storing`, both version cases
+  fail. No new guard in production code, so no mutant of one. Clean build of the story's commit
+  (`TZ=Etc/UTC mvn clean install` on OpenJDK 25.0.2, Docker ITs included, none skipped): engine
+  test support 12 + 5, core 1,253 + 103, Spring Boot 14 + 93, smoke test 38, Quarkus runtime 13,
+  deployment 52, integration tests 23 (`ZenBpmWorkflowLifecycleTest` 22), gate 37; coverage 100 %
+  on both platforms (0 of 37,445 instructions missed on Spring Boot, 0 of 37,315 on Quarkus);
+  `bin/check-deploy-safety.sh` green. The first build of the story failed in the gate's
+  `MethodOrderTest`: the new cases stood below the first helper of the class; they were moved.
+
+**E10 "Done when", checked 2026-10-20 at the end of the epic.** Met on both platforms:
+
+- *`@WorkflowTask(version = "tag")` routes:* Spring Boot `ZenBpmProcessVersionIT#aTagResolves`,
+  Quarkus `ZenBpmWorkflowLifecycleTest#aVersionedMethodRoutes` (tags `old-belt` and `new-belt`).
+- *The boot names old versions with running workflows and what they miss:* Spring Boot
+  `ZenBpmOldProcessVersionsIT`, Quarkus
+  `ZenBpmWorkflowLifecycleTest#theBootNamesAnOlderVersionItsWorkflowAndWhatItMisses`.
+- *A viewer shows definitions, XML and history including a call activity:* Spring Boot
+  `ZenBpmViewerApiIT`, Quarkus `ZenBpmWorkflowLifecycleTest#theViewerServesDefinitionXmlAndHistory`.
+
+What E10 leaves to the engine (GAPS 1, 32 and 33): a business key for a workflow the engine starts
+(E13.4), a tag several versions may carry, and a state on an entry of the history, an end on an
+instance and the element instance which started a child; all out of the pipeline's scope. The
+adapter's answers above hold until then.

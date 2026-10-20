@@ -1,0 +1,136 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL"
+    xmlns:zenbpm="http://zenbpm.pbinitiative.org/1.0" id="zenbpm-e2e-dispatching" targetNamespace="http://bpmn.io/schema/bpmn"
+    xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI"
+    xmlns:dc="http://www.omg.org/spec/DD/20100524/DC"
+    xmlns:di="http://www.omg.org/spec/DD/20100524/DI">
+  <bpmn:process id="Dispatching" isExecutable="true">
+    <bpmn:startEvent id="Ordered" name="Ordered">
+      <bpmn:outgoing>Flow_ToInspect</bpmn:outgoing>
+    </bpmn:startEvent>
+    <bpmn:serviceTask id="Inspect" name="Inspect">
+      <bpmn:extensionElements>
+        <zenbpm:taskDefinition type="inspect" />
+      </bpmn:extensionElements>
+      <bpmn:incoming>Flow_ToInspect</bpmn:incoming>
+      <bpmn:outgoing>Flow_ToWrapping</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:subProcess id="Wrapping" name="Wrapping">
+      <bpmn:incoming>Flow_ToWrapping</bpmn:incoming>
+      <bpmn:outgoing>Flow_ToBoxing</bpmn:outgoing>
+      <bpmn:startEvent id="WrappingStarted">
+        <bpmn:outgoing>Flow_ToWrap</bpmn:outgoing>
+      </bpmn:startEvent>
+      <bpmn:serviceTask id="Wrap" name="Wrap">
+        <bpmn:extensionElements>
+          <zenbpm:taskDefinition type="wrap" />
+        </bpmn:extensionElements>
+        <bpmn:incoming>Flow_ToWrap</bpmn:incoming>
+        <bpmn:outgoing>Flow_ToWrapped</bpmn:outgoing>
+      </bpmn:serviceTask>
+      <bpmn:endEvent id="Wrapped">
+        <bpmn:incoming>Flow_ToWrapped</bpmn:incoming>
+      </bpmn:endEvent>
+      <bpmn:sequenceFlow id="Flow_ToWrap" sourceRef="WrappingStarted" targetRef="Wrap" />
+      <bpmn:sequenceFlow id="Flow_ToWrapped" sourceRef="Wrap" targetRef="Wrapped" />
+    </bpmn:subProcess>
+    <bpmn:callActivity id="CallBoxing" name="Box">
+      <bpmn:extensionElements>
+        <zenbpm:calledElement processId="Boxing" />
+      </bpmn:extensionElements>
+      <bpmn:incoming>Flow_ToBoxing</bpmn:incoming>
+      <bpmn:outgoing>Flow_ToLabel</bpmn:outgoing>
+    </bpmn:callActivity>
+    <bpmn:serviceTask id="Label" name="Label">
+      <bpmn:extensionElements>
+        <zenbpm:taskDefinition type="label" />
+      </bpmn:extensionElements>
+      <bpmn:incoming>Flow_ToLabel</bpmn:incoming>
+      <bpmn:outgoing>Flow_ToDispatched</bpmn:outgoing>
+      <bpmn:multiInstanceLoopCharacteristics>
+        <bpmn:extensionElements>
+          <zenbpm:loopCharacteristics inputCollection="=[&quot;small&quot;, &quot;large&quot;]" inputElement="size" />
+        </bpmn:extensionElements>
+      </bpmn:multiInstanceLoopCharacteristics>
+    </bpmn:serviceTask>
+    <bpmn:endEvent id="Dispatched" name="Dispatched">
+      <bpmn:incoming>Flow_ToDispatched</bpmn:incoming>
+    </bpmn:endEvent>
+    <bpmn:sequenceFlow id="Flow_ToInspect" sourceRef="Ordered" targetRef="Inspect" />
+    <bpmn:sequenceFlow id="Flow_ToWrapping" sourceRef="Inspect" targetRef="Wrapping" />
+    <bpmn:sequenceFlow id="Flow_ToBoxing" sourceRef="Wrapping" targetRef="CallBoxing" />
+    <bpmn:sequenceFlow id="Flow_ToLabel" sourceRef="CallBoxing" targetRef="Label" />
+    <bpmn:sequenceFlow id="Flow_ToDispatched" sourceRef="Label" targetRef="Dispatched" />
+  </bpmn:process>
+  <bpmndi:BPMNDiagram id="BPMNDiagram_1">
+    <bpmndi:BPMNPlane id="BPMNPlane_1" bpmnElement="Dispatching">
+      <bpmndi:BPMNShape id="Ordered_di" bpmnElement="Ordered">
+        <dc:Bounds x="160" y="80" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Inspect_di" bpmnElement="Inspect">
+        <dc:Bounds x="256" y="80" width="100" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Wrapping_di" bpmnElement="Wrapping" isExpanded="true">
+        <dc:Bounds x="416" y="80" width="352" height="140" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="WrappingStarted_di" bpmnElement="WrappingStarted">
+        <dc:Bounds x="446" y="110" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Wrap_di" bpmnElement="Wrap">
+        <dc:Bounds x="542" y="110" width="100" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Wrapped_di" bpmnElement="Wrapped">
+        <dc:Bounds x="702" y="110" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="CallBoxing_di" bpmnElement="CallBoxing">
+        <dc:Bounds x="828" y="80" width="100" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Label_di" bpmnElement="Label">
+        <dc:Bounds x="988" y="80" width="100" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Dispatched_di" bpmnElement="Dispatched">
+        <dc:Bounds x="1148" y="80" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNEdge id="Flow_ToWrap_di" bpmnElement="Flow_ToWrap">
+        <di:waypoint x="482" y="128" />
+        <di:waypoint x="512" y="128" />
+        <di:waypoint x="512" y="150" />
+        <di:waypoint x="542" y="150" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_ToWrapped_di" bpmnElement="Flow_ToWrapped">
+        <di:waypoint x="642" y="150" />
+        <di:waypoint x="672" y="150" />
+        <di:waypoint x="672" y="128" />
+        <di:waypoint x="702" y="128" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_ToInspect_di" bpmnElement="Flow_ToInspect">
+        <di:waypoint x="196" y="98" />
+        <di:waypoint x="226" y="98" />
+        <di:waypoint x="226" y="120" />
+        <di:waypoint x="256" y="120" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_ToWrapping_di" bpmnElement="Flow_ToWrapping">
+        <di:waypoint x="356" y="120" />
+        <di:waypoint x="386" y="120" />
+        <di:waypoint x="386" y="150" />
+        <di:waypoint x="416" y="150" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_ToBoxing_di" bpmnElement="Flow_ToBoxing">
+        <di:waypoint x="768" y="150" />
+        <di:waypoint x="798" y="150" />
+        <di:waypoint x="798" y="120" />
+        <di:waypoint x="828" y="120" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_ToLabel_di" bpmnElement="Flow_ToLabel">
+        <di:waypoint x="928" y="120" />
+        <di:waypoint x="988" y="120" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_ToDispatched_di" bpmnElement="Flow_ToDispatched">
+        <di:waypoint x="1088" y="120" />
+        <di:waypoint x="1118" y="120" />
+        <di:waypoint x="1118" y="98" />
+        <di:waypoint x="1148" y="98" />
+      </bpmndi:BPMNEdge>
+    </bpmndi:BPMNPlane>
+  </bpmndi:BPMNDiagram>
+</bpmn:definitions>
