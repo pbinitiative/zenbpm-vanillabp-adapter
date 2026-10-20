@@ -17,7 +17,9 @@ import java.time.Instant;
 import java.time.ZoneOffset;
 import java.util.Arrays;
 import java.util.List;
+import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
@@ -30,14 +32,17 @@ import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
 import org.pbinitiative.zenbpmadapter.TestCollaborators;
 import org.pbinitiative.zenbpmadapter.TestScoping;
+import org.pbinitiative.zenbpmadapter.ZenBpmDeployedProcesses.ModuleMessages;
 import org.pbinitiative.zenbpmadapter.client.FakeEngine;
 import org.pbinitiative.zenbpmadapter.client.ZenBpmAdapterConfiguration;
+import org.pbinitiative.zenbpmadapter.client.ZenBpmAdapterConfiguration.MessageStartLookup;
 import org.pbinitiative.zenbpmadapter.client.ZenBpmClientFactory;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
 import io.vanillabp.integration.adapter.spi.NameClashAvoidance;
+import io.vanillabp.integration.spi.AggregatePersistenceAware;
 import io.vanillabp.integration.test.utils.CapturedOutput;
 import io.vanillabp.integration.test.utils.SuppressOutputExtension;
 import io.vanillabp.spi.process.ProcessDefinition;
@@ -58,6 +63,8 @@ class ZenBpmWorkflowViewerTest {
     private static final long ROOT = 4096001;
 
     private static final long ORDER_DEFINITION = 11;
+
+    private static final long REMINDED_DEFINITION = 12;
 
     private static final String SEARCH = "/v1/process-instances";
 
@@ -141,6 +148,26 @@ class ZenBpmWorkflowViewerTest {
             </bpmn:definitions>
             """;
 
+    /**
+     * A version of <code>Order</code> which waits at a user task and whose interrupting timer event
+     * sub-process escalates the wait.
+     */
+    private static final String REMINDED_MODEL = """
+            <bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" id="reminded" targetNamespace="x">
+              <bpmn:process id="shop__Order" isExecutable="true">
+                <bpmn:startEvent id="Start" />
+                <bpmn:userTask id="Wait" />
+                <bpmn:endEvent id="End" />
+                <bpmn:subProcess id="Escalation" triggeredByEvent="true">
+                  <bpmn:startEvent id="EscalationStart">
+                    <bpmn:timerEventDefinition><bpmn:timeDuration>PT1H</bpmn:timeDuration></bpmn:timerEventDefinition>
+                  </bpmn:startEvent>
+                  <bpmn:userTask id="Escalate" />
+                </bpmn:subProcess>
+              </bpmn:process>
+            </bpmn:definitions>
+            """;
+
     private final FakeEngine engine = FakeEngine.started();
 
     private final ZenBpmClientFactory factory = configured(Duration.ZERO);
@@ -176,10 +203,8 @@ class ZenBpmWorkflowViewerTest {
                         new ProcessDefinition("21", "Invoice", "1", List.of("InvoiceTagged", "InvoiceVersionOne"))),
                         definitions),
                 () -> assertEquals(List.of(
-                        "GET "
-                                + SEARCH,
-                        "GET "
-                                + MODEL,
+                        "GET %s".formatted(SEARCH),
+                        "GET %s".formatted(MODEL),
                         "GET /v1/process-definitions",
                         "GET /v1/process-definitions"), requests()),
                 // a lower bound of the creation, so the engine searches the process by its index
@@ -292,10 +317,8 @@ class ZenBpmWorkflowViewerTest {
         assertAll(
                 () -> assertEquals(List.of(), definitions),
                 () -> assertNull(history),
-                () -> assertEquals(List.of("GET "
-                        + SEARCH,
-                        "GET "
-                                + SEARCH),
+                () -> assertEquals(List.of("GET %s".formatted(SEARCH),
+                        "GET %s".formatted(SEARCH)),
                         requests()));
     }
 
@@ -384,8 +407,7 @@ class ZenBpmWorkflowViewerTest {
                                 "ZenBPM adapter 'orders' could not ask the engine for the BPMN of process definition 14: "),
                         cut::getMessage),
                 () -> assertEquals(List.of(
-                        "GET "
-                                + MODEL,
+                        "GET %s".formatted(MODEL),
                         "GET /v1/process-definitions/12",
                         "GET /v1/process-definitions/13"),
                         requests()
@@ -454,10 +476,8 @@ class ZenBpmWorkflowViewerTest {
                         "Invoice CALL_ACTIVITY 61",
                         "End END_EVENT -"), described(history.elementsHistory())),
                 () -> assertEquals(List.of(
-                        "GET "
-                                + SEARCH,
-                        "GET "
-                                + MODEL,
+                        "GET %s".formatted(SEARCH),
+                        "GET %s".formatted(MODEL),
                         "GET /v1/process-instances/%d/history".formatted(ROOT),
                         "GET /v1/process-instances/%d/child-processes".formatted(ROOT),
                         "GET /v1/process-instances/3/history",
@@ -754,6 +774,212 @@ class ZenBpmWorkflowViewerTest {
                 .toList());
     }
 
+    @Test
+    @DisplayName("An event sub-process writes no entry into the history of its workflow, so where the model has one the children are listed anyway, and the event sub-process is reported with its elements; the workflow ended with the last of them")
+    void anEventSubProcessIsReportedWithItsElements() {
+        searchFinds(instance(ROOT, REMINDED_DEFINITION, "shop__Order", 5, "completed", null, "default",
+                "2026-10-20T10:00:00Z", 0));
+        engine.answers("GET", "/v1/process-definitions/%d".formatted(REMINDED_DEFINITION), 200, definition(
+                REMINDED_DEFINITION, "shop__Order", 5, null, REMINDED_MODEL));
+        // the interrupting event sub-process terminated the user task and ended the workflow
+        historyOf(ROOT, entry(1, "Start", "START_EVENT", "00.001", "00.001"), entry(2, "Wait", "USER_TASK", "00.002",
+                "00.010"));
+        childrenOf(ROOT, instance(30, REMINDED_DEFINITION, "shop__Order", 5, "completed", ROOT, "subprocess",
+                "2026-10-20T10:00:00.010Z", 0));
+        historyOf(30, entry(31, "EscalationStart", "START_EVENT", "00.010", "00.010"), entry(32, "Escalate",
+                "USER_TASK", "00.011", "00.050"));
+        childrenOf(30);
+
+        final var history = processService.getWorkflowHistory("shop", "Order", null, "order-1", null);
+
+        final var eventSubProcess = history
+                .elementsHistory()
+                .stream()
+                .filter(element -> "Escalation".equals(element.elementId()))
+                .findFirst()
+                .orElseThrow();
+        assertAll(
+                () -> assertEquals(List.of(
+                        "Start START_EVENT -",
+                        "Wait USER_TASK -",
+                        "Escalation EVENT_SUB_PROCESS -",
+                        "EscalationStart START_EVENT -",
+                        "Escalate USER_TASK -"), described(history.elementsHistory())),
+                () -> assertEquals(Instant
+                        .parse("2026-10-20T10:00:00.010Z")
+                        .atOffset(ZoneOffset.UTC), eventSubProcess.startTime()),
+                () -> assertEquals(Instant
+                        .parse("2026-10-20T10:00:00.050Z")
+                        .atOffset(ZoneOffset.UTC), eventSubProcess.endTime()),
+                () -> assertEquals(Instant
+                        .parse("2026-10-20T10:00:00.050Z")
+                        .atOffset(ZoneOffset.UTC), history.endTime()),
+                () -> assertEquals(List.of(
+                        "GET %s".formatted(SEARCH),
+                        "GET /v1/process-definitions/%d".formatted(REMINDED_DEFINITION),
+                        "GET /v1/process-instances/%d/history".formatted(ROOT),
+                        "GET /v1/process-instances/%d/child-processes".formatted(ROOT),
+                        "GET /v1/process-instances/30/history",
+                        "GET /v1/process-instances/30/child-processes"), requests()));
+    }
+
+    @Test
+    @DisplayName("An event sub-process which still runs has no end, and a sub-process instance which starts at no start event of an event sub-process is no event sub-process")
+    void aRunningEventSubProcessHasNoEnd() {
+        searchFinds(instance(ROOT, REMINDED_DEFINITION, "shop__Order", 5, "active", null, "default",
+                "2026-10-20T10:00:00Z", 0));
+        engine.answers("GET", "/v1/process-definitions/%d".formatted(REMINDED_DEFINITION), 200, definition(
+                REMINDED_DEFINITION, "shop__Order", 5, null, REMINDED_MODEL));
+        historyOf(ROOT, entry(1, "Start", "START_EVENT", "00.001", "00.001"), entry(2, "Wait", "USER_TASK", "00.002",
+                null));
+        childrenOf(ROOT, instance(30, REMINDED_DEFINITION, "shop__Order", 5, "active", ROOT, "subprocess",
+                "2026-10-20T10:00:00.010Z", 0),
+                instance(40, REMINDED_DEFINITION, "shop__Order", 5, "active", ROOT,
+                        "subprocess", "2026-10-20T10:00:00.040Z", 0));
+        historyOf(30, entry(31, "EscalationStart", "START_EVENT", "00.010", "00.010"), entry(32, "Escalate",
+                "USER_TASK", "00.011", null));
+        historyOf(40, entry(41, "Wait", "USER_TASK", "00.040", null));
+        childrenOf(30);
+        childrenOf(40);
+
+        final var history = processService.getWorkflowHistory("shop", "Order", null, "order-1", null);
+
+        assertAll(
+                () -> assertEquals(List.of(
+                        "Start START_EVENT -",
+                        "Wait USER_TASK -",
+                        "Escalation EVENT_SUB_PROCESS -",
+                        "EscalationStart START_EVENT -",
+                        "Escalate USER_TASK -",
+                        "Wait USER_TASK -"), described(history.elementsHistory())),
+                () -> assertNull(history
+                        .elementsHistory()
+                        .get(2)
+                        .endTime()),
+                () -> assertNull(history.endTime()));
+    }
+
+    @Test
+    @DisplayName("A list of versions the engine does not answer costs the definitions the call activities would start, as a model which cannot be read does, and the failure is a WARN once until a read succeeds again")
+    void aListOfVersionsTheEngineDoesNotAnswerCostsTheCalledDefinitions(final CapturedOutput output) {
+        searchFinds(root("active", 0));
+        holdsTheOrderModel();
+        engine.answers("GET", "/v1/process-definitions", 503, null);
+
+        final var first = processService.getProcessDefinitions("shop", "Order", null, "order-1", null);
+        processService.getProcessDefinitions("shop", "Order", null, "order-1", null);
+        listsNoVersions();
+        processService.getProcessDefinitions("shop", "Order", null, "order-1", null);
+        engine.answers("GET", "/v1/process-definitions", 503, null);
+        processService.getProcessDefinitions("shop", "Order", null, "order-1", null);
+
+        final var warning = "ZenBPM[orders]: the viewer could not read the versions of the processes the call activities of process definition 11 call, so the definitions they would start are not reported; check that the engine at vanillabp.adapters.orders.rest-address answers within vanillabp.adapters.orders.request-timeout; further failures of the viewer are logged at DEBUG until one of its reads succeeds again";
+        assertAll(
+                () -> assertEquals(List.of(new ProcessDefinition("11", "Order", "4", null)), first),
+                () -> assertEquals(List.of(warning, warning), warnings(output)));
+    }
+
+    @Test
+    @DisplayName("Under message-start-lookup scan, where the search finds no workflow which runs, the workflow a message started, which has no business key, is found by its id variable; an instance of a sub-process the scan finds is not taken for it, and a workflow the search finds running costs no scan")
+    void underScanAWorkflowAMessageStartedIsFound() {
+        final var configuration = new ZenBpmAdapterConfiguration();
+        configuration.setRestAddress(engine.address());
+        configuration.setMessageStartLookup(MessageStartLookup.SCAN);
+        try (var scanning = new ZenBpmClientFactory("orders", configuration, () -> "shop")) {
+            final var messages = new ModuleMessages(List.of("shop__Order"), Set.of(), Set.of("shop__ordered"), Set.of(
+                    "shop__Order"), List.of());
+            scanning
+                    .deployedProcesses()
+                    .recordMessages("shop", messages, () -> messages);
+            // the aggregate's first workflow ended; its second was started by a message
+            final var keyed = new AtomicReference<>(instance(7, ORDER_DEFINITION, "shop__Order", 2, "completed", null,
+                    "default", "2026-10-20T10:00:00Z", 0));
+            final var running = new AtomicReference<>(startedByAMessage(ROOT, "default"));
+            engine.answers("GET", SEARCH, exchange -> FakeEngine.respond(exchange, 200, exchange
+                    .getRequestURI()
+                    .getRawQuery()
+                    .contains("businessKey=") ? page(1, keyed.get()) : page(1, running.get())));
+            holdsTheOrderModel();
+            listsNoVersions();
+            final var viewing = processService(scanning);
+
+            final var definitions = viewing.getProcessDefinitions("shop", "Order", persistence(), "order-1", null);
+            final var scansWithPersistence = scans();
+            final var withoutPersistence = viewing.getProcessDefinitions("shop", "Order", null, "order-1", null);
+            final var scansWithoutPersistence = scans();
+            running.set(startedByAMessage(ROOT + 1, "subprocess"));
+            final var aSubProcessScanned = viewing.getProcessDefinitions("shop", "Order", persistence(), "order-1",
+                    null);
+            keyed.set(instance(8, ORDER_DEFINITION, "shop__Order", 3, "active", null, "default",
+                    "2026-10-20T10:00:02Z", 0));
+            final var scansBefore = scans();
+            final var keyedRunning = viewing.getProcessDefinitions("shop", "Order", persistence(), "order-1", null);
+
+            assertAll(
+                    () -> assertEquals("4", definitions
+                            .getFirst()
+                            .version()),
+                    // nothing names the id variable, so nothing is scanned and the ended workflow is shown
+                    () -> assertEquals("2", withoutPersistence
+                            .getFirst()
+                            .version()),
+                    () -> assertEquals(scansWithPersistence, scansWithoutPersistence),
+                    () -> assertEquals("2", aSubProcessScanned
+                            .getFirst()
+                            .version()),
+                    () -> assertEquals("3", keyedRunning
+                            .getFirst()
+                            .version()),
+                    () -> assertEquals(scansBefore, scans()));
+        }
+    }
+
+    @Test
+    @DisplayName("A history context, and a parent on the way up to the workflow, which a node lagging behind does not show yet, is read again within workflow-visibility-timeout, while a context of another workflow is refused at once")
+    void aContextNotVisibleYetIsReadAgain() {
+        try (var waiting = configured(Duration.ofSeconds(5))) {
+            searchFinds(root("active", 0));
+            engine.answers("GET", "/v1/process-definitions/23", 200, definition(23, "shop__Invoice", 3, null,
+                    """
+                            <bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" id="i" targetNamespace="x">
+                              <bpmn:process id="shop__Invoice" isExecutable="true"><bpmn:serviceTask id="Bill" /></bpmn:process>
+                            </bpmn:definitions>"""));
+            listsNoVersions();
+            answersAfterA404(instance(5, 23, "shop__Invoice", 3, "completed", ROOT, "callActivity",
+                    "2026-10-20T10:00:00.004Z", null));
+            answersInstance(instance(6, 23, "shop__Invoice", 3, "completed", 4L, "callActivity",
+                    "2026-10-20T10:00:00.005Z", null));
+            answersAfterA404(instance(4, ORDER_DEFINITION, "shop__Order", 4, "completed", ROOT, "multiInstance",
+                    "2026-10-20T10:00:00.003Z", null));
+            answersInstance(instance(8, 23, "shop__Invoice", 3, "completed", 9L, "callActivity",
+                    "2026-10-20T10:00:00.006Z", null));
+            answersInstance(instance(9, ORDER_DEFINITION, "shop__Order", 4, "completed", null, "default",
+                    "2026-10-20T10:00:00.001Z", null));
+            final var viewing = processService(waiting);
+
+            final var called = viewing.getProcessDefinitions("shop", "Order", null, "order-1", "5");
+            final var calledInABody = viewing.getProcessDefinitions("shop", "Order", null, "order-1", "6");
+            final var ofAnotherWorkflow = viewing.getProcessDefinitions("shop", "Order", null, "order-1", "8");
+
+            assertAll(
+                    () -> assertEquals(List.of(new ProcessDefinition("23", "Invoice", "3", null)), called),
+                    () -> assertEquals(List.of(new ProcessDefinition("23", "Invoice", "3", null)), calledInABody),
+                    () -> assertEquals(List.of(), ofAnotherWorkflow),
+                    () -> assertEquals(List.of(
+                            "GET /v1/process-instances/5",
+                            "GET /v1/process-instances/5",
+                            "GET /v1/process-instances/6",
+                            "GET /v1/process-instances/4",
+                            "GET /v1/process-instances/4",
+                            "GET /v1/process-instances/8",
+                            "GET /v1/process-instances/9"),
+                            requests()
+                                    .stream()
+                                    .filter(request -> request.matches("GET /v1/process-instances/[0-9]+"))
+                                    .toList()));
+        }
+    }
+
     @ParameterizedTest(name = "{0} is {1}")
     @MethodSource("engineTypes")
     @DisplayName("Every type of element the engine writes into a history is the type of the SPI of the same meaning")
@@ -826,6 +1052,37 @@ class ZenBpmWorkflowViewerTest {
         }
     }
 
+    // the searches which ask for no business key, as the scan does
+    private long scans() {
+        return engine
+                .requests()
+                .stream()
+                .filter(request -> SEARCH.equals(request.path()))
+                .filter(request -> !request
+                        .query()
+                        .contains("businessKey="))
+                .count();
+    }
+
+    // a node lagging behind answers 404 for an instance another node shows
+    private void answersAfterA404(final String instance) {
+        try {
+            final var reads = new AtomicInteger();
+            engine.answers("GET", "/v1/process-instances/%d".formatted(JSON
+                    .readTree(instance)
+                    .path("key")
+                    .asLong()), exchange -> {
+                        if (reads.incrementAndGet() == 1) {
+                            FakeEngine.respond(exchange, 404, "{\"code\":\"NOT_FOUND\",\"message\":\"no\"}");
+                        } else {
+                            FakeEngine.respond(exchange, 200, instance);
+                        }
+                    });
+        } catch (final JsonProcessingException notJson) {
+            throw new IllegalArgumentException(notJson);
+        }
+    }
+
     private List<String> requests() {
         return engine
                 .requests()
@@ -847,6 +1104,34 @@ class ZenBpmWorkflowViewerTest {
                 NameClashAvoidance.USE_PREFIX)), (
                     module,
                     process) -> null);
+    }
+
+    private static AggregatePersistenceAware<Object> persistence() {
+        return new AggregatePersistenceAware<>() {
+
+            @Override
+            public String getAggregateIdName() {
+                return "orderId";
+            }
+
+            @Override
+            public Object loadById(final Object aggregateId) {
+                throw new AssertionError("the viewer loads no aggregate");
+            }
+
+        };
+    }
+
+    // an instance a message started carries no business key, only the id variable
+    private static String startedByAMessage(
+        final long key,
+        final String processType
+    ) {
+        return """
+                {"key": %d, "processDefinitionKey": %d, "bpmnProcessId": "shop__Order", "version": 4,
+                 "createdAt": "2026-10-20T10:00:01Z", "state": "active", "processType": "%s",
+                 "variables": {"orderId": "order-1"}}"""
+                .formatted(key, ORDER_DEFINITION, processType);
     }
 
     private static String root(

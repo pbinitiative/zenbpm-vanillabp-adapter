@@ -178,7 +178,8 @@ public class ZenBpmProcessService<A> implements MigratableProcessService<A> {
                 messageStarts::start));
         this.messageStartScan = new ZenBpmMessageStartScan(adapterId, factory);
         this.runningWorkflows = new ZenBpmRunningWorkflows(adapterId);
-        this.viewer = new ZenBpmWorkflowViewer(adapterId, factory, collaborators.scoping(), VISIBILITY_PROBE_INTERVAL);
+        this.viewer = new ZenBpmWorkflowViewer(adapterId, factory, collaborators
+                .scoping(), messageStartScan, VISIBILITY_PROBE_INTERVAL);
         final var pushes = new ZenBpmAggregatePush<A>(adapterId, factory, collaborators, this::variablesOf, runningWorkflows, messageStartScan);
         handlers.put(PhaseOperation.AGGREGATE_CHANGED, PhaseOperationHandler.of(pushes::checkNothing, pushes::push));
         this.phaseOperations = Collections.unmodifiableMap(handlers);
@@ -573,8 +574,9 @@ public class ZenBpmProcessService<A> implements MigratableProcessService<A> {
      *
      * @param workflowModuleId The workflow module
      * @param bpmnProcessId The process, as the workflow module names it
-     * @param aggregatePersistence The persistence of the aggregate, which the business key search
-     *            does not need
+     * @param aggregatePersistence The persistence of the aggregate, which names the id variable the
+     *            lookup of a workflow a message started reads under
+     *            <code>message-start-lookup: scan</code>
      * @param workflowAggregateId The id of the aggregate
      * @param historyContext <code>null</code> for the workflow, else the key of an instance a call
      *            activity of the workflow started
@@ -591,7 +593,7 @@ public class ZenBpmProcessService<A> implements MigratableProcessService<A> {
         final String historyContext
     ) {
         return viewer.processDefinitionsOf(clients(), workflowModuleId, bpmnProcessId, String.valueOf(
-                workflowAggregateId), historyContext);
+                workflowAggregateId), idVariableNameOf(aggregatePersistence), historyContext);
     }
 
     /**
@@ -620,8 +622,9 @@ public class ZenBpmProcessService<A> implements MigratableProcessService<A> {
      *
      * @param workflowModuleId The workflow module
      * @param bpmnProcessId The process, as the workflow module names it
-     * @param aggregatePersistence The persistence of the aggregate, which the business key search
-     *            does not need
+     * @param aggregatePersistence The persistence of the aggregate, which names the id variable the
+     *            lookup of a workflow a message started reads under
+     *            <code>message-start-lookup: scan</code>
      * @param workflowAggregateId The id of the aggregate
      * @param historyContext <code>null</code> for the workflow, else the key of an instance a call
      *            activity of the workflow started
@@ -638,7 +641,11 @@ public class ZenBpmProcessService<A> implements MigratableProcessService<A> {
         final String historyContext
     ) {
         return viewer.historyOf(clients(), workflowModuleId, bpmnProcessId, String.valueOf(workflowAggregateId),
-                historyContext);
+                idVariableNameOf(aggregatePersistence), historyContext);
+    }
+
+    private static String idVariableNameOf(final AggregatePersistenceAware<?> aggregatePersistence) {
+        return aggregatePersistence == null ? null : aggregatePersistence.getAggregateIdName();
     }
 
     // the core checked the aggregate's id before phase one. Phase one runs inside the caller's

@@ -1028,8 +1028,6 @@ class ZenBpmWorkflowLifecycleTest {
         return object("introspect/user-tasks/reviews/%s".formatted(id));
     }
 
-    // long enough for three looks of the user-task poller, which application.yaml times every
-    // second, each of which would tell a user task again
     // what an earlier version of the application left at the engine: version 1 of Sorting, and a
     // workflow which waits on version 1 of Storing
     private static long deployTheVersionsBeforeTheChange() {
@@ -1088,6 +1086,8 @@ class ZenBpmWorkflowLifecycleTest {
                 .getList("$");
     }
 
+    // long enough for three looks of the user-task poller, which application.yaml times every
+    // second, each of which would tell a user task again
     private static void watchThreeLooks() {
         LockSupport.parkNanos(Duration
                 .ofMillis(3_500)

@@ -299,7 +299,7 @@ class ZenBpmModelReaderTest {
 
     @ParameterizedTest(name = "{0}")
     @MethodSource("calledVersions")
-    @DisplayName("A call activity starts the version of its called process the engine resolves: the latest, a version by its number, or a tag, and a binding the engine refuses once the call activity is reached starts none")
+    @DisplayName("A call activity starts the version of its called process the engine resolves: the latest, a version by its number, or a tag, and a binding with which the engine refuses to deploy the model starts none")
     void aCallActivityStartsTheVersionTheEngineResolves(
         final String attributes,
         final CalledVersion expected
@@ -313,6 +313,27 @@ class ZenBpmModelReaderTest {
                 """.formatted(attributes));
 
         assertEquals(List.of(new CallActivity("Call", "Invoice", expected)), model.callActivities());
+    }
+
+    @Test
+    @DisplayName("The start events of event sub-processes, also inside an embedded sub-process and with the flag spelt as Go reads it, each name the event sub-process they start; those of the process and of an embedded sub-process do not")
+    void theStartEventsOfEventSubProcessesNameTheirEventSubProcess() {
+        final var model = readInline("""
+                <bpmn:process id="Order" isExecutable="true">
+                  <bpmn:startEvent id="Start" />
+                  <bpmn:subProcess id="Embedded">
+                    <bpmn:startEvent id="EmbeddedStart" />
+                    <bpmn:subProcess id="Reminders" triggeredByEvent="1">
+                      <bpmn:startEvent id="Reminder" isInterrupting="false" />
+                    </bpmn:subProcess>
+                  </bpmn:subProcess>
+                  <bpmn:subProcess id="Escalations" triggeredByEvent="true">
+                    <bpmn:startEvent id="Escalation" />
+                  </bpmn:subProcess>
+                </bpmn:process>
+                """);
+
+        assertEquals(Map.of("Reminder", "Reminders", "Escalation", "Escalations"), model.eventSubProcessStarts());
     }
 
     @Test
@@ -516,6 +537,8 @@ class ZenBpmModelReaderTest {
         return Stream.of(
                 Arguments.of("", CalledVersion.LATEST),
                 Arguments.of("version=\"3\"", new CalledVersion(3, null)),
+                // the engine reads a number without the whitespace around it
+                Arguments.of("version=\" 3 \"", new CalledVersion(3, null)),
                 Arguments.of("version=\"0\"", null),
                 Arguments.of("version=\"-1\"", null),
                 Arguments.of("versionTag=\"release-1\"", CalledVersion.LATEST),

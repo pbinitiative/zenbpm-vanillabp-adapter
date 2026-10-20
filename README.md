@@ -370,16 +370,19 @@ holds reads it through one cache of the adapter id, so a start reads each model 
 The viewer/history API is read from the engine (decision 57). A process definition's id is its key
 at the engine, and its BPMN is the model as the engine holds it, with the markers the adapter wrote.
 The workflow of an aggregate is found by its business key: one which runs, else the one created
-last; a search which finds nothing is repeated within `workflow-visibility-timeout`, and a workflow
-the engine started by a timer or a message, which has no business key, is unknown to the viewer.
-Its definitions are the one it runs on and, for each call activity, the one the engine would start
-now: the latest version, the version the call activity names, or the one which carries the tag it
-names. Its history merges the elements of its embedded sub-processes and multi-instance elements,
-which the engine keeps in instances of their own, reports the entry of a multi-instance element as
-`MULTI_INSTANCE`, leaves the adapter's markers out, carries the message of an incident nobody
-resolved, and names, for a call activity, the instance it started, whose history and definitions
-are read through that context; a context which belongs to another workflow is not served. The engine
-keeps no state of an element, so none is reported as cancelled (see [`GAPS.md`](./GAPS.md)).
+last; under `message-start-lookup: scan` a running workflow a message started is found by its id
+variable, as the probes find it. A read which finds nothing is repeated within
+`workflow-visibility-timeout`, and a workflow the engine started by a timer, or by a message outside
+the scan, which has no business key, is unknown to the viewer. Its definitions are the one it runs
+on and, for each call activity, the one the engine would start now: the latest version, the version
+the call activity names, or the one which carries the tag it names. Its history merges the elements
+of its embedded sub-processes, event sub-processes and multi-instance elements, which the engine
+keeps in instances of their own, reports an event sub-process as `EVENT_SUB_PROCESS` and the entry
+of a multi-instance element as `MULTI_INSTANCE`, leaves the adapter's markers out, carries the
+message of an incident nobody resolved, and names, for a call activity, the instance it started,
+whose history and definitions are read through that context; a context which belongs to another
+workflow is not served. The engine keeps no state of an element, so none is reported as cancelled
+(see [`GAPS.md`](./GAPS.md)).
 
 What is built next, and in which order, is the implementation plan in [`docs/`](docs/README.md).
 

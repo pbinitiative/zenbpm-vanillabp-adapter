@@ -115,6 +115,7 @@ class ZenBpmRestClientContractIT {
         client.deployBpmn(fixture("contract-multi-instance-call.bpmn"));
         client.deployBpmn(fixture("contract-viewed-called.bpmn"));
         client.deployBpmn(fixture("contract-viewed.bpmn"));
+        client.deployBpmn(fixture("contract-escalated.bpmn"));
         decision = client.deployDmn(fixture("contract-decision.dmn"));
     }
 
@@ -840,6 +841,39 @@ class ZenBpmRestClientContractIT {
                 () -> assertTrue(root
                         .stream()
                         .allMatch(entry -> entry.completedAt() != null), root::toString));
+    }
+
+    @Test
+    @DisplayName("An event sub-process writes no entry into the history of the instance it stands in: it runs in a child instance of the process type subprocess, whose history starts at the start event of the event sub-process")
+    void anEventSubProcessWritesNoEntryWhereItStands() {
+        final var started = client.createInstance(CreateInstanceRequest
+                .latestVersionOf("contract-escalated")
+                .withBusinessKey(uniqueBusinessKey()));
+        completeEveryJobOf("contract-escalated-escalate", 1);
+        completeEveryJobOf("contract-escalated-wait", 1);
+        eventually(() -> client
+                .instance(started.key())
+                .filter(instance -> instance.state() == ProcessInstanceRef.State.COMPLETED));
+
+        final var root = everyEntryOf(started.key());
+        final var eventSubProcess = only(client.children(started.key()), ProcessInstanceRef.ProcessType.SUBPROCESS);
+
+        assertAll(
+                () -> assertEquals(List.of("Start", "Flow_ToWait", "Wait", "Flow_ToEnd", "End"), root
+                        .stream()
+                        .sorted(Comparator.comparingLong(HistoryEntry::key))
+                        .map(HistoryEntry::elementId)
+                        .toList()),
+                () -> assertEquals(started.key(), eventSubProcess.parentKey()),
+                () -> assertEquals(List.of("Escalated", "Flow_ToEscalate", "Escalate", "Flow_ToEscalationEnd",
+                        "EscalationEnd"),
+                        everyEntryOf(eventSubProcess.key())
+                                .stream()
+                                .sorted(Comparator.comparingLong(HistoryEntry::key))
+                                .map(HistoryEntry::elementId)
+                                .toList()),
+                () -> assertEquals("START_EVENT", entryOf(everyEntryOf(eventSubProcess.key()), "Escalated")
+                        .elementType()));
     }
 
     @Test

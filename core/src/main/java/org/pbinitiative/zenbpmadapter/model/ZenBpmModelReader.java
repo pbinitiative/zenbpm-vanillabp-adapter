@@ -299,13 +299,12 @@ public final class ZenBpmModelReader {
         return children;
     }
 
-    // an attribute's value as written, whitespace included, because the engine keeps it: a job
-    // type ' charge ' is not 'charge'. Null where the element has none or an empty one
     // read as the engine reads it: without a binding type a version names itself; the binding type
     // 'versionTag' names a tag, 'latest' the latest version, and every other one the latest as well,
-    // whatever else the element says. What the engine refuses once the call activity is reached is
-    // null: a version with the binding type 'latest' or 'versionTag', a 'versionTag' without a
-    // tag, and a version which is no number above zero
+    // whatever else the element says. What makes the engine refuse to deploy the model is null: a
+    // version with the binding type 'latest' or 'versionTag', a 'versionTag' without a tag, and a
+    // version which is no number above zero. The engine reads the number without the whitespace
+    // around it, and the tag and the binding type as written
     private static CalledVersion calledVersionOf(final Element calledElement) {
         final var version = attribute(calledElement, "version");
         if (!calledElement.hasAttribute("bindingType")) {
@@ -330,13 +329,15 @@ public final class ZenBpmModelReader {
 
     private static Integer numberAboveZero(final String text) {
         try {
-            final var number = Integer.parseInt(text);
+            final var number = Integer.parseInt(text.strip());
             return number > 0 ? number : null;
         } catch (final NumberFormatException notANumber) {
             return null;
         }
     }
 
+    // an attribute's value as written, whitespace included, because the engine keeps it: a job
+    // type ' charge ' is not 'charge'. Null where the element has none or an empty one
     private static String attribute(
         final Element element,
         final String name
@@ -406,6 +407,8 @@ public final class ZenBpmModelReader {
 
         private final Map<String, List<String>> enclosingMultiInstances = new LinkedHashMap<>();
 
+        private final Map<String, String> eventSubProcessStarts = new LinkedHashMap<>();
+
         private ProcessReading(
             final String filename,
             final Document document,
@@ -453,7 +456,8 @@ public final class ZenBpmModelReader {
                     expressions,
                     messageStarts,
                     messageCatches,
-                    enclosingMultiInstances);
+                    enclosingMultiInstances,
+                    eventSubProcessStarts);
             // @formatter:on
         }
 
@@ -517,6 +521,10 @@ public final class ZenBpmModelReader {
                 }
                 final var innerChain = multiInstance.isPresent() ? append(chain, attribute(element, "id")) : chain;
                 if (isBpmn(element, "subProcess")) {
+                    if (ZenBpmBooleans.valueOf(element, "triggeredByEvent", false)) {
+                        bpmnChildren(element, "startEvent").forEach(start -> eventSubProcessStarts.put(attribute(start,
+                                "id"), attribute(element, "id")));
+                    }
                     walk(element, innerChain);
                 }
             }
@@ -549,7 +557,8 @@ public final class ZenBpmModelReader {
                     }
                 }
                 case "callActivity" -> {
-                    // a binding the engine refuses is read as null, which an Optional cannot carry
+                    // a binding with which the engine refuses the model is read as null, which an
+                    // Optional cannot carry
                     final var calledElement = extension(element, "calledElement").orElse(null);
                     final var calledVersion = calledElement == null ? CalledVersion.LATEST : calledVersionOf(
                             calledElement);

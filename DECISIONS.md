@@ -1526,66 +1526,86 @@ definition is gone.
 
 **Which workflow.** The core hands the viewer methods the aggregate id only, not the key of the
 workflow it hands the probe of the same read. The aggregate id is the workflow's business key
-(decision 25), so the viewer searches the instances of the process under that key, every page,
-with the earliest creation time as the lower bound so the engine searches its index (decision 56):
-one which runs is shown, else the one created last, by creation time and then key. The engine
-leaves the instances of embedded sub-processes and multi-instance elements, which carry the
-business key as well, out of that search, and the viewer passes them over all the same. A search
-which finds nothing is repeated every quarter of a second until `workflow-visibility-timeout`
-passed: the probe found the workflow a moment before, a node which lags behind may not show it
-yet, and nothing repeats a read of the viewer later. A workflow without a business key, one the
-engine started by a timer or a message or one somebody started past VanillaBP without one, is not
-found and is answered as unknown, which the core turns into its not-found exception. Keeping the
-key the core hands the probe for the viewer call which follows was rejected: it would tie the
-viewer to the order in which the core calls, which the platform's contract does not promise. A
-search the engine does not answer throws, naming the keys of the engine's address and of the time a
-request may take.
+(decision 25), so the viewer searches the instances of the process under that key, every page, with
+the earliest creation time as the lower bound so the engine searches its index (decision 56): one
+which runs is shown, else the one created last, by creation time and then key. The engine leaves the
+instances of embedded sub-processes and multi-instance elements, which carry the business key as
+well, out of that search, and the viewer passes them over all the same. Where the search finds no
+workflow which runs, and `message-start-lookup` is `scan` and the process has a message start event,
+the viewer looks for a running workflow by its id variable as the probes do (the same lookup,
+bounded by `message-start-lookup-max-instances`), so a workflow a message started is shown where the
+probe found it. A read which finds nothing is repeated every quarter of a second until
+`workflow-visibility-timeout` passed: the probe found the workflow a moment before, a node which
+lags behind may not show it yet, and nothing repeats a read of the viewer later. Any other workflow
+without a business key, one the engine started by a timer, one a message started outside the scan or
+which ended, or one somebody started past VanillaBP without one, is not found and is answered as
+unknown after that window, which the core turns into its not-found exception. Keeping the key the
+core hands the probe for the viewer call which follows was rejected: it would tie the viewer to the
+order in which the core calls, which the platform's contract does not promise. A search the engine
+does not answer throws, naming the keys of the engine's address and of the time a request may take.
 
 **The history context** of a call activity is the key of the instance it started, as a decimal
 number. A context is served only where it names an instance of the process type `callActivity`
 whose parents, read through the instance cache, lead to the workflow found, so a call activity of
 a called process has its context served as well, and the history of another workflow cannot be
-read through a context made up; such a context is answered as unknown with a WARN.
+read through a context made up; such a context is answered as unknown with a WARN. The instance of
+a context and each parent on the way up, which a node lagging behind may not show yet either, are
+read again within the same window, one deadline for the whole read; a walk which meets a root other
+than the workflow is refused at once.
 
 **The definitions** are the one the workflow, or the context, runs on, and for each call activity
 of its model the definition the engine would start now, resolved as the engine resolves a
 `calledElement` at the pinned commit (`ResolveVersion` of `pkg/bpmn/model/extensions/io_mapping.go`,
 `resolveCalledProcessDefinition` of `pkg/bpmn/sub_process.go`): the latest version, the version of
 a number, or the version which carries a tag, and where none does, the version a tag
-`v<number>` names. Call activities which start the same definition share its entry. One which names
-no process, a binding the engine refuses once the call activity is reached, and a process the
-engine holds no such version of are left out. Camunda 8 answers the version the application
+`v<number>` names, the number read without the whitespace around it, as Go reads it. Call
+activities which start the same definition share its entry. One which names no process, and a
+process the engine holds no such version of, are left out; so is a binding with which the engine
+refuses to deploy the model (`validateCallActivityVersions` of `pkg/bpmn/model/bpmn20/helper.go`
+runs `ResolveVersion` on every call activity while the model is parsed), which only a file the
+engine never held can carry. Camunda 8 answers the version the application
 deployed; the engine resolves at runtime, so this answers what it would start.
 
 **The history.** At the pinned commit the engine keeps the elements of an embedded sub-process in a
 child instance of the process type `subprocess`, and an activation of a multi-instance element as
 one entry in the instance the element stands in and a body of the process type `multiInstance`,
-which holds an entry per iteration (`ZenBpmRestClientContractIT#theHistoryOfAnInstanceHoldsItsOwnLevel`).
-The viewer reads each of them and merges their entries, ordered by the moment they were entered
-and then by key, so the workflow's history reads as Camunda 8's does: the entry of a multi-instance
-element where it stands is reported as `MULTI_INSTANCE`, as Camunda 8 reports the body, and each
-iteration with the type of the element. An instance a call activity started is a workflow of its
-own and stays out; the call activity names it as its secondary context. The engine names no call
-activity in the instance it started, but creates that instance right after the entry of the call
-activity, under a larger key of the same partition, so each entry of a call activity takes the
-first instance of its called process with a larger key which no entry before it took, the entries
-taken in the order of their keys. The entries of the markers the adapter writes into a model
+which holds an entry per iteration
+(`ZenBpmRestClientContractIT#theHistoryOfAnInstanceHoldsItsOwnLevel`). An event sub-process runs in
+a child instance of the process type `subprocess` as well, but writes no entry into the instance it
+stands in (`buildEventSubprocessInstance` of `pkg/bpmn/event_subprocess_subscription_handler.go`,
+`ZenBpmRestClientContractIT#anEventSubProcessWritesNoEntryWhereItStands`), so nothing in that
+history says a child is there: the viewer reads the children of every instance whose model has an
+event sub-process, and reports a child whose history starts at the start event of one as an
+`EVENT_SUB_PROCESS` element, from the creation of the child to the latest end of its entries, as
+Camunda 8 reports it. The viewer reads each of them and merges their entries, ordered by the moment
+they were entered and then by key, so the workflow's history reads as Camunda 8's does: the entry of
+a multi-instance element where it stands is reported as `MULTI_INSTANCE`, as Camunda 8 reports the
+body, and each iteration with the type of the element. An instance a call activity started is a
+workflow of its own and stays out; the call activity names it as its secondary context. The engine
+names no call activity in the instance it started, but creates that instance right after the entry
+of the call activity, under a larger key of the same partition, so each entry of a call activity
+takes the first instance of its called process with a larger key which no entry before it took, the
+entries taken in the order of their keys. The entries of the markers the adapter writes into a model
 (decisions 44 and 52), and those of the flows to them, are left out, because they are the adapter's
 means to hear the start and the end of a workflow, as the listeners of Camunda 8 are, which its
-history never shows. An element with an incident nobody resolved carries the engine's message,
-read only for an instance a list of instances counts incidents for, or for one read by its key
-which runs. The engine keeps no state of an element and no end of an instance, so no element is
-reported as cancelled and the end of a workflow which ended is the latest end of its own elements.
+history never shows. An element with an incident nobody resolved carries the engine's message, read
+only for an instance a list of instances counts incidents for, or for one read by its key which
+runs. The engine keeps no state of an element and no end of an instance, so no element is reported
+as cancelled and the end of a workflow which ended is the latest end of its elements, those of its
+sub-processes and event sub-processes included, because an interrupting event sub-process ends the
+workflow after its own last element.
 
-A history the engine does not answer, and the model of a definition which cannot be read, cost
-what they would have told: the elements are reported as `null`, which the platform's contract
-names as the answer of a BPMS which keeps no history and not as an error, and the definitions of
-the call activities are left out. The first such failure is a WARN, the next ones are DEBUG until a
-read of the viewer succeeds again.
+A history the engine does not answer, and the model of a definition or the versions of the processes
+it calls which cannot be read, cost what they would have told: the elements are reported as `null`,
+which the platform's contract names as the answer of a BPMS which keeps no history and not as an
+error, and the definitions of the call activities are left out. The first such failure is a WARN,
+the next ones are DEBUG until a read of the viewer succeeds again.
 
 What a read costs (decision 14): the definitions cost the search, the model once (it is kept), and
 one list of versions per process called; the history costs the search, the model, and for the
 workflow and each of its sub-process instances and multi-instance bodies its pages of history, one
-read of its children where an entry of it starts one, and its incidents where some are counted; a
-context adds one read of its instance, and one for each parent the instance cache does not hold.
+read of its children where an entry of it starts one or its model has an event sub-process, and its
+incidents where some are counted; a context adds one read of its instance, and one for each parent
+the instance cache does not hold; a read which finds nothing is repeated within the window; under
+the scan, a search which finds no workflow which runs adds the scan's pages.
 `ZenBpmWorkflowViewerTest` pins these numbers.

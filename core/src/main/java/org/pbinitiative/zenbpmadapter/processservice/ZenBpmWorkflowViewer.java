@@ -23,6 +23,7 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.locks.LockSupport;
+import java.util.function.Supplier;
 import java.util.stream.Collectors;
 
 import org.pbinitiative.zenbpmadapter.client.ZenBpmAdapterConfiguration;
@@ -55,34 +56,38 @@ import lombok.extern.slf4j.Slf4j;
  * <b>Which workflow.</b> The aggregate id is the workflow's business key (decision 25), so the
  * workflow is found by searching the instances of the process under that key: one which runs,
  * else the one created last, so an aggregate whose first workflow ended and whose second runs shows
- * the second. A node of the engine which lags behind may not find a workflow the core's probe
- * found a moment before, so where the search finds nothing it is repeated until
- * <code>workflow-visibility-timeout</code> passed, the window the probes report. A workflow the
- * engine started by a timer or a message has no business key and is not found, so it is reported
- * as unknown. A search the engine does not answer throws, because an unknown workflow is a
- * different answer.
+ * the second. A workflow the engine started by a timer or a message has no business key; under
+ * <code>message-start-lookup: scan</code> one a message started is found by its id variable among
+ * the instances which run, as the probes find it, and otherwise it is reported as unknown. A node of
+ * the engine which lags behind may not find a workflow the core's probe found a moment before, so
+ * where the search finds nothing it is repeated until <code>workflow-visibility-timeout</code>
+ * passed, the window the probes report. A search the engine does not answer throws, because an
+ * unknown workflow is a different answer.
  * <p>
  * <b>The history context</b> of a call activity is the key of the instance it started, as a decimal
  * number. A context is served only where that instance was started by a call activity of the
  * workflow found, or of a process the workflow called, so the history of another workflow cannot be
- * read through a context made up.
+ * read through a context made up. The instance and its parents are read again within the same
+ * window where a node does not show them yet.
  * <p>
  * <b>The definitions</b> are the one the workflow runs on, and for each call activity of its model
  * the definition the engine would start now: the latest version of the called process, the version
  * the call activity names, or the one which carries the tag it names.
  * <p>
  * <b>The history</b> lists the flow elements the workflow passed, its sequence flows included, with
- * those of its embedded sub-processes and multi-instance elements, which the engine keeps in child
- * instances of their own: the entry of a multi-instance element in the instance it stands in is
- * reported as {@link WorkflowElementType#MULTI_INSTANCE}, and each iteration with the type of the
- * element. A call activity names the instance it started as its secondary history context. The
- * markers the adapter writes into a model are left out. An element with an incident nobody resolved
- * carries the engine's message. The engine does not tell an element which was terminated from one
- * which completed, and keeps no end of an instance, so no element is reported as cancelled, and the
- * end of a workflow is the end of its last element. A read of the history which the engine does not
- * answer costs the elements, which are reported as <code>null</code>, and a read of a model which
- * fails costs the definitions its call activities would start; the first such failure is logged at
- * WARN, the next ones at DEBUG until a read succeeds again.
+ * those of its embedded sub-processes, event sub-processes and multi-instance elements, which the
+ * engine keeps in child instances of their own: the entry of a multi-instance element in the
+ * instance it stands in is reported as {@link WorkflowElementType#MULTI_INSTANCE}, and each
+ * iteration with the type of the element. An event sub-process writes no entry where it stands, so
+ * it is reported as {@link WorkflowElementType#EVENT_SUB_PROCESS} from its instance. A call activity
+ * names the instance it started as its secondary history context. The markers the adapter writes
+ * into a model are left out. An element with an incident nobody resolved carries the engine's
+ * message. The engine does not tell an element which was terminated from one which completed, and
+ * keeps no end of an instance, so no element is reported as cancelled, and the end of a workflow is
+ * the end of its last element. A read of the history which the engine does not answer costs the
+ * elements, which are reported as <code>null</code>, and a read of a model or of the versions of the
+ * processes called which fails costs the definitions its call activities would start; the first
+ * such failure is logged at WARN, the next ones at DEBUG until a read succeeds again.
  */
 @Slf4j
 final class ZenBpmWorkflowViewer {
@@ -92,6 +97,8 @@ final class ZenBpmWorkflowViewer {
     private final ZenBpmClientFactory factory;
 
     private final NameClashAvoidanceSupport scoping;
+
+    private final ZenBpmMessageStartScan messageStartScan;
 
     /**
      * How often the search is repeated while it waits for a workflow to become visible.
@@ -109,17 +116,20 @@ final class ZenBpmWorkflowViewer {
      * @param adapterId The adapter id
      * @param factory The factory of the adapter id
      * @param scoping The core's name-clash avoidance, which takes the prefix off a process id
+     * @param messageStartScan The lookup of the workflows a message started, which the probes use
      * @param searchInterval How often the search is repeated while it waits for a workflow
      */
     ZenBpmWorkflowViewer(
         final String adapterId,
         final ZenBpmClientFactory factory,
         final NameClashAvoidanceSupport scoping,
+        final ZenBpmMessageStartScan messageStartScan,
         final Duration searchInterval
     ) {
         this.adapterId = adapterId;
         this.factory = factory;
         this.scoping = scoping;
+        this.messageStartScan = messageStartScan;
         this.searchInterval = searchInterval;
     }
 
@@ -131,6 +141,8 @@ final class ZenBpmWorkflowViewer {
      * @param workflowModuleId The workflow module
      * @param bpmnProcessId The process, as the workflow module names it
      * @param aggregateId The id of the aggregate
+     * @param idVariableName The name of the variable which carries the aggregate's id,
+     *            <code>null</code> where nobody named it
      * @param historyContext <code>null</code> for the workflow, else the key of an instance a call
      *            activity of the workflow started
      * @return The definitions, empty where the workflow or the context is unknown
@@ -141,9 +153,11 @@ final class ZenBpmWorkflowViewer {
         final String workflowModuleId,
         final String bpmnProcessId,
         final String aggregateId,
+        final String idVariableName,
         final String historyContext
     ) {
-        final var subject = subjectOf(rest, workflowModuleId, bpmnProcessId, aggregateId, historyContext);
+        final var subject = subjectOf(rest, workflowModuleId, bpmnProcessId, aggregateId, idVariableName,
+                historyContext);
         if (subject.isEmpty()) {
             return List.of();
         }
@@ -161,8 +175,18 @@ final class ZenBpmWorkflowViewer {
                     failure);
             return List.copyOf(definitions);
         }
+        final List<ProcessDefinition> called;
+        try {
+            called = calledDefinitionsOf(rest, workflowModuleId, model);
+        } catch (final RuntimeException failure) {
+            readFailed(
+                    "the versions of the processes the call activities of process definition %d call, so the definitions they would start are not reported"
+                            .formatted(instance.definitionKey()),
+                    failure);
+            return List.copyOf(definitions);
+        }
         readsFail.set(false);
-        definitions.addAll(calledDefinitionsOf(rest, workflowModuleId, model));
+        definitions.addAll(called);
         return List.copyOf(definitions);
     }
 
@@ -200,6 +224,8 @@ final class ZenBpmWorkflowViewer {
      * @param workflowModuleId The workflow module
      * @param bpmnProcessId The process, as the workflow module names it
      * @param aggregateId The id of the aggregate
+     * @param idVariableName The name of the variable which carries the aggregate's id,
+     *            <code>null</code> where nobody named it
      * @param historyContext <code>null</code> for the workflow, else the key of an instance a call
      *            activity of the workflow started
      * @return The history, <code>null</code> where the workflow or the context is unknown
@@ -210,9 +236,11 @@ final class ZenBpmWorkflowViewer {
         final String workflowModuleId,
         final String bpmnProcessId,
         final String aggregateId,
+        final String idVariableName,
         final String historyContext
     ) {
-        final var subject = subjectOf(rest, workflowModuleId, bpmnProcessId, aggregateId, historyContext);
+        final var subject = subjectOf(rest, workflowModuleId, bpmnProcessId, aggregateId, idVariableName,
+                historyContext);
         if (subject.isEmpty()) {
             return null;
         }
@@ -260,41 +288,79 @@ final class ZenBpmWorkflowViewer {
         };
     }
 
-    // the instance a read is about: the workflow, or the instance its history context names
+    // the instance a read is about: the workflow, or the instance its history context names. A node
+    // which lags behind may not show what the probe found a moment ago on another one, so every read
+    // which finds nothing is repeated within one window, the one the probes report
     private Optional<ProcessInstanceRef> subjectOf(
         final ZenBpmRestClient rest,
         final String workflowModuleId,
         final String bpmnProcessId,
         final String aggregateId,
+        final String idVariableName,
         final String historyContext
     ) {
         final var scopedId = scoping.scopedProcessId(workflowModuleId, bpmnProcessId, adapterId);
         final var subject = "the workflow of aggregate '%s' (process '%s' of workflow module '%s')".formatted(
                 aggregateId, bpmnProcessId, workflowModuleId);
+        final var deadline = System.nanoTime() + factory
+                .configuration()
+                .getWorkflowVisibilityTimeout()
+                .toNanos();
         try {
-            final var workflow = workflowOf(rest, scopedId, aggregateId);
+            final var workflow = untilVisible(() -> workflowOf(rest, workflowModuleId, scopedId, aggregateId,
+                    idVariableName), deadline);
             if (workflow.isEmpty() || (historyContext == null)) {
                 return workflow;
             }
-            return calledInstanceOf(rest, workflow.get(), historyContext, subject);
+            return calledInstanceOf(rest, workflow.get(), historyContext, subject, deadline);
         } catch (final RuntimeException failure) {
             throw notAsked(subject, failure);
         }
     }
 
-    // a node which lags behind may not find a workflow the probe found a moment ago on another one,
-    // so an empty search is repeated within the window the probes report
     private Optional<ProcessInstanceRef> workflowOf(
         final ZenBpmRestClient rest,
+        final String workflowModuleId,
         final String scopedId,
-        final String aggregateId
+        final String aggregateId,
+        final String idVariableName
     ) {
-        final var deadline = System.nanoTime() + factory
-                .configuration()
-                .getWorkflowVisibilityTimeout()
-                .toNanos();
+        final var searched = searched(rest, scopedId, aggregateId);
+        if (searched
+                .filter(instance -> ZenBpmRunningWorkflows.isRunning(instance.state()))
+                .isPresent()) {
+            return searched;
+        }
+        return scanned(rest, workflowModuleId, scopedId, aggregateId, idVariableName).or(() -> searched);
+    }
+
+    // a workflow the engine started by a message has no business key, so under the scan it is found
+    // by its id variable among the instances which run, as the probes find it
+    private Optional<ProcessInstanceRef> scanned(
+        final ZenBpmRestClient rest,
+        final String workflowModuleId,
+        final String scopedId,
+        final String aggregateId,
+        final String idVariableName
+    ) {
+        if (idVariableName == null) {
+            return Optional.empty();
+        }
+        final var toScan = messageStartScan.processesToScan(workflowModuleId, Set.of(scopedId));
+        if (toScan.isEmpty()) {
+            return Optional.empty();
+        }
+        return messageStartScan
+                .running(rest, toScan, idVariableName, aggregateId)
+                .filter(ZenBpmWorkflowViewer::isARoot);
+    }
+
+    private <T> Optional<T> untilVisible(
+        final Supplier<Optional<T>> read,
+        final long deadline
+    ) {
         while (true) {
-            final var found = searched(rest, scopedId, aggregateId);
+            final var found = read.get();
             if (found.isPresent() || ((System.nanoTime() - deadline) >= 0)) {
                 return found;
             }
@@ -349,7 +415,8 @@ final class ZenBpmWorkflowViewer {
         final ZenBpmRestClient rest,
         final ProcessInstanceRef workflow,
         final String historyContext,
-        final String subject
+        final String subject,
+        final long deadline
     ) {
         final var key = ZenBpmKeys.keyOf(historyContext);
         if (key.isEmpty()) {
@@ -359,7 +426,7 @@ final class ZenBpmWorkflowViewer {
         }
         final Optional<ProcessInstanceRef> called;
         try {
-            called = rest.instance(key.getAsLong());
+            called = untilVisible(() -> rest.instance(key.getAsLong()), deadline);
         } catch (final RuntimeException failure) {
             if (ZenBpmKeys.isAKeyOfAPartitionTheEngineDoesNotHave(rest, key.getAsLong(), failure)) {
                 log.debug("ZenBPM[{}]: the history context '{}' of {} names a partition the engine does not have",
@@ -377,7 +444,7 @@ final class ZenBpmWorkflowViewer {
                 .get()
                 .processType() == ProcessInstanceRef.ProcessType.CALL_ACTIVITY) && isBelow(called
                         .get()
-                        .parentKey(), workflow.key())) {
+                        .parentKey(), workflow.key(), deadline)) {
             return called;
         }
         log.warn(
@@ -389,16 +456,18 @@ final class ZenBpmWorkflowViewer {
     // the parents are read through the instance cache, which keeps what does not change
     private boolean isBelow(
         final Long parentKey,
-        final long workflowKey
+        final long workflowKey,
+        final long deadline
     ) {
         var parent = parentKey;
         while (parent != null) {
             if (parent == workflowKey) {
                 return true;
             }
-            final var facts = factory
+            final long instanceKey = parent;
+            final var facts = untilVisible(() -> factory
                     .instances()
-                    .facts(parent);
+                    .facts(instanceKey), deadline);
             if (facts.isEmpty()) {
                 return false;
             }
@@ -532,16 +601,18 @@ final class ZenBpmWorkflowViewer {
                         .stream()
                         .filter(callActivity -> callActivity.calledProcessId() != null)
                         .collect(Collectors.toMap(ZenBpmBpmnModel.CallActivity::elementId,
-                                ZenBpmBpmnModel.CallActivity::calledProcessId)));
+                                ZenBpmBpmnModel.CallActivity::calledProcessId)), model.eventSubProcessStarts());
         final var elements = new ArrayList<Element>();
-        final var ownEntries = collect(rest, instance, false, shape, elements);
+        collect(rest, instance, false, shape, elements);
+        // an interrupting event sub-process ends the workflow after the last element of its own
         final var endTime = isEnded(instance.state())
-                ? ownEntries
+                ? elements
                         .stream()
-                        .map(HistoryEntry::completedAt)
+                        .map(element -> element
+                                .history()
+                                .endTime())
                         .filter(Objects::nonNull)
                         .max(Comparator.naturalOrder())
-                        .map(ZenBpmWorkflowViewer::offsetOf)
                         .orElse(null)
                 : null;
         return new Read(elements
@@ -554,7 +625,8 @@ final class ZenBpmWorkflowViewer {
     }
 
     // the entries of one instance and of its parts, which are added to the list; answers the
-    // instance's own entries
+    // instance's own entries. An event sub-process writes no entry into the instance it stands in,
+    // so the children of an instance whose model has one are read whatever its entries say
     private List<HistoryEntry> collect(
         final ZenBpmRestClient rest,
         final ProcessInstanceRef instance,
@@ -564,11 +636,13 @@ final class ZenBpmWorkflowViewer {
     ) {
         final var entries = entriesOf(rest, instance.key());
         final var errors = errorsOf(rest, instance);
-        final var children = entries
-                .stream()
-                .anyMatch(entry -> startsAChild(entry, isABody, shape)) ? rest.children(instance.key())
-                        : List
-                                .<ProcessInstanceRef>of();
+        final var children = !shape
+                .eventSubProcessStarts()
+                .isEmpty() || entries
+                        .stream()
+                        .anyMatch(entry -> startsAChild(entry, isABody, shape)) ? rest.children(instance.key())
+                                : List
+                                        .<ProcessInstanceRef>of();
         final var calledInstances = calledInstancesOf(entries, isABody, shape, children);
         for (final var entry : entries) {
             if (entry
@@ -587,7 +661,11 @@ final class ZenBpmWorkflowViewer {
         }
         for (final var child : children) {
             if (child.processType() == ProcessInstanceRef.ProcessType.SUBPROCESS) {
-                collect(rest, child, false, shape, elements);
+                final var childEntries = collect(rest, child, false, shape, elements);
+                eventSubProcessOf(childEntries, shape).ifPresent(eventSubProcess -> elements.add(new Element(child
+                        .createdAt(), child.key(), new WorkflowElementHistory(offsetOf(child.createdAt()), isEnded(
+                                child.state()) ? lastEndOf(childEntries)
+                                        : null, eventSubProcess, WorkflowElementType.EVENT_SUB_PROCESS, null, false, null))));
             }
             if (child.processType() == ProcessInstanceRef.ProcessType.MULTI_INSTANCE) {
                 collect(rest, child, true, shape, elements);
@@ -689,6 +767,32 @@ final class ZenBpmWorkflowViewer {
         return calledInstances;
     }
 
+    // the instance of an event sub-process starts at one of its start events, that of an embedded
+    // sub-process at a start event no event sub-process has
+    private static Optional<String> eventSubProcessOf(
+        final List<HistoryEntry> entries,
+        final Shape shape
+    ) {
+        return entries
+                .stream()
+                .filter(entry -> "START_EVENT".equals(entry.elementType()))
+                .map(entry -> shape
+                        .eventSubProcessStarts()
+                        .get(entry.elementId()))
+                .filter(Objects::nonNull)
+                .findFirst();
+    }
+
+    private static OffsetDateTime lastEndOf(final List<HistoryEntry> entries) {
+        return entries
+                .stream()
+                .map(HistoryEntry::completedAt)
+                .filter(Objects::nonNull)
+                .max(Comparator.naturalOrder())
+                .map(ZenBpmWorkflowViewer::offsetOf)
+                .orElse(null);
+    }
+
     private static boolean isEnded(final ProcessInstanceRef.State state) {
         return (state == ProcessInstanceRef.State.COMPLETED) || (state == ProcessInstanceRef.State.TERMINATED);
     }
@@ -731,10 +835,13 @@ final class ZenBpmWorkflowViewer {
      * @param multiInstanceElements The ids of its multi-instance elements
      * @param calledProcesses The process each call activity calls, by the id of the call activity,
      *            as the engine knows the process
+     * @param eventSubProcessStarts The event sub-process each start event of one starts, by the id
+     *            of the start event
      */
     private record Shape(
         Set<String> multiInstanceElements,
-        Map<String, String> calledProcesses
+        Map<String, String> calledProcesses,
+        Map<String, String> eventSubProcessStarts
     ) {
     }
 

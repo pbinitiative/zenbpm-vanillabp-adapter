@@ -70,6 +70,8 @@ import io.vanillabp.spi.service.BpmsStartTrigger;
  * @param enclosingMultiInstances For every element inside a multi-instance sub-process, the ids of
  *            the multi-instance sub-processes around it, the outermost first; an element inside
  *            none is not in the map
+ * @param eventSubProcessStarts For every start event of an event sub-process, wherever it is in
+ *            the process, the id of the event sub-process it starts
  */
 public record ZenBpmBpmnModel(
     String filename,
@@ -89,7 +91,8 @@ public record ZenBpmBpmnModel(
     List<ModelExpression> expressions,
     List<MessageReference> messageStarts,
     List<MessageReference> messageCatches,
-    Map<String, List<String>> enclosingMultiInstances
+    Map<String, List<String>> enclosingMultiInstances,
+    Map<String, String> eventSubProcessStarts
 ) {
 
     /**
@@ -110,6 +113,7 @@ public record ZenBpmBpmnModel(
         messageStarts = List.copyOf(messageStarts);
         messageCatches = List.copyOf(messageCatches);
         enclosingMultiInstances = Collections.unmodifiableMap(new LinkedHashMap<>(enclosingMultiInstances));
+        eventSubProcessStarts = Collections.unmodifiableMap(new LinkedHashMap<>(eventSubProcessStarts));
     }
 
     /**
@@ -211,8 +215,8 @@ public record ZenBpmBpmnModel(
      *            wrote it in a file of the application, with the prefix of the deployment in a model
      *            the engine holds; <code>null</code> where it names none
      * @param calledVersion Which version of the called process the engine starts, <code>null</code>
-     *            where the engine refuses what the call activity names and fails it once it is
-     *            reached
+     *            where what the call activity names makes the engine refuse to deploy the model, so
+     *            only a file the engine never held can carry it
      */
     public record CallActivity(
         String elementId,
