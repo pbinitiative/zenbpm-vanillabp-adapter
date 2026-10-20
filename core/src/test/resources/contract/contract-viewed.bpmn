@@ -1,0 +1,118 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" xmlns:zenbpm="http://zenbpm.pbinitiative.org/1.0" id="Definitions_ContractViewed" targetNamespace="http://bpmn.io/schema/bpmn"
+    xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI"
+    xmlns:dc="http://www.omg.org/spec/DD/20100524/DC"
+    xmlns:di="http://www.omg.org/spec/DD/20100524/DI">
+  <bpmn:process id="contract-viewed" isExecutable="true">
+    <bpmn:startEvent id="Start">
+      <bpmn:outgoing>Flow_ToWrap</bpmn:outgoing>
+    </bpmn:startEvent>
+    <bpmn:subProcess id="Wrapping">
+      <bpmn:incoming>Flow_ToWrap</bpmn:incoming>
+      <bpmn:outgoing>Flow_ToCall</bpmn:outgoing>
+      <bpmn:startEvent id="WrappingStarted">
+        <bpmn:outgoing>Flow_ToWrapWork</bpmn:outgoing>
+      </bpmn:startEvent>
+      <bpmn:serviceTask id="Wrap">
+        <bpmn:extensionElements>
+          <zenbpm:taskDefinition type="contract-viewed-wrap" />
+        </bpmn:extensionElements>
+        <bpmn:incoming>Flow_ToWrapWork</bpmn:incoming>
+        <bpmn:outgoing>Flow_ToWrapped</bpmn:outgoing>
+      </bpmn:serviceTask>
+      <bpmn:endEvent id="Wrapped">
+        <bpmn:incoming>Flow_ToWrapped</bpmn:incoming>
+      </bpmn:endEvent>
+      <bpmn:sequenceFlow id="Flow_ToWrapWork" sourceRef="WrappingStarted" targetRef="Wrap" />
+      <bpmn:sequenceFlow id="Flow_ToWrapped" sourceRef="Wrap" targetRef="Wrapped" />
+    </bpmn:subProcess>
+    <bpmn:callActivity id="Call">
+      <bpmn:extensionElements>
+        <zenbpm:calledElement processId="contract-viewed-called" />
+      </bpmn:extensionElements>
+      <bpmn:incoming>Flow_ToCall</bpmn:incoming>
+      <bpmn:outgoing>Flow_ToCallEach</bpmn:outgoing>
+    </bpmn:callActivity>
+    <bpmn:callActivity id="CallEach">
+      <bpmn:extensionElements>
+        <zenbpm:calledElement processId="contract-viewed-called" />
+      </bpmn:extensionElements>
+      <bpmn:incoming>Flow_ToCallEach</bpmn:incoming>
+      <bpmn:outgoing>Flow_ToEnd</bpmn:outgoing>
+      <bpmn:multiInstanceLoopCharacteristics>
+        <bpmn:extensionElements>
+          <zenbpm:loopCharacteristics inputCollection="=[1, 2]" inputElement="item" />
+        </bpmn:extensionElements>
+      </bpmn:multiInstanceLoopCharacteristics>
+    </bpmn:callActivity>
+    <bpmn:endEvent id="End">
+      <bpmn:incoming>Flow_ToEnd</bpmn:incoming>
+    </bpmn:endEvent>
+    <bpmn:sequenceFlow id="Flow_ToWrap" sourceRef="Start" targetRef="Wrapping" />
+    <bpmn:sequenceFlow id="Flow_ToCall" sourceRef="Wrapping" targetRef="Call" />
+    <bpmn:sequenceFlow id="Flow_ToCallEach" sourceRef="Call" targetRef="CallEach" />
+    <bpmn:sequenceFlow id="Flow_ToEnd" sourceRef="CallEach" targetRef="End" />
+  </bpmn:process>
+  <bpmndi:BPMNDiagram id="BPMNDiagram_1">
+    <bpmndi:BPMNPlane id="BPMNPlane_1" bpmnElement="contract-viewed">
+      <bpmndi:BPMNShape id="Start_di" bpmnElement="Start">
+        <dc:Bounds x="160" y="80" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Wrapping_di" bpmnElement="Wrapping" isExpanded="true">
+        <dc:Bounds x="256" y="80" width="352" height="140" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="WrappingStarted_di" bpmnElement="WrappingStarted">
+        <dc:Bounds x="286" y="110" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Wrap_di" bpmnElement="Wrap">
+        <dc:Bounds x="382" y="110" width="100" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Wrapped_di" bpmnElement="Wrapped">
+        <dc:Bounds x="542" y="110" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Call_di" bpmnElement="Call">
+        <dc:Bounds x="668" y="80" width="100" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="CallEach_di" bpmnElement="CallEach">
+        <dc:Bounds x="828" y="80" width="100" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="End_di" bpmnElement="End">
+        <dc:Bounds x="988" y="80" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNEdge id="Flow_ToWrapWork_di" bpmnElement="Flow_ToWrapWork">
+        <di:waypoint x="322" y="128" />
+        <di:waypoint x="352" y="128" />
+        <di:waypoint x="352" y="150" />
+        <di:waypoint x="382" y="150" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_ToWrapped_di" bpmnElement="Flow_ToWrapped">
+        <di:waypoint x="482" y="150" />
+        <di:waypoint x="512" y="150" />
+        <di:waypoint x="512" y="128" />
+        <di:waypoint x="542" y="128" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_ToWrap_di" bpmnElement="Flow_ToWrap">
+        <di:waypoint x="196" y="98" />
+        <di:waypoint x="226" y="98" />
+        <di:waypoint x="226" y="150" />
+        <di:waypoint x="256" y="150" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_ToCall_di" bpmnElement="Flow_ToCall">
+        <di:waypoint x="608" y="150" />
+        <di:waypoint x="638" y="150" />
+        <di:waypoint x="638" y="120" />
+        <di:waypoint x="668" y="120" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_ToCallEach_di" bpmnElement="Flow_ToCallEach">
+        <di:waypoint x="768" y="120" />
+        <di:waypoint x="828" y="120" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_ToEnd_di" bpmnElement="Flow_ToEnd">
+        <di:waypoint x="928" y="120" />
+        <di:waypoint x="958" y="120" />
+        <di:waypoint x="958" y="98" />
+        <di:waypoint x="988" y="98" />
+      </bpmndi:BPMNEdge>
+    </bpmndi:BPMNPlane>
+  </bpmndi:BPMNDiagram>
+</bpmn:definitions>

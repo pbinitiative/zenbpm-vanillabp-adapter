@@ -20,6 +20,7 @@ import java.net.http.HttpTimeoutException;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
@@ -45,6 +46,7 @@ import org.pbinitiative.zenbpmadapter.client.api.DefinitionStatistics;
 import org.pbinitiative.zenbpmadapter.client.api.DeployedResource;
 import org.pbinitiative.zenbpmadapter.client.api.EngineStatus;
 import org.pbinitiative.zenbpmadapter.client.api.HistoryEntry;
+import org.pbinitiative.zenbpmadapter.client.api.IncidentRef;
 import org.pbinitiative.zenbpmadapter.client.api.InstanceFilter;
 import org.pbinitiative.zenbpmadapter.client.api.JobFailure;
 import org.pbinitiative.zenbpmadapter.client.api.JobFilter;
@@ -361,8 +363,47 @@ class ZenBpmRestClientTest {
         assertEquals(Optional.of(new ProcessInstanceRef(
                 4503599627370501L, 4503599627370498L, "orders_order", 3, "2026.10", "order-1", ProcessInstanceRef.State.ACTIVE, Map
                         .of("amount", 1000L), 4503599627370400L, ProcessInstanceRef.ProcessType.CALL_ACTIVITY, Instant
-                                .parse("2026-10-13T14:30:25.123Z"))),
+                                .parse("2026-10-13T14:30:25.123Z"), 0)),
                 client.instance(4503599627370501L));
+    }
+
+    @Test
+    @DisplayName("A list of instances tells how many incidents of each nobody resolved, the answer for one instance by its key does not")
+    void aListOfInstancesCountsTheirIncidents() {
+        engine.answers("GET", "/v1/process-instances", 200, """
+                {"partitions": [{"partition": 1, "totalCount": 2, "items": [%s, %s]}],
+                 "page": 1, "size": 100, "count": 2, "totalCount": 2}"""
+                .formatted(
+                        instance(1, "active", "default").replace("\"variables\"",
+                                "\"incidentCount\": 2, \"variables\""),
+                        instance(2, "active", "default")));
+
+        assertEquals(Arrays.asList(2, null), client
+                .instances(InstanceFilter.anyInstance())
+                .items()
+                .stream()
+                .map(ProcessInstanceRef::incidentCount)
+                .toList());
+    }
+
+    @Test
+    @DisplayName("The incidents of an instance nobody resolved are read page by page to the end, each with the entry of the history it happened at")
+    void theUnresolvedIncidentsOfAnInstanceAreRead() {
+        engine.answers("GET", "/v1/process-instances/1/incidents", exchange -> FakeEngine.respond(exchange, 200,
+                isFirstPage(exchange) ? incidents(101, IntStream
+                        .rangeClosed(1, 100)
+                        .mapToObj(key -> incident(key, "Ship"))
+                        .collect(Collectors.joining(","))) : incidents(101, incident(101, "Pack"))));
+
+        final var incidents = client.incidentsOf(1);
+
+        assertAll(
+                () -> assertEquals(101, incidents.size()),
+                () -> assertEquals(new IncidentRef(9101, 101, "Pack", 1, "failed at 101", Instant.parse(
+                        "2026-10-13T14:30:27Z")), incidents.getLast()),
+                () -> assertEquals(List.of(
+                        "state=unresolved&page=1&size=100",
+                        "state=unresolved&page=2&size=100"), queries()));
     }
 
     @Test
@@ -1346,6 +1387,24 @@ class ZenBpmRestClientTest {
         return """
                 {"key": %d, "processDefinitionKey": 2, "version": 1, "createdAt": "2026-10-13T14:30:25Z",
                  "state": "%s", "processType": "%s", "variables": {}}""".formatted(key, state, processType);
+    }
+
+    private static String incidents(
+        final long totalCount,
+        final String items
+    ) {
+        return """
+                {"items": [%s], "page": 1, "size": 100, "count": 0, "totalCount": %d}""".formatted(items, totalCount);
+    }
+
+    private static String incident(
+        final long elementInstanceKey,
+        final String elementId
+    ) {
+        return """
+                {"key": 9%d, "elementInstanceKey": %d, "elementId": "%s", "processInstanceKey": 1,
+                 "message": "failed at %d", "createdAt": "2026-10-13T14:30:27Z", "executionToken": 5}"""
+                .formatted(elementInstanceKey, elementInstanceKey, elementId, elementInstanceKey);
     }
 
     private static void sleepLongerThanTheTimeout() {

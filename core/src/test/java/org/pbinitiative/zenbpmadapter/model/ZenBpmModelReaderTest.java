@@ -21,11 +21,16 @@ import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.stream.Stream;
 
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.Arguments;
+import org.junit.jupiter.params.provider.MethodSource;
 import org.pbinitiative.zenbpmadapter.model.ZenBpmBpmnModel.CallActivity;
+import org.pbinitiative.zenbpmadapter.model.ZenBpmBpmnModel.CalledVersion;
 import org.pbinitiative.zenbpmadapter.model.ZenBpmBpmnModel.MessageReference;
 import org.pbinitiative.zenbpmadapter.model.ZenBpmBpmnModel.MultiInstanceElement;
 import org.pbinitiative.zenbpmadapter.model.ZenBpmBpmnModel.StartEvent;
@@ -292,6 +297,24 @@ class ZenBpmModelReaderTest {
                         model.enclosingMultiInstances()));
     }
 
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("calledVersions")
+    @DisplayName("A call activity starts the version of its called process the engine resolves: the latest, a version by its number, or a tag, and a binding the engine refuses once the call activity is reached starts none")
+    void aCallActivityStartsTheVersionTheEngineResolves(
+        final String attributes,
+        final CalledVersion expected
+    ) {
+        final var model = readInline("""
+                <bpmn:process id="Order" isExecutable="true">
+                  <bpmn:callActivity id="Call">
+                    <bpmn:extensionElements><zenbpm:calledElement processId="Invoice" %s /></bpmn:extensionElements>
+                  </bpmn:callActivity>
+                </bpmn:process>
+                """.formatted(attributes));
+
+        assertEquals(List.of(new CallActivity("Call", "Invoice", expected)), model.callActivities());
+    }
+
     @Test
     @DisplayName("The elements which give a workflow a second token are collected, an activity leaving on two flows and flags spelt as Go reads them included (an empty one is false); their sequential or interrupting siblings are not")
     void theElementsWhichGiveASecondToken() {
@@ -486,6 +509,25 @@ class ZenBpmModelReaderTest {
                 () -> assertThrows(UnsupportedOperationException.class, () -> model
                         .enclosingMultiInstances()
                         .clear()));
+    }
+
+    // as ResolveVersion of pkg/bpmn/model/extensions/io_mapping.go reads them at the pinned commit
+    private static Stream<Arguments> calledVersions() {
+        return Stream.of(
+                Arguments.of("", CalledVersion.LATEST),
+                Arguments.of("version=\"3\"", new CalledVersion(3, null)),
+                Arguments.of("version=\"0\"", null),
+                Arguments.of("version=\"-1\"", null),
+                Arguments.of("versionTag=\"release-1\"", CalledVersion.LATEST),
+                Arguments.of("bindingType=\"latest\"", CalledVersion.LATEST),
+                Arguments.of("bindingType=\"latest\" version=\"3\"", null),
+                Arguments.of("bindingType=\"versionTag\" versionTag=\"release-1\"",
+                        new CalledVersion(null, "release-1")),
+                Arguments.of("bindingType=\"versionTag\" versionTag=\"\"", null),
+                Arguments.of("bindingType=\"versionTag\"", null),
+                Arguments.of("bindingType=\"versionTag\" versionTag=\"release-1\" version=\"3\"", null),
+                Arguments.of("bindingType=\"deployment\" version=\"3\"", CalledVersion.LATEST),
+                Arguments.of("bindingType=\"\" version=\"3\"", CalledVersion.LATEST));
     }
 
     private static ZenBpmBpmnModel readOne(final String fixture) {

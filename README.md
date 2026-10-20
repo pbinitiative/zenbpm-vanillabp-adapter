@@ -367,6 +367,20 @@ tasks; the workflows still running on it are named instead. The numbers are coun
 so no page of instances is read, and every question of a start which reads a model the engine
 holds reads it through one cache of the adapter id, so a start reads each model once (decision 56).
 
+The viewer/history API is read from the engine (decision 57). A process definition's id is its key
+at the engine, and its BPMN is the model as the engine holds it, with the markers the adapter wrote.
+The workflow of an aggregate is found by its business key: one which runs, else the one created
+last; a search which finds nothing is repeated within `workflow-visibility-timeout`, and a workflow
+the engine started by a timer or a message, which has no business key, is unknown to the viewer.
+Its definitions are the one it runs on and, for each call activity, the one the engine would start
+now: the latest version, the version the call activity names, or the one which carries the tag it
+names. Its history merges the elements of its embedded sub-processes and multi-instance elements,
+which the engine keeps in instances of their own, reports the entry of a multi-instance element as
+`MULTI_INSTANCE`, leaves the adapter's markers out, carries the message of an incident nobody
+resolved, and names, for a call activity, the instance it started, whose history and definitions
+are read through that context; a context which belongs to another workflow is not served. The engine
+keeps no state of an element, so none is reported as cancelled (see [`GAPS.md`](./GAPS.md)).
+
 What is built next, and in which order, is the implementation plan in [`docs/`](docs/README.md).
 
 ## Modules

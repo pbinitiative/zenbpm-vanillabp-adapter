@@ -92,7 +92,8 @@ final class ZenBpmWire {
         @JsonProperty(required = true) String state,
         Long parentProcessInstanceKey,
         @JsonProperty(required = true) String processType,
-        @JsonProperty(required = true) Map<String, Object> variables
+        @JsonProperty(required = true) Map<String, Object> variables,
+        Integer incidentCount
     ) {
     }
 
@@ -162,6 +163,22 @@ final class ZenBpmWire {
 
     record FlowElementHistoryPage(
         List<FlowElementHistory> items,
+        @JsonProperty(required = true) long totalCount
+    ) {
+    }
+
+    record Incident(
+        @JsonProperty(required = true) long key,
+        @JsonProperty(required = true) long elementInstanceKey,
+        @JsonProperty(required = true) String elementId,
+        @JsonProperty(required = true) long processInstanceKey,
+        @JsonProperty(required = true) String message,
+        @JsonProperty(required = true) String createdAt
+    ) {
+    }
+
+    record IncidentPage(
+        @JsonProperty(required = true) List<Incident> items,
         @JsonProperty(required = true) long totalCount
     ) {
     }

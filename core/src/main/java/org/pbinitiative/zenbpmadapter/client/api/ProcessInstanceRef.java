@@ -23,6 +23,9 @@ import java.util.Map;
  *            or multi-instance iteration; <code>null</code> for a top-level instance
  * @param processType What started the instance
  * @param createdAt When the instance was created
+ * @param incidentCount How many incidents of the instance itself are unresolved, as a list of
+ *            instances tells it; <code>null</code> where the answer does not say, as the answer
+ *            for one instance by its key
  */
 public record ProcessInstanceRef(
     long key,
@@ -35,7 +38,8 @@ public record ProcessInstanceRef(
     Map<String, Object> variables,
     Long parentKey,
     ProcessType processType,
-    Instant createdAt
+    Instant createdAt,
+    Integer incidentCount
 ) {
 
     /**

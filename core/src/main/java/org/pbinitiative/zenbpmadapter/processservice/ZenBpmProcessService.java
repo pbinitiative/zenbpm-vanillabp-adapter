@@ -60,11 +60,9 @@ import lombok.extern.slf4j.Slf4j;
  * answers every probe, counts the open tasks of a process and says what the engine does with the
  * values a workflow carries. These are all the operations the core requires of each adapter, so the
  * core accepts it while the application starts. Sending a signal, which ZenBPM cannot, is left out,
- * so the core answers it as not supported. Every method of the viewer/history API throws: where the
- * adapter id has no clients, the message of its validation, which names the keys to set; otherwise
- * an {@link UnsupportedOperationException} which says that the call is not built yet. Nothing
- * pretends to have done the work. A probe of an adapter id without clients throws the message of
- * its validation as well.
+ * so the core answers it as not supported. The viewer/history API is answered from the engine, see
+ * {@link ZenBpmWorkflowViewer}. A probe and a read of the viewer of an adapter id without clients
+ * throw the message of its validation, which names the keys to set.
  * <p>
  * A start asks the engine nothing in phase one, because there is nothing to ask before an
  * instance exists. Phase two starts the latest version of the process under the id the engine
@@ -119,6 +117,8 @@ public class ZenBpmProcessService<A> implements MigratableProcessService<A> {
     private final ZenBpmMessageStartScan messageStartScan;
 
     private final ZenBpmRunningWorkflows runningWorkflows;
+
+    private final ZenBpmWorkflowViewer viewer;
 
     /**
      * Whether the last probe which asked the engine failed.
@@ -178,6 +178,7 @@ public class ZenBpmProcessService<A> implements MigratableProcessService<A> {
                 messageStarts::start));
         this.messageStartScan = new ZenBpmMessageStartScan(adapterId, factory);
         this.runningWorkflows = new ZenBpmRunningWorkflows(adapterId);
+        this.viewer = new ZenBpmWorkflowViewer(adapterId, factory, collaborators.scoping(), VISIBILITY_PROBE_INTERVAL);
         final var pushes = new ZenBpmAggregatePush<A>(adapterId, factory, collaborators, this::variablesOf, runningWorkflows, messageStartScan);
         handlers.put(PhaseOperation.AGGREGATE_CHANGED, PhaseOperationHandler.of(pushes::checkNothing, pushes::push));
         this.phaseOperations = Collections.unmodifiableMap(handlers);
@@ -564,8 +565,23 @@ public class ZenBpmProcessService<A> implements MigratableProcessService<A> {
                 .getWorkflowVisibilityTimeout(), VISIBILITY_PROBE_INTERVAL);
     }
 
-    // the aggregate id is the application's business key, so no message of the three viewer
-    // methods repeats it, like the probes
+    /**
+     * The process definitions the workflow of an aggregate runs on, read from the engine, see
+     * {@link ZenBpmWorkflowViewer}: the definition of the workflow, or of the instance a call
+     * activity started which the history context names, and the definition each of its call
+     * activities would start now. A definition's id is its key at the engine.
+     *
+     * @param workflowModuleId The workflow module
+     * @param bpmnProcessId The process, as the workflow module names it
+     * @param aggregatePersistence The persistence of the aggregate, which the business key search
+     *            does not need
+     * @param workflowAggregateId The id of the aggregate
+     * @param historyContext <code>null</code> for the workflow, else the key of an instance a call
+     *            activity of the workflow started
+     * @return The definitions, empty where the engine holds no such workflow or context
+     * @throws IllegalStateException Where the adapter id has no clients, with the message of its
+     *             validation, or where the engine could not be asked for the workflow
+     */
     @Override
     public List<ProcessDefinition> getProcessDefinitions(
         final String workflowModuleId,
@@ -574,20 +590,45 @@ public class ZenBpmProcessService<A> implements MigratableProcessService<A> {
         final Object workflowAggregateId,
         final String historyContext
     ) {
-        throw notBuiltYet("listing the process definitions of workflow '%s' of workflow module '%s'".formatted(
-                bpmnProcessId, workflowModuleId));
+        return viewer.processDefinitionsOf(clients(), workflowModuleId, bpmnProcessId, String.valueOf(
+                workflowAggregateId), historyContext);
     }
 
+    /**
+     * The BPMN of a definition as the engine holds it, the markers the adapter wrote included, see
+     * {@link ZenBpmWorkflowViewer}.
+     *
+     * @param workflowModuleId The workflow module
+     * @param bpmnProcessId The process of the process service asked
+     * @param processDefinitionId The key of the definition at the engine
+     * @return The BPMN, <code>null</code> where the engine holds no such definition
+     * @throws IllegalStateException Where the adapter id has no clients, with the message of its
+     *             validation, or where the engine could not be asked
+     */
     @Override
     public InputStream getBpmnXml(
         final String workflowModuleId,
         final String bpmnProcessId,
         final String processDefinitionId
     ) {
-        throw notBuiltYet("reading the BPMN XML of process definition '%s' of workflow module '%s'".formatted(
-                processDefinitionId, workflowModuleId));
+        clients();
+        return viewer.bpmnXmlOf(processDefinitionId);
     }
 
+    /**
+     * What the workflow of an aggregate did, read from the engine, see {@link ZenBpmWorkflowViewer}.
+     *
+     * @param workflowModuleId The workflow module
+     * @param bpmnProcessId The process, as the workflow module names it
+     * @param aggregatePersistence The persistence of the aggregate, which the business key search
+     *            does not need
+     * @param workflowAggregateId The id of the aggregate
+     * @param historyContext <code>null</code> for the workflow, else the key of an instance a call
+     *            activity of the workflow started
+     * @return The history, <code>null</code> where the engine holds no such workflow or context
+     * @throws IllegalStateException Where the adapter id has no clients, with the message of its
+     *             validation, or where the engine could not be asked for the workflow
+     */
     @Override
     public WorkflowHistory getWorkflowHistory(
         final String workflowModuleId,
@@ -596,8 +637,8 @@ public class ZenBpmProcessService<A> implements MigratableProcessService<A> {
         final Object workflowAggregateId,
         final String historyContext
     ) {
-        throw notBuiltYet("reading the history of workflow '%s' of workflow module '%s'".formatted(bpmnProcessId,
-                workflowModuleId));
+        return viewer.historyOf(clients(), workflowModuleId, bpmnProcessId, String.valueOf(workflowAggregateId),
+                historyContext);
     }
 
     // the core checked the aggregate's id before phase one. Phase one runs inside the caller's
@@ -924,17 +965,6 @@ public class ZenBpmProcessService<A> implements MigratableProcessService<A> {
             throw new IllegalStateException(unconfigured.get());
         }
         return factory.rest();
-    }
-
-    // an adapter id without clients answers with the message of its validation, which names the
-    // keys to set, before it says what this version cannot do
-    private RuntimeException notBuiltYet(final String what) {
-        final var unconfigured = factory.unconfiguredMessage();
-        if (unconfigured.isPresent()) {
-            return new IllegalStateException(unconfigured.get());
-        }
-        return new UnsupportedOperationException(
-                "ZenBPM adapter '%s': %s is implemented in a later story".formatted(adapterId, what));
     }
 
     /**

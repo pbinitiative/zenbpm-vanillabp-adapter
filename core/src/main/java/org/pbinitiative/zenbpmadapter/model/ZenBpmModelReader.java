@@ -21,6 +21,7 @@ import javax.xml.parsers.DocumentBuilderFactory;
 import javax.xml.parsers.ParserConfigurationException;
 
 import org.pbinitiative.zenbpmadapter.model.ZenBpmBpmnModel.CallActivity;
+import org.pbinitiative.zenbpmadapter.model.ZenBpmBpmnModel.CalledVersion;
 import org.pbinitiative.zenbpmadapter.model.ZenBpmBpmnModel.MessageReference;
 import org.pbinitiative.zenbpmadapter.model.ZenBpmBpmnModel.MultiInstanceElement;
 import org.pbinitiative.zenbpmadapter.model.ZenBpmBpmnModel.StartEvent;
@@ -300,6 +301,42 @@ public final class ZenBpmModelReader {
 
     // an attribute's value as written, whitespace included, because the engine keeps it: a job
     // type ' charge ' is not 'charge'. Null where the element has none or an empty one
+    // read as the engine reads it: without a binding type a version names itself; the binding type
+    // 'versionTag' names a tag, 'latest' the latest version, and every other one the latest as well,
+    // whatever else the element says. What the engine refuses once the call activity is reached is
+    // null: a version with the binding type 'latest' or 'versionTag', a 'versionTag' without a
+    // tag, and a version which is no number above zero
+    private static CalledVersion calledVersionOf(final Element calledElement) {
+        final var version = attribute(calledElement, "version");
+        if (!calledElement.hasAttribute("bindingType")) {
+            if (version == null) {
+                return CalledVersion.LATEST;
+            }
+            final var number = numberAboveZero(version);
+            return number == null ? null : new CalledVersion(number, null);
+        }
+        return switch (calledElement.getAttribute("bindingType")) {
+            case "latest" -> version == null ? CalledVersion.LATEST : null;
+            case "versionTag" -> {
+                final var versionTag = attribute(calledElement, "versionTag");
+                if ((version != null) || (versionTag == null)) {
+                    yield null;
+                }
+                yield new CalledVersion(null, versionTag);
+            }
+            default -> CalledVersion.LATEST;
+        };
+    }
+
+    private static Integer numberAboveZero(final String text) {
+        try {
+            final var number = Integer.parseInt(text);
+            return number > 0 ? number : null;
+        } catch (final NumberFormatException notANumber) {
+            return null;
+        }
+    }
+
     private static String attribute(
         final Element element,
         final String name
@@ -511,9 +548,14 @@ public final class ZenBpmModelReader {
                                 .ifPresent(definition -> readCatchMessage(id, attribute(definition, "messageRef")));
                     }
                 }
-                case "callActivity" -> callActivities.add(new CallActivity(id, extension(element, "calledElement")
-                        .map(calledElement -> attribute(calledElement, "processId"))
-                        .orElse(null)));
+                case "callActivity" -> {
+                    // a binding the engine refuses is read as null, which an Optional cannot carry
+                    final var calledElement = extension(element, "calledElement").orElse(null);
+                    final var calledVersion = calledElement == null ? CalledVersion.LATEST : calledVersionOf(
+                            calledElement);
+                    callActivities.add(new CallActivity(id, calledElement == null ? null : attribute(calledElement,
+                            "processId"), calledVersion));
+                }
                 case "sequenceFlow" -> bpmnChild(element, "conditionExpression")
                         .flatMap(ZenBpmModelReader::plainTextOf)
                         .ifPresent(condition -> addExpression(id, ExpressionPlace.SEQUENCE_FLOW_CONDITION,
