@@ -364,6 +364,24 @@ class ZenBpmRestClientTest {
                 client.instance(4503599627370501L));
     }
 
+    @Test
+    @DisplayName("Where the tokens of an instance stand is read as the element of each active element instance, an element twice where two tokens stand at it, and an instance the engine does not know is empty")
+    void whereTheTokensStandIsRead() {
+        engine.answers("GET", "/v1/process-instances/1", 200,
+                """
+                        {"key": 1, "processDefinitionKey": 2, "version": 1, "createdAt": "2026-10-13T14:30:25.123Z",
+                         "state": "active", "processType": "default", "variables": {}, "activeElementInstances": [
+                           {"elementInstanceKey": 11, "createdAt": "2026-10-13T14:30:26Z", "state": "TokenStateWaiting", "elementId": "Pack"},
+                           {"elementInstanceKey": 12, "createdAt": "2026-10-13T14:30:26Z", "state": "TokenStateWaiting", "elementId": "vanillabp__ended__Shipped"},
+                           {"elementInstanceKey": 13, "createdAt": "2026-10-13T14:30:27Z", "state": "TokenStateFailed", "elementId": "Pack"}]}""");
+        engine.answers("GET", "/v1/process-instances/2", 404, "{\"code\": \"NOT_FOUND\"}");
+
+        assertAll(
+                () -> assertEquals(Optional.of(List.of("Pack", "vanillabp__ended__Shipped", "Pack")), client
+                        .activeElementsOf(1)),
+                () -> assertEquals(Optional.empty(), client.activeElementsOf(2)));
+    }
+
     @ParameterizedTest(name = "{0} is {1}")
     @MethodSource("instanceStates")
     @DisplayName("Every state of an instance has its constant")

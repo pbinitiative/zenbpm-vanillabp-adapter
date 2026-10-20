@@ -41,8 +41,10 @@ import lombok.extern.slf4j.Slf4j;
  * invocation. The notification names the job key as the task id, which completes the task later,
  * {@link TaskKind#USER_TASK} as its kind, the root instance of the task's own process as the
  * workflow (see decision 28 in the repository's DECISIONS.md), and as its delivery id the job key
- * with the event, so the core's record of a delivery answers a notification which a restarted node
- * hands it again. Once the core took the notification, it is handed the module's
+ * with the event for a creation and the job key alone for a cancellation, so the core's record of a
+ * delivery answers a notification which a restarted node hands it again, and a cancellation the core
+ * reported itself when the workflow ended (see decision 53 in the repository's DECISIONS.md). Once
+ * the core took the notification, it is handed the module's
  * {@link ZenBpmOpenTaskProbe} of the process, as after every delivery of a job, so a creation or a
  * cancellation of a user task is a wake-up of its workflow like any other.
  * <p>
@@ -224,19 +226,24 @@ public final class ZenBpmUserTaskNotifier {
     }
 
     /**
-     * The delivery id of a notification of a user task: the job key with the event, so the creation
-     * and the cancellation of one user task are two deliveries, and no id of a job of the job stream,
-     * which is a key alone, is ever one of them.
+     * The delivery id of a notification of a user task: the job key with the event for a creation,
+     * and the job key alone for a cancellation, so the creation and the cancellation of one user task
+     * are two deliveries. A cancellation carries the id under which the core reports a task it still
+     * believes open when its workflow ends, the task id, so the core answers the notification of a
+     * cancellation it reported itself from its record, see decision 53 in the repository's
+     * DECISIONS.md. The job stream never hands out a user task's job, so no delivery of the stream
+     * carries that key.
      *
      * @param jobKey The key of the user task's job
      * @param event What happened to the user task
-     * @return E.g. <code>2251799813685251-created</code>
+     * @return E.g. <code>2251799813685251-created</code>, or <code>2251799813685251</code> for a
+     *         cancellation
      */
     static String deliveryIdOf(
         final long jobKey,
         final TaskEvent.Event event
     ) {
-        return event == TaskEvent.Event.CANCELED ? "%d-canceled".formatted(jobKey) : "%d-created".formatted(jobKey);
+        return event == TaskEvent.Event.CANCELED ? Long.toString(jobKey) : "%d-created".formatted(jobKey);
     }
 
     private Outcome invoke(

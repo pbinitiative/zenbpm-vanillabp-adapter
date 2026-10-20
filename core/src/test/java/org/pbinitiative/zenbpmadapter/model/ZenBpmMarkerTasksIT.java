@@ -13,6 +13,7 @@ import java.io.InputStream;
 import java.io.UncheckedIOException;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.locks.LockSupport;
@@ -23,11 +24,14 @@ import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 import org.pbinitiative.zenbpmadapter.client.ZenBpmAdapterConfiguration;
 import org.pbinitiative.zenbpmadapter.client.ZenBpmRestClient;
 import org.pbinitiative.zenbpmadapter.client.api.CreateInstanceRequest;
 import org.pbinitiative.zenbpmadapter.client.api.JobFilter;
 import org.pbinitiative.zenbpmadapter.client.api.JobRef;
+import org.pbinitiative.zenbpmadapter.client.api.ProcessInstanceRef;
 import org.pbinitiative.zenbpmadapter.test.EngineUnderTest;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
@@ -35,17 +39,23 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 import io.vanillabp.integration.test.utils.SuppressOutputExtension;
 
 /**
- * The start markers on the pinned engine: the rewritten fixture <code>models/markers.bpmn</code>
- * deploys, and nothing of a workflow runs before the job of its start marker is completed, whether
- * a request or a message started it. The marker's job carries the variables of the instance, an
- * instance started by a request without a business key or by a message carries none, and a variable written into the instance
- * while it waits at the marker reaches the task behind it.
+ * The markers on the pinned engine: the fixture <code>models/markers.bpmn</code>, rewritten with its
+ * start and end markers, deploys, and nothing of a workflow runs before the job of its start marker
+ * is completed, whether a request or a message started it. The marker's job carries the variables
+ * of the instance, an instance started by a request without a business key or by a message carries
+ * none, and a variable written into the instance while it waits at the marker reaches the task
+ * behind it. A workflow which reaches a plain or a terminate end event of its own waits at the end
+ * event's marker, and completes once the marker's job is completed. At an error end event which
+ * nothing catches, which gets no marker, the engine raises an incident and the instance does not
+ * end.
  */
 @ExtendWith(SuppressOutputExtension.class)
 @Testcontainers(disabledWithoutDocker = true)
 class ZenBpmMarkerTasksIT {
 
     private static final String JOB_TYPE = ZenBpmMarkerTasks.startMarkerJobType("Orders");
+
+    private static final String END_JOB_TYPE = ZenBpmMarkerTasks.endMarkerJobType("Orders");
 
     private static final Duration PATIENCE = Duration.ofSeconds(10);
 
@@ -61,6 +71,7 @@ class ZenBpmMarkerTasksIT {
         rest = new ZenBpmRestClient("markers", configuration);
         final var model = read();
         ZenBpmMarkerTasks.insertStartMarkers(model, JOB_TYPE);
+        ZenBpmMarkerTasks.insertEndMarkers(model, END_JOB_TYPE);
         rest.deployBpmn(ZenBpmModelWriter.bytesOf(model));
     }
 
@@ -123,6 +134,94 @@ class ZenBpmMarkerTasksIT {
                         .instance(marker.instanceKey())
                         .orElseThrow()
                         .businessKey()));
+    }
+
+    @ParameterizedTest(name = "{0}")
+    @CsvSource({
+            "Shipped, false", "Rejected, true"
+    })
+    @DisplayName("A workflow which reaches a plain or a terminate end event of its own waits at the end event's marker, and completes once the marker's job is completed")
+    void aWorkflowWaitsAtTheMarkerOfItsEndEvent(
+        final String endEvent,
+        final boolean rejected
+    ) {
+        final var started = startedPastItsStartMarker(endEvent, rejected, false);
+
+        final var marker = eventually(() -> activeJobOf(started, END_JOB_TYPE));
+        final var whileItWaits = rest
+                .instance(started)
+                .orElseThrow()
+                .state();
+        rest.completeJob(marker.key(), null);
+
+        assertAll(
+                () -> assertEquals("vanillabp__ended__%s".formatted(endEvent), marker.elementId()),
+                () -> assertEquals(ProcessInstanceRef.State.ACTIVE, whileItWaits),
+                () -> assertEquals(ProcessInstanceRef.State.COMPLETED, eventually(() -> rest
+                        .instance(started)
+                        .filter(instance -> instance.state() != ProcessInstanceRef.State.ACTIVE))
+                        .state()));
+    }
+
+    @Test
+    @DisplayName("At an error end event which nothing catches, which gets no marker, the engine raises an incident, and the instance stays active with no token left")
+    void anUncaughtErrorEndEventRaisesAnIncident() {
+        final var started = startedPastItsStartMarker("Lost", false, true);
+
+        final var incident = eventually(() -> Optional
+                .of(ENGINE.json("/v1/process-instances/%d/incidents".formatted(started)))
+                .filter(incidents -> incidents
+                        .path("totalCount")
+                        .asInt() > 0));
+
+        assertAll(
+                () -> assertEquals("unhandled error end event Lost: lost", incident
+                        .path("items")
+                        .path(0)
+                        .path("message")
+                        .asText()),
+                () -> assertEquals(ProcessInstanceRef.State.ACTIVE, rest
+                        .instance(started)
+                        .orElseThrow()
+                        .state()),
+                () -> assertEquals(Optional.of(List.of()), rest.activeElementsOf(started)),
+                () -> assertEquals(List.of(), rest
+                        .jobs(JobFilter
+                                .anyJob()
+                                .withProcessInstanceKey(started)
+                                .withJobType(END_JOB_TYPE))
+                        .items()));
+    }
+
+    // started by a request and taken past its start marker and its task, so it goes on to the end
+    // event the variables lead to
+    private static long startedPastItsStartMarker(
+        final String endEvent,
+        final boolean rejected,
+        final boolean lost
+    ) {
+        final var started = rest.createInstance(CreateInstanceRequest
+                .latestVersionOf("Orders")
+                .withVariables(Map.of("orderId", "order-%s".formatted(endEvent), "rejected", rejected, "lost",
+                        lost)));
+        rest.completeJob(waitingJobOf(started.key()).key(), null);
+        rest.completeJob(eventually(() -> activeJobOf(started.key(), "weigh")).key(), null);
+        return started.key();
+    }
+
+    private static Optional<JobRef> activeJobOf(
+        final long instanceKey,
+        final String jobType
+    ) {
+        return rest
+                .jobs(JobFilter
+                        .anyJob()
+                        .withProcessInstanceKey(instanceKey)
+                        .withJobType(jobType)
+                        .withState(JobRef.State.ACTIVE))
+                .items()
+                .stream()
+                .findFirst();
     }
 
     private static JobRef waitingJobOf(final long instanceKey) {

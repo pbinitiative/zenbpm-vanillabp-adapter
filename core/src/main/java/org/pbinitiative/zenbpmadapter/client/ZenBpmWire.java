@@ -96,6 +96,12 @@ final class ZenBpmWire {
     ) {
     }
 
+    record ProcessInstanceTokens(@JsonProperty(required = true) List<ElementInstance> activeElementInstances) {
+    }
+
+    record ElementInstance(@JsonProperty(required = true) String elementId) {
+    }
+
     record ProcessInstancePage(
         @JsonProperty(required = true) List<PartitionProcessInstances> partitions,
         @JsonProperty(required = true) long totalCount

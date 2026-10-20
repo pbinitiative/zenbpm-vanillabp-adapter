@@ -7,11 +7,14 @@ package org.pbinitiative.zenbpmadapter.springboot.it.lifecycle;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 
 /**
- * The application of <code>ZenBpmLifecycleIT</code>: the workflows of three JPA aggregates, each
- * with a <code>&#64;WorkflowStartedByBpms</code> method. {@link TickWorkflow} is started by a timer,
- * {@link DeliveryWorkflow} by the application or past VanillaBP, and it calls
- * {@link InvoiceWorkflow}, which works on an aggregate of its own. It scans this package only, so
- * the application of another integration test, in a package of its own, stays out of it.
+ * The application of <code>ZenBpmLifecycleIT</code>: the workflows of five JPA aggregates. Three of
+ * them have a <code>&#64;WorkflowStartedByBpms</code> method: {@link TickWorkflow} is started by a
+ * timer, {@link DeliveryWorkflow} by the application or past VanillaBP, and it calls
+ * {@link InvoiceWorkflow}, which works on an aggregate of its own. Two have a
+ * <code>&#64;WorkflowEnded</code> method and are started by the application: {@link ReturnWorkflow},
+ * whose branches end apart, and {@link SettlementWorkflow}, which ends while an event sub-process of
+ * it may still run. It scans this package only, so the application of another integration test, in
+ * a package of its own, stays out of it.
  */
 @SpringBootApplication
 public class LifecycleItApplication {

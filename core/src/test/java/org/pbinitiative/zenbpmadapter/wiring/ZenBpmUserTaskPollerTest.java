@@ -156,7 +156,7 @@ class ZenBpmUserTaskPollerTest {
 
         looksTwice();
 
-        assertEquals(List.of("51-created", "51-canceled"), deliveryIds());
+        assertEquals(List.of("51-created", "51"), deliveryIds());
         assertEquals(TaskEvent.Event.CANCELED, jobs.invoker
                 .invocations()
                 .getLast()
@@ -176,8 +176,29 @@ class ZenBpmUserTaskPollerTest {
         startsPolling(Duration.ofHours(1));
         looks();
 
-        assertEquals(List.of("51-canceled"), beforeTheRestart);
-        assertEquals(List.of("51-canceled", "51-canceled"), deliveryIds());
+        assertEquals(List.of("51"), beforeTheRestart);
+        assertEquals(List.of("51", "51"), deliveryIds());
+    }
+
+    @Test
+    @DisplayName("A user task the end of its workflow took away is told as cancelled under its task id, the id under which the core reported it when the workflow ended, so the core answers the notification from its record where it reported it, and runs the method where it did not")
+    void aUserTaskTheEndOfItsWorkflowTookAwayIsToldUnderItsTaskId() {
+        jobs.holdsEnded(ROOT, "order-1", "\"id\": \"order-1\"");
+        listsActive(userTask(51, ROOT));
+        startsPolling(Duration.ofHours(1));
+        looks();
+        listsActive();
+        listsTerminated(terminated(51, ROOT));
+
+        looksTwice();
+
+        assertAll(
+                () -> assertEquals(List.of("51-created", "51"), deliveryIds()),
+                () -> assertEquals("51", jobs.invoker
+                        .invocations()
+                        .getLast()
+                        .context()
+                        .getTaskId()));
     }
 
     @Test
@@ -196,7 +217,7 @@ class ZenBpmUserTaskPollerTest {
 
         looks();
 
-        assertEquals(List.of("51-canceled"), deliveryIds());
+        assertEquals(List.of("51"), deliveryIds());
     }
 
     @Test
@@ -325,7 +346,7 @@ class ZenBpmUserTaskPollerTest {
             jobs.awaitFreeSlots();
         }
 
-        assertEquals(List.of("51-created", "51-created", "52-created", "52-created", "53-created", "54-canceled"),
+        assertEquals(List.of("51-created", "51-created", "52-created", "52-created", "53-created", "54"),
                 deliveryIds()
                         .stream()
                         .sorted()
@@ -758,7 +779,7 @@ class ZenBpmUserTaskPollerTest {
                 .stream()
                 .sorted()
                 .toList());
-        assertEquals(List.of("51-created", "52-created", "54-canceled"), deliveryIds()
+        assertEquals(List.of("51-created", "52-created", "54"), deliveryIds()
                 .stream()
                 .sorted()
                 .toList());
@@ -774,8 +795,9 @@ class ZenBpmUserTaskPollerTest {
                 BILLING_TYPE))));
         startsPolling(Duration.ofHours(1));
         final var billing = new ZenBpmProcessingContext("billing");
-        billing.recordWiring(new WiredProcess("Invoice", "billing__Invoice", Set.of(), true, false, Map.of(), Map.of(
-                BILLING_TYPE, "check")));
+        billing.recordWiring(
+                new WiredProcess("Invoice", "billing__Invoice", Set.of(), true, false, Map.of(), Map.of(), Map.of(
+                        BILLING_TYPE, "check")));
         final var collaborators = TestCollaborators.withInvoker("orders", TestScoping.of(
                 NameClashAvoidance.USE_PREFIX), jobs.invoker);
         final var billingHandler = new ZenBpmJobHandler("orders", jobs.factory, collaborators, billing, ZenBpmRetryBackoffResolver.NONE);
@@ -906,7 +928,7 @@ class ZenBpmUserTaskPollerTest {
     void aModuleWithoutUserTasksStartsNoLooks() {
         final var context = new ZenBpmProcessingContext("billing");
         context.recordWiring(new WiredProcess("Invoice", "billing__Invoice", Set
-                .of("billing__Invoice__bill"), true, false, Map.of(), Map.of()));
+                .of("billing__Invoice__bill"), true, false, Map.of(), Map.of(), Map.of()));
         poller = new ZenBpmUserTaskPoller("orders", jobs.factory);
         poller.register(new ZenBpmUserTaskNotifier("orders", jobs.factory, TestCollaborators.withInvoker("orders",
                 TestScoping.of(NameClashAvoidance.USE_PREFIX), jobs.invoker), context, jobs.handler));
@@ -915,7 +937,7 @@ class ZenBpmUserTaskPollerTest {
 
         assertTrue(listings().isEmpty());
         assertEquals("7-created", ZenBpmUserTaskNotifier.deliveryIdOf(7, TaskEvent.Event.CREATED));
-        assertEquals("7-canceled", ZenBpmUserTaskNotifier.deliveryIdOf(7, TaskEvent.Event.CANCELED));
+        assertEquals("7", ZenBpmUserTaskNotifier.deliveryIdOf(7, TaskEvent.Event.CANCELED));
     }
 
     // a fresh poller with its own set, as after a restart, of the module 'shop' with the process
@@ -925,7 +947,7 @@ class ZenBpmUserTaskPollerTest {
         if (handler == null) {
             final var context = new ZenBpmProcessingContext("shop");
             context.recordWiring(new WiredProcess("Order", "shop__Order", Set.of(JobRunning.JOB_TYPE), true, false, Map
-                    .of(), Map.of(USER_TASK_TYPE, "approve")));
+                    .of(), Map.of(), Map.of(USER_TASK_TYPE, "approve")));
             final var collaborators = TestCollaborators.withInvoker("orders", TestScoping.of(
                     NameClashAvoidance.USE_PREFIX), jobs.invoker);
             handler = new ZenBpmJobHandler("orders", jobs.factory, collaborators, context, ZenBpmRetryBackoffResolver.NONE);
@@ -940,8 +962,9 @@ class ZenBpmUserTaskPollerTest {
     // as two modules share the engine's default type
     private void startsBillingSharingTheType() {
         final var billing = new ZenBpmProcessingContext("billing");
-        billing.recordWiring(new WiredProcess("Invoice", "billing__Invoice", Set.of(), true, false, Map.of(), Map.of(
-                USER_TASK_TYPE, "check")));
+        billing.recordWiring(
+                new WiredProcess("Invoice", "billing__Invoice", Set.of(), true, false, Map.of(), Map.of(), Map.of(
+                        USER_TASK_TYPE, "check")));
         final var collaborators = TestCollaborators.withInvoker("orders", TestScoping.of(
                 NameClashAvoidance.USE_PREFIX), jobs.invoker);
         final var billingHandler = new ZenBpmJobHandler("orders", jobs.factory, collaborators, billing, ZenBpmRetryBackoffResolver.NONE);

@@ -104,7 +104,8 @@ class ZenBpmJobDispatcherTest {
                 .instances(), new ZenBpmLockRenewal("orders", jobs.factory.rest(), "shop-1", executor.timing()));
         dispatcher.register(jobs.handlerOf("shop", NameClashAvoidance.USE_PREFIX,
                 new WiredProcess("Order", "shop__Order", Set.of(JobRunning.JOB_TYPE), true, false, Map.of(), Map
-                        .of())));
+                        .of(), Map
+                                .of())));
 
         try {
             dispatcher.accept(job(42));
@@ -175,7 +176,8 @@ class ZenBpmJobDispatcherTest {
     @DisplayName("A job goes to the module which serves the process of its instance with its type, where two modules share the type")
     void aJobGoesToTheModuleWhichServesItsProcess() {
         jobs.dispatcher.register(jobs.handlerOf("billing", NameClashAvoidance.NONE,
-                new WiredProcess("Invoice", "Invoice", Set.of(JobRunning.JOB_TYPE), true, false, Map.of(), Map.of())));
+                new WiredProcess("Invoice", "Invoice", Set.of(JobRunning.JOB_TYPE), true, false, Map.of(), Map.of(), Map
+                        .of())));
         jobs.holds(300, "Invoice", "default", null, "invoice-1", "\"id\": \"invoice-1\"");
         jobs.takesTheCommands(300);
 
@@ -215,7 +217,7 @@ class ZenBpmJobDispatcherTest {
     @DisplayName("A job of a type one module subscribes, whose instance belongs to a process another module claims without serving that type, is left to its lock")
     void aJobOfAProcessWhichDoesNotServeItsTypeIsLeftToItsLock(final CapturedOutput output) {
         jobs.dispatcher.register(jobs.handlerOf("billing", NameClashAvoidance.NONE,
-                new WiredProcess("Invoice", "Invoice", Set.of("invoice"), true, false, Map.of(), Map.of())));
+                new WiredProcess("Invoice", "Invoice", Set.of("invoice"), true, false, Map.of(), Map.of(), Map.of())));
 
         jobs.runs(JobRunning.job(42, INSTANCE, "invoice", Instant
                 .now()

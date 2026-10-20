@@ -115,13 +115,13 @@ class ZenBpmWorkflowProcessingTest {
         deploymentService.startWorkflowProcessing("shop", context);
         final var subscribed = engine
                 .call(0)
-                .subscriptions(4);
+                .subscriptions(5);
         final var openWhileStarted = factory.getOpenWorkflowModules();
         deploymentService.stopWorkflowProcessing("shop", context);
         deploymentService.stopWorkflowProcessing("shop", context);
         final var all = engine
                 .call(0)
-                .subscriptions(8);
+                .subscriptions(10);
 
         assertAll(
                 () -> assertEquals(List.of(
@@ -129,9 +129,11 @@ class ZenBpmWorkflowProcessingTest {
                         "TYPE_SUBSCRIBE shop__Orders__ship",
                         "TYPE_SUBSCRIBE shop__Orders__pack",
                         // the start markers of the process, which starts a workflow of its own
-                        "TYPE_SUBSCRIBE vanillabp__started__shop__Orders"),
+                        "TYPE_SUBSCRIBE vanillabp__started__shop__Orders",
+                        // the end markers of older versions, although nobody listens to the end now
+                        "TYPE_SUBSCRIBE vanillabp__ended__shop__Orders"),
                         described(subscribed)),
-                () -> assertEquals(List.of(300_000L, 90_000L, 300_000L, 300_000L), subscribed
+                () -> assertEquals(List.of(300_000L, 90_000L, 300_000L, 300_000L, 300_000L), subscribed
                         .stream()
                         .map(StreamSubscriptionRequest::getLockDurationMs)
                         .toList()),
@@ -146,9 +148,10 @@ class ZenBpmWorkflowProcessingTest {
                         "TYPE_UNSUBSCRIBE shop__Orders__charge",
                         "TYPE_UNSUBSCRIBE shop__Orders__ship",
                         "TYPE_UNSUBSCRIBE shop__Orders__pack",
-                        "TYPE_UNSUBSCRIBE vanillabp__started__shop__Orders"),
-                        described(all.subList(4, all.size()))),
-                () -> assertEquals(8, all.size()),
+                        "TYPE_UNSUBSCRIBE vanillabp__started__shop__Orders",
+                        "TYPE_UNSUBSCRIBE vanillabp__ended__shop__Orders"),
+                        described(all.subList(5, all.size()))),
+                () -> assertEquals(10, all.size()),
                 () -> assertEquals(Set.of(), factory.getOpenWorkflowModules()),
                 () -> assertEquals(Optional.of("shop"), factory
                         .deployedProcesses()
@@ -173,11 +176,11 @@ class ZenBpmWorkflowProcessingTest {
         deploymentService.startWorkflowProcessing("shop", context);
         final var subscribed = engine
                 .call(0)
-                .subscriptions(4);
+                .subscriptions(5);
         deploymentService.stopWorkflowProcessing("shop", context);
         final var all = engine
                 .call(0)
-                .subscriptions(8);
+                .subscriptions(10);
 
         assertAll(
                 () -> assertEquals(Set.of("user-task-type"), context.userTaskTypes()),
@@ -187,7 +190,7 @@ class ZenBpmWorkflowProcessingTest {
                                 .userTaskTypes()
                                 .contains(subscription.getJobType())),
                         () -> described(all).toString()),
-                () -> assertEquals(4, subscribed.size()),
+                () -> assertEquals(5, subscribed.size()),
                 () -> assertTrue(output
                         .getOutOfThisTest()
                         .contains("""
@@ -200,8 +203,9 @@ class ZenBpmWorkflowProcessingTest {
     void aModuleWithUserTasksOnlySubscribesNothing(final CapturedOutput output) {
         final var deploymentService = deploymentService(TestWiring.claiming());
         final var context = new ZenBpmProcessingContext("shop");
-        context.recordWiring(new WiredProcess("Order", "Order", Set.of(), true, false, Map.of(), Map.of("approve",
-                "approve")));
+        context.recordWiring(
+                new WiredProcess("Order", "Order", Set.of(), true, false, Map.of(), Map.of(), Map.of("approve",
+                        "approve")));
 
         deploymentService.startWorkflowProcessing("shop", context);
         final var openWhileStarted = registry
@@ -237,7 +241,7 @@ class ZenBpmWorkflowProcessingTest {
                             .wiring(),
                     TestStarts.everyProcessStartingAWorkflow()));
             final var context = new ZenBpmProcessingContext("shop");
-            context.recordWiring(new WiredProcess("Order", "Order", Set.of(), true, false, Map.of(), Map.of(
+            context.recordWiring(new WiredProcess("Order", "Order", Set.of(), true, false, Map.of(), Map.of(), Map.of(
                     "approve", "approve")));
 
             deploymentService.startWorkflowProcessing("shop", context);
@@ -263,7 +267,7 @@ class ZenBpmWorkflowProcessingTest {
                                         .wiring(),
                                 TestStarts.everyProcessStartingAWorkflow()));
         final var context = new ZenBpmProcessingContext("shop");
-        context.recordWiring(new WiredProcess("Order", "Order", Set.of(), true, false, Map.of(), Map.of()));
+        context.recordWiring(new WiredProcess("Order", "Order", Set.of(), true, false, Map.of(), Map.of(), Map.of()));
 
         deploymentService.startWorkflowProcessing("shop", context);
         deploymentService.stopWorkflowProcessing("shop", context);
@@ -278,7 +282,7 @@ class ZenBpmWorkflowProcessingTest {
         final var shop = withJobTypes("shop", "charge");
         final var billing = withJobTypes("billing", "charge");
         billing.recordWiring(
-                new WiredProcess("Invoice", "Invoice", Set.of("invoice"), true, false, Map.of(), Map.of()));
+                new WiredProcess("Invoice", "Invoice", Set.of("invoice"), true, false, Map.of(), Map.of(), Map.of()));
         // a module started after the first stop marks on the stream where that stop's frames end
         final var audit = withJobTypes("audit", "audit");
 
@@ -286,20 +290,25 @@ class ZenBpmWorkflowProcessingTest {
         deploymentService.startWorkflowProcessing("billing", billing);
         engine
                 .call(0)
-                .subscriptions(2);
+                .subscriptions(4);
         deploymentService.stopWorkflowProcessing("shop", shop);
         deploymentService.startWorkflowProcessing("audit", audit);
         deploymentService.stopWorkflowProcessing("billing", billing);
         final var all = engine
                 .call(0)
-                .subscriptions(5);
+                .subscriptions(8);
 
+        // the end markers' type of the process 'Order', which every module wires, stays subscribed
+        // with the module 'audit'
         assertEquals(List.of(
                 "TYPE_SUBSCRIBE charge",
+                "TYPE_SUBSCRIBE vanillabp__ended__Order",
                 "TYPE_SUBSCRIBE invoice",
+                "TYPE_SUBSCRIBE vanillabp__ended__Invoice",
                 "TYPE_SUBSCRIBE audit",
                 "TYPE_UNSUBSCRIBE charge",
-                "TYPE_UNSUBSCRIBE invoice"),
+                "TYPE_UNSUBSCRIBE invoice",
+                "TYPE_UNSUBSCRIBE vanillabp__ended__Invoice"),
                 described(all));
     }
 
@@ -339,7 +348,7 @@ class ZenBpmWorkflowProcessingTest {
         deploymentService.startWorkflowProcessing("shop", context);
         engine
                 .call(0)
-                .subscriptions(1);
+                .subscriptions(2);
 
         registry
                 .getFactory(ADAPTER_ID)
@@ -347,9 +356,11 @@ class ZenBpmWorkflowProcessingTest {
 
         final var log = output.getAllOfThisTest();
         assertAll(
-                () -> assertEquals(List.of("TYPE_SUBSCRIBE charge", "TYPE_UNSUBSCRIBE charge"), described(engine
-                        .call(0)
-                        .subscriptions())),
+                () -> assertEquals(List.of("TYPE_SUBSCRIBE charge", "TYPE_SUBSCRIBE vanillabp__ended__Order",
+                        "TYPE_UNSUBSCRIBE charge", "TYPE_UNSUBSCRIBE vanillabp__ended__Order"),
+                        described(engine
+                                .call(0)
+                                .subscriptions())),
                 () -> assertTrue(log.contains("still subscribe their job types"), log),
                 () -> assertTrue(context
                         .processingStopped()
@@ -378,9 +389,10 @@ class ZenBpmWorkflowProcessingTest {
                 () -> assertEquals(Set.of(), whileTheContextIsHeld),
                 () -> assertFalse(starting.isAlive()),
                 () -> assertEquals(Set.of("shop"), factory.getOpenWorkflowModules()),
-                () -> assertEquals(List.of("TYPE_SUBSCRIBE charge"), described(engine
-                        .call(0)
-                        .subscriptions(1))));
+                () -> assertEquals(List.of("TYPE_SUBSCRIBE charge", "TYPE_SUBSCRIBE vanillabp__ended__Order"),
+                        described(engine
+                                .call(0)
+                                .subscriptions(2))));
     }
 
     @Test
@@ -471,7 +483,8 @@ class ZenBpmWorkflowProcessingTest {
         final var context = new ZenBpmProcessingContext(workflowModuleId);
         context.recordWiring(
                 new WiredProcess("Order", "Order", new LinkedHashSet<>(List.of(jobTypes)), true, false, Map.of(), Map
-                        .of()));
+                        .of(), Map
+                                .of()));
         return context;
     }
 

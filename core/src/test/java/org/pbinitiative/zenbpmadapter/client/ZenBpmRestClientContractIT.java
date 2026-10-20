@@ -643,6 +643,27 @@ class ZenBpmRestClientContractIT {
     }
 
     @Test
+    @DisplayName("The tokens of an instance stand at the element they wait at and move on with the instance, the one of a call activity at the call activity and not in the called instance, and an instance the engine does not know is empty")
+    void theTokensOfAnInstanceStandWhereTheyWait() {
+        final var waiting = start(client, uniqueBusinessKey());
+        final var parent = client.createInstance(CreateInstanceRequest.latestVersionOf("contract-parent"));
+        final var movedOn = start(client, uniqueBusinessKey());
+        client.completeJob(waitingJobOf(client, movedOn).key(), Map.of());
+
+        assertAll(
+                () -> assertEquals(List.of("Task_Work"), eventually(() -> client
+                        .activeElementsOf(waiting.key())
+                        .filter(elements -> !elements.isEmpty()))),
+                () -> assertEquals(List.of("Call_Task"), eventually(() -> client
+                        .activeElementsOf(parent.key())
+                        .filter(elements -> !elements.isEmpty()))),
+                () -> assertEquals(List.of("Catch_Paid"), eventually(() -> client
+                        .activeElementsOf(movedOn.key())
+                        .filter(elements -> elements.contains("Catch_Paid")))),
+                () -> assertEquals(Optional.empty(), client.activeElementsOf(KEY_NOBODY_HOLDS)));
+    }
+
+    @Test
     @DisplayName("An instance and a job the engine does not know are empty")
     void unknownInstancesAndJobsAreEmpty() {
         assertEquals(Optional.empty(), client.instance(KEY_NOBODY_HOLDS));

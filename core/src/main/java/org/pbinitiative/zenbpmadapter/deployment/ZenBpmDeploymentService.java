@@ -504,8 +504,9 @@ public class ZenBpmDeploymentService implements AdapterDeploymentService<ZenBpmB
      * token; refuses a method which wants the item of an iteration whose element names none, see
      * {@link ZenBpmMultiInstanceItems}; carries the aggregate id to a process called on the same
      * aggregate from inside a multi-instance body, see {@link ZenBpmCallActivities}; writes a start
-     * marker behind every start event of a process which starts a workflow of its own, see
-     * {@link ZenBpmMarkerTasks}; and remembers
+     * marker behind every start event of a process which starts a workflow of its own, and an end
+     * marker in front of every end event of a process whose end the platform wants to hear about,
+     * see {@link ZenBpmMarkerTasks}; and remembers
      * what the start of the workflow processing and the lifecycle of a workflow need, the
      * <code>job-timeout</code> of each job type included, and the job type of each user task a
      * method serves, whose notifications are polled, see decision 12 in the repository's DECISIONS.md;
@@ -573,9 +574,14 @@ public class ZenBpmDeploymentService implements AdapterDeploymentService<ZenBpmB
         final var reportsItsStart = reportsItsStart(workflowModuleId, bpmnProcessId);
         final Map<String, BpmsStartTrigger.Kind> startMarkers = reportsItsStart ? writeTheStartMarkers(
                 workflowModuleId, bpmnProcessId, scopedProcessId, model, context) : Map.of();
-        context.recordWiring(new WiredProcess(bpmnProcessId, scopedProcessId, jobTypes, reportsItsStart, reportsItsEnd(
-                workflowModuleId, bpmnProcessId), startMarkers, userTasksNotifiedOf(workflowModuleId, bpmnProcessId,
-                        model)));
+        final var reportsItsEnd = reportsItsEnd(workflowModuleId, bpmnProcessId);
+        final Map<String, ZenBpmMarkerTasks.Ending> endMarkers = reportsItsEnd ? writeTheEndMarkers(model,
+                scopedProcessId) : Map.of();
+        recordTheJobTimeoutOfTheEndMarkers(workflowModuleId, bpmnProcessId, ZenBpmMarkerTasks.endMarkerJobType(
+                scopedProcessId), context);
+        context.recordWiring(
+                new WiredProcess(bpmnProcessId, scopedProcessId, jobTypes, reportsItsStart, reportsItsEnd, startMarkers, endMarkers, userTasksNotifiedOf(
+                        workflowModuleId, bpmnProcessId, model)));
         recordServed(workflowModuleId, bpmnProcessId, scopedProcessId);
         log.info(
                 "ZenBPM[{}]: wired {} task(s) and {} user task(s) of BPMN process '{}' (file '{}', workflow module '{}')",
@@ -936,8 +942,10 @@ public class ZenBpmDeploymentService implements AdapterDeploymentService<ZenBpmB
                 .isEmpty() && declared
                         .startMarkers()
                         .isEmpty() && declared
-                                .userTaskTypes()
-                                .isEmpty()) {
+                                .endMarkers()
+                                .isEmpty() && declared
+                                        .userTaskTypes()
+                                        .isEmpty()) {
             return;
         }
         declared
@@ -954,11 +962,14 @@ public class ZenBpmDeploymentService implements AdapterDeploymentService<ZenBpmB
         // recorded for it is never read
         recordTheJobTimeoutOfTheStartMarkers(workflowModuleId, bpmnProcessId, ZenBpmMarkerTasks.startMarkerJobType(
                 declared.scopedBpmnProcessId()), context);
+        recordTheJobTimeoutOfTheEndMarkers(workflowModuleId, bpmnProcessId, ZenBpmMarkerTasks.endMarkerJobType(
+                declared.scopedBpmnProcessId()), context);
         context.recordWiring(
                 new WiredProcess(bpmnProcessId, declared.scopedBpmnProcessId(), new LinkedHashSet<>(declared
                         .jobTypes()
                         .values()), reportsItsStart(workflowModuleId, bpmnProcessId), reportsItsEnd(workflowModuleId,
-                                bpmnProcessId), declared.startMarkers(), declared.userTaskTypes()));
+                                bpmnProcessId), declared.startMarkers(), declared.endMarkers(), declared
+                                        .userTaskTypes()));
     }
 
     // see decision 44 in the repository's DECISIONS.md: asked once the wiring of the process was
@@ -985,6 +996,27 @@ public class ZenBpmDeploymentService implements AdapterDeploymentService<ZenBpmB
                 .startEvents()
                 .forEach(startEvent -> startMarkers.put(startEvent.elementId(), startEvent.kind()));
         return startMarkers;
+    }
+
+    // see decision 52 in the repository's DECISIONS.md: asked once the wiring of the process was
+    // validated, as the start markers are, because only then does the core answer no for a called
+    // process; the type is subscribed and its timeout recorded whatever this model gets, for the
+    // markers of older versions
+    private static Map<String, ZenBpmMarkerTasks.Ending> writeTheEndMarkers(
+        final ZenBpmBpmnModel model,
+        final String scopedProcessId
+    ) {
+        return ZenBpmMarkerTasks.insertEndMarkers(model, ZenBpmMarkerTasks.endMarkerJobType(scopedProcessId));
+    }
+
+    private void recordTheJobTimeoutOfTheEndMarkers(
+        final String workflowModuleId,
+        final String bpmnProcessId,
+        final String jobType,
+        final ZenBpmProcessingContext context
+    ) {
+        context.recordJobTimeout(jobType, jobTimeouts.jobTimeoutFor(workflowModuleId, bpmnProcessId,
+                ZenBpmMarkerTasks.END_MARKER_TASK), bpmnProcessId, ZenBpmMarkerTasks.END_MARKER_TASK, adapterId);
     }
 
     private void recordTheJobTimeoutOfTheStartMarkers(

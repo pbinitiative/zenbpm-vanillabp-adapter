@@ -53,9 +53,12 @@ import lombok.extern.slf4j.Slf4j;
  * Where a model held under the id carries start markers, which an earlier version of the
  * application wrote, its start markers are served as well, with the start events of every held
  * model which carries them, see decision 46 in the repository's DECISIONS.md: a workflow started
- * right before the rename may still wait at its marker. A start marker needs no task definition, so
- * the held models are read for them also where no method serving the id names one, and not where
- * the platform hears no start of a workflow of the id.
+ * right before the rename may still wait at its marker. So are its end markers, with the end events
+ * which carry them, where the platform wants to hear about the end of the id's workflows, see
+ * decision 52 in the repository's DECISIONS.md: those workflows reach them far more often. A marker
+ * needs no task definition, so the held models are read for markers also where no method serving
+ * the id names one, and not where the platform hears neither a start nor an end of a workflow of the
+ * id.
  */
 @Slf4j
 final class ZenBpmDeclaredProcessWorkers {
@@ -85,7 +88,7 @@ final class ZenBpmDeclaredProcessWorkers {
 
     /**
      * What serves the workflows of the process ids a workflow module declares without a model.
-     * Asks the engine only for an id whose methods name a task definition, or whose start the
+     * Asks the engine only for an id whose methods name a task definition, or whose start or end the
      * platform hears.
      *
      * @param workflowModuleId The workflow module, which finished deploying
@@ -118,6 +121,11 @@ final class ZenBpmDeclaredProcessWorkers {
                 .bpmsInitiatedStartInvoker()
                 .map(invoker -> invoker.startsAWorkflowOfItsOwn(workflowModuleId, bpmnProcessId))
                 .orElse(false);
+        // the end markers of a held model are served wherever the platform can be told an end, also
+        // where nobody listens to the end any more, see decision 52 in the repository's DECISIONS.md
+        final var endsMayBeReported = collaborators
+                .workflowEndedInvoker()
+                .isPresent();
         if (taskDefinitions.isEmpty()) {
             log.warn("""
                     ZenBPM[{}]: workflow module '{}' declares BPMN process '{}' without deploying a model under it, \
@@ -128,15 +136,16 @@ final class ZenBpmDeclaredProcessWorkers {
                     job nobody takes has not failed. Either wire those methods by task definition \
                     ('@WorkflowTask(taskDefinition = ...)', which is what the model's 'zenbpm:taskDefinition' \
                     carries), or keep deploying the old model under its old id until those workflows have ended.{}""",
-                    adapterId, workflowModuleId, bpmnProcessId, startsAreHeard ? """
-                             The start markers of the models the engine holds under that id are served all the \
-                            same, because they need no task definition.""" : "");
-            return new DeclaredProcess(bpmnProcessId, scopedProcessId, Map.of(), startsAreHeard ? startMarkersHeld(
-                    workflowModuleId, scopedProcessId) : Map.of(), Map.of());
+                    adapterId, workflowModuleId, bpmnProcessId,
+                    markersServedAllTheSame(startsAreHeard, endsMayBeReported));
+            final var held = startsAreHeard || endsMayBeReported ? markersHeld(workflowModuleId, scopedProcessId,
+                    startsAreHeard, endsMayBeReported) : new HeldTypes(Set.of(), Set.of(), Map.of(), Map.of());
+            return new DeclaredProcess(bpmnProcessId, scopedProcessId, Map.of(), held.startMarkers(), held
+                    .endMarkers(), Map.of());
         }
         final HeldTypes types;
         try {
-            types = heldTypes(workflowModuleId, scopedProcessId, startsAreHeard);
+            types = heldTypes(workflowModuleId, scopedProcessId, startsAreHeard, endsMayBeReported);
         } catch (final RuntimeException e) {
             log.debug("ZenBPM[{}]: the models the engine holds as '{}' could not be read", adapterId, scopedProcessId,
                     e);
@@ -147,7 +156,7 @@ final class ZenBpmDeclaredProcessWorkers {
                     task, which the engine hands out alike. The next start of the application reads them again.""",
                     adapterId, workflowModuleId, bpmnProcessId, scopedProcessId, Objects.requireNonNullElse(e
                             .getMessage(), e.toString()));
-            return new DeclaredProcess(bpmnProcessId, scopedProcessId, Map.of(), Map.of(), Map.of());
+            return new DeclaredProcess(bpmnProcessId, scopedProcessId, Map.of(), Map.of(), Map.of(), Map.of());
         }
         final var served = new LinkedHashMap<String, String>();
         final var userTasks = new LinkedHashMap<String, String>();
@@ -179,28 +188,54 @@ final class ZenBpmDeclaredProcessWorkers {
             }
             heldNowhere.add(taskDefinition);
         }
-        report(workflowModuleId, bpmnProcessId, scopedProcessId, served, types.startMarkers(), subscribedBefore,
-                userTasks, heldNowhere, sharedWithATask);
-        return new DeclaredProcess(bpmnProcessId, scopedProcessId, served, types.startMarkers(), userTasks);
+        report(workflowModuleId, bpmnProcessId, scopedProcessId, served, types, subscribedBefore, userTasks,
+                heldNowhere, sharedWithATask);
+        return new DeclaredProcess(bpmnProcessId, scopedProcessId, served, types.startMarkers(), types
+                .endMarkers(), userTasks);
     }
 
-    // see decision 46 in the repository's DECISIONS.md: the start markers of an id whose methods
-    // name no task definition
-    private Map<String, BpmsStartTrigger.Kind> startMarkersHeld(
+    // a marker needs no task definition, so the held models are read for the markers of an id whose
+    // methods name none, see decisions 46 and 52 in the repository's DECISIONS.md
+    private HeldTypes markersHeld(
         final String workflowModuleId,
-        final String scopedProcessId
+        final String scopedProcessId,
+        final boolean startsAreHeard,
+        final boolean endsMayBeReported
     ) {
         try {
-            return heldTypes(workflowModuleId, scopedProcessId, true).startMarkers();
+            return heldTypes(workflowModuleId, scopedProcessId, startsAreHeard, endsMayBeReported);
         } catch (final RuntimeException e) {
             log.debug("ZenBPM[{}]: the models the engine holds as '{}' could not be read", adapterId, scopedProcessId,
                     e);
             log.warn("""
-                    ZenBPM[{}]: the models the engine holds as '{}' could not be read ({}), so the start markers \
-                    they may carry are not served. The next start of the application reads them again.""",
-                    adapterId, scopedProcessId, Objects.requireNonNullElse(e.getMessage(), e.toString()));
-            return Map.of();
+                    ZenBPM[{}]: the models the engine holds as '{}' could not be read ({}), so the {} they may \
+                    carry are not served. The next start of the application reads them again.""", adapterId,
+                    scopedProcessId, Objects.requireNonNullElse(e.getMessage(), e.toString()), markersOf(
+                            startsAreHeard, endsMayBeReported));
+            return new HeldTypes(Set.of(), Set.of(), Map.of(), Map.of());
         }
+    }
+
+    private static String markersServedAllTheSame(
+        final boolean startsAreHeard,
+        final boolean endsMayBeReported
+    ) {
+        if (!startsAreHeard && !endsMayBeReported) {
+            return "";
+        }
+        return """
+                 The %s of the models the engine holds under that id are served all the same, because they need no \
+                task definition.""".formatted(markersOf(startsAreHeard, endsMayBeReported));
+    }
+
+    private static String markersOf(
+        final boolean startsAreHeard,
+        final boolean endsMayBeReported
+    ) {
+        if (startsAreHeard && endsMayBeReported) {
+            return "start and end markers";
+        }
+        return startsAreHeard ? "start markers" : "end markers";
     }
 
     // the types the held models give to a user task of the task definition: its scoped type, and
@@ -224,12 +259,15 @@ final class ZenBpmDeclaredProcessWorkers {
     private HeldTypes heldTypes(
         final String workflowModuleId,
         final String scopedProcessId,
-        final boolean startsAreHeard
+        final boolean startsAreHeard,
+        final boolean endsMayBeReported
     ) {
         final var taskTypes = new TreeSet<String>();
         final var userTaskTypes = new TreeSet<String>();
         final var startMarkers = new LinkedHashMap<String, BpmsStartTrigger.Kind>();
+        final var endMarkers = new LinkedHashMap<String, ZenBpmMarkerTasks.Ending>();
         final var startMarkerJobType = ZenBpmMarkerTasks.startMarkerJobType(scopedProcessId);
+        final var endMarkerJobType = ZenBpmMarkerTasks.endMarkerJobType(scopedProcessId);
         final var rest = factory.rest();
         for (final var version : rest.processDefinitions(scopedProcessId, false)) {
             final var bpmn = rest
@@ -250,9 +288,17 @@ final class ZenBpmDeclaredProcessWorkers {
                                     .forEach(startEvent -> startMarkers.putIfAbsent(startEvent.elementId(), startEvent
                                             .kind()));
                         }
+                        if (endsMayBeReported && model
+                                .tasks()
+                                .stream()
+                                .anyMatch(task -> endMarkerJobType.equals(task.taskDefinition()))) {
+                            ZenBpmMarkerTasks
+                                    .endMarkersOf(model)
+                                    .forEach(endMarkers::putIfAbsent);
+                        }
                     });
         }
-        return new HeldTypes(taskTypes, userTaskTypes, startMarkers);
+        return new HeldTypes(taskTypes, userTaskTypes, startMarkers, endMarkers);
     }
 
     private static void typesOf(
@@ -271,7 +317,7 @@ final class ZenBpmDeclaredProcessWorkers {
         final String bpmnProcessId,
         final String scopedProcessId,
         final Map<String, String> served,
-        final Map<String, BpmsStartTrigger.Kind> startMarkers,
+        final HeldTypes types,
         final Set<String> subscribedBefore,
         final Map<String, String> userTasks,
         final Set<String> heldNowhere,
@@ -289,9 +335,23 @@ final class ZenBpmDeclaredProcessWorkers {
         if (!sharing.isEmpty()) {
             servedBy.add("the job types %s which the deployed processes subscribe".formatted(sharing));
         }
-        if (!startMarkers.isEmpty()) {
+        if (!types
+                .startMarkers()
+                .isEmpty()) {
             servedBy.add("the job type '%s' of the start markers of %s".formatted(ZenBpmMarkerTasks
-                    .startMarkerJobType(scopedProcessId), new TreeSet<>(startMarkers.keySet())));
+                    .startMarkerJobType(scopedProcessId),
+                    new TreeSet<>(types
+                            .startMarkers()
+                            .keySet())));
+        }
+        if (!types
+                .endMarkers()
+                .isEmpty()) {
+            servedBy.add("the job type '%s' of the end markers of %s".formatted(ZenBpmMarkerTasks.endMarkerJobType(
+                    scopedProcessId),
+                    new TreeSet<>(types
+                            .endMarkers()
+                            .keySet())));
         }
         if (!userTasks.isEmpty()) {
             servedBy.add("""
@@ -335,6 +395,8 @@ final class ZenBpmDeclaredProcessWorkers {
      *            name, as the engine knows it, empty where nothing does
      * @param startMarkers The start events of the held models which carry start markers, each with
      *            what triggers it, empty where none does
+     * @param endMarkers The end events of the held models which carry end markers, each with how
+     *            much of the workflow it ends, empty where none does
      * @param userTaskTypes The job type of a user task of a held model for each task definition the
      *            methods serving the id name, as the engine knows it, each with that task definition;
      *            empty where no held model gives one to a user task
@@ -344,6 +406,7 @@ final class ZenBpmDeclaredProcessWorkers {
         String scopedBpmnProcessId,
         Map<String, String> jobTypes,
         Map<String, BpmsStartTrigger.Kind> startMarkers,
+        Map<String, ZenBpmMarkerTasks.Ending> endMarkers,
         Map<String, String> userTaskTypes
     ) {
     }
@@ -354,11 +417,13 @@ final class ZenBpmDeclaredProcessWorkers {
      * @param taskTypes The types of the tasks which create a job for a worker
      * @param userTaskTypes The types of the user tasks
      * @param startMarkers The start events of the models which carry start markers
+     * @param endMarkers The end events of the models which carry end markers
      */
     private record HeldTypes(
         Set<String> taskTypes,
         Set<String> userTaskTypes,
-        Map<String, BpmsStartTrigger.Kind> startMarkers
+        Map<String, BpmsStartTrigger.Kind> startMarkers,
+        Map<String, ZenBpmMarkerTasks.Ending> endMarkers
     ) {
     }
 

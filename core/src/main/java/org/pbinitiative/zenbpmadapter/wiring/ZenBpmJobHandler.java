@@ -92,9 +92,10 @@ import lombok.extern.slf4j.Slf4j;
  * has is the model's, else the engine's default, see decision 38 in the repository's
  * DECISIONS.md.</li>
  * </ul>
- * <b>The start of a workflow.</b> The job of a start marker is handed to the
- * {@link ZenBpmBpmsInitiatedStartHandler} of the module, inside the same drain, see decision 26 in
- * the repository's DECISIONS.md.
+ * <b>The start and the end of a workflow.</b> The job of a start marker is handed to the
+ * {@link ZenBpmBpmsInitiatedStartHandler} of the module, and the job of an end marker to its
+ * {@link ZenBpmWorkflowEndedHandler}, inside the same drain, see decision 26 in the repository's
+ * DECISIONS.md.
  * <p>
  * <b>The tasks the engine took away.</b> The engine tells nobody about a job it ended, as an
  * interrupting boundary event or a cancelled instance does. So once the outcome of a delivery
@@ -163,6 +164,13 @@ public final class ZenBpmJobHandler {
     private final ZenBpmBpmsInitiatedStartHandler starts;
 
     /**
+     * What serves the jobs of the end markers, also where the platform hands no invoker of ends: an
+     * end marker of a version deployed while it handed one is completed without a report, see
+     * decision 52 in the repository's DECISIONS.md.
+     */
+    private final ZenBpmWorkflowEndedHandler ends;
+
+    /**
      * The handler of a workflow module whose processing starts.
      *
      * @param adapterId The adapter id
@@ -205,6 +213,9 @@ public final class ZenBpmJobHandler {
                 .bpmsInitiatedStartInvoker()
                 .map(invoker -> new ZenBpmBpmsInitiatedStartHandler(adapterId, workflowModuleId, invoker, rest, clientId, retryBackoffs))
                 .orElse(null);
+        this.ends = new ZenBpmWorkflowEndedHandler(adapterId, workflowModuleId, collaborators
+                .workflowEndedInvoker()
+                .orElse(null), rest, clientId, retryBackoffs);
         // the core names a task by the definition it was reported under, which is the plain one
         processes
                 .values()
@@ -242,7 +253,7 @@ public final class ZenBpmJobHandler {
      * @param scopedProcessId The process of the job's instance, as the engine knows it
      * @param jobType The job's type
      * @return The process, empty where the module holds no such process or serves no such job type
-     *         in it, the type of its start markers included
+     *         in it, the types of its start and end markers included
      */
     public Optional<WiredProcess> processServing(
         final String scopedProcessId,
@@ -252,7 +263,7 @@ public final class ZenBpmJobHandler {
                 .ofNullable(processes.get(scopedProcessId))
                 .filter(process -> process
                         .jobTypes()
-                        .contains(jobType) || isStartMarker(process, jobType));
+                        .contains(jobType) || isStartMarker(process, jobType) || isEndMarker(process, jobType));
     }
 
     /**
@@ -326,8 +337,8 @@ public final class ZenBpmJobHandler {
         final var job = received.job();
         final var plainProcessId = process.bpmnProcessId();
         final var startMarker = isStartMarker(process, job.getType());
-        final var taskDefinition = startMarker ? ZenBpmMarkerTasks.START_MARKER_TASK
-                : scoping.plainTaskDefinition(workflowModuleId, plainProcessId, job.getType(), adapterId);
+        final var endMarker = isEndMarker(process, job.getType());
+        final var taskDefinition = taskDefinitionOf(process, job.getType(), startMarker, endMarker);
         final var delivery = new Delivery(job.getKey(), taskDefinition, plainProcessId, new ZenBpmCommandRetry(
                 adapterId, job.getKey(), taskDefinition, renewal::lockEnd, this::isStopping));
         // entered before the module's state is read, and the stop sets the state before it looks
@@ -343,6 +354,11 @@ public final class ZenBpmJobHandler {
             }
             if (startMarker) {
                 starts.handle(received, facts, process, delivery.retry(), drain::isStopping);
+                return;
+            }
+            if (endMarker) {
+                ends.handle(received, facts, process, idVariableNameOf(facts.scopedProcessId()), delivery.retry(),
+                        drain::isStopping);
                 return;
             }
             run(received, facts, delivery, renewal, entered);
@@ -771,6 +787,31 @@ public final class ZenBpmJobHandler {
                     the engine handed it out again and the newer delivery decides, or its element or workflow ended \
                     meanwhile""", adapterId, job.getKey(), delivery.taskDefinition(), aggregate.id());
         }
+    }
+
+    // a marker goes by the name its job-timeout and retry-backoff are resolved for
+    private String taskDefinitionOf(
+        final WiredProcess process,
+        final String jobType,
+        final boolean startMarker,
+        final boolean endMarker
+    ) {
+        if (startMarker) {
+            return ZenBpmMarkerTasks.START_MARKER_TASK;
+        }
+        if (endMarker) {
+            return ZenBpmMarkerTasks.END_MARKER_TASK;
+        }
+        return scoping.plainTaskDefinition(workflowModuleId, process.bpmnProcessId(), jobType, adapterId);
+    }
+
+    private static boolean isEndMarker(
+        final WiredProcess process,
+        final String jobType
+    ) {
+        return process
+                .endMarkerJobType()
+                .equals(jobType);
     }
 
     private static boolean isStartMarker(
