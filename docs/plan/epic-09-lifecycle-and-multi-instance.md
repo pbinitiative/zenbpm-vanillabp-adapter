@@ -1048,3 +1048,29 @@ was decided:
 What E9 leaves to the engine: E13.6 (end and cancellation notifications, GAPS 8 and 9), E13.7
 (`loopCounter` and `nrOfInstances`, GAPS 16) and E13.14 (the root key on a job, GAPS 22), all out of
 the pipeline's scope; the adapter's fallbacks above answer until then.
+
+**S9.4.1 and S9.5.1 done 2026-10-20**, merged to `main` as `522b38f` (pull request #67: stories
+`11d187e` and `45ca127`, review fixes `9464bcc`, CodeRabbit fixes `f212e05`; CodeRabbit's two
+comments were valid and it confirmed both fixes). F9.4 and F9.5 are complete, and with them E9.
+On `522b38f` (GitHub keeps run logs for 90 days, so what they showed is written here as well):
+
+- `Checks`, run
+  [39419819148](https://github.com/pbinitiative/zenbpm-vanillabp-adapter/actions/runs/39419819148):
+  green on both JDKs. `bin/check-engine-copies.sh` (in the JDK 25 job) reported both copies as the
+  engine's files of `bdd795a3...`. On both JDKs `ZenBpmMultiInstanceTest` ran 28 tests,
+  `ZenBpmMultiInstanceIT` 2, `ZenBpmRestClientTest` 104, `ZenBpmRestClientContractIT` 28,
+  `ZenBpmJobHandlerTest` 34, `ZenBpmUserTaskPollerTest` 36, `ZenBpmLifecycleIT` 15 and the Quarkus
+  `ZenBpmWorkflowLifecycleTest` 19, none skipped (engine test support 12 unit and 5 integration
+  tests, core 1,177 unit and 100 integration tests, Spring Boot 14 unit and 83 integration tests,
+  smoke test 38, Quarkus runtime 13, Quarkus deployment 52, Quarkus integration tests 20, coverage
+  gate 37). The gate measured 100 % on both platforms: of 34,550 instructions for Spring Boot and
+  34,420 for Quarkus on JDK 25, of 34,540 and 34,410 on JDK 21.
+- `Publish snapshots`, run
+  [39419819209](https://github.com/pbinitiative/zenbpm-vanillabp-adapter/actions/runs/39419819209):
+  green. The core snapshot it published to GitHub Packages, `2.0.0-20261020.120705-63`, holds the
+  batch's new main classes (`ZenBpmMultiInstance` with `Body`, `Iteration`, `Shape` and `Segment`,
+  `ZenBpmWire$Activation`, `ZenBpmWire$ProcessInstanceActivations`) and the changed ones
+  (`HistoryEntry`, `ZenBpmRestClient`, `ZenBpmJobHandler`, `ZenBpmUserTaskNotifier`), 246 classes,
+  and no test class, fake, fixture or BPMN file. Both report pages (`spring-boot-report/index.html`,
+  `quarkus-report/index.html`) answer HTTP 200 and show 0 of 34,550 (Spring Boot) and 0 of 34,420
+  (Quarkus) instructions missed.
