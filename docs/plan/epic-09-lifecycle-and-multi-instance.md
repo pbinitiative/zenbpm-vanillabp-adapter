@@ -428,6 +428,35 @@ in every case, and a missing invoker counts as an end nobody listens to
 (`ZenBpmWorkflowEndedHandlerTest#anEndMarkerWithoutAnInvokerOfEndsIsCompletedWithoutAReport`; the
 mutant without the guard is killed).
 
+**S9.2.1 done 2026-10-20**, merged to `main` as `b1a93dd` (pull request #65: story `a3917f7`; two
+reviews, whose seven findings, one Major and two Minor of Claude's and two Major and one Minor of
+Copilot's, were all valid and fixed in `376cd2c`, answered above; CodeRabbit's one actionable
+comment, a null handler of end markers where the platform hands no invoker of ends, was valid and
+fixed in `af530ac`, and CodeRabbit resolved its thread). F9.2 is complete; E9 goes on with S9.4.1
+and S9.5.1. On `b1a93dd` (GitHub keeps run logs for 90 days, so what they showed is written here
+as well):
+
+- `Checks`, run
+  [39375039905](https://github.com/pbinitiative/zenbpm-vanillabp-adapter/actions/runs/39375039905):
+  green on both JDKs. `bin/check-engine-copies.sh` (in the JDK 25 job) reported both copies as the
+  engine's files of `bdd795a3...`. On both JDKs `ZenBpmWorkflowEndedHandlerTest` ran 17 tests,
+  `ZenBpmMarkerTasksTest` 19, `ZenBpmMarkerTasksIT` 5, `ZenBpmUserTaskPollerTest` 35,
+  `ZenBpmDeclaredProcessWorkersTest` 25, `ZenBpmDeploymentWiringTest` 19,
+  `ZenBpmWorkflowProcessingTest` 12, `ZenBpmLifecycleIT` 12 and `ZenBpmUserTaskRestartIT` 5, none
+  skipped (engine test support 12 unit and 5 integration tests, core 1,144 unit and 96 integration
+  tests, Spring Boot 14 unit and 80 integration tests, smoke test 38, Quarkus runtime 13, Quarkus
+  deployment 52, Quarkus integration tests 17, coverage gate 37). The gate measured 100 % on both
+  platforms: of 33,277 instructions for Spring Boot and 33,147 for Quarkus on JDK 25, of 33,267 and
+  33,137 on JDK 21.
+- `Publish snapshots`, run
+  [39375039892](https://github.com/pbinitiative/zenbpm-vanillabp-adapter/actions/runs/39375039892):
+  green. The core snapshot it published to GitHub Packages, `2.0.0-20261020.052814-61`, holds the
+  story's new main classes (`ZenBpmWorkflowEndedHandler` with `Ended` and `Elsewhere`,
+  `ZenBpmMarkerTasks$Ending`) and the changed ones (`ZenBpmMarkerTasks`, `ZenBpmUserTaskNotifier`,
+  `ZenBpmProcessingContext`), 237 classes, and no test class, fake, fixture or BPMN file. Both
+  report pages (`spring-boot-report/index.html`, `quarkus-report/index.html`) answer HTTP 200 and
+  show 0 of 33,277 (Spring Boot) and 0 of 33,147 (Quarkus) instructions missed.
+
 ## F9.3 Workflows the engine starts itself
 
 ### S9.3.1 `ZenBpmBpmsInitiatedStartHandler`
