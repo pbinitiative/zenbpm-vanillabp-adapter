@@ -7,6 +7,7 @@ annotations, all delivered through model rewriting (decision 26) and the instanc
 started by timer (or somebody started past VanillaBP) gets the aggregate the application's
 `@WorkflowStartedByBpms` method builds and names, and is found afterwards (decision 25), and a task
 inside a parallel multi-instance sub-process binds element, index and total - on both platforms.
+Met on 2026-10-20, on both platforms; the tests which hold each clause are named after S9.5.1.
 
 Template: `Camunda8WorkflowEndedHandler`, `Camunda8BpmsInitiatedStartHandler`, `Camunda8MultiInstance`.
 Contract: `WorkflowEndedInvoker`, `BpmsInitiatedStartInvoker` (validate the start events while
@@ -865,8 +866,92 @@ multi-instance call activity). The aggregate's list `parcels` is a declared aggr
 
 ### S9.5.1 Lifecycle on Quarkus
 
-- [ ] **Depends on:** S9.4.1.
+- [x] **Depends on:** S9.4.1.
 
 `ZenBpmWorkflowLifecycleTest#theWorkflowEndIsReported`, `#theEngineStartsAWorkflowOnItsOwn` (the
 aggregate the method named, found afterwards through the start row, as S9.3.1),
 `#multiInstanceBindsElementIndexAndTotal`.
+
+*Fit check, 2026-10-20, decided by the Implementor where it says so.* Checked against `main`
+(`03a2ada`) with S9.4.1 on top, the Quarkus glue (`quarkus/runtime`: `ZenBpmDeploymentServiceProducer`
+hands the platform's `WorkflowEndedInvoker` and `BpmsInitiatedStartInvoker` through
+`AdapterCollaboratorsSupport.collaborators` to the same `ZenBpmDeploymentService` the Spring Boot
+glue builds; `quarkus/deployment`: `ZenBpmIntegrationProcessor` registers the producers and records
+nothing about processes), and the Spring Boot ITs of S9.1.1 to S9.4.1. What did not fit, and what
+was decided:
+
+1. **The build-time side** (the brief's question). The Quarkus extension wires nothing at build
+   time: the markers are written, `ZenBpmProcessingContext#jobTypes` is filled and a declared
+   process's held models are read by the core at the application's start, exactly as on Spring
+   Boot, from the collaborators the runtime producer hands it. What the glue could get wrong is
+   whether the platform's Quarkus integration hands the two invokers at all; the twins below prove
+   it does: the end marker's type is subscribed (`#theWorkflowEndIsReported` reads the start line,
+   which names `vanillabp__ended__zenbpm-e2e__Packing`), its job reaches the `@WorkflowEnded`
+   method, and the start marker of a workflow started past VanillaBP reaches the
+   `@WorkflowStartedByBpms` method.
+2. **The twins** (as the story names them, decided by the Implementor where the story leaves the
+   fixture open). The one prod-mode application of `ZenBpmWorkflowLifecycleTest` got two processes:
+   `Packing` (a copy of the Spring Boot `Picking` without its call activity: a parallel
+   multi-instance sub-process and a sequential multi-instance task over the aggregate's declared
+   list `items`, and a `@WorkflowEnded` method), and `Receiving` (started over the engine's REST API
+   without a business key; its `@WorkflowStartedByBpms` method builds the aggregate, and a message
+   correlated on it later reaches the workflow only through the start row).
+   `#theWorkflowEndIsReported`, `#theEngineStartsAWorkflowOnItsOwn` and
+   `#multiInstanceBindsElementIndexAndTotal` hold E9's three clauses on Quarkus. Started past
+   VanillaBP rather than by a timer: the start marker's handler does not tell the two apart beyond
+   the kind it reports, which the Spring Boot `#aTimerStartBuildsTheAggregate` holds, and a timer
+   would start a workflow at every boot of the shared application.
+3. **Spring Boot ITs without a Quarkus twin, and why none is needed.** Each of them proves a
+   decision the core takes alone, from the same collaborators, so the core's unit tests (counted on
+   both platforms) and the twins above, which prove the glue, cover them:
+   `ZenBpmLifecycleIT#aSecondDeliveryOfTheMarkerBuildsNothing`, `#theApplicationsOwnStartBuildsNothing`
+   (every Quarkus workflow the application starts passes its start marker already),
+   `#aProcessCalledOnAnAggregateOfItsOwnBuildsItsOwn` (a rewrite of `deployResources`),
+   `#aBranchWhichEndsWhileAnotherRunsReportsNothing`, `#theEndWaitsForAnEventSubProcessStillRunning`,
+   `#aCancelledWorkflowReportsNothing`, `#aReportWhichThrewIsRepeated`,
+   `#aWorkflowWhoseAggregateIsGoneEnds`, `#theEndCancelsTheTasksStillOpen`,
+   `#aCalledProcessIsToldTheIterationOfItsCaller`, `ZenBpmUserTaskRestartIT` and
+   `ZenBpmRenamedProcessIT` (a declared process's held models: read by
+   `ZenBpmDeclaredProcessWorkers` in the core, and a twin would need a second boot of the shared
+   prod-mode application).
+4. **The incident's cause sentence of the end marker.** It is the failure message the core's
+   `ZenBpmWorkflowEndedHandler` writes from the thrown exception
+   (`ZenBpmWorkflowEndedHandlerTest#aReportWhichThrowsFailsTheJob`); nothing of the platform's glue
+   takes part in it, so no Quarkus twin is needed.
+5. Decisions, GAPS: nothing new.
+
+**Acceptance** (the story names its three tests; recorded here as its criteria)
+
+- [x] On a booted Quarkus application against the pinned image:
+  `ZenBpmWorkflowLifecycleTest#theWorkflowEndIsReported` (the end event `Packed` reaches the
+  `@WorkflowEnded` method, the instance completes after it, and the start line names the end
+  markers' type), `#theEngineStartsAWorkflowOnItsOwn` (a start over `POST /v1/process-instances`
+  without a business key gets the aggregate `receipt-<order>` the `@WorkflowStartedByBpms` method
+  built, the start row names the instance, the id variable holds the id, and a correlation on the
+  aggregate completes the workflow) and `#multiInstanceBindsElementIndexAndTotal` (`a:0/3`,
+  `b:1/3`, `c:2/3` for the parallel sub-process and, in that order, for the sequential task).
+  Clean build of the story's commit (`TZ=Etc/UTC mvn clean install` on OpenJDK 25.0.2,
+  Docker ITs included, none skipped): engine test support 12 + 5, core 1,167 + 97, Spring Boot
+  14 + 83, smoke test 38, Quarkus runtime 13, deployment 52, integration tests 20, gate 37; coverage
+  100 % on both platforms (0 of 34,305 instructions missed on Spring Boot, 0 of 34,175 on Quarkus);
+  `bin/check-deploy-safety.sh` green. The story adds no production code and no guard, so it has no
+  mutant of its own; its three tests are the twins of the Spring Boot ITs.
+
+**E9 "Done when", checked 2026-10-20 at the end of the epic.** Met on both platforms:
+
+- *A workflow's end reaches the application with its end event id:* Spring Boot
+  `ZenBpmLifecycleIT#theEndOfAWorkflowIsReportedWithItsEndEvent`, Quarkus
+  `ZenBpmWorkflowLifecycleTest#theWorkflowEndIsReported`.
+- *A workflow the engine started by timer, or somebody started past VanillaBP, gets the aggregate
+  the application's `@WorkflowStartedByBpms` method builds and names, and is found afterwards
+  (decision 25):* Spring Boot `ZenBpmLifecycleIT#aTimerStartBuildsTheAggregate` and
+  `#aWorkflowStartedPastVanillaBpGetsAnAggregate`, Quarkus
+  `ZenBpmWorkflowLifecycleTest#theEngineStartsAWorkflowOnItsOwn` (past VanillaBP; the timer is held
+  on Spring Boot only, see point 2 of the fit check above).
+- *A task inside a parallel multi-instance sub-process binds element, index and total:* Spring Boot
+  `ZenBpmLifecycleIT#theIterationIsReported`, Quarkus
+  `ZenBpmWorkflowLifecycleTest#multiInstanceBindsElementIndexAndTotal`.
+
+What E9 leaves to the engine: E13.6 (end and cancellation notifications, GAPS 8 and 9), E13.7
+(`loopCounter` and `nrOfInstances`, GAPS 16) and E13.14 (the root key on a job, GAPS 22), all out of
+the pipeline's scope; the adapter's fallbacks above answer until then.

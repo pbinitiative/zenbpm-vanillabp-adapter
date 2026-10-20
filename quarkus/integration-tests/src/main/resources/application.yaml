@@ -20,6 +20,9 @@ vanillabp:
   workflow-modules:
     zenbpm-e2e:
       workflows:
+        Packing:
+          declared-aggregate-values:
+            - items
         TaskFailures:
           adapters:
             zenbpm:

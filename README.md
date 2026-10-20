@@ -186,7 +186,9 @@ its own: a service task whose job tells the platform that a workflow started (de
 [`DECISIONS.md`](./DECISIONS.md)). A workflow a timer started, or one somebody started past
 VanillaBP without a business key, gets the aggregate the application's `@WorkflowStartedByBpms`
 method builds and names. Its id is written into the instance before the workflow goes on, and the
-workflow is found later through the instance key of its start. A second delivery of the marker reads
+workflow is found later through the instance key of its start
+(`ZenBpmLifecycleIT#aWorkflowStartedPastVanillaBpGetsAnAggregate`, on Quarkus
+`ZenBpmWorkflowLifecycleTest#theEngineStartsAWorkflowOnItsOwn`). A second delivery of the marker reads
 that id from the instance, because the engine hands a job out with the variables it was created
 with, and builds nothing; it builds a second aggregate only where a node which has not seen the
 update yet answers that read (decision 46). A workflow the application started itself passes its
@@ -202,7 +204,8 @@ there the model hands on whatever name the called workflow is to start with.
 A claimed process whose end the application listens to, through a `@WorkflowEnded` method or
 `vanillabp.delivery.release-on-workflow-end`, gets an end marker in front of every none, message and
 terminate end event of its own (decision 52). Its job reports the end with the end event's id
-(`ZenBpmLifecycleIT#theEndOfAWorkflowIsReportedWithItsEndEvent`), after the platform told every task
+(`ZenBpmLifecycleIT#theEndOfAWorkflowIsReportedWithItsEndEvent`, on Quarkus
+`ZenBpmWorkflowLifecycleTest#theWorkflowEndIsReported`), after the platform told every task
 it believed open in the workflow as cancelled, a task inside an embedded sub-process included, and
 the instance ends only once the report committed (`#theEndCancelsTheTasksStillOpen`). An end event
 which ends one branch while another branch of the workflow still runs reports nothing, and the end
@@ -241,7 +244,8 @@ of the iteration, the index counts from 0 in the order the engine handed out the
 total is the size of the collection where the modeller wrote it as a bare variable such as
 `=parcels`: for an iteration of a parallel multi-instance sub-process
 (`ZenBpmLifecycleIT#theIterationIsReported`) and of a sequential multi-instance task
-(`#theIterationsOfASequentialTaskAreReportedOneAfterTheOther`). For a collection written as any
+(`#theIterationsOfASequentialTaskAreReportedOneAfterTheOther`), on Quarkus both in
+`ZenBpmWorkflowLifecycleTest#multiInstanceBindsElementIndexAndTotal`. For a collection written as any
 other expression the total is `-1`, as Camunda 8 reports a total it cannot tell
 (`ZenBpmMultiInstanceTest#aCollectionWrittenAsAnExpressionHasNoTotal`). Nested iterations are told
 the outermost first (`#nestedIterationsAreToldOutermostFirst`). A task of a process which an
