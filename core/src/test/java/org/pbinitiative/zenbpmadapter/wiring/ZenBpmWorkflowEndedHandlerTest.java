@@ -23,6 +23,9 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.pbinitiative.zenbpmadapter.TestCollaborators;
+import org.pbinitiative.zenbpmadapter.TestScoping;
+import org.pbinitiative.zenbpmadapter.ZenBpmProcessingContext;
 import org.pbinitiative.zenbpmadapter.ZenBpmProcessingContext.WiredProcess;
 import org.pbinitiative.zenbpmadapter.client.FakeEngine;
 import org.pbinitiative.zenbpmadapter.client.ReceivedJob;
@@ -263,6 +266,26 @@ class ZenBpmWorkflowEndedHandlerTest {
         assertAll(
                 () -> assertEquals(List.of(), jobs.ends.ends()),
                 () -> assertEquals(List.of("POST /v1/jobs/42/complete"), jobs.commands()));
+    }
+
+    @Test
+    @DisplayName("Where the platform hands no invoker of ends any more, the end marker of a version deployed while it handed one is completed without a report, so its workflow ends")
+    void anEndMarkerWithoutAnInvokerOfEndsIsCompletedWithoutAReport(final CapturedOutput output) {
+        final var context = new ZenBpmProcessingContext("shop");
+        context.recordWiring(new WiredProcess("Order", "shop__Order", Set.of(JobRunning.JOB_TYPE), true, true, Map
+                .of(), Map.of(), Map.of()));
+        // the collaborators of the module as the platform builds them without an invoker of ends
+        jobs.dispatcher.register(new ZenBpmJobHandler("orders", jobs.factory, TestCollaborators.withInvokers(
+                "orders", TestScoping.of(NameClashAvoidance.USE_PREFIX), jobs.invoker, jobs.starts,
+                null), context, ZenBpmRetryBackoffResolver.NONE));
+        holds(ROOT, "order-1", "\"id\": \"order-1\"", SHIPPED);
+        jobs.takesTheCommands(ROOT);
+
+        jobs.runs(JobRunning.endMarkerJob(ROOT, SHIPPED));
+
+        assertAll(
+                () -> assertEquals(List.of(), jobs.ends.ends()),
+                () -> assertEquals(List.of("POST /v1/jobs/42/complete"), jobs.commands(), output::getAllOfThisTest));
     }
 
     @Test

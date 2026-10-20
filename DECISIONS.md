@@ -1291,7 +1291,8 @@ which it does wherever it writes start markers. An instance of a version deploye
 listened to the end of its workflows still waits at its end marker after nobody does any more
 (a release removed the last `@WorkflowEnded` method, or switched the release of the records off),
 and a job nobody takes stops it there for good, without an incident. Such a marker's job is
-completed without a report, as the application deploying the current version would want. A process
+completed without a report, as the application deploying the current version would want, also where
+the platform hands no invoker of ends at all. A process
 declared without a model subscribes the type where a model the engine holds under the id carries end
 markers and the platform hands an invoker of ends, whoever listens, as decision 46 says for the
 start markers. A module which subscribes no type at all, whose processes have neither a task, nor a

@@ -71,6 +71,7 @@ final class ZenBpmWorkflowEndedHandler {
 
     private final String workflowModuleId;
 
+    // null where the platform hands no invoker of ends
     private final WorkflowEndedInvoker invoker;
 
     private final ZenBpmRestClient rest;
@@ -121,7 +122,7 @@ final class ZenBpmWorkflowEndedHandler {
         final var endEventId = ZenBpmMarkerTasks
                 .endEventOf(job.getElementId())
                 .orElse(job.getElementId());
-        if (!process.reportsItsEnd()) {
+        if ((invoker == null) || !process.reportsItsEnd()) {
             log.debug("""
                     ZenBPM[{}]: nobody listens to the end of the workflows of process '{}' any more, so the end \
                     marker in front of end event '{}' of instance {}, of a version deployed while somebody did, is \

@@ -420,6 +420,14 @@ test 38, Quarkus runtime 13, deployment 52, integration tests 17, gate 37; cover
 platforms (0 of 33,281 instructions missed on Spring Boot, 0 of 33,151 on Quarkus);
 `bin/check-deploy-safety.sh` green.
 
+*Answer to CodeRabbit on pull request #65, 2026-10-20.* One actionable comment, valid: the fix of
+finding 2 subscribes the end markers' type also where the platform hands no invoker of ends, while
+`ZenBpmJobHandler` built the handler of the end markers only with one, so the job of an older
+version's marker met `null` and was left to its lock again and again. Fixed: the handler is built
+in every case, and a missing invoker counts as an end nobody listens to
+(`ZenBpmWorkflowEndedHandlerTest#anEndMarkerWithoutAnInvokerOfEndsIsCompletedWithoutAReport`; the
+mutant without the guard is killed).
+
 ## F9.3 Workflows the engine starts itself
 
 ### S9.3.1 `ZenBpmBpmsInitiatedStartHandler`

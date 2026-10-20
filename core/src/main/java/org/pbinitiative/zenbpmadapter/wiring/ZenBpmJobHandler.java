@@ -164,8 +164,9 @@ public final class ZenBpmJobHandler {
     private final ZenBpmBpmsInitiatedStartHandler starts;
 
     /**
-     * What serves the jobs of the end markers, <code>null</code> where the platform hands no
-     * invoker of ends, which writes no end marker either.
+     * What serves the jobs of the end markers, also where the platform hands no invoker of ends: an
+     * end marker of a version deployed while it handed one is completed without a report, see
+     * decision 52 in the repository's DECISIONS.md.
      */
     private final ZenBpmWorkflowEndedHandler ends;
 
@@ -212,10 +213,9 @@ public final class ZenBpmJobHandler {
                 .bpmsInitiatedStartInvoker()
                 .map(invoker -> new ZenBpmBpmsInitiatedStartHandler(adapterId, workflowModuleId, invoker, rest, clientId, retryBackoffs))
                 .orElse(null);
-        this.ends = collaborators
+        this.ends = new ZenBpmWorkflowEndedHandler(adapterId, workflowModuleId, collaborators
                 .workflowEndedInvoker()
-                .map(invoker -> new ZenBpmWorkflowEndedHandler(adapterId, workflowModuleId, invoker, rest, clientId, retryBackoffs))
-                .orElse(null);
+                .orElse(null), rest, clientId, retryBackoffs);
         // the core names a task by the definition it was reported under, which is the plain one
         processes
                 .values()
