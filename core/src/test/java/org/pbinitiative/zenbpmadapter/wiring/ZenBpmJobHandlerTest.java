@@ -14,6 +14,7 @@ import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CountDownLatch;
@@ -32,6 +33,7 @@ import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.json.JsonMapper;
 
 import io.vanillabp.integration.adapter.spi.workflowtask.DeliveryOfAnUnknownWorkflowException;
+import io.vanillabp.integration.adapter.spi.workflowtask.MultiInstanceValue;
 import io.vanillabp.integration.adapter.spi.workflowtask.TaskExistence;
 import io.vanillabp.integration.adapter.spi.workflowtask.TaskKind;
 import io.vanillabp.integration.adapter.spi.workflowtask.WorkflowTaskOutcome;
@@ -55,6 +57,8 @@ class ZenBpmJobHandlerTest {
     private static final long ROOT = 100;
 
     private static final long SUB_PROCESS = 200;
+
+    private static final long BODY = 300;
 
     private JobRunning jobs;
 
@@ -104,6 +108,83 @@ class ZenBpmJobHandlerTest {
                 () -> assertTrue(context.predatesDeployedVersion()),
                 () -> assertFalse(context.runInCurrentTransaction()),
                 () -> assertEquals(Map.of(), context.getMultiInstances()));
+    }
+
+    @Test
+    @DisplayName("The iterations a job runs in are read only where the method asks for them, and once for all of its parameters, also where no body is kept")
+    void theIterationsAreReadOnceWhereTheMethodAsksForThem() {
+        // nothing kept, so only the delivery itself can spare the second parameter a read
+        jobs.close();
+        jobs = new JobRunning(2, configuration -> configuration.setInstanceCacheMaxEntries(0));
+        final var variables = "\"id\": \"order-1\", \"parcels\": [\"a\", \"b\"]";
+        jobs.holds(ROOT, "default", null, "order-1", variables);
+        // the body of the multi-instance task 'Ship', with a copy of the variables of the root
+        jobs.holds(BODY, "multiInstance", ROOT, "order-1", variables);
+        jobs.takesTheCommands(BODY, ROOT);
+        jobs.holdsTheModel(JobRunning.DEFINITION_KEY, """
+                <bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" \
+                xmlns:zenbpm="http://zenbpm.pbinitiative.org/1.0" id="Definitions_Order" \
+                targetNamespace="http://bpmn.io/schema/bpmn">
+                  <bpmn:process id="shop__Order" isExecutable="true">
+                    <bpmn:serviceTask id="Ship">
+                      <bpmn:multiInstanceLoopCharacteristics><bpmn:extensionElements>
+                        <zenbpm:loopCharacteristics inputCollection="=parcels" inputElement="parcel" />
+                      </bpmn:extensionElements></bpmn:multiInstanceLoopCharacteristics>
+                    </bpmn:serviceTask>
+                  </bpmn:process>
+                </bpmn:definitions>""");
+        jobs.engine.answers("GET", "/v1/jobs", 200, """
+                {"partitions": [{"partition": 1, "totalCount": 2, "items": [
+                  {"key": 42, "elementId": "Ship", "type": "shop__Order__ship", "elementType": "SERVICE_TASK",
+                   "processInstanceKey": 300, "elementInstanceKey": 7, "state": "active",
+                   "createdAt": "2026-10-17T14:30:26.123Z", "inputVariables": {"parcel": "b"}},
+                  {"key": 41, "elementId": "Ship", "type": "shop__Order__ship", "elementType": "SERVICE_TASK",
+                   "processInstanceKey": 300, "elementInstanceKey": 6, "state": "completed",
+                   "createdAt": "2026-10-17T14:30:25.123Z", "inputVariables": {"parcel": "a"}}]}],
+                 "totalCount": 2}""");
+        final var told = new ArrayList<Map<String, MultiInstanceValue>>();
+        jobs.invoker.answers(context -> {
+            told.add(context.getMultiInstances());
+            told.add(context.getMultiInstances());
+            return WorkflowTaskOutcome.completed();
+        });
+
+        jobs.runs(JobRunning.job(BODY));
+        final var listingsWhileAsked = listingsOfJobs();
+        jobs.invoker.answers(context -> WorkflowTaskOutcome.completed());
+        jobs.runs(JobRunning.job(BODY));
+
+        assertAll(
+                () -> assertEquals(List.of(Map.of("Ship", new MultiInstanceValue("b", 1, 2)), Map.of("Ship",
+                        new MultiInstanceValue("b", 1, 2))), told),
+                () -> assertEquals(1, listingsWhileAsked),
+                () -> assertEquals(1, listingsOfJobs()));
+    }
+
+    @Test
+    @DisplayName("A read of the iterations which fails fails the job as a method which threw, with the read's failure")
+    void aReadOfTheIterationsWhichFailsFailsTheJob() {
+        jobs.holds(ROOT, "default", null, "order-1", "\"id\": \"order-1\"");
+        jobs.holds(BODY, "multiInstance", ROOT, "order-1", "\"id\": \"order-1\"");
+        jobs.takesTheCommands(BODY, ROOT);
+        jobs.engine.answers("GET", "/v1/process-definitions/%d".formatted(JobRunning.DEFINITION_KEY), 500, """
+                {"code": "INTERNAL", "message": "the model cannot be read"}""");
+        jobs.invoker.answers(context -> {
+            context.getMultiInstances();
+            return WorkflowTaskOutcome.completed();
+        });
+
+        jobs.runs(JobRunning.job(BODY));
+
+        assertAll(
+                () -> assertEquals(List.of("POST /v1/jobs/42/fail"), jobs.commands()),
+                () -> assertTrue(jobs
+                        .bodiesOf("POST", "/v1/jobs/42/fail")
+                        .getFirst()
+                        .contains("the model cannot be read"),
+                        () -> jobs
+                                .bodiesOf("POST", "/v1/jobs/42/fail")
+                                .toString()));
     }
 
     @Test
@@ -818,6 +899,14 @@ class ZenBpmJobHandlerTest {
     }
 
     // job 42 of the module's type in instance 100, as the engine answers it
+    private long listingsOfJobs() {
+        return jobs.engine
+                .requests()
+                .stream()
+                .filter(request -> "/v1/jobs".equals(request.path()))
+                .count();
+    }
+
     private static String job42(final String state) {
         return """
                 {"key": 42, "elementId": "Ship", "type": "shop__Order__ship", "elementType": "SERVICE_TASK",

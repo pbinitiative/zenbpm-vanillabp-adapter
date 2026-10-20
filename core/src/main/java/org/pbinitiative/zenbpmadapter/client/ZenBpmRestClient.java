@@ -482,6 +482,20 @@ public class ZenBpmRestClient implements AutoCloseable {
     }
 
     /**
+     * The jobs of one process instance in every state (<code>GET /v1/jobs</code>), read page by
+     * page to the end. The jobs of its child instances are not among them.
+     *
+     * @param instanceKey The key of the instance
+     * @return The jobs, ordered by key within each partition of the engine
+     */
+    public List<JobRef> jobsOf(final long instanceKey) {
+        return everyPage(page -> jobs(JobFilter
+                .anyJob()
+                .withProcessInstanceKey(instanceKey)
+                .withPage(page)));
+    }
+
+    /**
      * Completes a job (<code>POST /v1/jobs/{key}/complete</code>). A job completed before is
      * answered like the first time.
      *

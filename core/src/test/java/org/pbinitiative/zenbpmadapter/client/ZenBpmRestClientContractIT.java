@@ -24,6 +24,7 @@ import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -103,6 +104,7 @@ class ZenBpmRestClientContractIT {
         client.deployBpmn(fixture("contract-start-fails.bpmn"));
         client.deployBpmn(fixture("contract-start-mapped.bpmn"));
         client.deployBpmn(fixture("contract-iterations.bpmn"));
+        client.deployBpmn(fixture("contract-multi-instance.bpmn"));
         decision = client.deployDmn(fixture("contract-decision.dmn"));
     }
 
@@ -480,6 +482,86 @@ class ZenBpmRestClientContractIT {
     }
 
     @Test
+    @DisplayName("An activation of a multi-instance element is a body under its instance which holds a copy of the instance's variables; the iterations of a sub-process are child instances of the body and those of a task are jobs of the body, each with its item, created in the order of the items, and a sequential element's iteration which ended stays listed")
+    void theIterationsOfAMultiInstanceElementAreKeptInTheOrderOfTheirItems() {
+        final var started = client.createInstance(CreateInstanceRequest
+                .latestVersionOf("contract-multi-instance")
+                .withBusinessKey(uniqueBusinessKey())
+                .withVariables(Map.of("items", List.of("x", "y", "z"))));
+        final var eachBody = eventually(() -> client
+                .children(started.key())
+                .stream()
+                .findFirst());
+        final var eachIterations = eventually(() -> Optional
+                .of(inTheOrderCreated(client.children(eachBody.key())))
+                .filter(children -> children.size() == 3));
+        final var eachJobs = eachIterations
+                .stream()
+                .map(iteration -> eventually(() -> client
+                        .jobsOf(iteration.key())
+                        .stream()
+                        .findFirst()))
+                .toList();
+
+        eachJobs.forEach(job -> client.completeJob(job.key(), null));
+        final var oneByOneBody = eventually(() -> client
+                .children(started.key())
+                .stream()
+                .filter(child -> child.key() != eachBody.key())
+                .findFirst());
+        final var first = eventually(() -> client
+                .jobsOf(oneByOneBody.key())
+                .stream()
+                .findFirst());
+        client.completeJob(first.key(), null);
+        final var oneByOne = eventually(() -> Optional
+                .of(client
+                        .jobsOf(oneByOneBody.key())
+                        .stream()
+                        .sorted(Comparator
+                                .comparing(JobRef::createdAt)
+                                .thenComparing(JobRef::key))
+                        .toList())
+                .filter(jobs -> jobs.size() == 2));
+
+        assertAll(
+                () -> assertEquals(ProcessInstanceRef.ProcessType.MULTI_INSTANCE, eachBody.processType()),
+                () -> assertEquals(List.of("x", "y", "z"), eachBody
+                        .variables()
+                        .get("items")),
+                () -> assertEquals(List.of(ProcessInstanceRef.ProcessType.SUBPROCESS,
+                        ProcessInstanceRef.ProcessType.SUBPROCESS, ProcessInstanceRef.ProcessType.SUBPROCESS),
+                        eachIterations
+                                .stream()
+                                .map(ProcessInstanceRef::processType)
+                                .toList()),
+                () -> assertEquals(List.of("x", "y", "z"), eachIterations
+                        .stream()
+                        .map(iteration -> iteration
+                                .variables()
+                                .get("item"))
+                        .toList()),
+                () -> assertEquals(List.of("x", "y", "z"), eachJobs
+                        .stream()
+                        .map(job -> job
+                                .inputVariables()
+                                .get("item"))
+                        .toList()),
+                () -> assertEquals(ProcessInstanceRef.ProcessType.MULTI_INSTANCE, oneByOneBody.processType()),
+                () -> assertEquals(List.of(), client.children(oneByOneBody.key())),
+                () -> assertEquals(List.of(JobRef.State.COMPLETED, JobRef.State.ACTIVE), oneByOne
+                        .stream()
+                        .map(JobRef::state)
+                        .toList()),
+                () -> assertEquals(List.of("x", "y"), oneByOne
+                        .stream()
+                        .map(job -> job
+                                .inputVariables()
+                                .get("item"))
+                        .toList()));
+    }
+
+    @Test
     @DisplayName("A start message without a key starts the newest version, is answered without the instance it started, and the instance and the job of its first task carry the message's variables; a search of the process's running instances reads them")
     void aStartMessageIsAnsweredWithoutTheInstanceItStarted() {
         final var aggregateId = uniqueBusinessKey();
@@ -800,6 +882,15 @@ class ZenBpmRestClientContractIT {
                 return response.getJob();
             }
         }
+    }
+
+    private static List<ProcessInstanceRef> inTheOrderCreated(final List<ProcessInstanceRef> instances) {
+        return instances
+                .stream()
+                .sorted(Comparator
+                        .comparing(ProcessInstanceRef::createdAt)
+                        .thenComparing(ProcessInstanceRef::key))
+                .toList();
     }
 
 }

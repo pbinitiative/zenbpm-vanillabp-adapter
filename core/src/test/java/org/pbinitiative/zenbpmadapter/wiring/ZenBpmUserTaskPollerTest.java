@@ -12,7 +12,9 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.IOException;
 import java.time.Duration;
+import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.Deque;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -39,6 +41,7 @@ import org.pbinitiative.zenbpmadapter.client.FakeEngine;
 
 import io.vanillabp.integration.adapter.spi.NameClashAvoidance;
 import io.vanillabp.integration.adapter.spi.workflowtask.DeliveryOfAnUnknownWorkflowException;
+import io.vanillabp.integration.adapter.spi.workflowtask.MultiInstanceValue;
 import io.vanillabp.integration.adapter.spi.workflowtask.TaskInvocationContext;
 import io.vanillabp.integration.adapter.spi.workflowtask.TaskKind;
 import io.vanillabp.integration.adapter.spi.workflowtask.WorkflowTaskOutcome;
@@ -67,6 +70,8 @@ class ZenBpmUserTaskPollerTest {
 
     private static final Pattern PAGE = Pattern.compile("page=(\\d+)");
 
+    private static final Pattern INSTANCE = Pattern.compile("processInstanceKey=(\\d+)");
+
     private final JobRunning jobs = new JobRunning(2);
 
     /**
@@ -78,6 +83,12 @@ class ZenBpmUserTaskPollerTest {
      * What the engine lists of the type of the module <code>billing</code>, as {@link #listed}.
      */
     private final Map<String, String> listedForBilling = new ConcurrentHashMap<>();
+
+    /**
+     * The jobs of an instance in every state, as pages, by the key of the instance: each listing
+     * answers the next page of the queue, and the last one from then on.
+     */
+    private final Map<Long, Deque<String>> listedOfInstances = new ConcurrentHashMap<>();
 
     private ZenBpmUserTaskPoller poller;
 
@@ -652,6 +663,43 @@ class ZenBpmUserTaskPollerTest {
     }
 
     @Test
+    @DisplayName("A user task which is an iteration of a multi-instance user task is told its item, its index and the size of the collection, as a job is, and a listing which lacks the iteration is read again")
+    void aUserTaskInAnIterationIsToldItsIteration() {
+        final var variables = "\"id\": \"order-1\", \"parcels\": [\"a\", \"b\"]";
+        jobs.holds(ROOT, "default", null, "order-1", variables);
+        // the body of the multi-instance user task, with a copy of the variables of the root
+        jobs.holds(300, "multiInstance", ROOT, "order-1", variables);
+        jobs.holdsTheModel(JobRunning.DEFINITION_KEY, """
+                <bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" \
+                xmlns:zenbpm="http://zenbpm.pbinitiative.org/1.0" id="Definitions_Order" \
+                targetNamespace="http://bpmn.io/schema/bpmn">
+                  <bpmn:process id="shop__Order" isExecutable="true">
+                    <bpmn:userTask id="Approve">
+                      <bpmn:multiInstanceLoopCharacteristics><bpmn:extensionElements>
+                        <zenbpm:loopCharacteristics inputCollection="=parcels" inputElement="parcel" />
+                      </bpmn:extensionElements></bpmn:multiInstanceLoopCharacteristics>
+                    </bpmn:userTask>
+                  </bpmn:process>
+                </bpmn:definitions>""");
+        // a lagging node lists the iteration only at the second read, which the notification repeats
+        listedOfInstances.put(300L,
+                new ArrayDeque<>(List.of(page(1, List.of(userTaskOfParcel(51, "2026-10-19T10:00:00Z",
+                        "a"))), page(2, List.of(userTaskOfParcel(52, "2026-10-19T10:00:01Z", "b"),
+                                userTaskOfParcel(51,
+                                        "2026-10-19T10:00:00Z", "a"))))));
+        listsActive(userTask(52, 300));
+        startsPolling(Duration.ofHours(1));
+
+        looks();
+
+        assertEquals(Map.of("Approve", new MultiInstanceValue("b", 1, 2)), jobs.invoker
+                .invocations()
+                .getFirst()
+                .context()
+                .getMultiInstances());
+    }
+
+    @Test
     @DisplayName("A user task whose instance names no aggregate was started past VanillaBP: it is not told, which a WARN says once")
     void aUserTaskWithoutAnAggregateIsWarnedAboutOnce(final CapturedOutput output) {
         jobs.holds(ROOT, "default", null, null, "");
@@ -977,6 +1025,13 @@ class ZenBpmUserTaskPollerTest {
             final var query = exchange
                     .getRequestURI()
                     .getRawQuery();
+            final var instance = INSTANCE.matcher(query);
+            if (instance.find()) {
+                final var pages = listedOfInstances.getOrDefault(Long.valueOf(instance.group(1)), new ArrayDeque<>(
+                        List.of(page(0, List.of()))));
+                FakeEngine.respond(exchange, 200, pages.size() > 1 ? pages.poll() : pages.peek());
+                return;
+            }
             final var state = STATE.matcher(query);
             final var page = PAGE.matcher(query);
             assertTrue(state.find() && page.find(), query);
@@ -1120,6 +1175,19 @@ class ZenBpmUserTaskPollerTest {
         final long instanceKey
     ) {
         return job(key, instanceKey, "USER_TASK", "active");
+    }
+
+    // as the engine lists the job of an iteration of a multi-instance user task: with its item
+    private static String userTaskOfParcel(
+        final long key,
+        final String createdAt,
+        final String parcel
+    ) {
+        return """
+                {"key": %d, "elementId": "Approve", "type": "%s", "elementType": "USER_TASK", "processInstanceKey": 300,
+                 "elementInstanceKey": %d, "state": "active", "createdAt": "%s",
+                 "inputVariables": {"parcel": "%s"}}""".formatted(key, USER_TASK_TYPE, key + 1_000_000, createdAt,
+                parcel);
     }
 
     private static String terminated(

@@ -20,6 +20,7 @@ import java.net.http.HttpTimeoutException;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -656,6 +657,30 @@ class ZenBpmRestClientTest {
         assertEquals(List.of(
                 "jobType=orders_order%23ship&state=terminated&processInstanceKey=4503599627370501&page=1&size=10&sortBy=key&sortOrder=asc"),
                 queries());
+    }
+
+    @Test
+    @DisplayName("The jobs of an instance are read page by page to the end, in every state")
+    void theJobsOfAnInstanceAreReadToTheEnd() {
+        engine.answers("GET", "/v1/jobs", exchange -> {
+            final var first = exchange
+                    .getRequestURI()
+                    .getRawQuery()
+                    .contains("page=1&");
+            final var items = first
+                    ? String.join(",", Collections.nCopies(JobFilter.MAXIMUM_SIZE, JOB))
+                    : JOB;
+            FakeEngine.respond(exchange, 200, """
+                    {"partitions": [{"partition": 1, "totalCount": %d, "items": [%s]}], "totalCount": %d}"""
+                    .formatted(JobFilter.MAXIMUM_SIZE + 1, items, JobFilter.MAXIMUM_SIZE + 1));
+        });
+
+        final var jobs = client.jobsOf(4503599627370501L);
+
+        assertEquals(JobFilter.MAXIMUM_SIZE + 1, jobs.size());
+        assertEquals(List.of(
+                "processInstanceKey=4503599627370501&page=1&size=100&sortBy=key&sortOrder=asc",
+                "processInstanceKey=4503599627370501&page=2&size=100&sortBy=key&sortOrder=asc"), queries());
     }
 
     @Test

@@ -699,7 +699,7 @@ fix. E9 goes on with S9.2.1 after E7 and E8, and the global order goes on with S
 
 ### S9.4.1 `ZenBpmMultiInstance` (engine-gated)
 
-- [ ] **Depends on:** S6.1.1. **Engine twin:** E13.7.
+- [x] **Depends on:** S6.1.1. **Engine twin:** E13.7.
 
 **Instructions**
 
@@ -732,10 +732,134 @@ the walk up the parent chain above.
 `ZenBpmLifecycleIT#theIterationIsReported` (`multi-instance.bpmn`: parallel MI sub-process over three
 ids with a service task binding `@MultiInstanceElement`, `@MultiInstanceIndex`, `@MultiInstanceTotal`).
 
+*Fit check, 2026-10-20, decided by the Implementor where it says so.* Checked against `main`
+(`03a2ada`), `ADAPTER-AUTHORS.md` (`getMultiInstances`; `multiInstanceElementNames`: "an id your
+model does not know belongs to a caller"), the platform as the adapter resolves it
+(`2.0.0-20261015.045823-21`: `TaskInvocationContext#getMultiInstances`, `MultiInstanceValue`, whose
+`total` is an `int`, `CoreParameterBinders` and `HandlerContexts#of`, which asks the adapter only
+where a parameter binds an iteration, `NestedMultiInstancesKeepTheirOrderTest`,
+`TheMultiInstanceShapeOfAHeldVersionTest`), Camunda 8's `Camunda8MultiInstance` (mappings written
+at deployment, `-1` for a total it cannot tell, the caller's levels of its decision 30), and the
+engine at the pin `bdd795a3` (source exported with `git archive`: `handleMultiInstanceActivity`,
+`startParallelMultiInstance`, `startSequentialMultiInstance` and
+`sortFlowElementInstancesSortByCreatedAtAndKey` of `pkg/bpmn/multi_instance.go`,
+`createInstanceWithStartingElements` of `pkg/bpmn/engine.go`, `FindInactiveInstancesToDelete` of
+`internal/sql/queries/process_instance.sql`, `openapi/api.yaml`, `WaitingJob` of `zenbpm.proto`);
+REST probes against the pinned image (parallel and sequential multi-instance sub-processes, parallel
+and sequential multi-instance service tasks, a multi-instance user task, nested multi-instance
+sub-processes, a multi-instance call activity, a collection written as a FEEL expression), then the
+tests below. What did not fit, and what was decided:
+
+1. **The instance tree** (open question 1(a); the plan's picture was wrong, settled by the engine's
+   code and the probes). The plan has one child instance of the process type `multiInstance` per
+   iteration, whose variables carry the item. The engine creates ONE body per activation of the
+   element, of the type `multiInstance`, under the instance the element stands in, holding a copy of
+   that instance's variables. An iteration of a sub-process is a child instance of the body of the
+   type `subprocess`, holding the item; an iteration of a call activity a child of the type
+   `callActivity`, the item among its copied variables; an iteration of a task (service, send, user)
+   is no instance at all but a job of the body, which carries the item. A sequential element has the
+   same body, its iterations created one after the other. Built: every `multiInstance` instance on
+   the way up is a body, and its iteration is the instance below it on the way up, or the job where
+   the job waits in the body itself. The javadoc of `ProcessInstanceRef.ProcessType`, which called
+   `MULTI_INSTANCE` one iteration, is corrected.
+2. **The index** (open question 1(b)). The engine hands an iteration the item at the number of
+   iterations the body created before it, and orders the outputs of the iterations by creation and
+   then by key. Children and jobs are listed by key, not by creation. An iteration which ended stays
+   listed: the engine's history clean-up deletes a child instance only once its parent ended, so an
+   iteration keeps its place while its body runs. Built: the index is the position of the job's
+   iteration among the body's children (`GET .../child-processes`) or jobs (`GET
+   /v1/jobs?processInstanceKey=`, new `ZenBpmRestClient#jobsOf`) ordered by `createdAt` and then
+   key. The job stream names no element instance (GAPS 15), so the iteration of a task is told by its
+   job key. Measured: `ZenBpmRestClientContractIT#theIterationsOfAMultiInstanceElementAreKeptInTheOrderOfTheirItems`.
+3. **The total** (open questions 1(c) and 5). The body holds a copy of the variables the collection
+   was evaluated against, so for a collection written as a bare variable the body's copy is exactly
+   what the engine iterates over; an iteration's own instance holds the item alone (GAPS 31). The
+   result of any other FEEL expression is kept only in the history row of the element in the parent
+   instance, which cannot be told apart from another activation of the same element.
+   `MultiInstanceValue#total` is an `int`, so the plan's `null` cannot reach the core, and Camunda 8
+   reports `-1` for a total it cannot tell. Decided `-1` with a DEBUG line; the README says so
+   (`ZenBpmMultiInstanceTest#aCollectionWrittenAsAnExpressionHasNoTotal`).
+4. **Which element a body belongs to** (not foreseen, decided by the Implementor, decision 54). The
+   REST API names a body's element in its tokens only, which are gone once the body ended. Decided the
+   model: walking up, every body met is the next multi-instance element around the job from the
+   inside out (`ZenBpmBpmnModel#multiInstanceChainOf`), read from the model of the instance's own
+   version by its definition key, once per version, as decision 52 reads end events. A body the model
+   does not show ends the walk with a DEBUG line.
+5. **Mappings at deployment as Camunda 8 writes them** (open question 2, decided as recommended).
+   The engine has no `loopCounter` to map an index from, and a mapping of the total alone would still
+   leave the read of the index. Not built; decision 54 says why.
+6. **The iterations of a caller** (open question 3, decided as recommended, decision 54). The
+   engine's parent chain crosses a call activity: a called instance (`callActivity`) hangs under the
+   caller's body where the call activity iterates (probed), and the platform asks for the ids of a
+   caller's elements. Built: the walk goes on in the caller, from the call activity of the caller's
+   model which calls the process (as the engine knows it) and iterates exactly where the called
+   instance hangs under a body; where the caller's model holds more than one such call activity, the
+   walk stops there, and the caller's iterations are not told
+   (`ZenBpmMultiInstanceTest#aCallerWithTwoCallsOfTheProcessIsNotAskedAbout`). A call activity which
+   names its process by an expression never matches.
+7. **User tasks** (open question 4, decided as recommended). The notifier's context answers
+   `getMultiInstances()` the same way (`ZenBpmUserTaskPollerTest#aUserTaskInAnIterationIsToldItsIteration`);
+   a notification holds no lock, so the attempts of the repetition alone bound its reads.
+8. **When it is read** (decided by the Implementor, decision 54). The core asks `getMultiInstances()`
+   only where a parameter binds an iteration, once per such parameter. Built: read on the first ask,
+   once per delivery, inside the core's invocation, through the delivery's command repetition; a read
+   which fails fails the invocation like a method which threw.
+9. **The cache** (open question 6). The iterations of a body are kept per workflow module, bounded
+   by `instance-cache-max-entries` (least recently used first), and read again whenever the iteration
+   asked about is missing, as a later iteration of a sequential element
+   (`ZenBpmMultiInstanceTest#aSequentialTaskFindsAnIterationCreatedLater`, against the engine
+   `ZenBpmLifecycleIT#theIterationsOfASequentialTaskAreReportedOneAfterTheOther`). Nothing else ends
+   an entry, because an iteration keeps its place. The model of each version is kept without a bound,
+   as the end markers' are. The instance cache itself is unchanged.
+10. **Nested elements.** Probed: an inner element's collection is evaluated in the outer iteration's
+    instance, which holds the item alone (GAPS 31), so a collection of the root iterates over
+    nothing there; a nested collection has to come from the item or be mapped in. The unit test of
+    nested iterations uses a collection mapped in.
+11. **Documents.** GAPS 16 is entered under the plan's number; the deviations row, the SPI mapping
+    row, the architecture's line and the README say what is built. Decision 54 is new. The box
+    "Superseded by E13.7" stays open: the walk stays until the engine hands out `loopCounter` and
+    `nrOfInstances` (E13.7 is out of the pipeline's scope).
+
+Built and added: `ZenBpmMultiInstanceTest` (19 cases against a fake engine in the pinned engine's
+shape: a body with copied variables, iterations as children or jobs, listed by key and not in the
+order they were created), `ZenBpmJobHandlerTest#theIterationsAreReadOnceWhereTheMethodAsksForThem`
+and `#aReadOfTheIterationsWhichFailsFailsTheJob`,
+`ZenBpmUserTaskPollerTest#aUserTaskInAnIterationIsToldItsIteration`,
+`ZenBpmRestClientTest#theJobsOfAnInstanceAreReadToTheEnd`,
+`ZenBpmRestClientContractIT#theIterationsOfAMultiInstanceElementAreKeptInTheOrderOfTheirItems`, and
+against the pinned image `ZenBpmLifecycleIT#theIterationIsReported` (`lifecycle-it/multi-instance.bpmn`,
+process `Picking`: a parallel multi-instance sub-process over three parcels, `=parcels` of the
+aggregate, with a service task binding `@MultiInstanceElement`, `@MultiInstanceIndex` and
+`@MultiInstanceTotal`), `#theIterationsOfASequentialTaskAreReportedOneAfterTheOther` and
+`#aCalledProcessIsToldTheIterationOfItsCaller` (`Labelling`, called on the same aggregate by a
+multi-instance call activity). The aggregate's list `parcels` is a declared aggregate value
+(`lifecycle-it.yaml`): the platform refuses a collection which travels undeclared.
+
 **Acceptance criteria**
 
-- [ ] Index counts from 0, total equals the collection size, element is the item.
-- [ ] Superseded by E13.7 once the engine hands out `loopCounter` and `nrOfInstances`.
+- [x] Index counts from 0, total equals the collection size, element is the item.
+  `ZenBpmLifecycleIT#theIterationIsReported` against the pinned image tells the three tasks
+  `a:0/3`, `b:1/3` and `c:2/3`, and so do `#theIterationsOfASequentialTaskAreReportedOneAfterTheOther`
+  (in that order) and `#aCalledProcessIsToldTheIterationOfItsCaller` (the caller's iteration).
+  Clean build of the story's commit (`TZ=Etc/UTC mvn clean install` on OpenJDK
+  25.0.2, Docker ITs included, none skipped): engine test support 12 + 5, core 1,167 + 97, Spring
+  Boot 14 + 83, smoke test 38, Quarkus runtime 13, deployment 52, integration tests 17, gate 37;
+  coverage 100 % on both platforms (0 of 34,305 instructions missed on Spring Boot, 0 of 34,175 on
+  Quarkus); `bin/check-deploy-safety.sh` green. Mutants: 20 written, 19 killed. At the unit level
+  18 of 19: the read again of a body which lacks the iteration, the failure for an iteration nobody lists,
+  the repetition of that read, the end of the walk at a body the model does not show, the switch to
+  the caller, the refusal of two candidate call activities, the filter of a caller's call activities
+  by whether they iterate (dropped altogether), the caller's call which does not iterate inside an
+  iteration, the total of an expression, the check for a list, the body kept, the model kept, the
+  model read only at a body, an unreadable model, the order outermost first, the read once per
+  delivery, the notification's iterations, the repetition of the notification's read. Against the
+  pinned engine 1 of 1: without the read again, `ZenBpmLifecycleIT#theIterationsOfASequentialTaskAreReportedOneAfterTheOther`
+  waits in vain for the second iteration. The one survivor, the order by key alone instead of by
+  creation and then key, is equivalent on what the engine produces: the leader generates an
+  iteration's key from the same clock and in the same order as its `createdAt`, so the two orders
+  agree; the order by creation is kept because the engine orders the iterations by it itself.
+- [ ] Superseded by E13.7 once the engine hands out `loopCounter` and `nrOfInstances`. Waits for
+  E13.7, which is out of the pipeline's scope; until then the walk of decision 54 answers.
 
 ## F9.5 Quarkus twins
 

@@ -4,11 +4,13 @@
  */
 package org.pbinitiative.zenbpmadapter.wiring;
 
+import java.time.Instant;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.function.Supplier;
 
 import org.pbinitiative.zenbpmadapter.ZenBpmDeployedProcesses;
 import org.pbinitiative.zenbpmadapter.ZenBpmInstanceCache;
@@ -16,10 +18,12 @@ import org.pbinitiative.zenbpmadapter.ZenBpmInstanceCache.InstanceFacts;
 import org.pbinitiative.zenbpmadapter.ZenBpmProcessingContext;
 import org.pbinitiative.zenbpmadapter.ZenBpmProcessingContext.WiredProcess;
 import org.pbinitiative.zenbpmadapter.client.ZenBpmClientFactory;
+import org.pbinitiative.zenbpmadapter.client.ZenBpmCommandRetry;
 import org.pbinitiative.zenbpmadapter.client.api.JobRef;
 
 import io.vanillabp.integration.adapter.spi.AdapterCollaborators;
 import io.vanillabp.integration.adapter.spi.workflowtask.DeliveryOfAnUnknownWorkflowException;
+import io.vanillabp.integration.adapter.spi.workflowtask.MultiInstanceValue;
 import io.vanillabp.integration.adapter.spi.workflowtask.TaskInvocationContext;
 import io.vanillabp.integration.adapter.spi.workflowtask.TaskKind;
 import io.vanillabp.integration.adapter.spi.workflowtask.WorkflowTaskInvoker;
@@ -346,12 +350,17 @@ public final class ZenBpmUserTaskNotifier {
                 .getLast();
         final var idVariableName = idVariableNameOf(facts.scopedProcessId());
         final var aggregate = aggregateNamedIn(facts, idVariableName, workflowId);
+        // no lock bounds a notification, so only the attempts bound the reads of its iterations
+        final var retry = new ZenBpmCommandRetry(adapterId, job.key(), taskDefinition, () -> Instant.MAX, handler
+                .drain()::isStopping);
         return Optional
                 .of(new Notification(adapterId, job, event, taskDefinition, aggregate.orElse(null), workflowId, facts
                         .version(), deployedProcesses
                                 .versionOf(workflowModuleId, plainProcessId)
                                 .map(deployed -> facts.version() < deployed)
-                                .orElse(false)));
+                                .orElse(false), handler
+                                        .multiInstance()
+                                        .iterationsOnFirstAsk(job.key(), facts.key(), job.elementId(), retry)));
     }
 
     // an instance of a sub-process takes both from its parent when it starts, so a workflow the
@@ -416,6 +425,8 @@ public final class ZenBpmUserTaskNotifier {
 
         private final boolean predatesDeployedVersion;
 
+        private final Supplier<Map<String, MultiInstanceValue>> iterations;
+
         private Notification(
             final String adapterId,
             final JobRef job,
@@ -424,7 +435,8 @@ public final class ZenBpmUserTaskNotifier {
             final NamedAggregate aggregate,
             final long workflowId,
             final int version,
-            final boolean predatesDeployedVersion
+            final boolean predatesDeployedVersion,
+            final Supplier<Map<String, MultiInstanceValue>> iterations
         ) {
             this.adapterId = adapterId;
             this.job = job;
@@ -434,6 +446,7 @@ public final class ZenBpmUserTaskNotifier {
             this.workflowId = workflowId;
             this.version = version;
             this.predatesDeployedVersion = predatesDeployedVersion;
+            this.iterations = iterations;
         }
 
         @Override
@@ -507,6 +520,12 @@ public final class ZenBpmUserTaskNotifier {
             return job
                     .inputVariables()
                     .get(name);
+        }
+
+        @Override
+        public Map<String, MultiInstanceValue> getMultiInstances() {
+            // read as for a job, see decision 54 in the repository's DECISIONS.md
+            return iterations.get();
         }
 
         @Override

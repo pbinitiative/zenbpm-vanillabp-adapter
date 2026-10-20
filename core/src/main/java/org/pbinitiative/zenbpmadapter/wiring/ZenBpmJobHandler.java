@@ -11,6 +11,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.function.Supplier;
 import java.util.stream.Collectors;
 
 import org.pbinitiative.zenbpmadapter.ZenBpmDeployedProcesses;
@@ -35,6 +36,7 @@ import io.vanillabp.integration.adapter.spi.AdapterCollaborators;
 import io.vanillabp.integration.adapter.spi.AggregateSyncMode;
 import io.vanillabp.integration.adapter.spi.NameClashAvoidanceSupport;
 import io.vanillabp.integration.adapter.spi.workflowtask.DeliveryOfAnUnknownWorkflowException;
+import io.vanillabp.integration.adapter.spi.workflowtask.MultiInstanceValue;
 import io.vanillabp.integration.adapter.spi.workflowtask.TaskInvocationContext;
 import io.vanillabp.integration.adapter.spi.workflowtask.TaskKind;
 import io.vanillabp.integration.adapter.spi.workflowtask.WorkflowTaskInvoker;
@@ -171,6 +173,11 @@ public final class ZenBpmJobHandler {
     private final ZenBpmWorkflowEndedHandler ends;
 
     /**
+     * What tells the iterations a task runs in, for the jobs and the user tasks of the module.
+     */
+    private final ZenBpmMultiInstance multiInstance;
+
+    /**
      * The handler of a workflow module whose processing starts.
      *
      * @param adapterId The adapter id
@@ -216,6 +223,9 @@ public final class ZenBpmJobHandler {
         this.ends = new ZenBpmWorkflowEndedHandler(adapterId, workflowModuleId, collaborators
                 .workflowEndedInvoker()
                 .orElse(null), rest, clientId, retryBackoffs);
+        this.multiInstance = new ZenBpmMultiInstance(adapterId, workflowModuleId, rest, instances, factory
+                .configuration()
+                .getInstanceCacheMaxEntries());
         // the core names a task by the definition it was reported under, which is the plain one
         processes
                 .values()
@@ -306,6 +316,15 @@ public final class ZenBpmJobHandler {
      */
     public ZenBpmDrain drain() {
         return drain;
+    }
+
+    /**
+     * What tells the iterations a task of the module runs in.
+     *
+     * @return The iterations of the module's tasks
+     */
+    ZenBpmMultiInstance multiInstance() {
+        return multiInstance;
     }
 
     /**
@@ -412,7 +431,8 @@ public final class ZenBpmJobHandler {
                 .version(), deployedProcesses
                         .versionOf(workflowModuleId, delivery.plainProcessId())
                         .map(deployed -> facts.version() < deployed)
-                        .orElse(false));
+                        .orElse(false), multiInstance.iterationsOnFirstAsk(job.getKey(), facts.key(), job
+                                .getElementId(), delivery.retry()));
         final WorkflowTaskOutcome outcome;
         try {
             outcome = invoker.invokeWorkflowTask(workflowModuleId, delivery.plainProcessId(), context);
@@ -867,6 +887,8 @@ public final class ZenBpmJobHandler {
 
         private final boolean predatesDeployedVersion;
 
+        private final Supplier<Map<String, MultiInstanceValue>> iterations;
+
         private Map<String, Object> inputVariables;
 
         private Invocation(
@@ -876,7 +898,8 @@ public final class ZenBpmJobHandler {
             final NamedAggregate aggregate,
             final long workflowId,
             final int version,
-            final boolean predatesDeployedVersion
+            final boolean predatesDeployedVersion,
+            final Supplier<Map<String, MultiInstanceValue>> iterations
         ) {
             this.adapterId = adapterId;
             this.received = received;
@@ -885,6 +908,7 @@ public final class ZenBpmJobHandler {
             this.workflowId = workflowId;
             this.version = version;
             this.predatesDeployedVersion = predatesDeployedVersion;
+            this.iterations = iterations;
         }
 
         @Override
@@ -961,6 +985,13 @@ public final class ZenBpmJobHandler {
                 inputVariables = received.inputVariables();
             }
             return inputVariables.get(name);
+        }
+
+        @Override
+        public Map<String, MultiInstanceValue> getMultiInstances() {
+            // read where a parameter of the method asks for an iteration, and once for all of
+            // them, see decision 54 in the repository's DECISIONS.md
+            return iterations.get();
         }
 
         @Override

@@ -45,6 +45,8 @@ import org.pbinitiative.zenbpmadapter.springboot.it.lifecycle.DeliveryWorkflow;
 import org.pbinitiative.zenbpmadapter.springboot.it.lifecycle.Invoice;
 import org.pbinitiative.zenbpmadapter.springboot.it.lifecycle.InvoiceRepository;
 import org.pbinitiative.zenbpmadapter.springboot.it.lifecycle.LifecycleItApplication;
+import org.pbinitiative.zenbpmadapter.springboot.it.lifecycle.Picking;
+import org.pbinitiative.zenbpmadapter.springboot.it.lifecycle.PickingWorkflow;
 import org.pbinitiative.zenbpmadapter.springboot.it.lifecycle.ReturnCase;
 import org.pbinitiative.zenbpmadapter.springboot.it.lifecycle.ReturnCaseRepository;
 import org.pbinitiative.zenbpmadapter.springboot.it.lifecycle.ReturnWorkflow;
@@ -85,6 +87,11 @@ import io.vanillabp.spi.process.ProcessService;
  * sub-process still runs is reported once that sub-process ended, a cancelled workflow reports
  * nothing, a report which threw is repeated by the engine, and a workflow whose aggregate the
  * application deleted ends all the same.
+ * <p>
+ * A task inside a multi-instance element is told the iteration it runs in: its item, its index
+ * counted from 0 and the size of the collection, for an iteration of a parallel multi-instance
+ * sub-process, of a sequential multi-instance task, and for a task of a process which an iteration
+ * of a multi-instance call activity started.
  * <p>
  * The application {@link LifecycleItApplication} runs with <code>lifecycle-it.yaml</code>, which
  * gives the start marker of <code>Delivering</code> and the end marker of <code>Settling</code> a
@@ -146,6 +153,12 @@ class ZenBpmLifecycleIT {
 
     @Autowired
     private SettlementRepository settlements;
+
+    @Autowired
+    private ProcessService<Picking> pickingProcessService;
+
+    @Autowired
+    private PickingWorkflow pickingWorkflow;
 
     @Autowired
     private TransactionTemplate transactionTemplate;
@@ -526,10 +539,81 @@ class ZenBpmLifecycleIT {
                         .getEnds()));
     }
 
+    @Test
+    @DisplayName("A task inside a parallel multi-instance sub-process over three parcels is told the item, the index counted from 0 and the total of its iteration")
+    void theIterationIsReported() {
+        final var picking = startAPicking();
+
+        final var picked = eventually(() -> Optional
+                .of(iterationsOf(pickingWorkflow.picked(), picking))
+                .filter(iterations -> iterations.size() == 3));
+
+        assertEquals(List.of("a:0/3", "b:1/3", "c:2/3"), picked
+                .stream()
+                .sorted()
+                .toList());
+    }
+
+    @Test
+    @DisplayName("The iterations of a sequential multi-instance task are told one after the other, each with the item, the index and the total of its own")
+    void theIterationsOfASequentialTaskAreReportedOneAfterTheOther() {
+        final var picking = startAPicking();
+
+        final var weighed = eventually(() -> Optional
+                .of(iterationsOf(pickingWorkflow.weighed(), picking))
+                .filter(iterations -> iterations.size() == 3));
+
+        assertEquals(List.of("a:0/3", "b:1/3", "c:2/3"), weighed);
+    }
+
+    @Test
+    @DisplayName("A task of a called process is told the iteration of the multi-instance call activity which started it, and the workflow ends")
+    void aCalledProcessIsToldTheIterationOfItsCaller() {
+        final var picking = startAPicking();
+
+        final var labelled = eventually(() -> Optional
+                .of(iterationsOf(pickingWorkflow.labelled(), picking))
+                .filter(iterations -> iterations.size() == 3));
+        final var instance = eventually(() -> rest()
+                .instances(InstanceFilter
+                        .anyInstance()
+                        .withBusinessKey(picking))
+                .items()
+                .stream()
+                .filter(started -> started.parentKey() == null)
+                .findFirst());
+
+        assertAll(
+                () -> assertEquals(List.of("a:0/3", "b:1/3", "c:2/3"), labelled
+                        .stream()
+                        .sorted()
+                        .toList()),
+                () -> assertEquals(ProcessInstanceRef.State.COMPLETED, awaitTheEndOf(instance.key()).state()));
+    }
+
     @DynamicPropertySource
     static void theEngineBehindTheProxy(final DynamicPropertyRegistry registry) {
         registry.add("vanillabp.adapters.zenbpm.rest-address", PROXY::address);
         registry.add("vanillabp.adapters.zenbpm.grpc-address", ENGINE::grpcAddress);
+    }
+
+    private String startAPicking() {
+        final var pickingId = "picking-%s".formatted(UUID.randomUUID());
+        transactionTemplate.executeWithoutResult(
+                status -> pickingProcessService.startWorkflow(new Picking(pickingId, List.of("a", "b", "c"))));
+        return pickingId;
+    }
+
+    // the iterations told for one picking, as <item>:<index>/<total>
+    private static List<String> iterationsOf(
+        final List<String> told,
+        final String pickingId
+    ) {
+        return told
+                .stream()
+                .filter(iteration -> iteration.startsWith("%s:".formatted(pickingId)))
+                .map(iteration -> iteration.substring(pickingId.length() + 1))
+                .toList();
     }
 
     private ProcessInstanceRef startPastVanillaBp(final String orderRef) {

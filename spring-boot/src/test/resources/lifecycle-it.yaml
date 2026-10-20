@@ -28,6 +28,9 @@ vanillabp:
               adapters:
                 zenbpm:
                   retry-backoff: PT1S
+        Picking:
+          declared-aggregate-values:
+            - parcels
         Settling:
           tasks:
             vanillabp__ended:

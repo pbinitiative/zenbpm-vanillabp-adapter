@@ -231,6 +231,30 @@ transaction for the end and one for each task still open, a read of the instance
 child instances, and a read of the model once per version; a message end event's own task runs after
 the report, and two branches whose end markers wait at the same time may report the end twice.
 
+A task inside a multi-instance element is told the iteration it runs in, through
+`@MultiInstanceElement`, `@MultiInstanceIndex` and `@MultiInstanceTotal` named after the id of the
+multi-instance element (decision 54). ZenBPM hands a job neither an index nor a total (see
+[`GAPS.md`](./GAPS.md)), so the adapter reads them from the instances the engine keeps of the
+element, only where a method asks for one and once for all its parameters
+(`ZenBpmJobHandlerTest#theIterationsAreReadOnceWhereTheMethodAsksForThem`). The element is the item
+of the iteration, the index counts from 0 in the order the engine handed out the items, and the
+total is the size of the collection where the modeller wrote it as a bare variable such as
+`=parcels`: for an iteration of a parallel multi-instance sub-process
+(`ZenBpmLifecycleIT#theIterationIsReported`) and of a sequential multi-instance task
+(`#theIterationsOfASequentialTaskAreReportedOneAfterTheOther`). For a collection written as any
+other expression the total is `-1`, as Camunda 8 reports a total it cannot tell
+(`ZenBpmMultiInstanceTest#aCollectionWrittenAsAnExpressionHasNoTotal`). Nested iterations are told
+the outermost first (`#nestedIterationsAreToldOutermostFirst`). A task of a process which an
+iteration of a multi-instance call activity started is told the caller's iteration as well
+(`ZenBpmLifecycleIT#aCalledProcessIsToldTheIterationOfItsCaller`), unless the caller's model calls
+the process from two call activities which may both have started it
+(`ZenBpmMultiInstanceTest#aCallerWithTwoCallsOfTheProcessIsNotAskedAbout`). A user task is told its
+iteration as a job is (`ZenBpmUserTaskPollerTest#aUserTaskInAnIterationIsToldItsIteration`). The
+reads cost the model once per version, the body of the element once, and the list of its iterations
+once per body and once more for every iteration of a sequential element; a read which fails fails
+the delivery like a method which threw
+(`ZenBpmJobHandlerTest#aReadOfTheIterationsWhichFailsFailsTheJob`).
+
 A message is correlated in two phases. Phase one never asks the engine whether
 something waits. It refuses where the application calls a message which no version the engine holds
 of the workflow module's processes waits for, and one which the newest version of a process starts
