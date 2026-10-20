@@ -32,6 +32,7 @@ import org.pbinitiative.zenbpmadapter.client.ZenBpmEnvironmentInfo;
 import org.pbinitiative.zenbpmadapter.client.ZenBpmErrors;
 import org.pbinitiative.zenbpmadapter.client.ZenBpmInstanceIdentity;
 import org.pbinitiative.zenbpmadapter.client.api.DeployedResource;
+import org.pbinitiative.zenbpmadapter.client.api.ProcessDefinitionRef;
 import org.pbinitiative.zenbpmadapter.health.ZenBpmHealth;
 import org.pbinitiative.zenbpmadapter.model.ZenBpmBpmnModel;
 import org.pbinitiative.zenbpmadapter.model.ZenBpmCallActivities;
@@ -682,6 +683,9 @@ public class ZenBpmDeploymentService implements AdapterDeploymentService<ZenBpmB
                     workflowModuleId, bpmnProcessId);
             final var resource = answerTo(file, () -> rest.deployBpmn(ZenBpmModelWriter.bytesOf(model)));
             final var definition = answerTo(file, () -> rest.processDefinition(resource.key()));
+            if (!resource.created()) {
+                refuseAnOlderVersionHandedBack(file, workflowModuleId, bpmnProcessId, definition);
+            }
             versions.add(new ZenBpmDeployedProcesses.DeployedProcess(workflowModuleId, bpmnProcessId, definition
                     .bpmnProcessId(), definition.key(), definition.version(), definition.versionTag(), definition
                             .bpmnData()));
@@ -1306,6 +1310,32 @@ public class ZenBpmDeploymentService implements AdapterDeploymentService<ZenBpmB
                             .configuration()
                             .engineAddress(), ZenBpmErrors.withoutAdapterId(adapterId, e)), e);
         }
+    }
+
+    // a model deployed again with the tag and the content of an older version gets that older version
+    // back, while the engine starts every new workflow on its newest one, which the platform's check
+    // of the deployed version would never see, see decision 55 in the repository's DECISIONS.md
+    private void refuseAnOlderVersionHandedBack(
+        final String file,
+        final String workflowModuleId,
+        final String bpmnProcessId,
+        final ProcessDefinitionRef definition
+    ) {
+        final var newest = processVersions
+                .deployedVersionsOf(workflowModuleId, bpmnProcessId)
+                .stream()
+                .mapToInt(version -> Integer.parseInt(version.version()))
+                .max();
+        if (newest.isEmpty() || (newest.getAsInt() <= definition.version())) {
+            return;
+        }
+        throw new IllegalStateException("""
+                ZenBPM hands back version %d for %s, because that version carries the same version tag '%s' and \
+                the same content, but the engine starts every new workflow on the newest version, %d, which is not \
+                the model this application brings. The engine gives a version tag to one version of a process only, \
+                so give the model a version tag no version of process '%s' carries yet, or none, and the engine \
+                deploys it as its newest version.""".formatted(definition.version(), file, definition.versionTag(),
+                newest.getAsInt(), definition.bpmnProcessId()));
     }
 
     private static String unchangedOrNot(final DeployedResource resource) {

@@ -48,7 +48,9 @@ import io.vanillabp.spi.process.ProcessService;
  * under <code>use-prefix</code>. Each case boots one application twice, as one application updated
  * on its data, with two models of its process: a job carries the version of its definition, so a
  * version made of numbers needs nothing from the engine, and a version tag is read from the
- * engine's list of the definitions, which the version catalog of the adapter id answers.
+ * engine's list of the definitions, which the version catalog of the adapter id answers. Each case
+ * runs on an engine of its own, because the cases deploy the same process, and a version one case
+ * leaves behind would decide what the next one deploys.
  */
 @ExtendWith(SuppressOutputExtension.class)
 @Testcontainers(disabledWithoutDocker = true)
@@ -57,7 +59,7 @@ class ZenBpmProcessVersionIT {
     private static final Duration TIMEOUT = Duration.ofSeconds(30);
 
     @Container
-    private static final EngineUnderTest ENGINE = new EngineUnderTest();
+    private final EngineUnderTest engine = new EngineUnderTest();
 
     private String database;
 
@@ -116,17 +118,21 @@ class ZenBpmProcessVersionIT {
     }
 
     @Test
-    @DisplayName("A model deployed again with the tag and the content of an older version gets that older version back, and a workflow started afterwards runs on the newest version")
-    void aRolledBackTaggedModelGetsItsOldVersionBack() {
+    @DisplayName("A model deployed again with the tag and the content of an older version gets that older version back from the engine, which starts new workflows on its newest version, so the start ends naming both versions and the fix")
+    void aRolledBackTaggedModelEndsTheStart() {
         boot(TagsApplication.class, "tags/v1").close();
         boot(TagsApplication.class, "tags/v2").close();
 
-        final var rolledBack = boot(TagsApplication.class, "tags/v1");
-        final var started = start(rolledBack);
+        final var failure = assertThrows(RuntimeException.class, () -> boot(TagsApplication.class, "tags/v1"));
 
+        final var message = messagesOf(failure);
         assertAll(
-                () -> assertEquals(Optional.of(1), versionOf(rolledBack, "Labelling")),
-                () -> assertEquals("release-2", servedBy(rolledBack, started)));
+                () -> assertTrue(message.contains(
+                        "ZenBPM hands back version 1 for BPMN file 'labelling.bpmn' of workflow module 'deploy-it' (process 'Labelling'), because that version carries the same version tag 'release-1'"),
+                        message),
+                () -> assertTrue(message.contains("the engine starts every new workflow on the newest version, 2"),
+                        message),
+                () -> assertTrue(message.contains("give the model a version tag no version of process"), message));
     }
 
     @Test
@@ -168,8 +174,8 @@ class ZenBpmProcessVersionIT {
                         "spring.config.name=versions-it",
                         "spring.datasource.url=%s".formatted(database),
                         "vanillabp.adapters.zenbpm.resources-location=classpath*:versions-it/%s".formatted(models),
-                        "vanillabp.adapters.zenbpm.rest-address=%s".formatted(ENGINE.restAddress()),
-                        "vanillabp.adapters.zenbpm.grpc-address=%s".formatted(ENGINE.grpcAddress()),
+                        "vanillabp.adapters.zenbpm.rest-address=%s".formatted(engine.restAddress()),
+                        "vanillabp.adapters.zenbpm.grpc-address=%s".formatted(engine.grpcAddress()),
                         "vanillabp.adapters.zenbpm.client-id=versions-it-%s".formatted(UUID.randomUUID()))
                 .run();
         boots.add(context);

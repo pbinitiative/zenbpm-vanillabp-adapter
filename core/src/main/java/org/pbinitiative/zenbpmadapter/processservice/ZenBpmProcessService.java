@@ -323,8 +323,8 @@ public class ZenBpmProcessService<A> implements MigratableProcessService<A> {
      * The engine counts, the adapter adds up: one request for the list of versions, and per version
      * one for its model and one for its statistics. The platform asks before the application
      * deployed anything, so every model is read from the engine, and kept for the other questions of
-     * the start which read the same models, see decision 56 in the repository's DECISIONS.md. A task with an incident is not
-     * counted. Where the engine does not answer, the number is lost and nothing else, so the
+     * the start which read the same models, see decision 56 in the repository's DECISIONS.md. A task
+     * with an incident is not counted. Where the engine does not answer, the number is lost and nothing else, so the
      * answer is <code>null</code> and the failure a DEBUG line. An adapter id without clients has
      * no engine to ask and answers <code>null</code> the same way.
      *

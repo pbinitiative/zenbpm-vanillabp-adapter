@@ -70,7 +70,9 @@ What did not fit, and what was decided:
    deployed again with the tag and the content of an older version gets that older version back,
    while workflows the application starts afterwards run on the newest one. Both are GAPS 32 (new),
    pinned by `ZenBpmProcessVersionIT#aTagAnotherVersionCarriesIsRefused` and
-   `#aRolledBackTaggedModelGetsItsOldVersionBack`, and said in the README and as item 18 of the
+   `#aRolledBackTaggedModelGetsItsOldVersionBack` (after the reviews such a start ends:
+   `#aRolledBackTaggedModelEndsTheStart`, see the answers below), and said in the README and as
+   item 18 of the
    deviations draft. Because the adapter writes markers and mappings into the model, a change of the
    methods alone needs a new tag as well; the engine's reason, which the deployment's message
    carries, names the tag.
@@ -112,7 +114,9 @@ longer says that the catalog "comes with E10".
   `version = "release-9"` once in its startup box. `#theVersionDecidesWhichMethodRuns` holds the
   numbers (`version = "1"`, `version = ">1"`, two deployments), `#aDeployedVersionWithoutAMethodEndsTheStart`
   the end of the start (platform decision 126), `#aTagAnotherVersionCarriesIsRefused` and
-  `#aRolledBackTaggedModelGetsItsOldVersionBack` GAPS 32; `ZenBpmProcessVersionsTest` the one list
+  `#aRolledBackTaggedModelGetsItsOldVersionBack` (now `#aRolledBackTaggedModelEndsTheStart`)
+  GAPS 32;
+  `ZenBpmProcessVersionsTest` the one list
   request, oldest first with the tags, and the deployed version known without a request.
   Clean build of the story's commit (`TZ=Etc/UTC mvn clean install` on OpenJDK 25.0.2, Docker ITs
   included, none skipped): engine test support 12 + 5, core 1,181 + 100, Spring Boot 14 + 88, smoke
@@ -216,7 +220,10 @@ against the pinned image. What did not fit, and what was decided:
    mapped into a multi-instance body; only what the deployed model has, so a version is never blamed
    for what the deployed one lacks as well. A process id this start deployed nothing under, such as a
    declared one, has no model to compare with and is answered `null`. The older models are the ones
-   `tasksOfVersion` reads next, so this costs no request of its own.
+   `tasksOfVersion` reads next, so this costs no request of its own. *Corrected after the reviews:*
+   that compared versions nobody runs on, and an outfaded version's model, which `tasksOfVersion`
+   never reads, cost a request of its own; now only the versions workflows run on are compared, one
+   model at a time (see the answers below).
 6. **Renamed processes**: `processVersionCatalogOf` came with S10.1.1 (see its fit check); the
    questions about the versions of a declared id are answered by the same catalog under the scoped
    old id, `ZenBpmRenamedProcessTest`.
@@ -251,6 +258,74 @@ against the pinned image. What did not fit, and what was decided:
   larger than the bound kept out (it survived first: the test let a lone model be dropped by the
   bound itself; it now shows that without the guard such a model drops every model kept), the held
   messages and the open tasks reading through the cache.
+
+**Answers to two reviews of e10-f10.1, 2026-10-20** (one by Claude, approve after 1 Major, with
+3 Minor and 4 Nits; one by Copilot, changes requested, 1 Major and 1 Nit). Every claim was checked
+in the code of the branch, in the platform as the adapter resolves it and, for the engine, at the
+pin `bdd795a3`. The GAPS citation was raised by both, so nine distinct findings remain; all nine
+were valid and are fixed. Decisions 55 and 56, new on this branch, were extended in place before
+the merge; no new decision was needed.
+
+- **A tagged rollback left the version new workflows run on unchecked** (Claude 1, Major).
+  `AllocateProcessDefinition` of `internal/cluster/state/definitions.go` compares the newest version
+  first and then hands back the version carrying the tag where the content is the same (`200`,
+  unchanged), while new workflows start on the newest version; the platform checks only the version
+  a start deployed and the older ones. Where the engine answers a deployment as unchanged, the
+  deployment now compares the version with the newest one the catalog lists (the list the platform
+  reads afterwards anyway) and ends the start where an older version came back, naming the file,
+  both versions, the tag and the fix (a tag no version carries yet, or none). A WARN alone was
+  rejected: the application would start workflows on a model it does not bring. Tests:
+  `ZenBpmDeployingTest#aModelHandedBackAsAnOlderVersionEndsTheDeployment`,
+  `#aModelHeldUnchangedAsTheNewestVersionIsDeployed`, and against the pinned image
+  `ZenBpmProcessVersionIT#aRolledBackTaggedModelEndsTheStart`, which replaces
+  `#aRolledBackTaggedModelGetsItsOldVersionBack`. Decision 55, GAPS 32, the README, item 18 of the
+  deviations draft and the architecture say it.
+- **The count of a version made the engine read every instance of the partition** (Claude 2,
+  Minor). `FindProcessInstancesPage` of `internal/sql/queries/process_instance.sql` searches the
+  index by definition and creation time only where a lower bound is given. Both searches now send
+  `createdFrom=1970-01-01T00:00:00Z`;
+  `ZenBpmProcessVersionCatalogTest#theWorkflowsOnAVersionAreCountedByTheEngine` asserts it,
+  decision 56 says why.
+- **What older versions miss blamed workflows for versions nobody runs on, and held every older
+  model at once** (Claude 3, Minor; Copilot 1, Major). The answer compared every older version, also
+  one without workflows and an outfaded one, whose model `tasksOfVersion` never reads, and kept
+  every parsed model in a list until the comparison; Copilot ran out of a 128 MB heap at 1,000
+  versions.
+  The catalog now keeps the last count of each version, which the platform asks right before, and
+  compares only the versions workflows run on (or whose count the engine did not give), reading
+  their models one after the other and keeping of each only what it carries
+  (`ZenBpmOlderVersions.Carried`: two flags and the mapped names). Test
+  `ZenBpmProcessVersionCatalogTest#onlyTheOlderVersionsWorkflowsRunOnAreCompared` (no read of the
+  model of a version without workflows, no further request). No bounded-heap test: it would be slow
+  and flaky in a build, and the fix keeps nothing that holds a model. Fit-check item 5 of S10.2.1 is
+  corrected.
+- **The javadoc cited GAPS 32** (Claude 4, Copilot 2). It now says it in its own words and cites
+  decision 55.
+- **The README promised `zeebe:versionTag` without a test** (Claude 5, Nit). The claim is gone from
+  the README and the javadoc; decision 55 keeps the engine's fact.
+- **Decision 56 departed from the contract's "drop it afterwards" without saying so** (Claude 6,
+  Nit). It now names the sentence and why: the same models are asked at different moments of a
+  start, and the bound caps the cost.
+- **The cost test did not ask in the platform's order** (Claude 7, Nit). It now asks the list, the
+  counts of every older version, what they miss, and then the questions per version, as
+  `DeployedProcessVersionsCheck#check` does. The three list requests per process stay: they are
+  constant per process (decision 14), and the rollback check reads the catalog's list, so it adds
+  none.
+- **Unwrapped lines** (Claude 8, Nit): wrapped.
+
+Mutants of the new guards, each against a green unmutated run, 6 of 6 killed: the rollback check
+removed (`#aModelHandedBackAsAnOlderVersionEndsTheDeployment`), `<=` made `<`
+(`#aModelHeldUnchangedAsTheNewestVersionIsDeployed`), `createdFrom` removed, every older version
+compared, the kept counts ignored (`#onlyTheOlderVersionsWorkflowsRunOnAreCompared`), an unknown
+count excluded (`#twoThingsMissedAreNamedWithAnd`, `#onlyWhatTheDeployedModelHasIsNamed`).
+`ZenBpmProcessVersionIT` now starts an engine per case: the first full build after the fixes
+failed in `#aTagResolves` and `#aTagAnotherVersionCarriesIsRefused`, because the renamed rollback
+case ran before them on the shared engine and left versions 1 and 2 of `Labelling` behind, which the
+new check refuses as it should. Clean build after the fixes (`TZ=Etc/UTC mvn clean install` on
+OpenJDK 25.0.2, Docker ITs included, none skipped): engine test support 12 + 5, core 1,203 + 100,
+Spring Boot 14 + 89, smoke test 38, Quarkus runtime 13, deployment 52, integration tests 20, gate
+37; coverage 100 % on both platforms (0 of 35,801 instructions missed on Spring Boot, 0 of 35,671
+on Quarkus); `bin/check-deploy-safety.sh` green.
 
 ## F10.3 The viewer
 

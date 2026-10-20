@@ -180,9 +180,8 @@ class ZenBpmDeployingTest {
             final var sent = engine
                     .requests()
                     .stream()
-                    .filter(request -> request
-                            .path()
-                            .equals("/v1/process-definitions"))
+                    .filter(request -> "POST /v1/process-definitions".equals("%s %s".formatted(request.method(),
+                            request.path())))
                     .map(FakeEngine.Request::body)
                     .toList();
             assertAll(
@@ -194,6 +193,61 @@ class ZenBpmDeployingTest {
                             .requests()
                             .get(2)
                             .contentType()));
+        }
+    }
+
+    @Test
+    @DisplayName("A model the engine hands back as an older version, because that version carries its tag and its content, ends the deployment naming the file, both versions and the fix; nothing is registered or remembered")
+    void aModelHandedBackAsAnOlderVersionEndsTheDeployment() {
+        engine.answers("POST", "/v1/process-definitions", 200, "{\"processDefinitionKey\":9}");
+        engine.answers("GET", "/v1/process-definitions/9", 200, """
+                {"key":9,"version":1,"versionTag":"release-1","bpmnProcessId":"Order","bpmnData":"<xml/>"}""");
+        engine.answers("GET", "/v1/process-definitions", 200, """
+                {"items": [{"key": 9, "version": 1, "versionTag": "release-1", "bpmnProcessId": "Order"},
+                           {"key": 11, "version": 2, "versionTag": "release-2", "bpmnProcessId": "Order"}],
+                 "totalCount": 2}""");
+        final var wiring = TestWiring.claiming("Order");
+
+        try (var registry = registry()) {
+            final var deploymentService = deploymentService(registry, TestScoping.of(NameClashAvoidance.NONE), wiring);
+            final var context = prepared(deploymentService, ORDER);
+
+            final var failure = assertThrows(IllegalStateException.class, () -> deploymentService.deployResources(
+                    "shop", context));
+
+            assertAll(
+                    () -> assertEquals(
+                            """
+                                    ZenBPM hands back version 1 for BPMN file 'order.bpmn' of workflow module 'shop' (process \
+                                    'Order'), because that version carries the same version tag 'release-1' and the same \
+                                    content, but the engine starts every new workflow on the newest version, 2, which is not the \
+                                    model this application brings. The engine gives a version tag to one version of a process \
+                                    only, so give the model a version tag no version of process 'Order' carries yet, or none, \
+                                    and the engine deploys it as its newest version.""",
+                            failure.getMessage()),
+                    () -> assertEquals(List.of(), wiring.callsOf("registerDeployedVersion")),
+                    () -> assertEquals(Optional.empty(), deployedProcesses(registry).keyOf("shop", "Order")));
+        }
+    }
+
+    @Test
+    @DisplayName("A model the engine holds unchanged as its newest version is deployed as before")
+    void aModelHeldUnchangedAsTheNewestVersionIsDeployed() {
+        engine.answers("POST", "/v1/process-definitions", 200, "{\"processDefinitionKey\":11}");
+        engine.answers("GET", "/v1/process-definitions/11", 200, """
+                {"key":11,"version":2,"versionTag":"release-2","bpmnProcessId":"Order","bpmnData":"<xml/>"}""");
+        engine.answers("GET", "/v1/process-definitions", 200, """
+                {"items": [{"key": 9, "version": 1, "versionTag": "release-1", "bpmnProcessId": "Order"},
+                           {"key": 11, "version": 2, "versionTag": "release-2", "bpmnProcessId": "Order"}],
+                 "totalCount": 2}""");
+        final var wiring = TestWiring.claiming("Order");
+
+        try (var registry = registry()) {
+            final var deploymentService = deploymentService(registry, TestScoping.of(NameClashAvoidance.NONE), wiring);
+
+            deploymentService.deployResources("shop", prepared(deploymentService, ORDER));
+
+            assertEquals(Optional.of(11L), deployedProcesses(registry).keyOf("shop", "Order"));
         }
     }
 

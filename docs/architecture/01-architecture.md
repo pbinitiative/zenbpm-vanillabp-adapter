@@ -202,6 +202,8 @@ start reads each model once (decision 56).
 first, so no new process version calls a decision the engine does not hold yet, then one `POST
 /v1/process-definitions` per BPMN file (the bytes as read where the pipeline changed nothing, the
 document written out otherwise) with a `GET /v1/process-definitions/{key}` to learn its version.
+Where the engine answers a file as unchanged with a version older than the newest one the catalog
+lists, which a tagged model of an older version gets back, the start ends (decision 55).
 Only once the engine took every file come `registerDeployedVersion` (unchanged files included),
 the version and its tag recorded in the version catalog, and
 the `ZenBpmDeployedProcesses` record (scoped id, key, version, version tag, model as the engine
@@ -273,8 +275,8 @@ every other type a task, decision 51); then the job's instance through the cache
 in scope -> UNKNOWN; job `active` or `failed` -> ACTIVE, `completed` or `terminated` -> COMPLETED;
 every other failure -> BPMS_UNAVAILABLE. `openTaskCount(module, process)`: the versions under the
 scoped id (`GET /v1/process-definitions`), per version its model (`GET
-/v1/process-definitions/{key}`, through the cache of held models) and its statistics, the active counts of the elements which give a
-worker a job summed; `null` where the engine does not answer. The platform asks it before the
+/v1/process-definitions/{key}`, through the cache of held models) and its statistics, the active
+counts of the elements which give a worker a job summed; `null` where the engine does not answer. The platform asks it before the
 application deployed anything. `workflowVisibilityDelay()` = the configured
 `workflow-visibility-timeout` (default `PT2S`, poll `PT0.25S`);
 `workflowVisibilityDelay(workflowId)` keeps that window too, because a follower may not see an

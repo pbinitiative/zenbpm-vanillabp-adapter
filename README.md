@@ -344,22 +344,23 @@ is pushed again later. A handler which runs already, or a task handed out again,
 its job was created with all the same. An iteration of a multi-instance element which starts after a
 push reads the pushed value only where the element maps it in (see [`GAPS.md`](./GAPS.md)).
 
-A `@WorkflowTask(version = ...)` method runs for the jobs of the versions it names. A version made of numbers is compared with the version the job carries. A
-version tag, which a model carries as `<zenbpm:versionTag value="..." />` on its process (or
-`zeebe:versionTag` from the Camunda Modeler), is placed by the list of the definitions the engine
-holds under the process, one request per process and start, and the version this start deployed is
+A `@WorkflowTask(version = ...)` method runs for the jobs of the versions it names. A version made
+of numbers is compared with the version the job carries. A version tag, which a model carries as
+`<zenbpm:versionTag value="..." />` on its process, is placed by the list of the definitions the
+engine holds under the process, one request per process and start, and the version this start deployed is
 known from the deployment's answer (decision 55). A tag no version carries is reported once at
 startup, and a task of the version this start deployed which no method serves for that version ends
 the start. ZenBPM gives a tag to one version of a process only: it refuses a changed model under a
 tag an earlier version carries, so a changed model needs a new tag, also where only the methods
 changed, because the adapter writes into the model it deploys; and a model deployed again with the
-tag and the content of an older version gets that older version back, while new workflows start on
-the newest one (see [`GAPS.md`](./GAPS.md)).
+tag and the content of an older version gets that older version back, while new workflows would
+start on the newest one, so such a start ends, naming both versions and the fix: a tag no version
+carries yet (see [`GAPS.md`](./GAPS.md)).
 
 At startup the versions the engine holds of a process which are older than the one this start
 deployed are checked: the platform names such a version with the number of workflows which still
 run on it, a task of it which no method serves any more, and what those workflows miss, which the
-adapter reads from the models the engine holds, because it writes VanillaBP's behaviour into the
+adapter reads from the models of the older versions workflows still run on, because it writes VanillaBP's behaviour into the
 model it deploys: the end markers, the start markers and the names mapped into a multi-instance
 body. A version faded out with `vanillabp.adapters.<id>.outfaded-versions` is not checked for its
 tasks; the workflows still running on it are named instead. The numbers are counted by the engine,

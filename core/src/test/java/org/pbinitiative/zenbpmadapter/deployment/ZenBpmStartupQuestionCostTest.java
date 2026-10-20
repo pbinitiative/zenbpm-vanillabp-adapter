@@ -119,19 +119,19 @@ class ZenBpmStartupQuestionCostTest {
         }
     }
 
-    // the order of DeployedProcessVersionsCheck#check for a version older than the deployed one
+    // the order of DeployedProcessVersionsCheck#check: the list, the counts of every older version,
+    // what they miss, and then the questions about each older version, which ask its count no more
     private static void askAsThePlatformsCheckOfTheOlderVersions(final ZenBpmDeploymentService deploymentService) {
         final var catalog = deploymentService.processVersionCatalogOf("shop", "Orders");
         final var held = catalog.deployedVersionsOf("shop", "Orders");
+        final var older = held.subList(0, held.size() - 1);
+        older.forEach(version -> catalog.activeInstanceCountOf("shop", "Orders", version.version()));
         catalog.whatOlderVersionsMiss("shop", "Orders");
-        held
-                .subList(0, held.size() - 1)
-                .forEach(version -> {
-                    catalog.activeInstanceCountOf("shop", "Orders", version.version());
-                    catalog.concurrentTokenElementsOfVersion("shop", "Orders", version.version());
-                    catalog.identifiersOfVersion("shop", "Orders", version.version());
-                    catalog.tasksOfVersion("shop", "Orders", version.version());
-                });
+        older.forEach(version -> {
+            catalog.concurrentTokenElementsOfVersion("shop", "Orders", version.version());
+            catalog.identifiersOfVersion("shop", "Orders", version.version());
+            catalog.tasksOfVersion("shop", "Orders", version.version());
+        });
     }
 
     private static void deploy(final ZenBpmDeploymentService deploymentService) {

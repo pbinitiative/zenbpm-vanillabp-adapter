@@ -156,7 +156,7 @@ class ZenBpmProcessVersionCatalogTest {
     }
 
     @Test
-    @DisplayName("The workflows on a version are the active and the failed instances of its definition, counted by the engine with two requests of one item each, whatever their number")
+    @DisplayName("The workflows on a version are the active and the failed instances of its definition, counted by the engine with two requests of one item each, whatever their number, each with the earliest creation time as its lower bound, which makes the engine search the index of the definition")
     void theWorkflowsOnAVersionAreCountedByTheEngine() {
         engine.answers("GET", "/v1/process-instances", exchange -> {
             final var total = exchange
@@ -181,7 +181,8 @@ class ZenBpmProcessVersionCatalogTest {
                 () -> assertEquals(2, instanceQueries.size(), instanceQueries::toString),
                 () -> assertTrue(instanceQueries
                         .stream()
-                        .allMatch(query -> query.contains("processDefinitionKey=9") && query.contains("size=1")),
+                        .allMatch(query -> query.contains("processDefinitionKey=9") && query.contains("size=1") && query
+                                .contains("createdFrom=1970-01-01T00%3A00%3A00Z")),
                         instanceQueries::toString),
                 () -> assertTrue(instanceQueries
                         .getFirst()
@@ -227,6 +228,48 @@ class ZenBpmProcessVersionCatalogTest {
                 reported, so a workflow the engine started by a timer or a message has no workflow aggregate, and \
                 no start row holds the instance key of any of them, and a task inside the multi-instance body of \
                 'EveryParcel' does not get 'tariff'""", versions.whatOlderVersionsMiss("shop", "Orders"));
+    }
+
+    @Test
+    @DisplayName("Only the older versions on which workflows run are compared, with the counts the platform asked right before, and the model of a version nobody runs on is not read")
+    void onlyTheOlderVersionsWorkflowsRunOnAreCompared() throws JsonProcessingException {
+        engine.answers("GET", "/v1/process-definitions", 200, """
+                {"items": [{"key": 9, "version": 1, "bpmnProcessId": "shop__Orders"},
+                           {"key": 10, "version": 2, "bpmnProcessId": "shop__Orders"},
+                           {"key": 11, "version": 3, "bpmnProcessId": "shop__Orders"}], "totalCount": 3}""");
+        final var withMarkers = deployed(TestWiring.claiming("Orders"), TestStarts
+                .everyProcessStartingAWorkflow()
+                .listeningToTheEndOf("Orders"));
+        recordDeployed(withMarkers, 3);
+        engine.answers("GET", "/v1/process-definitions/9", 200, definition(9, 1, deployed(TestWiring.claiming(
+                "Orders"),
+                TestStarts
+                        .everyProcessStartingAWorkflow()
+                        .called("Orders"))));
+        engine.answers("GET", "/v1/process-definitions/10", 200, definition(10, 2, withMarkers));
+        engine.answers("GET", "/v1/process-instances", exchange -> {
+            final var total = exchange
+                    .getRequestURI()
+                    .getQuery()
+                    .contains("processDefinitionKey=10&state=active") ? 5 : 0;
+            FakeEngine.respond(exchange, 200, """
+                    {"partitions": [{"partition": 1, "totalCount": %d, "items": []}],
+                     "page": 1, "size": 1, "count": 0, "totalCount": %d}""".formatted(total, total));
+        });
+        versions.deployedVersionsOf("shop", "Orders");
+        final var counts = List.of(versions.activeInstanceCountOf("shop", "Orders", "1"), versions
+                .activeInstanceCountOf("shop", "Orders", "2"));
+        final var asked = engine
+                .requests()
+                .size();
+
+        final var missed = versions.whatOlderVersionsMiss("shop", "Orders");
+
+        assertAll(
+                () -> assertEquals(List.of(0L, 5L), counts),
+                () -> assertNull(missed),
+                () -> assertEquals(List.of("GET /v1/process-definitions/10"), requests().subList(asked, requests()
+                        .size())));
     }
 
     @Test
@@ -297,7 +340,14 @@ class ZenBpmProcessVersionCatalogTest {
     }
 
     private void recordDeployed(final String bpmn) {
-        final var deployed = new ZenBpmDeployedProcesses.DeployedProcess("shop", "Orders", "shop__Orders", 11, 2, null, bpmn);
+        recordDeployed(bpmn, 2);
+    }
+
+    private void recordDeployed(
+        final String bpmn,
+        final int version
+    ) {
+        final var deployed = new ZenBpmDeployedProcesses.DeployedProcess("shop", "Orders", "shop__Orders", 11, version, null, bpmn);
         registry
                 .getFactory(ADAPTER_ID)
                 .deployedProcesses()

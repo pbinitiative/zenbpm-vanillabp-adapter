@@ -6,6 +6,7 @@ package org.pbinitiative.zenbpmadapter.deployment;
 
 import java.io.ByteArrayInputStream;
 import java.nio.charset.StandardCharsets;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Comparator;
@@ -45,11 +46,11 @@ import lombok.extern.slf4j.Slf4j;
  * engine's list of the definitions of a process, one request per process, which answers every
  * version with its key and its tag, see decision 14 in the repository's DECISIONS.md. The version a
  * start deployed is recorded from the deployment's answer without any request. The engine reads
- * the tag of a model from its process's <code>versionTag</code> extension element, in any
- * namespace (<code>&lt;zenbpm:versionTag value="..." /&gt;</code>, or <code>zeebe:</code> from the
- * Camunda Modeler), and gives a tag to one version of a process only, see GAPS 32 in the
- * repository's GAPS.md. How the catalog is made and where it is registered is decision 55 in the
- * repository's DECISIONS.md.
+ * the tag of a model from its process's <code>versionTag</code> extension element
+ * (<code>&lt;zenbpm:versionTag value="..." /&gt;</code>) and gives a tag to one version of a
+ * process only, so a model deployed again with the tag and the content of an older version gets
+ * that older version back, which the deployment refuses. How the catalog is made, where it is
+ * registered and why such a deployment is refused is decision 55 in the repository's DECISIONS.md.
  * <p>
  * The questions about one held version read its model, which the engine hands back as it holds
  * it, through the cache every model question of a start shares, so a model is read once per
@@ -76,6 +77,14 @@ public class ZenBpmProcessVersions extends CachingProcessVersionCatalog {
      * the questions of a start, and the next start reads the list again.
      */
     private final Map<String, Long> definitionKeys = new ConcurrentHashMap<>();
+
+    /**
+     * How many workflows run on a version, per workflow module, plain process id and version, as
+     * the engine counted them last. The platform asks the counts of the older versions right before
+     * it asks what those versions miss, so the answer to that compares only the versions somebody
+     * still runs on without asking the engine again.
+     */
+    private final Map<String, Long> instanceCounts = new ConcurrentHashMap<>();
 
     /**
      * The catalog of one adapter id.
@@ -209,7 +218,10 @@ public class ZenBpmProcessVersions extends CachingProcessVersionCatalog {
     /**
      * How many workflows run on one version: those the engine holds as active and those it holds as
      * failed, which an operator resumes, counted by the engine, so the answer costs two requests
-     * whatever their number, see decision 14 in the repository's DECISIONS.md.
+     * whatever their number, see decision 14 in the repository's DECISIONS.md. Each search names a
+     * lower bound of the creation time, the earliest there is, because only with one does the engine
+     * search the index of the definition's instances instead of every instance it holds, see
+     * decision 56 in the repository's DECISIONS.md.
      *
      * @param workflowModuleId The workflow module
      * @param bpmnProcessId The plain id of the process
@@ -231,13 +243,16 @@ public class ZenBpmProcessVersions extends CachingProcessVersionCatalog {
             final var running = InstanceFilter
                     .anyInstance()
                     .withProcessDefinitionKey(definitionKey.get())
+                    .withCreatedFrom(Instant.EPOCH)
                     .withSize(1);
             final var rest = factory.rest();
-            return rest
+            final var count = rest
                     .instances(running.withState(ProcessInstanceRef.State.ACTIVE))
                     .totalCount() + rest
                             .instances(running.withState(ProcessInstanceRef.State.FAILED))
                             .totalCount();
+            instanceCounts.put(keyOf(workflowModuleId, bpmnProcessId, version), count);
+            return count;
         } catch (final RuntimeException e) {
             log.warn(
                     "ZenBPM[{}]: the engine did not say how many workflows run on version {} of BPMN process '{}' (workflow module '{}'): {}",
@@ -250,7 +265,10 @@ public class ZenBpmProcessVersions extends CachingProcessVersionCatalog {
      * What a workflow running on a version older than the one this start deployed does not get,
      * read from the models: the end markers the deployed model has and the older ones lack, the
      * start markers alike, and the names the deployed model maps into a multi-instance body which
-     * an older one does not map in.
+     * an older one does not map in. Only the older versions on which workflows run are compared,
+     * because the platform tells this to the workflows that run, and a version whose count the
+     * engine did not give is compared as well, because nobody can say that none runs on it. Their
+     * models are read one after the other and let go before the next.
      *
      * @param workflowModuleId The workflow module
      * @param bpmnProcessId The plain id of the process
@@ -272,12 +290,15 @@ public class ZenBpmProcessVersions extends CachingProcessVersionCatalog {
                 .versionOf(workflowModuleId, bpmnProcessId)
                 .orElseThrow();
         try {
-            final var deployed = modelOf(workflowModuleId, String.valueOf(deployedVersion), factory.heldBpmnOf(
-                    deployedKey.get()));
-            final var older = new ArrayList<ZenBpmBpmnModel>();
+            final var deployed = ZenBpmOlderVersions.Carried.by(modelOf(workflowModuleId, String.valueOf(
+                    deployedVersion), factory.heldBpmnOf(deployedKey.get())));
+            final var older = new ArrayList<ZenBpmOlderVersions.Carried>();
             for (final var version : deployedVersionsOf(workflowModuleId, bpmnProcessId)) {
-                if (Integer.parseInt(version.version()) < deployedVersion) {
-                    heldModelOf(workflowModuleId, bpmnProcessId, version.version()).ifPresent(older::add);
+                if ((Integer.parseInt(version.version()) < deployedVersion) && workflowsMayRunOn(workflowModuleId,
+                        bpmnProcessId, version.version())) {
+                    heldModelOf(workflowModuleId, bpmnProcessId, version.version())
+                            .map(ZenBpmOlderVersions.Carried::by)
+                            .ifPresent(older::add);
                 }
             }
             return ZenBpmOlderVersions.whatTheyMiss(deployed, older);
@@ -339,6 +360,16 @@ public class ZenBpmProcessVersions extends CachingProcessVersionCatalog {
                             adapterId, e));
             return null;
         }
+    }
+
+    private boolean workflowsMayRunOn(
+        final String workflowModuleId,
+        final String bpmnProcessId,
+        final String version
+    ) {
+        final var counted = instanceCounts.get(keyOf(workflowModuleId, bpmnProcessId, version));
+        final var count = counted != null ? counted : activeInstanceCountOf(workflowModuleId, bpmnProcessId, version);
+        return (count == null) || (count > 0);
     }
 
     private Optional<ZenBpmBpmnModel> heldModelOf(

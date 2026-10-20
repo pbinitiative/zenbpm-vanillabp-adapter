@@ -97,5 +97,6 @@ what a remote BPMS looks like.
     version carries is refused, and the start ends naming the tag. Give every changed model a new
     tag, also where only the application's methods changed, because the adapter writes markers and
     mappings into the model it deploys. A model deployed again with the tag and the content of an
-    older version gets that older version back, while new workflows start on the newest one
+    older version gets that older version back, while new workflows would start on the newest
+    one, so that start ends, naming both versions and the fix, a tag no version carries yet
     (GAPS 32).

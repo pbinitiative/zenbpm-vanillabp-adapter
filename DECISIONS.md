@@ -1431,6 +1431,18 @@ without it, did not have: a tag no version carries is reported once at startup, 
 a start deployed which no method serves for that version ends the start (platform decision 126), and
 the versions older than the deployed one are checked.
 
+Because a tag names one version, a model deployed again with the tag and the content of an older
+version, as a workflow module rolled back to an earlier release brings it, gets that older version
+back (`200`, unchanged), while the engine starts every new workflow on its newest version. The
+platform checks the methods against the version a start deployed and the versions older than it,
+so the newest version, on which every new workflow runs, would be checked by nobody, and the
+application would start workflows on a model it does not bring. So where the engine answers a
+deployment as unchanged, the deployment compares the version it got with the newest version the
+catalog lists (the same list request the platform's check reads afterwards), and where an older
+version came back it ends the start, naming the file, both versions, the tag and the fix: a tag no
+version of the process carries yet, or none, with which the engine deploys the model as its newest
+version. A model the engine created is always its newest version and costs no list request here.
+
 ### 56. A start reads each model the engine holds once, and the questions about a held version read it from there
 
 Decided by the implementation pipeline in place of the maintainers, as their policy for the
@@ -1453,7 +1465,11 @@ So the client factory of every adapter id keeps the models it read, by definitio
 `GET` of the definition it created stays, because it learns the version and the tag from it. The
 cache keeps at most 8 Mi characters of BPMN and drops the model asked for longest ago first, so an
 engine which holds a great many versions costs requests, not memory; it lives as long as the
-application, because a key never names another model.
+application, because a key never names another model. That goes beyond what the platform's contract asks
+(`ProcessVersionCatalog#identifiersOfVersion`: hold a model "while the version is being asked about,
+and drop it afterwards"), because the questions which read the same model are asked at different
+moments of a start, `openTaskCount` before anything is deployed and the check of the older versions
+after the deployment, and the bound caps what keeping them costs.
 
 The catalog keeps the definition key of every version from its list request, so a question about a
 held version costs no search for the key; a version neither listed nor deployed by this start costs
@@ -1469,7 +1485,11 @@ say".
 
 How many workflows run on a version is what the engine counts: the totals of two searches for one
 item each (`GET /v1/process-instances`, filtered by the definition key, `state=active` and
-`state=failed`), whatever their number (decision 14). A failed instance carries an incident which an
+`state=failed`), whatever their number (decision 14). Each search names the earliest creation time
+there is (`createdFrom=1970-01-01T00:00:00Z`) as its lower bound: at `bdd795a3`
+`FindProcessInstancesPage` of `internal/sql/queries/process_instance.sql` searches the index of the
+definition's instances by creation time only where a definition and a lower bound are both given,
+and otherwise reads every instance the partition holds. A failed instance carries an incident which an
 operator resolves, so it still runs, as the probes count it. At the pinned commit `bdd795a3` the
 search finds the instances a call activity started as well (`GetProcessInstances` of
 `internal/cluster/server/server.go` includes the process type `callActivity` unless child processes
@@ -1483,4 +1503,10 @@ reported; the start markers alike; and the names the deployed model maps into a 
 which an older one does not map in. Markers are written for every event of a kind at once, so a
 version holds them or does not. Only what the deployed model has is named, and a process id this
 start deployed nothing under, such as a declared one, is answered `null`, because there is no model
-to compare with.
+to compare with. Only the older versions on which workflows run are compared, because the platform
+tells the answer to those workflows: the platform asks the count of every older version right before,
+and the catalog keeps the last count of each version, so the comparison asks the engine nothing more;
+a version whose count the engine did not give is compared as well, because nobody can say that none
+runs on it. The models are read one after the other, and of each only what it carries of the
+markers and mappings is kept, so a process with many versions does not hold all their models at
+once.

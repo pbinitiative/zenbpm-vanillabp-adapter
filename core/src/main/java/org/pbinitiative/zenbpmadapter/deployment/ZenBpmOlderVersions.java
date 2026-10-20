@@ -8,6 +8,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 
 import org.pbinitiative.zenbpmadapter.model.ZenBpmBpmnModel;
@@ -31,21 +32,52 @@ final class ZenBpmOlderVersions {
     }
 
     /**
+     * What one model carries of what an older version may lack, small enough to keep for every
+     * version while the model itself is let go.
+     *
+     * @param endMarkers Whether the model reports the end of a workflow
+     * @param startMarkers Whether the model reports the start of a workflow
+     * @param mappedIntoMultiInstanceBodies The names each multi-instance element maps into its body
+     */
+    record Carried(
+        boolean endMarkers,
+        boolean startMarkers,
+        Map<String, Set<String>> mappedIntoMultiInstanceBodies
+    ) {
+
+        /**
+         * What a model carries.
+         *
+         * @param model The model, as the engine holds it
+         * @return What it carries
+         */
+        static Carried by(final ZenBpmBpmnModel model) {
+            return new Carried(hasMarkers(model, ZenBpmMarkerTasks.ENDED), hasMarkers(model,
+                    ZenBpmMarkerTasks.STARTED), ZenBpmTaskParameters.mappedIntoMultiInstanceBodies(model));
+        }
+
+    }
+
+    /**
      * What the older versions lack, in words which follow "so those workflows never get it: ".
      *
-     * @param deployed The model this start deployed, as the engine holds it
-     * @param older The models of the older versions
+     * @param deployed What the model this start deployed carries
+     * @param older What the models of the older versions carry
      * @return What they miss, <code>null</code> where they miss nothing
      */
     static String whatTheyMiss(
-        final ZenBpmBpmnModel deployed,
-        final List<ZenBpmBpmnModel> older
+        final Carried deployed,
+        final List<Carried> older
     ) {
         final var missed = new ArrayList<String>();
-        if (lackedByAny(deployed, older, ZenBpmMarkerTasks.ENDED)) {
+        if (deployed.endMarkers() && older
+                .stream()
+                .anyMatch(carried -> !carried.endMarkers())) {
             missed.add("the end of such a workflow is not reported to a @WorkflowEnded method");
         }
-        if (lackedByAny(deployed, older, ZenBpmMarkerTasks.STARTED)) {
+        if (deployed.startMarkers() && older
+                .stream()
+                .anyMatch(carried -> !carried.startMarkers())) {
             missed.add("""
                     their start was not reported, so a workflow the engine started by a timer or a message has no \
                     workflow aggregate, and no start row holds the instance key of any of them""");
@@ -69,16 +101,6 @@ final class ZenBpmOlderVersions {
     }
 
     // markers are written for every event of a kind at once, so a version holds them or not
-    private static boolean lackedByAny(
-        final ZenBpmBpmnModel deployed,
-        final List<ZenBpmBpmnModel> older,
-        final String markerPrefix
-    ) {
-        return hasMarkers(deployed, markerPrefix) && older
-                .stream()
-                .anyMatch(model -> !hasMarkers(model, markerPrefix));
-    }
-
     private static boolean hasMarkers(
         final ZenBpmBpmnModel model,
         final String markerPrefix
@@ -94,13 +116,13 @@ final class ZenBpmOlderVersions {
     // only an element an older version has as well counts: one it does not have runs no task of its
     // workflows
     private static LinkedHashMap<String, Set<String>> mappingsLacked(
-        final ZenBpmBpmnModel deployed,
-        final List<ZenBpmBpmnModel> older
+        final Carried deployed,
+        final List<Carried> older
     ) {
         final var lacked = new LinkedHashMap<String, Set<String>>();
-        final var mappedNow = ZenBpmTaskParameters.mappedIntoMultiInstanceBodies(deployed);
-        for (final var model : older) {
-            final var mappedThen = ZenBpmTaskParameters.mappedIntoMultiInstanceBodies(model);
+        final var mappedNow = deployed.mappedIntoMultiInstanceBodies();
+        for (final var carried : older) {
+            final var mappedThen = carried.mappedIntoMultiInstanceBodies();
             mappedNow.forEach((
                 elementId,
                 names) -> {
