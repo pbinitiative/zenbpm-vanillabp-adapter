@@ -848,8 +848,8 @@ public class ZenBpmRestClient implements AutoCloseable {
         final var completedAt = entry.completedAt() == null
                 ? null
                 : Instant.parse(entry.completedAt());
-        return new HistoryEntry(key, elementId, elementType, instanceKey, createdAt, completedAt, entry
-                .inputVariables());
+        return new HistoryEntry(key, elementId, elementType, instanceKey, createdAt, completedAt, variables(entry
+                .inputVariables()));
     }
 
     private static ProcessInstanceRef processInstanceRef(final ZenBpmWire.ProcessInstance instance) {

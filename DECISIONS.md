@@ -1378,8 +1378,9 @@ the instance shows no token at the element, the history holds no list for it, or
 the element wait at once over collections of different sizes, the total is `-1`, as Camunda 8
 reports a total it cannot tell. The map is keyed by the ids of the multi-instance elements, the
 outermost first. The iterations of a body and its total are kept, bounded by
-`instance-cache-max-entries`, and the iterations are read again where the iteration asked about is
-not among them yet, as the next iteration of a sequential element.
+`instance-cache-max-entries`; the iterations are read again where the iteration asked about is not
+among them yet, as the next iteration of a sequential element, and a total of `-1` is read again at
+the next ask, because a node which lagged behind may have caused it.
 
 Where the walk meets an instance a call activity started, it goes on in the caller: the called
 process runs in the caller's iterations, which the platform asks for as names the called model does

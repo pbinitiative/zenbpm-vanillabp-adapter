@@ -573,7 +573,8 @@ class ZenBpmRestClientTest {
     }
 
     @Test
-    @DisplayName("A page of the history is ordered by entry, carries what each element was handed, and says whether it is the last one")
+    @DisplayName("A page of the history is ordered by entry, carries what each element was handed, a whole number as a Long and a list unmodifiable as every variable, and says whether it is the last one")
+    @SuppressWarnings("unchecked")
     void aPageOfTheHistory() {
         engine.answers("GET", "/v1/process-instances/1/history", 200, """
                 {"items": [
@@ -582,7 +583,7 @@ class ZenBpmRestClientTest {
                    "elementType": "START_EVENT", "inputVariables": {}},
                   {"key": 12, "processInstanceKey": 1, "createdAt": "2026-10-13T14:30:27Z",
                    "elementId": "Task_Ship", "elementType": "SERVICE_TASK",
-                   "inputVariables": {"parcel": ["a", "b"], "parcels": ["a", "b"]}}
+                   "inputVariables": {"copy": [1, 2], "parcels": ["a", "b"]}}
                 ], "page": 2, "size": 100, "count": 2, "totalCount": 102}""");
 
         final var page = client.history(1, 2);
@@ -591,8 +592,14 @@ class ZenBpmRestClientTest {
                 new HistoryEntry(11, "StartEvent_1", "START_EVENT", 1, Instant.parse("2026-10-13T14:30:26Z"), Instant
                         .parse("2026-10-13T14:30:27Z"), Map.of()),
                 new HistoryEntry(12, "Task_Ship", "SERVICE_TASK", 1, Instant.parse("2026-10-13T14:30:27Z"), null, Map
-                        .of("parcel", List.of("a", "b"), "parcels", List.of("a", "b")))),
+                        .of("copy", List.of(1L, 2L), "parcels", List.of("a", "b")))),
                 page.items());
+        final var copies = (List<Object>) page
+                .items()
+                .getLast()
+                .inputVariables()
+                .get("copy");
+        assertThrows(UnsupportedOperationException.class, () -> copies.add(3L));
         assertEquals(102, page.totalCount());
         assertTrue(page.last());
         assertEquals(List.of("page=2&size=100&sortBy=createdAt&sortOrder=asc"), queries());

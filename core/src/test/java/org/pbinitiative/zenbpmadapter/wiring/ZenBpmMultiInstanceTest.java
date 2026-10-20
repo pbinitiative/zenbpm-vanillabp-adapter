@@ -253,6 +253,32 @@ class ZenBpmMultiInstanceTest {
     }
 
     @Test
+    @DisplayName("A total which could not be read, as on a node which lagged behind, is read again for the next task of the body, and kept once it was read")
+    void aTotalWhichCouldNotBeReadIsReadAgain() {
+        holdsTheModels();
+        holds(ROOT, "default", null, ORDER, "shop__Order", COLLECTION);
+        holds(PARCELS, "multiInstance", ROOT, ORDER, "shop__Order", COLLECTION);
+        holds(202L, "subprocess", PARCELS, ORDER, "shop__Order", "\"parcel\": \"b\"");
+        holds(203L, "subprocess", PARCELS, ORDER, "shop__Order", "\"parcel\": \"c\"");
+        hasChildren(PARCELS, child(203L, "2026-10-17T14:30:25.127Z", "subprocess", PARCELS, "\"parcel\": \"c\""),
+                child(202L, "2026-10-17T14:30:25.125Z", "subprocess", PARCELS, "\"parcel\": \"b\""), child(201L,
+                        "2026-10-17T14:30:25.123Z", "subprocess", PARCELS, "\"parcel\": \"a\""));
+
+        final var beforeTheNodeCaughtUp = multiInstance.iterationsOf(42L, 202L, "Pick", retry());
+        entered(ROOT, "Parcels", 150L, "parcel", PARCELS_EVALUATED);
+        final var afterwards = multiInstance.iterationsOf(43L, 203L, "Pick", retry());
+        final var later = multiInstance.iterationsOf(42L, 202L, "Pick", retry());
+
+        assertAll(
+                () -> assertEquals(Map.of("Parcels", new MultiInstanceValue("b", 1, ZenBpmMultiInstance.UNKNOWN_TOTAL)),
+                        beforeTheNodeCaughtUp),
+                () -> assertEquals(Map.of("Parcels", new MultiInstanceValue("c", 2, 3)), afterwards),
+                () -> assertEquals(Map.of("Parcels", new MultiInstanceValue("b", 1, 3)), later),
+                () -> assertEquals(1, requestsFor("/v1/process-instances/%d/history".formatted(ROOT))),
+                () -> assertEquals(1, requestsFor("/v1/process-instances/%d/child-processes".formatted(PARCELS))));
+    }
+
+    @Test
     @DisplayName("Where the history does not list the entry of the token, as where it moved between two pages, it is read again, and then the total is -1")
     void anEntryTheHistoryDoesNotListHasNoTotal() {
         holdsTheModels();

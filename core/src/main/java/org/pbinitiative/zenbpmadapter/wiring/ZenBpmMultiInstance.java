@@ -326,10 +326,15 @@ public final class ZenBpmMultiInstance {
         final ZenBpmCommandRetry retry
     ) {
         var known = keptBody(body.key());
-        if ((known == null) || (known.positionOf(iterationKey) < 0)) {
-            final var total = known == null ? totalOf(body, element, retry) : known.total();
-            final var iterations = retry.read("iterations of multi-instance element '%s'".formatted(element
-                    .elementId()), () -> iterationsOf(body.key(), element, iterationIsAJob),
+        // a total which could not be read, as on a node which lagged behind, is read again; one which
+        // was read stays, because the engine never changes the collection of an activation
+        final var totalKnown = (known != null) && (known.total() != UNKNOWN_TOTAL);
+        final var iterationKnown = (known != null) && (known.positionOf(iterationKey) >= 0);
+        if (!totalKnown || !iterationKnown) {
+            final var total = totalKnown ? known.total() : totalOf(body, element, retry);
+            final var iterations = iterationKnown ? known.iterations() : retry.read(
+                    "iterations of multi-instance element '%s'".formatted(element.elementId()), () -> iterationsOf(
+                            body.key(), element, iterationIsAJob),
                     read -> Body
                             .positionOf(read, iterationKey) < 0);
             known = new Body(total, iterations);

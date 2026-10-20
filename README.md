@@ -261,7 +261,8 @@ waits at neither, the caller's iterations are not told, which a WARN says once
 (`#aCallerWithTwoCallsOfTheProcessWhichWaitsAtNoneIsNotTold`). A user task is told its
 iteration as a job is (`ZenBpmUserTaskPollerTest#aUserTaskInAnIterationIsToldItsIteration`). The
 reads cost the model once per version, the instance the element stands in and its history once per
-body, and the list of its iterations once per body and once more for every iteration of a sequential
+body (again at the next ask where the total could not be read,
+`ZenBpmMultiInstanceTest#aTotalWhichCouldNotBeReadIsReadAgain`), and the list of its iterations once per body and once more for every iteration of a sequential
 element; a read which fails fails
 the delivery like a method which threw
 (`ZenBpmJobHandlerTest#aReadOfTheIterationsWhichFailsFailsTheJob`).

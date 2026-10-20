@@ -932,6 +932,29 @@ support 12 + 5, core 1,176 + 100, Spring Boot 14 + 83, smoke test 38, Quarkus ru
 deployment 52, integration tests 20, gate 37; coverage 100 % on both platforms (0 of 34,526
 instructions missed on Spring Boot, 0 of 34,396 on Quarkus); `bin/check-deploy-safety.sh` green.
 
+*CodeRabbit on pull request #67, 2026-10-20* (2 actionable comments on `9464bcc`, both valid, fixed
+in one commit after it):
+
+- **The history's input variables were not normalized** (Minor). `historyEntry` handed them on as
+  Jackson read them, while every other variable map of the client goes through `variables(...)`: a
+  whole number as a `Long`, nested lists and objects unmodifiable. Fixed;
+  `ZenBpmRestClientTest#aPageOfTheHistory` now reads a list of numbers and refuses to change it.
+- **A `-1` total was kept with the body** (Minor). Where the first ask met a node which lagged
+  behind, every later task of that body was told `-1` until the entry left the cache. A kept `-1` is
+  now read again at the next ask, and a total which was read stays, because the engine never
+  changes an activation's collection (`ZenBpmMultiInstanceTest#aTotalWhichCouldNotBeReadIsReadAgain`).
+  This goes further than the suggestion, which read it again only for a later sequential
+  iteration: a parallel body's next task gets the read as well.
+
+Mutants: 4 of 4 killed (no normalization, the `-1` kept, the iterations read again with the total,
+the total read on every ask). The pre-merge "docstring coverage" warning is CodeRabbit's generic
+measure; the repository's rule is javadoc on the public API, which `javadoc:javadoc-no-fork` checks
+in the build. Clean build after the fixes (`TZ=Etc/UTC mvn clean install`, OpenJDK 25.0.2, Docker
+ITs included, none skipped): engine test support 12 + 5, core 1,177 + 100, Spring Boot 14 + 83,
+smoke test 38, Quarkus runtime 13, deployment 52, integration tests 20, gate 37; coverage 100 % on
+both platforms (0 of 34,550 instructions missed on Spring Boot, 0 of 34,420 on Quarkus);
+`bin/check-deploy-safety.sh` green.
+
 ## F9.5 Quarkus twins
 
 ### S9.5.1 Lifecycle on Quarkus
