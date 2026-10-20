@@ -44,6 +44,7 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
 import io.vanillabp.integration.adapter.spi.NameClashAvoidance;
+import io.vanillabp.integration.adapter.spi.version.DeployedProcessVersion;
 import io.vanillabp.integration.test.utils.CapturedOutput;
 import io.vanillabp.integration.test.utils.SuppressOutputExtension;
 
@@ -103,7 +104,7 @@ class ZenBpmDeployingTest {
     }
 
     @Test
-    @DisplayName("Every file is deployed after the engine answered ready, the DMN files before the BPMN files, the version of each process is registered, and what the engine ended up with is remembered and logged")
+    @DisplayName("Every file is deployed after the engine answered ready, the DMN files before the BPMN files, the version of each process is registered, and what the engine ended up with is remembered, known to the version catalog with its tag without a request, and logged")
     void everyFileIsDeployedAndItsVersionRegistered(final CapturedOutput output) {
         engine.answers("POST", "/v1/process-definitions", 201, "{\"processDefinitionKey\":11}");
         engine.answers("GET", "/v1/process-definitions/11", 200, """
@@ -119,9 +120,13 @@ class ZenBpmDeployingTest {
                     StandardCharsets.UTF_8)));
 
             deploymentService.deployResources("shop", context);
+            final var taggedVersion = deploymentService
+                    .processVersionCatalogOf("shop", "Order")
+                    .resolveVersion("shop", "Order", "v3");
 
             final var log = output.getAllOfThisTest();
             assertAll(
+                    () -> assertEquals(DeployedProcessVersion.of("3", "v3"), taggedVersion),
                     () -> assertEquals(List.of(
                             "GET /system/health/ready",
                             "GET /system/status",

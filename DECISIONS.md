@@ -1401,3 +1401,32 @@ repetition bounded by the job's lock, fails the method's invocation as an except
 would, so the job is failed with its `retry-backoff`. The notification of a user task reads its
 iterations the same way. Once the engine hands out `loopCounter` and `nrOfInstances`, the walk
 goes.
+
+### 55. The version catalog reads the versions and their tags from the engine's list of definitions
+
+Decided by the implementation pipeline in place of the maintainers, as their policy for the
+autonomous run asks.
+
+A job carries the version of its definition, so `@WorkflowTask(version = "1")` and every other
+specification made of numbers needs nothing from the engine. A specification which names a version
+tag needs to know which version carries the tag, and only the engine knows that. At the pinned commit
+`bdd795a3` the engine reads the tag of a model from the `versionTag` extension element of its
+process, in any namespace (`extractProcessVersionTag` of `pkg/bpmn/xml_loader.go`), keeps it with the
+definition, and hands it out in its list of definitions (`GET /v1/process-definitions`, `versionTag`
+of each item) and with each definition. It gives a tag to one version of a process only (GAPS 32).
+
+So every adapter id has one `ZenBpmProcessVersions`, a `CachingProcessVersionCatalog` of the
+platform. It lists the definitions under the process's id as the engine knows it, scoped as the
+deployment scopes it, with one request for every version and its tag (decision 14). The version a
+deployment of this start ended up with, with its tag, is recorded from the deployment's answer,
+without a request. `wireBpmn` registers the catalog for every process a workflow service claims, as
+the Camunda 8 adapter does, after the platform validated the process's tasks; a process nobody
+claims gets no wiring call at all. `processVersionCatalogOf` hands out the same
+catalog for a process id a workflow module declares without bringing a model for it, such as the old
+id of a renamed process, because the catalog asks by the id scoped as the deployment of that id
+scoped it; an adapter id without clients has no engine to ask and answers `null`.
+
+Registering the catalog switches on what the platform does with one, which this adapter, built
+without it, did not have: a tag no version carries is reported once at startup, a task of the version
+a start deployed which no method serves for that version ends the start (platform decision 126), and
+the versions older than the deployed one are checked.

@@ -205,7 +205,9 @@ public final class TestWiring {
                         (String) arguments[2]);
                 case "validateTaskWiring" -> refuseTheTasksWhereAsked();
                 case "taskWiringOfProcessesNobodyDeployed" -> Map.copyOf(declaredWithoutAModel);
-                case "reportModelExpressions", "reportConcurrentTokenElements", "registerDeployedVersion" -> null;
+                case "reportModelExpressions", "reportConcurrentTokenElements", "registerDeployedVersion",
+                        "registerProcessVersions" ->
+                    null;
                 default -> throw new AssertionError("WorkflowTaskWiring.%s is not expected to be called".formatted(
                         method.getName()));
             };

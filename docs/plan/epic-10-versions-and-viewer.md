@@ -17,7 +17,7 @@ the viewer methods of `MigratableProcessService`.
 
 ### S10.1.1 `ZenBpmProcessVersions`
 
-- [ ] **Depends on:** E4.
+- [x] **Depends on:** E4.
 
 **Instructions**
 
@@ -42,9 +42,85 @@ fail before this catalog exists. Assert the core's message by the phrases
 **Tests**: `ZenBpmProcessVersionsTest` (fake server), Spring `ZenBpmProcessVersionIT#theVersionDecidesWhichMethodRuns`
 (two methods, `version = "1"` and `version = ">1"`, two deployments), `#aTagResolves`.
 
+*Fit check, 2026-10-20, decided by the Implementor where it says so.* Checked against `main`
+(`85ffe95`), `ADAPTER-AUTHORS.md` (the version calls of section 8 and checklist item 3), the
+platform as the adapter resolves it (`2.0.0-20261015.045823-21`: `ProcessVersionCatalog`,
+`CachingProcessVersionCatalog`, `DeployedProcessVersion`, `WorkflowTaskRegistry#resolveProcessVersions`,
+`ProcessVersions#reportUnknownVersionTag`, `DeployedProcessVersionsCheck`), the Camunda 8 template
+(`Camunda8ProcessVersions`, `Camunda8DeploymentService` around the registration and
+`processVersionCatalogOf`, `Camunda8ProcessVersionIT`), and the engine at the pin `bdd795a3`
+(source read with `git show`/`git grep` at the pin: `extractProcessVersionTag` and
+`storeProcessDefinitionVersion` of `pkg/bpmn/xml_loader.go`, `processDefinitionDeployer.deployOnce`
+of `internal/cluster/node.go`, `AllocateProcessDefinition` of `internal/cluster/state/definitions.go`,
+`GetProcessDefinitions` of `internal/rest/server.go`), then the tests below against the pinned image.
+What did not fit, and what was decided:
+
+1. **`DeployedProcessVersion` carries no key.** The record of the platform is `(version, versionTag,
+   deployedAt)`, not `(version, versionTag, definitionKey)` as the instructions write. The catalog
+   keeps the definition key per version in a map of its own, filled from the same list request and
+   from the deployment, as `Camunda8ProcessVersions#definitionKeysByVersion` does; the questions of
+   S10.2.1 read it.
+2. **Version tags at the engine** (open question 1 of the brief). The engine reads a tag from the
+   `versionTag` extension element of the process in any namespace, keeps it per version, and hands
+   it out in the list of definitions and with each definition, so tags route: one list request per
+   process answers every version with its key and tag (decision 14), and the version this start
+   deployed is recorded from the deployment's answer without a request. What the plan did not know:
+   the engine gives a tag to ONE version of a process. A changed model under a tag an earlier version
+   carries is refused with `400` ("version tag ... is already used by version N"), and a model
+   deployed again with the tag and the content of an older version gets that older version back,
+   while workflows the application starts afterwards run on the newest one. Both are GAPS 32 (new),
+   pinned by `ZenBpmProcessVersionIT#aTagAnotherVersionCarriesIsRefused` and
+   `#aRolledBackTaggedModelGetsItsOldVersionBack`, and said in the README and as item 18 of the
+   deviations draft. Because the adapter writes markers and mappings into the model, a change of the
+   methods alone needs a new tag as well; the engine's reason, which the deployment's message
+   carries, names the tag.
+3. **Which processes register the catalog** (open question 5). `Camunda8DeploymentService` registers
+   it in `wireBpmn` for every process it wires, right after `validateTaskWiring`; this adapter wires
+   only claimed processes (a called process a workflow service declares is claimed), so the
+   registration sits at the same place and reaches the same processes. `processVersionCatalogOf`
+   hands out the same catalog for every declared-only id, as Camunda 8 does, `null` for an adapter id
+   without clients. Decided by the Implementor: it is built in this story rather than in S10.2.1,
+   because the deploying test proves the recorded version through it; the questions about the
+   versions of a declared id are S10.2.1's.
+4. **The planned `ZenBpmDeploymentIT#aDeployedVersionWithoutAMethodEndsTheStart`** is
+   `ZenBpmProcessVersionIT#aDeployedVersionWithoutAMethodEndsTheStart` (decided by the Implementor):
+   it needs an application of its own, and `DeployItApplication` scans its package and every package
+   below it. The note above asks to assert the phrase `A_VERSION_OF_A_PROCESS`; that phrase is the
+   subject line of the findings in the startup box, and the message which ends the start writes
+   "Version '1' of BPMN process 'Sealing'" instead, so the test asserts
+   `ELEMENTS_SERVED_BY_NO_METHOD_IN_THIS_VERSION`, the version and process as that message writes
+   them, and the method.
+5. **The unknown tag is reported by the platform**, once per start, as a WARN of the startup box
+   (`ProcessVersions#reportUnknownVersionTag`), beside the platform's own "neither a deployed version
+   nor a version tag" line and its dead-method warning. The finding publishes no phrase, so
+   `#aTagResolves` finds it by the specification and the method in the order it names them.
+6. **Quarkus** (open question 6): the catalog is built in `core` and registered by the core's calls,
+   so the Quarkus build-time wiring needs no change; the Quarkus suite runs unchanged in the clean
+   build. Its twins are S10.4.1's.
+7. **The refresh interval** of an unknown version or tag is the platform's default of 60 seconds, as
+   on Camunda 8.
+
+Decision 55 (new) records the catalog; GAPS 32 is new. `docs/architecture/01-architecture.md` no
+longer says that the catalog "comes with E10".
+
 **Acceptance criteria**
 
-- [ ] A version specification naming a tag routes; a tag nobody deployed is reported once at startup.
+- [x] A version specification naming a tag routes; a tag nobody deployed is reported once at startup.
+  `ZenBpmProcessVersionIT#aTagResolves` against the pinned image: a workflow on the version tagged
+  `release-1` is served by the method of `version = "release-1"`, one on the version tagged
+  `release-2` by that of `version = "release-2"`, and each start names the method of
+  `version = "release-9"` once in its startup box. `#theVersionDecidesWhichMethodRuns` holds the
+  numbers (`version = "1"`, `version = ">1"`, two deployments), `#aDeployedVersionWithoutAMethodEndsTheStart`
+  the end of the start (platform decision 126), `#aTagAnotherVersionCarriesIsRefused` and
+  `#aRolledBackTaggedModelGetsItsOldVersionBack` GAPS 32; `ZenBpmProcessVersionsTest` the one list
+  request, oldest first with the tags, and the deployed version known without a request.
+  Clean build of the story's commit (`TZ=Etc/UTC mvn clean install` on OpenJDK 25.0.2, Docker ITs
+  included, none skipped): engine test support 12 + 5, core 1,181 + 100, Spring Boot 14 + 88, smoke
+  test 38, Quarkus runtime 13, deployment 52, integration tests 20, gate 37; coverage 100 % on both
+  platforms (0 of 34,633 instructions missed on Spring Boot, 0 of 34,503 on Quarkus);
+  `bin/check-deploy-safety.sh` green. Mutants: 4 written, 4 killed (the version recorded from the
+  deployment, the registration in `wireBpmn`, the `null` catalog of an adapter id without clients,
+  the order of the versions).
 
 ### S10.2.1 Old versions, renamed processes, open task count
 

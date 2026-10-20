@@ -93,3 +93,9 @@ what a remote BPMS looks like.
     what the element maps in, and once it waited it reads nothing else. A push of the workflow
     writes every iteration which runs, so their gateways read the pushed value; an iteration which
     starts later reads it only through such a mapping (GAPS 31).
+18. **A version tag names one version of a process**: a changed model under a tag an earlier
+    version carries is refused, and the start ends naming the tag. Give every changed model a new
+    tag, also where only the application's methods changed, because the adapter writes markers and
+    mappings into the model it deploys. A model deployed again with the tag and the content of an
+    older version gets that older version back, while new workflows start on the newest one
+    (GAPS 32).

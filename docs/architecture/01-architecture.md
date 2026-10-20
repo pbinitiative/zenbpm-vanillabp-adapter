@@ -182,15 +182,19 @@ outside a body, so only inside a body is the id variable carried, by an input ma
 multi-instance element the call runs in, and only where the called process shares the aggregate.
 `unsharedWorkflowAggregatePaths` and `declaredTypesOfWorkflowAggregatePaths` are not called, as in
 the Camunda 8 adapter: a model expression reading an attribute the aggregate does not share fails at
-runtime as a FEEL error (deviation 14). The process version catalog (`registerProcessVersions`)
-comes with E10; until then nothing is registered, which the core reads as "not asked yet".
+runtime as a FEEL error (deviation 14). `registerProcessVersions` registers the version catalog
+of the adapter id, `ZenBpmProcessVersions`, after the platform validated the tasks: it lists the
+versions and their tags under the scoped id with one request per process and records the version
+this start deployed from the deployment's answer (decision 55); `processVersionCatalogOf` hands out
+the same catalog for a process id a workflow module declares without a model.
 
 `deployResources`: `validateNoCollidingProcessIds` (before anything is sent), then
 `ZenBpmEngineWait` and `ZenBpmEnvironmentInfo`, then one `POST /v1/dmn-resource-definitions` per DMN
 first, so no new process version calls a decision the engine does not hold yet, then one `POST
 /v1/process-definitions` per BPMN file (the bytes as read where the pipeline changed nothing, the
 document written out otherwise) with a `GET /v1/process-definitions/{key}` to learn its version.
-Only once the engine took every file come `registerDeployedVersion` (unchanged files included) and
+Only once the engine took every file come `registerDeployedVersion` (unchanged files included),
+the version and its tag recorded in the version catalog, and
 the `ZenBpmDeployedProcesses` record (scoped id, key, version, version tag, model as the engine
 holds it) in the client factory, which serves the viewer and the ownership checks, and
 `reportIdentifiersTheModelsDeclare`. The identifiers the engine held before are not reported: every
