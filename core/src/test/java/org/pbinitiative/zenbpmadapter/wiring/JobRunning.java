@@ -30,6 +30,8 @@ import org.pbinitiative.zenbpmadapter.client.ZenBpmClientFactory;
 import org.pbinitiative.zenbpmadapter.client.grpc.Zenbpm.WaitingJob;
 import org.pbinitiative.zenbpmadapter.model.ZenBpmMarkerTasks;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.google.protobuf.ByteString;
 
 import io.vanillabp.integration.adapter.spi.NameClashAvoidance;
@@ -58,6 +60,12 @@ final class JobRunning implements AutoCloseable {
      * event.
      */
     static final String END_MARKER_TYPE = "vanillabp__ended__shop__Order";
+
+    /**
+     * The key of version 3 of <code>shop__Order</code>, the version of every instance the engine
+     * holds unless a test says otherwise.
+     */
+    static final long DEFINITION_KEY = 4503599627370498L;
 
     static final Duration JOB_TIMEOUT = Duration.ofMinutes(5);
 
@@ -118,6 +126,7 @@ final class JobRunning implements AutoCloseable {
                 JOB_TYPE), true, true, Map.of("Placed", BpmsStartTrigger.Kind.TIMER), Map.of("Shipped",
                         ZenBpmMarkerTasks.Ending.BRANCH, "Withdrawn", ZenBpmMarkerTasks.Ending.WORKFLOW), Map.of()));
         dispatcher.register(handler);
+        holdsTheModel(DEFINITION_KEY, modelOfOrder("Shipped", "Withdrawn"));
     }
 
     /**
@@ -208,6 +217,95 @@ final class JobRunning implements AutoCloseable {
         final List<String> standingAt
     ) {
         holds(key, scopedProcessId, processType, parentKey, businessKey, variables, standingAt, "active");
+    }
+
+    /**
+     * Lets the engine hold a root instance of <code>shop__Order</code> of another version, whose
+     * tokens stand at elements.
+     *
+     * @param key The instance key
+     * @param definitionKey The key of the version
+     * @param version The version
+     * @param businessKey The business key, <code>null</code> for none
+     * @param variables The variables, written as JSON as they are
+     * @param standingAt The element of each token of the instance
+     */
+    void holdsOfVersion(
+        final long key,
+        final long definitionKey,
+        final int version,
+        final String businessKey,
+        final String variables,
+        final List<String> standingAt
+    ) {
+        holds(key, definitionKey, version, "shop__Order", "default", null, businessKey, variables, standingAt,
+                "active");
+    }
+
+    /**
+     * Lets the engine answer the model of a version of a process by its key.
+     *
+     * @param definitionKey The key of the version
+     * @param bpmn The model as XML
+     */
+    void holdsTheModel(
+        final long definitionKey,
+        final String bpmn
+    ) {
+        engine.answers("GET", "/v1/process-definitions/%d".formatted(definitionKey), 200, """
+                {"key": %d, "version": 3, "bpmnProcessId": "shop__Order", "bpmnData": %s}""".formatted(definitionKey,
+                asJsonString(bpmn)));
+    }
+
+    /**
+     * A model of <code>shop__Order</code> whose start splits into two branches, each with an end
+     * marker in front of its end event: one which ends its branch, and a terminate end event.
+     *
+     * @param branchEnd The end event which ends its branch
+     * @param terminateEnd The terminate end event
+     * @return The model as XML
+     */
+    static String modelOfOrder(
+        final String branchEnd,
+        final String terminateEnd
+    ) {
+        return """
+                <?xml version="1.0" encoding="UTF-8"?>
+                <bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" \
+                xmlns:zenbpm="http://zenbpm.pbinitiative.org/1.0" id="Definitions_Order" \
+                targetNamespace="http://bpmn.io/schema/bpmn">
+                  <bpmn:process id="shop__Order" isExecutable="true">
+                    <bpmn:startEvent id="Placed"><bpmn:outgoing>toSplit</bpmn:outgoing></bpmn:startEvent>
+                    <bpmn:parallelGateway id="Split">
+                      <bpmn:incoming>toSplit</bpmn:incoming>
+                      <bpmn:outgoing>toBranchMarker</bpmn:outgoing>
+                      <bpmn:outgoing>toTerminateMarker</bpmn:outgoing>
+                    </bpmn:parallelGateway>
+                    <bpmn:serviceTask id="vanillabp__ended__%1$s">
+                      <bpmn:extensionElements><zenbpm:taskDefinition type="vanillabp__ended__shop__Order" />\
+                </bpmn:extensionElements>
+                      <bpmn:incoming>toBranchMarker</bpmn:incoming>
+                      <bpmn:outgoing>toBranchEnd</bpmn:outgoing>
+                    </bpmn:serviceTask>
+                    <bpmn:endEvent id="%1$s"><bpmn:incoming>toBranchEnd</bpmn:incoming></bpmn:endEvent>
+                    <bpmn:serviceTask id="vanillabp__ended__%2$s">
+                      <bpmn:extensionElements><zenbpm:taskDefinition type="vanillabp__ended__shop__Order" />\
+                </bpmn:extensionElements>
+                      <bpmn:incoming>toTerminateMarker</bpmn:incoming>
+                      <bpmn:outgoing>toTerminateEnd</bpmn:outgoing>
+                    </bpmn:serviceTask>
+                    <bpmn:endEvent id="%2$s">
+                      <bpmn:incoming>toTerminateEnd</bpmn:incoming>
+                      <bpmn:terminateEventDefinition />
+                    </bpmn:endEvent>
+                    <bpmn:sequenceFlow id="toSplit" sourceRef="Placed" targetRef="Split" />
+                    <bpmn:sequenceFlow id="toBranchMarker" sourceRef="Split" targetRef="vanillabp__ended__%1$s" />
+                    <bpmn:sequenceFlow id="toBranchEnd" sourceRef="vanillabp__ended__%1$s" targetRef="%1$s" />
+                    <bpmn:sequenceFlow id="toTerminateMarker" sourceRef="Split" targetRef="vanillabp__ended__%2$s" />
+                    <bpmn:sequenceFlow id="toTerminateEnd" sourceRef="vanillabp__ended__%2$s" targetRef="%2$s" />
+                  </bpmn:process>
+                </bpmn:definitions>
+                """.formatted(branchEnd, terminateEnd);
     }
 
     /**
@@ -474,8 +572,32 @@ final class JobRunning implements AutoCloseable {
         engine.close();
     }
 
+    private static String asJsonString(final String text) {
+        try {
+            return new ObjectMapper().writeValueAsString(text);
+        } catch (final JsonProcessingException e) {
+            throw new IllegalStateException(e);
+        }
+    }
+
     private void holds(
         final long key,
+        final String scopedProcessId,
+        final String processType,
+        final Long parentKey,
+        final String businessKey,
+        final String variables,
+        final List<String> standingAt,
+        final String state
+    ) {
+        holds(key, DEFINITION_KEY, 3, scopedProcessId, processType, parentKey, businessKey, variables, standingAt,
+                state);
+    }
+
+    private void holds(
+        final long key,
+        final long definitionKey,
+        final int version,
         final String scopedProcessId,
         final String processType,
         final Long parentKey,
@@ -491,25 +613,28 @@ final class JobRunning implements AutoCloseable {
                         "elementId": "%s"}"""
                         .formatted(elementId))
                 .collect(Collectors.joining(","));
-        engine.answers("GET", "/v1/process-instances/%d".formatted(key), 200, """
-                {
-                  "key": %d,
-                  "processDefinitionKey": 4503599627370498,
-                  "bpmnProcessId": "%s",
-                  "version": 3,
-                  %s
-                  "createdAt": "2026-10-17T14:30:25.123Z",
-                  "state": "%s",
-                  %s
-                  "processType": "%s",
-                  "variables": {%s},
-                  "activeElementInstances": [%s]
-                }
-                """.formatted(key, scopedProcessId, businessKey == null ? "" : "\"businessKey\": \"%s\",".formatted(
-                businessKey), state, parentKey == null ? ""
-                        : "\"parentProcessInstanceKey\": %d,".formatted(
-                                parentKey),
-                processType, variables, tokens));
+        engine.answers("GET", "/v1/process-instances/%d".formatted(key), 200,
+                """
+                        {
+                          "key": %d,
+                          "processDefinitionKey": %d,
+                          "bpmnProcessId": "%s",
+                          "version": %d,
+                          %s
+                          "createdAt": "2026-10-17T14:30:25.123Z",
+                          "state": "%s",
+                          %s
+                          "processType": "%s",
+                          "variables": {%s},
+                          "activeElementInstances": [%s]
+                        }
+                        """.formatted(key, definitionKey, scopedProcessId, version,
+                        businessKey == null ? "" : "\"businessKey\": \"%s\",".formatted(
+                                businessKey),
+                        state, parentKey == null ? ""
+                                : "\"parentProcessInstanceKey\": %d,".formatted(
+                                        parentKey),
+                        processType, variables, tokens));
     }
 
 }

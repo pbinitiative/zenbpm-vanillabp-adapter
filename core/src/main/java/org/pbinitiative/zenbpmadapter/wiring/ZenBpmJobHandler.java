@@ -811,8 +811,7 @@ public final class ZenBpmJobHandler {
     ) {
         return process
                 .endMarkerJobType()
-                .filter(jobType::equals)
-                .isPresent();
+                .equals(jobType);
     }
 
     private static boolean isStartMarker(

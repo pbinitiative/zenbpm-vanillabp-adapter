@@ -403,10 +403,10 @@ hands each job and event not in its seen-set (per node; a delivery is forgotten 
 looks in a row no longer list it) to a handler slot with `tryExecute`. There
 `ZenBpmUserTaskNotifier` of the module whose claimed process the job's instance belongs to (instance
 cache) builds the context: `TaskEvent CREATED` resp. `CANCELED`, `taskKind = USER_TASK`, task id =
-job key, delivery id = `job.key + "-created"` resp. `"-canceled"`, the root as the workflow
-(decision 28), and after the core took it, the module's open-task probe as a wake-up. A terminated
-job never seen active is told as `CANCELED` only; the delivery record makes a restarted node
-harmless. A look which fails is never read as an empty one; a notification which found no free slot
+job key, delivery id = `job.key + "-created"` resp. the job key alone (decision 53), the root as
+the workflow (decision 28), and after the core took it, the module's open-task probe as a wake-up.
+A terminated job never seen active is told as `CANCELED` only; the delivery record makes a restarted
+node harmless. A look which fails is never read as an empty one; a notification which found no free slot
 waits for the next look, and one which threw or met the module's stop is told again by the next
 look, then after a wait which doubles with each failure, at most 64 looks. A job of a process no
 running module claims is not handed over again until a module starts. The stream is deliberately NOT
@@ -448,8 +448,12 @@ Both arrive as ordinary jobs of the marker tasks (section 3, step 4), served by 
   report. A report which threw fails the job like a task's handler (decision 27), with the
   `retry-backoff` resolved for the name `vanillabp__ended` and a message naming the
   `@WorkflowEnded` method. A canceled instance runs no marker, so kind CANCELED is never reported
-  (GAPS 9), and the user-task poller tells no cancellation of a user task whose workflow ended at a
-  reported end, which that report told already (decision 53).
+  (GAPS 9). The user-task poller tells a cancellation under the job key alone, the id under which
+  the core reported a user task the end took away, so the core answers it from its record
+  (decision 53). Whether an end event is a terminate end event is read from the model of the
+  instance's own version, once per version; the type of the end markers is subscribed for every
+  claimed process wherever the module subscribes a type, and a marker where nobody listens to the
+  end any more is completed without a report (decision 52).
 - `ZenBpmBpmsInitiatedStartHandler` (decisions 25 and 46), which the module's `ZenBpmJobHandler`
   hands the job of a start marker, inside the module's drain and under the renewal of its lock: the
   context carries the start event and its kind (remembered per process while wiring), the job's

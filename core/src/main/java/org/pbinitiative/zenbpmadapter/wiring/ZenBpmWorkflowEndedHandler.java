@@ -4,8 +4,12 @@
  */
 package org.pbinitiative.zenbpmadapter.wiring;
 
+import java.io.ByteArrayInputStream;
+import java.nio.charset.StandardCharsets;
 import java.time.Instant;
+import java.util.Map;
 import java.util.Optional;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.BooleanSupplier;
 
 import org.pbinitiative.zenbpmadapter.ZenBpmInstanceCache.InstanceFacts;
@@ -17,6 +21,7 @@ import org.pbinitiative.zenbpmadapter.client.ZenBpmRestClient;
 import org.pbinitiative.zenbpmadapter.client.api.JobFailure;
 import org.pbinitiative.zenbpmadapter.client.api.ProcessInstanceRef;
 import org.pbinitiative.zenbpmadapter.model.ZenBpmMarkerTasks;
+import org.pbinitiative.zenbpmadapter.model.ZenBpmModelReader;
 
 import io.vanillabp.integration.adapter.spi.workflowend.WorkflowEndedContext;
 import io.vanillabp.integration.adapter.spi.workflowend.WorkflowEndedInvoker;
@@ -32,7 +37,9 @@ import lombok.extern.slf4j.Slf4j;
  * <p>
  * An end event ends the workflow only where nothing else of it runs, so before an end is reported
  * the handler reads where the tokens of the workflow stand, see decision 52 in the repository's
- * DECISIONS.md:
+ * DECISIONS.md. What kind of end event the marker stands in front of is read from the model of the
+ * instance's own version, once per version, because an instance of an older version runs on the
+ * model it started with:
  * <ul>
  * <li><b>A terminate end event</b> ends the workflow whatever else runs: the end is reported at
  * once.</li>
@@ -48,8 +55,11 @@ import lombok.extern.slf4j.Slf4j;
  * workflow as cancelled. An aggregate the application deleted is skipped by the core, and the
  * workflow ends.</li>
  * </ul>
- * Two branches which reach their end markers at the same moment may both report the end: the
- * platform delivers the end at least once, and so does every second delivery of the marker. A
+ * Two branches whose end markers wait at the same time, because they were reached together or the
+ * first one's job waits for a slot or its retry, may both report the end: the platform delivers
+ * the end at least once, and so does every second delivery of the marker. Where nobody listens to
+ * the end of the process's workflows any more, the marker of a version deployed while somebody did
+ * is completed without a report, so its workflows still end. A
  * report which throws fails the job like the job of a handler which threw, see decision 27 in the
  * repository's DECISIONS.md, and the incident the engine raises at the last retry names the
  * <code>&#64;WorkflowEnded</code> method.
@@ -68,6 +78,9 @@ final class ZenBpmWorkflowEndedHandler {
     private final String clientId;
 
     private final ZenBpmRetryBackoffResolver retryBackoffs;
+
+    // the end markers of each version by its definition key, read once: a version never changes
+    private final Map<Long, Map<String, ZenBpmMarkerTasks.Ending>> endingsOfVersions = new ConcurrentHashMap<>();
 
     ZenBpmWorkflowEndedHandler(
         final String adapterId,
@@ -108,13 +121,31 @@ final class ZenBpmWorkflowEndedHandler {
         final var endEventId = ZenBpmMarkerTasks
                 .endEventOf(job.getElementId())
                 .orElse(job.getElementId());
-        // an end event this boot's model does not hold belongs to an older version of the process,
-        // and is taken for one which ends its branch only, so no end is reported too early
-        final var ending = process
-                .endMarkers()
-                .getOrDefault(endEventId, ZenBpmMarkerTasks.Ending.BRANCH);
+        if (!process.reportsItsEnd()) {
+            log.debug("""
+                    ZenBPM[{}]: nobody listens to the end of the workflows of process '{}' any more, so the end \
+                    marker in front of end event '{}' of instance {}, of a version deployed while somebody did, is \
+                    completed without a report""", adapterId, process.bpmnProcessId(), endEventId, job
+                    .getInstanceKey());
+            complete(received, endEventId, process, retry);
+            return;
+        }
+        final Map<String, ZenBpmMarkerTasks.Ending> endings;
+        try {
+            endings = endingsOf(facts, retry);
+        } catch (final RuntimeException e) {
+            log.info("""
+                    ZenBPM[{}]: the model of version {} of process '{}' could not be read ({}), so it is not known \
+                    whether end event '{}' of instance {} ends the workflow; the job is left to its lock, after which \
+                    the engine hands it out again""", adapterId, facts.version(), process.bpmnProcessId(),
+                    thrownAsText(e), endEventId, job.getInstanceKey());
+            return;
+        }
+        // the marker is in front of the end event in the model it came from, so an end event it
+        // does not hold cannot be met; it is taken for one which ends its branch all the same
+        final var ending = endings.getOrDefault(endEventId, ZenBpmMarkerTasks.Ending.BRANCH);
         if (ending == ZenBpmMarkerTasks.Ending.BRANCH) {
-            final var elsewhere = whatElseRuns(job.getInstanceKey(), process, retry);
+            final var elsewhere = whatElseRuns(job.getInstanceKey(), endings, retry);
             if (elsewhere.isPresent()) {
                 goOnWithout(received, endEventId, process, elsewhere.get(), retry);
                 return;
@@ -148,7 +179,7 @@ final class ZenBpmWorkflowEndedHandler {
     // runs; a token at an end event waits for the job of a message end event, and ends there
     private Optional<Elsewhere> whatElseRuns(
         final long instanceKey,
-        final WiredProcess process,
+        final Map<String, ZenBpmMarkerTasks.Ending> endings,
         final ZenBpmCommandRetry retry
     ) {
         final var standing = retry.read("read of the tokens of instance %d".formatted(instanceKey),
@@ -159,9 +190,8 @@ final class ZenBpmWorkflowEndedHandler {
         if (standing
                 .get()
                 .stream()
-                .anyMatch(elementId -> !elementId.startsWith(ZenBpmMarkerTasks.ENDED) && !process
-                        .endMarkers()
-                        .containsKey(elementId))) {
+                .anyMatch(elementId -> !elementId.startsWith(ZenBpmMarkerTasks.ENDED) && !endings.containsKey(
+                        elementId))) {
             return Optional.of(Elsewhere.ANOTHER_BRANCH);
         }
         final var children = retry.read("read of the child instances of instance %d".formatted(instanceKey),
@@ -172,6 +202,31 @@ final class ZenBpmWorkflowEndedHandler {
             return Optional.of(Elsewhere.AN_EVENT_SUB_PROCESS);
         }
         return Optional.empty();
+    }
+
+    // the end markers of the model the instance runs on; a model which holds no executable process
+    // gives none, which reads every end event as one which ends its branch
+    private Map<String, ZenBpmMarkerTasks.Ending> endingsOf(
+        final InstanceFacts facts,
+        final ZenBpmCommandRetry retry
+    ) {
+        final var definitionKey = facts.definitionKey();
+        final var known = endingsOfVersions.get(definitionKey);
+        if (known != null) {
+            return known;
+        }
+        final var bpmn = retry.read("read of process definition %d".formatted(definitionKey), () -> rest
+                .processDefinition(definitionKey)
+                .bpmnData(), read -> false);
+        final var endings = ZenBpmModelReader
+                .read(workflowModuleId, "version %d of process '%s'".formatted(facts.version(), facts
+                        .scopedProcessId()), new ByteArrayInputStream(bpmn.getBytes(StandardCharsets.UTF_8)))
+                .stream()
+                .findFirst()
+                .map(ZenBpmMarkerTasks::endMarkersOf)
+                .orElse(Map.of());
+        endingsOfVersions.put(definitionKey, endings);
+        return endings;
     }
 
     private void goOnWithout(

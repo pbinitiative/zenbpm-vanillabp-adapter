@@ -287,7 +287,9 @@ and what was decided:
    holds a completed job of the process's end markers, only for a process which writes end markers
    (`WiredProcess#endMarkerJobType`); the completed job is the proof that the report committed,
    because a marker's job is completed only after it, and a version without markers has none. A
-   cancelled instance's user tasks are told as before (GAPS 9).
+   cancelled instance's user tasks are told as before (GAPS 9). *Corrected after the reviews:* the
+   rule lost cancellations the core never delivered, and was replaced by a delivery id which the
+   core answers from its record; see finding 3 of the answers below.
 5. **A deleted aggregate** (open question 3). `WorkflowEndedHandlers#invokeHandler` logs it and
    returns, and `DerivedCancelations` swallows the failed cancellation of its task; the marker's job
    is completed and the workflow ends (`ZenBpmLifecycleIT#aWorkflowWhoseAggregateIsGoneEnds`).
@@ -323,11 +325,15 @@ and what was decided:
 `#theEndCancelsTheTasksStillOpen` (a task waiting in a parallel branch inside an embedded
 sub-process is reported `CANCELED` before `@WorkflowEnded` runs, because both carry the root key).
 Added: `ZenBpmMarkerTasksTest` (nine cases of the end marker), `ZenBpmMarkerTasksIT#aWorkflowWaitsAtTheMarkerOfItsEndEvent`
-and `#anUncaughtErrorEndEventRaisesAnIncident`, `ZenBpmUserTaskPollerTest` (three cases),
+and `#anUncaughtErrorEndEventRaisesAnIncident`, `ZenBpmUserTaskPollerTest` (one case after the
+reviews),
 `ZenBpmDeclaredProcessWorkersTest` (four cases), `ZenBpmRestClientTest#whereTheTokensStandIsRead`,
 `ZenBpmRestClientContractIT#theTokensOfAnInstanceStandWhereTheyWait`, `ZenBpmLifecycleIT#aBranchWhichEndsWhileAnotherRunsReportsNothing`,
 `#theEndWaitsForAnEventSubProcessStillRunning`, `#aReportWhichThrewIsRepeated`,
-`#aWorkflowWhoseAggregateIsGoneEnds`, `ZenBpmUserTaskRestartIT#aUserTaskTheEndTookAwayIsToldOnceAcrossARestart`.
+`#aWorkflowWhoseAggregateIsGoneEnds`, `ZenBpmUserTaskRestartIT#aUserTaskTheEndTookAwayIsToldOnceAcrossARestart`,
+and after the reviews `#aCancellationTheEndCouldNotReportIsToldByALook`,
+`#aUserTaskTheEndTookAwayIsToldTwiceWhereTheEndReleasesTheRecords` and three cases of
+`ZenBpmWorkflowEndedHandlerTest`.
 
 **Acceptance criteria**
 
@@ -357,6 +363,62 @@ and `#anUncaughtErrorEndEventRaisesAnIncident`, `ZenBpmUserTaskPollerTest` (thre
   `ZenBpmLifecycleIT#aBranchWhichEndsWhileAnotherRunsReportsNothing` and `#theEndCancelsTheTasksStillOpen`
   with an end reported at `Inspected`; the read of the child instances, failing
   `#theEndWaitsForAnEventSubProcessStillRunning`).
+
+*Answers to two reviews of e09-f9.2, 2026-10-20* (Claude: approve after one Major; Copilot:
+changes requested, 2 Major, 1 Minor; both of `a3917f7`). Every finding was checked against the
+code, the resolved platform snapshot `2.0.0-20261015.045823-21` and the pinned engine; all seven
+were valid. Decisions 52 and 53, not merged yet, were rewritten in place.
+
+1. **An end event was read by the model this application deployed** (Copilot 1, Claude 2). The
+   handler looked the end event up in this boot's model, so an older version's terminate end
+   event whose id the new model lacks went unreported while another branch ran, and an older end
+   of a branch which the new model names as terminate reported too early; Copilot reproduced both
+   on the pinned engine. Fixed: the handler reads the model of the instance's own version
+   (`facts.definitionKey()`, `GET /v1/process-definitions/{key}`) once per version, and uses it
+   both for the kind of end event and for a token which stands at an end event; a model which
+   cannot be read leaves the job to its lock. Tests:
+   `ZenBpmWorkflowEndedHandlerTest#anEndEventIsReadByTheModelOfTheInstancesVersion` (both
+   directions, one read for two jobs) and `#aModelWhichCannotBeReadLeavesTheJob`. Decision 52.
+2. **The end markers of older versions stopped their workflows once nobody listened** (Claude 1).
+   The type was subscribed only where this boot wrote markers, and a ZenBPM job nobody subscribes
+   is never handed out and raises no incident. Fixed: the type of every wired process's end
+   markers is subscribed wherever the module subscribes a type anyway
+   (`ZenBpmProcessingContext#jobTypes`), with its job-timeout; a marker's job where the end is no
+   longer heard is completed without a report (`#anEndNobodyListensToAnyMoreIsCompletedWithoutAReport`);
+   a declared id serves the end markers of its held models wherever the platform hands an
+   invoker of ends (`ZenBpmDeclaredProcessWorkersTest#theEndMarkersOfAHeldModelAreServedWhereNobodyListensAnyMore`).
+   A module which subscribes no type at all opens no stream for them, so an adapter id without a
+   job stream still starts; that limit is in decision 52. The subscription lists of
+   `ZenBpmWorkflowProcessingTest`, `ZenBpmDeploymentWiringTest` and
+   `ZenBpmDeclaredProcessWorkersTest` name the new type.
+3. **The poller's rule dropped cancellations the core never delivered** (Copilot 2, Claude 3).
+   `DerivedCancelations` reports each open record in a transaction of its own and swallows a
+   failure, leaving the record open, and a creation whose method takes no `@TaskId` leaves no
+   record; the rule left both out, and it looked at the called process instead of the root.
+   Fixed: the rule is gone. The poller tells a user task's cancellation under the job key alone,
+   the id the core gives its own derived cancellation (the task id), so the core answers the
+   poller from its record where it reported the cancellation, and runs the method where it did
+   not. Against the pinned engine: `ZenBpmUserTaskRestartIT#aUserTaskTheEndTookAwayIsToldOnceAcrossARestart`
+   (records kept: creation, cancellation and end once each, before and after a restart),
+   `#aCancellationTheEndCouldNotReportIsToldByALook` (the method throws at the end; a look tells it)
+   and `#aUserTaskTheEndTookAwayIsToldTwiceWhereTheEndReleasesTheRecords` (the limit: the released
+   record cannot answer the look). Decision 53, and decision 12's "superseded in part" line.
+4. **Documents** (Copilot 3, Claude 4 and 5). The SPI mapping's user-task row and GAPS 10 no longer
+   call the poller the only source; README and decision 52 say that two branches whose markers wait
+   at the same time may both report, that an end behind a running event sub-process waits up to one
+   `job-timeout` of `vanillabp__ended`, and what a report costs.
+
+Mutants of the fixes: 9 of 9 killed. At the unit level: the guard for an end nobody hears, the
+endings of this boot instead of the version's, the cache per version, the version's end events in
+the read of the tokens, the cancellation's id (7 poller tests), the end types riding along (5
+processing tests), the declared gate on an invoker of ends, the job-timeout of an end type nobody
+hears. Against the pinned engine: the cancellation's id, failing
+`ZenBpmUserTaskRestartIT#aUserTaskTheEndTookAwayIsToldOnceAcrossARestart` with two cancellations.
+Clean build of the review-fix commit (`TZ=Etc/UTC mvn clean install` on OpenJDK 25.0.2, Docker ITs
+included, none skipped): engine test support 12 + 5, core 1,143 + 96, Spring Boot 14 + 80, smoke
+test 38, Quarkus runtime 13, deployment 52, integration tests 17, gate 37; coverage 100 % on both
+platforms (0 of 33,281 instructions missed on Spring Boot, 0 of 33,151 on Quarkus);
+`bin/check-deploy-safety.sh` green.
 
 ## F9.3 Workflows the engine starts itself
 

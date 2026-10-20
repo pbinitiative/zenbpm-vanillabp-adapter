@@ -16,10 +16,7 @@ import org.pbinitiative.zenbpmadapter.ZenBpmInstanceCache.InstanceFacts;
 import org.pbinitiative.zenbpmadapter.ZenBpmProcessingContext;
 import org.pbinitiative.zenbpmadapter.ZenBpmProcessingContext.WiredProcess;
 import org.pbinitiative.zenbpmadapter.client.ZenBpmClientFactory;
-import org.pbinitiative.zenbpmadapter.client.ZenBpmRestClient;
-import org.pbinitiative.zenbpmadapter.client.api.JobFilter;
 import org.pbinitiative.zenbpmadapter.client.api.JobRef;
-import org.pbinitiative.zenbpmadapter.client.api.ProcessInstanceRef;
 
 import io.vanillabp.integration.adapter.spi.AdapterCollaborators;
 import io.vanillabp.integration.adapter.spi.workflowtask.DeliveryOfAnUnknownWorkflowException;
@@ -44,16 +41,12 @@ import lombok.extern.slf4j.Slf4j;
  * invocation. The notification names the job key as the task id, which completes the task later,
  * {@link TaskKind#USER_TASK} as its kind, the root instance of the task's own process as the
  * workflow (see decision 28 in the repository's DECISIONS.md), and as its delivery id the job key
- * with the event, so the core's record of a delivery answers a notification which a restarted node
- * hands it again. Once the core took the notification, it is handed the module's
+ * with the event for a creation and the job key alone for a cancellation, so the core's record of a
+ * delivery answers a notification which a restarted node hands it again, and a cancellation the core
+ * reported itself when the workflow ended (see decision 53 in the repository's DECISIONS.md). Once
+ * the core took the notification, it is handed the module's
  * {@link ZenBpmOpenTaskProbe} of the process, as after every delivery of a job, so a creation or a
  * cancellation of a user task is a wake-up of its workflow like any other.
- * <p>
- * A user task taken away by the end of its workflow is not notified as cancelled where the end was
- * reported, which the workflow's root instance shows by having completed after its end marker's
- * job: the core reported every user task it believed open in that workflow as cancelled before the
- * end, so a notification would tell the application a second time, see decision 53 in the
- * repository's DECISIONS.md.
  * <p>
  * A notification runs inside the module's {@link ZenBpmDrain}, so the shutdown waits for it, and
  * one which starts while the module stops is not run.
@@ -78,8 +71,6 @@ public final class ZenBpmUserTaskNotifier {
     private final ZenBpmInstanceCache instances;
 
     private final ZenBpmDeployedProcesses deployedProcesses;
-
-    private final ZenBpmRestClient rest;
 
     /**
      * The notifier of a workflow module whose processing starts.
@@ -112,7 +103,6 @@ public final class ZenBpmUserTaskNotifier {
         this.invoker = collaborators.workflowTaskInvoker();
         this.instances = factory.instances();
         this.deployedProcesses = factory.deployedProcesses();
-        this.rest = factory.rest();
     }
 
     /**
@@ -220,22 +210,6 @@ public final class ZenBpmUserTaskNotifier {
             if (notification.isEmpty()) {
                 return Outcome.AGAIN;
             }
-            final boolean toldByTheEnd;
-            try {
-                toldByTheEnd = (event == TaskEvent.Event.CANCELED) && theEndOfItsWorkflowToldIt(process, notification
-                        .get());
-            } catch (final RuntimeException e) {
-                log.debug(
-                        "ZenBPM[{}]: the end of the workflow of user task {} ('{}') could not be read; the next look at the user tasks hands it over again: {}",
-                        adapterId, job.key(), taskDefinition, e.getMessage());
-                return Outcome.AGAIN;
-            }
-            if (toldByTheEnd) {
-                log.debug(
-                        "ZenBPM[{}]: user task {} ('{}') was taken away by the end of its workflow, whose report told the application already, so it is not notified as {}",
-                        adapterId, job.key(), taskDefinition, event);
-                return Outcome.DONE;
-            }
             if (notification
                     .get()
                     .namesNoAggregate()) {
@@ -252,19 +226,24 @@ public final class ZenBpmUserTaskNotifier {
     }
 
     /**
-     * The delivery id of a notification of a user task: the job key with the event, so the creation
-     * and the cancellation of one user task are two deliveries, and no id of a job of the job stream,
-     * which is a key alone, is ever one of them.
+     * The delivery id of a notification of a user task: the job key with the event for a creation,
+     * and the job key alone for a cancellation, so the creation and the cancellation of one user task
+     * are two deliveries. A cancellation carries the id under which the core reports a task it still
+     * believes open when its workflow ends, the task id, so the core answers the notification of a
+     * cancellation it reported itself from its record, see decision 53 in the repository's
+     * DECISIONS.md. The job stream never hands out a user task's job, so no delivery of the stream
+     * carries that key.
      *
      * @param jobKey The key of the user task's job
      * @param event What happened to the user task
-     * @return E.g. <code>2251799813685251-created</code>
+     * @return E.g. <code>2251799813685251-created</code>, or <code>2251799813685251</code> for a
+     *         cancellation
      */
     static String deliveryIdOf(
         final long jobKey,
         final TaskEvent.Event event
     ) {
-        return event == TaskEvent.Event.CANCELED ? "%d-canceled".formatted(jobKey) : "%d-created".formatted(jobKey);
+        return event == TaskEvent.Event.CANCELED ? Long.toString(jobKey) : "%d-created".formatted(jobKey);
     }
 
     private Outcome invoke(
@@ -327,35 +306,6 @@ public final class ZenBpmUserTaskNotifier {
                     "ZenBPM[{}]: the other open tasks of the workflow of user task {} ('{}') could not be looked at; the next delivery of the workflow looks again",
                     adapterId, wakeUp.getTaskId(), wakeUp.getTaskDefinition(), e);
         }
-    }
-
-    // see decision 53 in the repository's DECISIONS.md: the end marker's job is completed only after
-    // the core committed the end, which reported every user task it believed open in the workflow
-    // as cancelled; a workflow which ends where a branch ends completes markers of its other branches
-    // without a report, so the workflow has to have ended as well
-    private boolean theEndOfItsWorkflowToldIt(
-        final WiredProcess process,
-        final Notification notification
-    ) {
-        final var endMarkerJobType = process.endMarkerJobType();
-        if (endMarkerJobType.isEmpty()) {
-            return false;
-        }
-        final var workflowId = notification.workflowId;
-        final var ended = rest
-                .instance(workflowId)
-                .map(ProcessInstanceRef::state)
-                .filter(ProcessInstanceRef.State.COMPLETED::equals)
-                .isPresent();
-        return ended && !rest
-                .jobs(JobFilter
-                        .anyJob()
-                        .withJobType(endMarkerJobType.get())
-                        .withState(JobRef.State.COMPLETED)
-                        .withProcessInstanceKey(workflowId)
-                        .withSize(1))
-                .items()
-                .isEmpty();
     }
 
     // an instance which names no aggregate was started past VanillaBP; a user task's job is not

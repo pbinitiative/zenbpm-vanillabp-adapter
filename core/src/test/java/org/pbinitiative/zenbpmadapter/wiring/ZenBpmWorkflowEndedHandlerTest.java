@@ -13,6 +13,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -21,9 +23,11 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.pbinitiative.zenbpmadapter.ZenBpmProcessingContext.WiredProcess;
 import org.pbinitiative.zenbpmadapter.client.FakeEngine;
 import org.pbinitiative.zenbpmadapter.client.ReceivedJob;
 
+import io.vanillabp.integration.adapter.spi.NameClashAvoidance;
 import io.vanillabp.integration.test.utils.CapturedOutput;
 import io.vanillabp.integration.test.utils.SuppressOutputExtension;
 import io.vanillabp.spi.service.WorkflowEnd;
@@ -45,6 +49,8 @@ class ZenBpmWorkflowEndedHandlerTest {
     private static final String SHIPPED = "vanillabp__ended__Shipped";
 
     private static final String WITHDRAWN = "vanillabp__ended__Withdrawn";
+
+    private static final long OLDER_VERSION = 4503599627370497L;
 
     private JobRunning jobs;
 
@@ -191,12 +197,68 @@ class ZenBpmWorkflowEndedHandlerTest {
     }
 
     @Test
-    @DisplayName("An end event the deployed model does not hold, of an older version, is taken for one which ends its branch, so no end is reported while another branch runs")
-    void anEndEventTheModelDoesNotHoldEndsItsBranch() {
-        holds(ROOT, "order-1", "\"id\": \"order-1\"", "vanillabp__ended__Gone", "Pack");
+    @DisplayName("An end event is read by the model of the instance's own version, not by the model this application deployed: an older version's terminate end event reports the end while another branch runs, and an older version's end event of a branch, which the deployed model holds as a terminate end event, reports nothing")
+    void anEndEventIsReadByTheModelOfTheInstancesVersion() {
+        // version 2 holds 'Shipped' as the terminate end event and 'Withdrawn' as the end of a branch
+        jobs.holdsTheModel(OLDER_VERSION, JobRunning.modelOfOrder("Withdrawn", "Shipped"));
+        jobs.holdsOfVersion(ROOT, OLDER_VERSION, 2, "order-1", "\"id\": \"order-1\"", List.of(SHIPPED, "Pack"));
+        jobs.holdsOfVersion(ROOT + 1, OLDER_VERSION, 2, "order-2", "\"id\": \"order-2\"", List.of(WITHDRAWN,
+                "Pack"));
+        jobs.hasChildren(ROOT);
+        jobs.takesTheCommands(ROOT, ROOT + 1);
+
+        jobs.runs(JobRunning.endMarkerJob(ROOT, SHIPPED));
+        jobs.runs(JobRunning.endMarkerJob(ROOT + 1, WITHDRAWN));
+
+        assertAll(
+                () -> assertEquals(List.of("order-1"), jobs.ends
+                        .ends()
+                        .stream()
+                        .map(end -> end
+                                .context()
+                                .getWorkflowAggregateId())
+                        .toList()),
+                () -> assertEquals(List.of("POST /v1/jobs/42/complete", "POST /v1/jobs/42/complete"), jobs
+                        .commands()),
+                () -> assertEquals(1, modelReadsOf(OLDER_VERSION), jobs.engine
+                        .requests()::toString));
+    }
+
+    @Test
+    @DisplayName("Where the model of the instance's version cannot be read, the job is left to its lock and nothing is reported, and the next delivery reads it again")
+    void aModelWhichCannotBeReadLeavesTheJob(final CapturedOutput output) {
+        jobs.engine.answers("GET", "/v1/process-definitions/%d".formatted(OLDER_VERSION), 500,
+                "{\"code\": \"TECHNICAL_ERROR\", \"message\": \"the engine broke down\"}");
+        jobs.holdsOfVersion(ROOT, OLDER_VERSION, 2, "order-1", "\"id\": \"order-1\"", List.of(SHIPPED));
         jobs.takesTheCommands(ROOT);
 
-        jobs.runs(JobRunning.endMarkerJob(ROOT, "vanillabp__ended__Gone"));
+        jobs.runs(JobRunning.endMarkerJob(ROOT, SHIPPED));
+        final var whileItFailed = jobs.commands();
+        jobs.holdsTheModel(OLDER_VERSION, JobRunning.modelOfOrder("Shipped", "Withdrawn"));
+        jobs.hasChildren(ROOT);
+        jobs.runs(JobRunning.endMarkerJob(ROOT, SHIPPED));
+
+        assertAll(
+                () -> assertEquals(List.of(), whileItFailed),
+                () -> assertEquals(1, jobs.ends
+                        .ends()
+                        .size()),
+                () -> assertTrue(output
+                        .getAllOfThisTest()
+                        .contains("the model of version 2 of process 'Order' could not be read"),
+                        output::getAllOfThisTest));
+    }
+
+    @Test
+    @DisplayName("Where nobody listens to the end of the process's workflows any more, the end marker of a version deployed while somebody did is completed without a report, so its workflow ends")
+    void anEndNobodyListensToAnyMoreIsCompletedWithoutAReport() {
+        jobs.dispatcher.register(jobs.handlerOf("shop", NameClashAvoidance.USE_PREFIX,
+                new WiredProcess("Order", "shop__Order", Set.of(JobRunning.JOB_TYPE), true, false, Map.of(), Map
+                        .of(), Map.of())));
+        holds(ROOT, "order-1", "\"id\": \"order-1\"", SHIPPED);
+        jobs.takesTheCommands(ROOT);
+
+        jobs.runs(JobRunning.endMarkerJob(ROOT, SHIPPED));
 
         assertAll(
                 () -> assertEquals(List.of(), jobs.ends.ends()),
@@ -357,6 +419,14 @@ class ZenBpmWorkflowEndedHandlerTest {
                 .getAllOfThisTest()
                 .split("could not be answered to the engine; it is left to its lock", -1).length - 1,
                 output::getAllOfThisTest);
+    }
+
+    private long modelReadsOf(final long definitionKey) {
+        return jobs.engine
+                .requests()
+                .stream()
+                .filter(request -> "/v1/process-definitions/%d".formatted(definitionKey).equals(request.path()))
+                .count();
     }
 
     private void holds(

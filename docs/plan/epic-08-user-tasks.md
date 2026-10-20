@@ -129,8 +129,10 @@ the maintainers, all recorded in decision 12, which this story enters together w
   out. Recorded in decision 12 and GAPS 10. *Note for S9.2.1:* once the end marker makes the core
   release the records of an ended workflow, this case reaches every user task of a workflow which
   ended at an end event while its user task was cancelled; decide there whether a terminated job of
-  an instance which ended is still told. *Answered by S9.2.1, 2026-10-20:* it is not, where the end
-  was reported (decision 53, `ZenBpmUserTaskRestartIT#aUserTaskTheEndTookAwayIsToldOnceAcrossARestart`).
+  an instance which ended is still told. *Answered by S9.2.1, 2026-10-20, corrected after its
+  reviews:* it is told, under the job key alone, the id under which the core reported it at the
+  end, so the core answers it from its record where the records are kept; where the end released
+  them it is told twice (decision 53, `ZenBpmUserTaskRestartIT#aUserTaskTheEndTookAwayIsToldOnceAcrossARestart`).
 - The WARNs for `PT0S` and below one second are configuration warnings beside the one about a long
   `shutdown-grace` (`ZenBpmAdapterConfiguration#validate`), so the startup report logs each once.
 

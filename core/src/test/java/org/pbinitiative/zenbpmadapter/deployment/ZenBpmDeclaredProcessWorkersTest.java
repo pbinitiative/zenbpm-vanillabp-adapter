@@ -95,7 +95,7 @@ class ZenBpmDeclaredProcessWorkersTest {
 
         final var subscribed = stream
                 .call(0)
-                .subscriptions(6);
+                .subscriptions(8);
         final var handler = new ZenBpmJobHandler(ADAPTER_ID, factory(), collaborators(NameClashAvoidance.USE_PREFIX,
                 TestWiring
                         .claiming("Orders")
@@ -109,7 +109,10 @@ class ZenBpmDeclaredProcessWorkersTest {
                         // the start markers of the claimed process, which starts a workflow of its own
                         "vanillabp__started__shop__Orders",
                         "shop__OrdersBeforeTheRename__charge",
-                        "shop__OrdersBeforeTheRename__refund"),
+                        "shop__OrdersBeforeTheRename__refund",
+                        // the end markers of both processes, which versions of them may carry
+                        "vanillabp__ended__shop__Orders",
+                        "vanillabp__ended__shop__OrdersBeforeTheRename"),
                         subscribed
                                 .stream()
                                 .map(StreamSubscriptionRequest::getJobType)
@@ -172,18 +175,20 @@ class ZenBpmDeclaredProcessWorkersTest {
 
         final var subscribed = stream
                 .call(0)
-                .subscriptions(4);
+                .subscriptions(6);
         final var handler = new ZenBpmJobHandler(ADAPTER_ID, factory(), collaborators(NameClashAvoidance.NONE,
                 TestWiring
                         .claiming("Orders")
                         .servedElsewhere("Notify")
                         .wiring()), context, ZenBpmRetryBackoffResolver.NONE);
         assertAll(
-                () -> assertEquals(List.of("charge", "ship", "pack", "vanillabp__started__Orders"), subscribed
-                        .stream()
-                        .map(StreamSubscriptionRequest::getJobType)
-                        .toList()),
-                () -> assertEquals(4, stream
+                () -> assertEquals(List.of("charge", "ship", "pack", "vanillabp__started__Orders",
+                        "vanillabp__ended__Orders", "vanillabp__ended__OrdersBeforeTheRename"),
+                        subscribed
+                                .stream()
+                                .map(StreamSubscriptionRequest::getJobType)
+                                .toList()),
+                () -> assertEquals(6, stream
                         .call(0)
                         .subscriptions()
                         .size()),
@@ -297,7 +302,7 @@ class ZenBpmDeclaredProcessWorkersTest {
     }
 
     @Test
-    @DisplayName("A declared process id whose methods are all wired by element id is named with both ways out, and the engine is asked only for the start markers of the models it holds, of which none carries one here")
+    @DisplayName("A declared process id whose methods are all wired by element id is named with both ways out, and the engine is asked only for the start and end markers of the models it holds, of which none carries one here")
     void aDeclaredIdWiredByElementIdIsNamedWithBothWaysOut(final CapturedOutput output) throws Exception {
         final var held = "shop__%s".formatted(DECLARED);
         theEngineHolds(held, model(held, "shop__%s__charge".formatted(DECLARED), null));
@@ -310,9 +315,9 @@ class ZenBpmDeclaredProcessWorkersTest {
         deploymentService.startWorkflowProcessing("shop", context);
 
         assertAll(
-                () -> assertEquals(4, stream
+                () -> assertEquals(5, stream
                         .call(0)
-                        .subscriptions(4)
+                        .subscriptions(5)
                         .size()),
                 () -> assertTrue(rest
                         .requests()
@@ -325,8 +330,8 @@ class ZenBpmDeclaredProcessWorkersTest {
                         .getOutOfThisTest()
                         .contains(
                                 """
-                                        The start markers of the models the engine holds under that id are served all the same, \
-                                        because they need no task definition."""),
+                                        The start and end markers of the models the engine holds under that id are served all \
+                                        the same, because they need no task definition."""),
                         output::getOutOfThisTest),
                 () -> assertFalse(context
                         .wiredProcesses()
@@ -371,9 +376,8 @@ class ZenBpmDeclaredProcessWorkersTest {
                         .wiredProcesses()
                         .get(DECLARED)
                         .jobTypes()),
-                () -> assertEquals("vanillabp__started__shop__OrdersBeforeTheRename", subscribed
-                        .getLast()
-                        .getJobType()));
+                () -> assertTrue(jobTypesOf(subscribed).contains("vanillabp__started__shop__OrdersBeforeTheRename"),
+                        () -> jobTypesOf(subscribed).toString()));
     }
 
     @Test
@@ -400,8 +404,8 @@ class ZenBpmDeclaredProcessWorkersTest {
                 () -> assertTrue(output
                         .getOutOfThisTest()
                         .contains("""
-                                so the start markers they may carry are not served. The next start of the application \
-                                reads them again."""), output::getOutOfThisTest));
+                                so the start and end markers they may carry are not served. The next start of the \
+                                application reads them again."""), output::getOutOfThisTest));
     }
 
     @Test
@@ -481,9 +485,9 @@ class ZenBpmDeclaredProcessWorkersTest {
         deploymentService.startWorkflowProcessing("shop", context);
 
         assertAll(
-                () -> assertEquals(4, stream
+                () -> assertEquals(5, stream
                         .call(0)
-                        .subscriptions(4)
+                        .subscriptions(5)
                         .size()),
                 () -> assertFalse(context
                         .wiredProcesses()
@@ -522,9 +526,8 @@ class ZenBpmDeclaredProcessWorkersTest {
                 .call(0)
                 .subscriptions(5);
         assertAll(
-                () -> assertEquals("shop__OrdersBeforeTheRename__refund", subscribed
-                        .getLast()
-                        .getJobType()),
+                () -> assertTrue(jobTypesOf(subscribed).contains("shop__OrdersBeforeTheRename__refund"),
+                        () -> jobTypesOf(subscribed).toString()),
                 () -> assertEquals(Set.of("shop__OrdersBeforeTheRename__refund"), context
                         .wiredProcesses()
                         .get(DECLARED)
@@ -629,9 +632,8 @@ class ZenBpmDeclaredProcessWorkersTest {
                         .wiredProcesses()
                         .get(DECLARED)
                         .startMarkers()),
-                () -> assertEquals("vanillabp__started__shop__OrdersBeforeTheRename", subscribed
-                        .getLast()
-                        .getJobType()));
+                () -> assertTrue(jobTypesOf(subscribed).contains("vanillabp__started__shop__OrdersBeforeTheRename"),
+                        () -> jobTypesOf(subscribed).toString()));
     }
 
     @Test
@@ -667,9 +669,8 @@ class ZenBpmDeclaredProcessWorkersTest {
                                 .wiredProcesses()
                                 .get(DECLARED)
                                 .endMarkers()),
-                () -> assertEquals("vanillabp__ended__shop__OrdersBeforeTheRename", subscribed
-                        .getLast()
-                        .getJobType()),
+                () -> assertTrue(jobTypesOf(subscribed).contains("vanillabp__ended__shop__OrdersBeforeTheRename"),
+                        () -> jobTypesOf(subscribed).toString()),
                 () -> assertTrue(output
                         .getOutOfThisTest()
                         .contains(
@@ -678,8 +679,8 @@ class ZenBpmDeclaredProcessWorkersTest {
     }
 
     @Test
-    @DisplayName("The end markers of a held model are not served where nobody listens to the end of the id's workflows, and the start markers are served without the end markers where the platform hands no invoker of starts")
-    void theEndMarkersOfAHeldModelAreServedOnlyWhereTheEndIsHeard() throws Exception {
+    @DisplayName("The end markers of a held model are served also where nobody listens to the end of the id's workflows any more, so a workflow which waits at one of them still ends")
+    void theEndMarkersOfAHeldModelAreServedWhereNobodyListensAnyMore() throws Exception {
         final var held = "shop__%s".formatted(DECLARED);
         theEngineHolds(held, modelWithEndMarkers(held));
         final var unheard = deploymentService(NameClashAvoidance.USE_PREFIX, TestWiring
@@ -691,14 +692,51 @@ class ZenBpmDeclaredProcessWorkersTest {
         unheard.startWorkflowProcessing("shop", context);
 
         assertAll(
+                () -> assertEquals(Map.of("Shipped", ZenBpmMarkerTasks.Ending.BRANCH, "Withdrawn",
+                        ZenBpmMarkerTasks.Ending.WORKFLOW),
+                        context
+                                .wiredProcesses()
+                                .get(DECLARED)
+                                .endMarkers()),
+                () -> assertTrue(context
+                        .jobTypes()
+                        .contains("vanillabp__ended__shop__OrdersBeforeTheRename"),
+                        () -> context
+                                .jobTypes()
+                                .toString()));
+    }
+
+    @Test
+    @DisplayName("Where the platform hands an invoker of starts and none of ends, a declared process id whose methods are all wired by element id serves the start markers of its held models and not their end markers, and its WARN says so")
+    void withoutAnInvokerOfEndsTheStartMarkersAloneAreServed(final CapturedOutput output) throws Exception {
+        final var held = "shop__%s".formatted(DECLARED);
+        theEngineHolds(held, modelWithStartMarkers(held), modelWithEndMarkers(held));
+        final var wiring = TestWiring
+                .claiming("Orders")
+                .servedElsewhere("Notify")
+                .declaringWithoutAModel(DECLARED);
+        final var deploymentService = deploymentService(NameClashAvoidance.USE_PREFIX, wiring, TestCollaborators
+                .hearingStartsOnly(ADAPTER_ID, TestScoping.of(NameClashAvoidance.USE_PREFIX), wiring.wiring(),
+                        TestStarts.everyProcessStartingAWorkflow()));
+        final var context = wired(deploymentService);
+
+        deploymentService.startWorkflowProcessing("shop", context);
+
+        assertAll(
+                () -> assertEquals(Set.of("Placed"), context
+                        .wiredProcesses()
+                        .get(DECLARED)
+                        .startMarkers()
+                        .keySet()),
                 () -> assertEquals(Map.of(), context
                         .wiredProcesses()
                         .get(DECLARED)
                         .endMarkers()),
-                () -> assertEquals(Optional.empty(), context
-                        .wiredProcesses()
-                        .get(DECLARED)
-                        .endMarkerJobType()));
+                () -> assertTrue(output
+                        .getOutOfThisTest()
+                        .contains("""
+                                The start markers of the models the engine holds under that id are served all the \
+                                same, because they need no task definition."""), output::getOutOfThisTest));
     }
 
     @Test
@@ -794,9 +832,8 @@ class ZenBpmDeclaredProcessWorkersTest {
                         .wiredProcesses()
                         .get(DECLARED)
                         .jobTypes()),
-                () -> assertEquals("vanillabp__started__shop__OrdersBeforeTheRename", subscribed
-                        .getLast()
-                        .getJobType()),
+                () -> assertTrue(jobTypesOf(subscribed).contains("vanillabp__started__shop__OrdersBeforeTheRename"),
+                        () -> jobTypesOf(subscribed).toString()),
                 () -> assertTrue(output
                         .getOutOfThisTest()
                         .contains(
@@ -869,9 +906,9 @@ class ZenBpmDeclaredProcessWorkersTest {
         deploymentService.startWorkflowProcessing("shop", context);
 
         assertAll(
-                () -> assertEquals(4, stream
+                () -> assertEquals(5, stream
                         .call(0)
-                        .subscriptions(4)
+                        .subscriptions(5)
                         .size()),
                 () -> assertEquals(List.of(), rest.requests()));
     }
@@ -1035,6 +1072,13 @@ class ZenBpmDeclaredProcessWorkersTest {
         configuration.setGrpcAddress(stream.address());
         configuration.setGrpcPlaintext(true);
         return new ZenBpmClientRegistry(List.of(new ZenBpmClientFactory(ADAPTER_ID, configuration, () -> "shop")));
+    }
+
+    private static List<String> jobTypesOf(final List<StreamSubscriptionRequest> subscriptions) {
+        return subscriptions
+                .stream()
+                .map(StreamSubscriptionRequest::getJobType)
+                .toList();
     }
 
     private static String fixture(final String name) {

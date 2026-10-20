@@ -196,7 +196,8 @@ class ZenBpmDeploymentWiringTest {
                                 .userTaskTypes()),
                 () -> assertEquals(Set.of("shop__Orders__approve", "user-task-type", "shop__Orders__user-task-type"),
                         context.userTaskTypes()),
-                () -> assertEquals(Set.of("shop__Orders__ship"), context.jobTypes()));
+                () -> assertEquals(Set.of("shop__Orders__ship", "vanillabp__ended__shop__Orders"), context
+                        .jobTypes()));
     }
 
     @Test
@@ -589,7 +590,9 @@ class ZenBpmDeploymentWiringTest {
                           vanillabp.workflow-modules.shop.workflows.Packing.tasks.pack.adapters.orders.job-timeout
                           vanillabp.workflow-modules.shop.workflows.Returns.tasks.pack.adapters.orders.job-timeout""",
                         refusal.getMessage()),
-                () -> assertEquals(Map.of("pack", Duration.ofMinutes(1)), context.jobTimeouts()));
+                // the end markers' types are subscribed for the markers of older versions
+                () -> assertEquals(Map.of("pack", Duration.ofMinutes(1), "vanillabp__ended__Packing", Duration
+                        .ofMinutes(1), "vanillabp__ended__Returns", Duration.ofMinutes(1)), context.jobTimeouts()));
     }
 
     @Test
@@ -628,7 +631,8 @@ class ZenBpmDeploymentWiringTest {
                                   vanillabp.workflow-modules.billing.workflows.Returns.tasks.pack.adapters.orders.job-timeout
                                 or keep the job types apart with name-clash-avoidance 'use-prefix'.""",
                         refusal.getMessage()),
-                () -> assertEquals(Map.of("pack", Duration.ofMinutes(1)), billing.jobTimeouts()));
+                () -> assertEquals(Map.of("pack", Duration.ofMinutes(1), "vanillabp__ended__Returns", Duration
+                        .ofMinutes(1)), billing.jobTimeouts()));
     }
 
     @Test
@@ -659,7 +663,7 @@ class ZenBpmDeploymentWiringTest {
                         .wiredProcesses()
                         .get("Orders")
                         .startMarkerJobType()),
-                () -> assertEquals(Optional.of("vanillabp__ended__shop__Orders"), context
+                () -> assertEquals("vanillabp__ended__shop__Orders", context
                         .wiredProcesses()
                         .get("Orders")
                         .endMarkerJobType()),
@@ -672,7 +676,7 @@ class ZenBpmDeploymentWiringTest {
     }
 
     @Test
-    @DisplayName("A called process, whose end the platform does not report although the application listens to the end of its workflows, and a process nobody claims, get no marker")
+    @DisplayName("A called process, whose end the platform does not report although the application listens to the end of its workflows, and a process nobody claims, get no marker; the called process subscribes no start marker, and its end markers' type only for the markers a version of it may carry from before")
     void aCalledProcessAndOneNobodyClaimsGetNoMarker() {
         final var starts = TestStarts
                 .everyProcessStartingAWorkflow()
@@ -698,17 +702,18 @@ class ZenBpmDeploymentWiringTest {
                         .wiredProcesses()
                         .get("Orders")
                         .startMarkerJobType()),
-                () -> assertEquals(Optional.empty(), called
+                () -> assertEquals("vanillabp__ended__Orders", called
                         .wiredProcesses()
                         .get("Orders")
                         .endMarkerJobType()),
                 () -> assertTrue(starts
                         .calls()
                         .contains("workflowEndedHandlerExists[shop, Orders]"), starts.calls()::toString),
-                () -> assertFalse(called
+                () -> assertEquals(List.of("vanillabp__ended__Orders"), called
                         .jobTypes()
                         .stream()
-                        .anyMatch(jobType -> jobType.startsWith(ZenBpmMarkerTasks.RESERVED_PREFIX))),
+                        .filter(jobType -> jobType.startsWith(ZenBpmMarkerTasks.RESERVED_PREFIX))
+                        .toList()),
                 () -> assertEquals(List.of(), idsWritten(nobodys)));
     }
 

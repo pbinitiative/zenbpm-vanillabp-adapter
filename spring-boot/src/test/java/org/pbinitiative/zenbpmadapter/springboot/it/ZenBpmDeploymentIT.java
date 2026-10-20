@@ -133,11 +133,11 @@ class ZenBpmDeploymentIT {
 
         assertAll(
                 () -> assertTrue(log.contains(
-                        "ZenBPM[zenbpm]: workflow module 'deploy-it' subscribed the job type(s) deploy-it__DeployIt__ship (job-timeout PT5M), vanillabp__started__deploy-it__DeployIt (job-timeout PT5M), each with at most 4 active job(s)"),
+                        "ZenBPM[zenbpm]: workflow module 'deploy-it' subscribed the job type(s) deploy-it__DeployIt__ship (job-timeout PT5M), vanillabp__started__deploy-it__DeployIt (job-timeout PT5M), vanillabp__ended__deploy-it__DeployIt (job-timeout PT5M), each with at most 4 active job(s)"),
                         log),
                 () -> assertTrue(log.contains(warning), log),
                 () -> assertTrue(log.contains(
-                        "ZenBPM[zenbpm]: workflow module 'deploy-it' unsubscribed the job type(s) deploy-it__DeployIt__ship, vanillabp__started__deploy-it__DeployIt"),
+                        "ZenBPM[zenbpm]: workflow module 'deploy-it' unsubscribed the job type(s) deploy-it__DeployIt__ship, vanillabp__started__deploy-it__DeployIt, vanillabp__ended__deploy-it__DeployIt"),
                         log),
                 () -> assertTrue(log.contains("ZenBPM[zenbpm]: closing the REST client of the engine at "), log),
                 () -> assertFalse(log.contains("still subscribe their job types"), log));

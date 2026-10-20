@@ -121,10 +121,11 @@ final class ZenBpmDeclaredProcessWorkers {
                 .bpmsInitiatedStartInvoker()
                 .map(invoker -> invoker.startsAWorkflowOfItsOwn(workflowModuleId, bpmnProcessId))
                 .orElse(false);
-        final var endsAreHeard = collaborators
+        // the end markers of a held model are served wherever the platform can be told an end, also
+        // where nobody listens to the end any more, see decision 52 in the repository's DECISIONS.md
+        final var endsMayBeReported = collaborators
                 .workflowEndedInvoker()
-                .map(invoker -> invoker.workflowEndedHandlerExists(workflowModuleId, bpmnProcessId))
-                .orElse(false);
+                .isPresent();
         if (taskDefinitions.isEmpty()) {
             log.warn("""
                     ZenBPM[{}]: workflow module '{}' declares BPMN process '{}' without deploying a model under it, \
@@ -135,15 +136,16 @@ final class ZenBpmDeclaredProcessWorkers {
                     job nobody takes has not failed. Either wire those methods by task definition \
                     ('@WorkflowTask(taskDefinition = ...)', which is what the model's 'zenbpm:taskDefinition' \
                     carries), or keep deploying the old model under its old id until those workflows have ended.{}""",
-                    adapterId, workflowModuleId, bpmnProcessId, markersServedAllTheSame(startsAreHeard, endsAreHeard));
-            final var held = startsAreHeard || endsAreHeard ? markersHeld(workflowModuleId, scopedProcessId,
-                    startsAreHeard, endsAreHeard) : new HeldTypes(Set.of(), Set.of(), Map.of(), Map.of());
+                    adapterId, workflowModuleId, bpmnProcessId,
+                    markersServedAllTheSame(startsAreHeard, endsMayBeReported));
+            final var held = startsAreHeard || endsMayBeReported ? markersHeld(workflowModuleId, scopedProcessId,
+                    startsAreHeard, endsMayBeReported) : new HeldTypes(Set.of(), Set.of(), Map.of(), Map.of());
             return new DeclaredProcess(bpmnProcessId, scopedProcessId, Map.of(), held.startMarkers(), held
                     .endMarkers(), Map.of());
         }
         final HeldTypes types;
         try {
-            types = heldTypes(workflowModuleId, scopedProcessId, startsAreHeard, endsAreHeard);
+            types = heldTypes(workflowModuleId, scopedProcessId, startsAreHeard, endsMayBeReported);
         } catch (final RuntimeException e) {
             log.debug("ZenBPM[{}]: the models the engine holds as '{}' could not be read", adapterId, scopedProcessId,
                     e);
@@ -198,10 +200,10 @@ final class ZenBpmDeclaredProcessWorkers {
         final String workflowModuleId,
         final String scopedProcessId,
         final boolean startsAreHeard,
-        final boolean endsAreHeard
+        final boolean endsMayBeReported
     ) {
         try {
-            return heldTypes(workflowModuleId, scopedProcessId, startsAreHeard, endsAreHeard);
+            return heldTypes(workflowModuleId, scopedProcessId, startsAreHeard, endsMayBeReported);
         } catch (final RuntimeException e) {
             log.debug("ZenBPM[{}]: the models the engine holds as '{}' could not be read", adapterId, scopedProcessId,
                     e);
@@ -209,28 +211,28 @@ final class ZenBpmDeclaredProcessWorkers {
                     ZenBPM[{}]: the models the engine holds as '{}' could not be read ({}), so the {} they may \
                     carry are not served. The next start of the application reads them again.""", adapterId,
                     scopedProcessId, Objects.requireNonNullElse(e.getMessage(), e.toString()), markersOf(
-                            startsAreHeard, endsAreHeard));
+                            startsAreHeard, endsMayBeReported));
             return new HeldTypes(Set.of(), Set.of(), Map.of(), Map.of());
         }
     }
 
     private static String markersServedAllTheSame(
         final boolean startsAreHeard,
-        final boolean endsAreHeard
+        final boolean endsMayBeReported
     ) {
-        if (!startsAreHeard && !endsAreHeard) {
+        if (!startsAreHeard && !endsMayBeReported) {
             return "";
         }
         return """
                  The %s of the models the engine holds under that id are served all the same, because they need no \
-                task definition.""".formatted(markersOf(startsAreHeard, endsAreHeard));
+                task definition.""".formatted(markersOf(startsAreHeard, endsMayBeReported));
     }
 
     private static String markersOf(
         final boolean startsAreHeard,
-        final boolean endsAreHeard
+        final boolean endsMayBeReported
     ) {
-        if (startsAreHeard && endsAreHeard) {
+        if (startsAreHeard && endsMayBeReported) {
             return "start and end markers";
         }
         return startsAreHeard ? "start markers" : "end markers";
@@ -258,7 +260,7 @@ final class ZenBpmDeclaredProcessWorkers {
         final String workflowModuleId,
         final String scopedProcessId,
         final boolean startsAreHeard,
-        final boolean endsAreHeard
+        final boolean endsMayBeReported
     ) {
         final var taskTypes = new TreeSet<String>();
         final var userTaskTypes = new TreeSet<String>();
@@ -286,7 +288,7 @@ final class ZenBpmDeclaredProcessWorkers {
                                     .forEach(startEvent -> startMarkers.putIfAbsent(startEvent.elementId(), startEvent
                                             .kind()));
                         }
-                        if (endsAreHeard && model
+                        if (endsMayBeReported && model
                                 .tasks()
                                 .stream()
                                 .anyMatch(task -> endMarkerJobType.equals(task.taskDefinition()))) {

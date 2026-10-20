@@ -199,6 +199,33 @@ public final class TestCollaborators {
     }
 
     /**
+     * A complete set of collaborators which hands an invoker of starts and none of ends, of which
+     * the scoping, the wiring and the invoker of starts may be called.
+     *
+     * @param adapterId The adapter id they are handed to
+     * @param scoping The platform's name-clash scoping, as the test wants it to answer
+     * @param workflowTaskWiring The platform's wiring, as the test wants it to answer
+     * @param starts The invokers whose invoker of starts is handed
+     * @return The collaborators
+     */
+    public static AdapterCollaborators hearingStartsOnly(
+        final String adapterId,
+        final NameClashAvoidanceSupport scoping,
+        final WorkflowTaskWiring workflowTaskWiring,
+        final TestStarts starts
+    ) {
+        return AdapterCollaborators
+                .forAdapter(adapterId)
+                .workflowTaskWiring(workflowTaskWiring)
+                .workflowTaskInvoker(servingUserTasks())
+                .scoping(scoping)
+                .workflowAggregateSync(unused(WorkflowAggregateSync.class))
+                .preCommitRegistrar(unused(PreCommitRegistrar.class))
+                .bpmsInitiatedStartInvoker(starts.startInvoker())
+                .build();
+    }
+
+    /**
      * A set of collaborators without the two optional invokers of the lifecycle of a workflow, as a
      * platform builds it for an application which asks for neither, of which the scoping and the
      * wiring may be called.

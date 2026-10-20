@@ -256,6 +256,13 @@ public final class ZenBpmProcessingContext {
      * The job types of the workflow module's claimed processes, those of their start and end
      * markers included, and of the process ids it declares without a model, each once, in the
      * order the processes were wired.
+     * <p>
+     * The end markers' type of every process is among them wherever the module subscribes a type
+     * anyway, also where the deployed model gives no end event a marker: an instance of a version
+     * deployed while somebody listened to the end of its workflows waits at its end marker after
+     * nobody does any more, and a job nobody takes stops it there for good, see decision 52 in the
+     * repository's DECISIONS.md. A module which subscribes nothing else opens no job stream for
+     * them, so an adapter id without a job stream still starts.
      *
      * @return The job types as the engine knows them
      */
@@ -268,10 +275,17 @@ public final class ZenBpmProcessingContext {
                     wiredProcess
                             .startMarkerJobType()
                             .ifPresent(jobTypes::add);
-                    wiredProcess
-                            .endMarkerJobType()
-                            .ifPresent(jobTypes::add);
+                    if (!wiredProcess
+                            .endMarkers()
+                            .isEmpty()) {
+                        jobTypes.add(wiredProcess.endMarkerJobType());
+                    }
                 });
+        if (!jobTypes.isEmpty()) {
+            wiredProcesses
+                    .values()
+                    .forEach(wiredProcess -> jobTypes.add(wiredProcess.endMarkerJobType()));
+        }
         return Collections.unmodifiableSet(jobTypes);
     }
 
@@ -461,16 +475,13 @@ public final class ZenBpmProcessingContext {
         }
 
         /**
-         * The job type of the process's end markers.
+         * The job type of the process's end markers, whatever the deployed model gives a marker, see
+         * {@link ZenBpmProcessingContext#jobTypes()}.
          *
-         * @return The job type as the engine knows it, empty where the model gives no end event a
-         *         marker
+         * @return The job type as the engine knows it
          */
-        public Optional<String> endMarkerJobType() {
-            if (endMarkers.isEmpty()) {
-                return Optional.empty();
-            }
-            return Optional.of(ZenBpmMarkerTasks.endMarkerJobType(scopedBpmnProcessId));
+        public String endMarkerJobType() {
+            return ZenBpmMarkerTasks.endMarkerJobType(scopedBpmnProcessId);
         }
 
     }
