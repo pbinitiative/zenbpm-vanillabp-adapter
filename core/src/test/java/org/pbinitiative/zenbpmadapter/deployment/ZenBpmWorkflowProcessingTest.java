@@ -200,8 +200,9 @@ class ZenBpmWorkflowProcessingTest {
     void aModuleWithUserTasksOnlySubscribesNothing(final CapturedOutput output) {
         final var deploymentService = deploymentService(TestWiring.claiming());
         final var context = new ZenBpmProcessingContext("shop");
-        context.recordWiring(new WiredProcess("Order", "Order", Set.of(), true, false, Map.of(), Map.of("approve",
-                "approve")));
+        context.recordWiring(
+                new WiredProcess("Order", "Order", Set.of(), true, false, Map.of(), Map.of(), Map.of("approve",
+                        "approve")));
 
         deploymentService.startWorkflowProcessing("shop", context);
         final var openWhileStarted = registry
@@ -237,7 +238,7 @@ class ZenBpmWorkflowProcessingTest {
                             .wiring(),
                     TestStarts.everyProcessStartingAWorkflow()));
             final var context = new ZenBpmProcessingContext("shop");
-            context.recordWiring(new WiredProcess("Order", "Order", Set.of(), true, false, Map.of(), Map.of(
+            context.recordWiring(new WiredProcess("Order", "Order", Set.of(), true, false, Map.of(), Map.of(), Map.of(
                     "approve", "approve")));
 
             deploymentService.startWorkflowProcessing("shop", context);
@@ -263,7 +264,7 @@ class ZenBpmWorkflowProcessingTest {
                                         .wiring(),
                                 TestStarts.everyProcessStartingAWorkflow()));
         final var context = new ZenBpmProcessingContext("shop");
-        context.recordWiring(new WiredProcess("Order", "Order", Set.of(), true, false, Map.of(), Map.of()));
+        context.recordWiring(new WiredProcess("Order", "Order", Set.of(), true, false, Map.of(), Map.of(), Map.of()));
 
         deploymentService.startWorkflowProcessing("shop", context);
         deploymentService.stopWorkflowProcessing("shop", context);
@@ -278,7 +279,7 @@ class ZenBpmWorkflowProcessingTest {
         final var shop = withJobTypes("shop", "charge");
         final var billing = withJobTypes("billing", "charge");
         billing.recordWiring(
-                new WiredProcess("Invoice", "Invoice", Set.of("invoice"), true, false, Map.of(), Map.of()));
+                new WiredProcess("Invoice", "Invoice", Set.of("invoice"), true, false, Map.of(), Map.of(), Map.of()));
         // a module started after the first stop marks on the stream where that stop's frames end
         final var audit = withJobTypes("audit", "audit");
 
@@ -471,7 +472,8 @@ class ZenBpmWorkflowProcessingTest {
         final var context = new ZenBpmProcessingContext(workflowModuleId);
         context.recordWiring(
                 new WiredProcess("Order", "Order", new LinkedHashSet<>(List.of(jobTypes)), true, false, Map.of(), Map
-                        .of()));
+                        .of(), Map
+                                .of()));
         return context;
     }
 

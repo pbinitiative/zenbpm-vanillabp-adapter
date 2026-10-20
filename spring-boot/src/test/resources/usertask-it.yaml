@@ -20,3 +20,7 @@ vanillabp:
           tasks:
             Sign:
               implemented-externally: true
+        Endorsing:
+          tasks:
+            Withdraw:
+              implemented-externally: true

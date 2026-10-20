@@ -170,6 +170,12 @@ maintainers, as their policy for the autonomous run asks.
 A notification cannot raise a BPMN error into the workflow; a method which raises one is warned
 about and the user task waits on.
 
+*"A record the core no longer holds, after `vanillabp.delivery.retention` or once the end of its
+workflow released it, is told again after a restart" and "the poller is the only source of a user
+task's `CANCELED`" are superseded in part by decision 53: the report of the end of a workflow tells
+the user tasks it took away as cancelled, and the poller then tells them neither before nor after a
+restart.*
+
 ### 13. A class opens its fields one by one, not as a whole
 
 The deployment service, the process service and the engine client of this adapter hold many
@@ -427,6 +433,10 @@ before any code relied on it, so decision 5 never entered this log.
 the same change as the handler which serves its job. A marker nobody serves stops every workflow in
 front of its end event, so until that change no end marker is written, and an application is told
 nothing about the end of a workflow.
+
+*"An end marker goes in front of every end event of the top-level process" is superseded in part by
+decision 52: an error end event gets none, and an end event reports the end of the workflow only
+where nothing else of it runs.*
 
 ### 27. A failed handler is failed at the engine, with retries and backoff
 
@@ -1217,3 +1227,90 @@ its state, naming the element and the methods which end it. The check says the s
 runs without a probe, as it does where a record of the platform which names no kind answers the
 election. The handlers of both kinds are one class,
 built once per kind, whose messages say "task" or "user task".
+
+### 52. The end marker reports an end only where nothing else of the workflow runs, and no error end event gets one
+
+Decided by the implementation pipeline in place of the maintainers, as their policy for the
+autonomous run asks.
+
+The end markers of decision 26 are written in `wireBpmn`, right after `validateTaskWiring`, for the
+reason decision 44 gives for the start markers: the core answers `workflowEndedHandlerExists` with
+no for a called process only once the wiring of the process was validated. The job type is
+`vanillabp__ended__` followed by the id under which the engine holds the process, a marker is
+`vanillabp__ended__<end event id>`, the flow from it to the end event the marker's id followed by
+`__flow`, and an element of the marker's id is never written twice. The marker takes over every
+flow which led to the end event, the event keeps its definition, and the marker is drawn as a shape
+of 60 by 40 points whose right edge is 80 points left of the end event's right edge, its middle on
+the event's middle.
+
+**Which end events.** A none, a message and a terminate end event of the process itself get one. An
+error end event gets none. Where nothing catches its error, the pinned engine raises an incident
+there (`unhandled error end event <id>: <code>`) and the instance stays active without a token,
+which `ZenBpmMarkerTasksIT#anUncaughtErrorEndEventRaisesAnIncident` measures; Zeebe raises an
+incident as well, and the Camunda 8 adapter, whose listener sits on the process, then reports
+nothing. Where an error event sub-process of the process catches the error, the workflow goes on in
+the sub-process. In neither case does the workflow end at the error end event.
+
+**When the end is reported.** A terminate end event ends the workflow whatever else of it runs, so
+its marker reports at once. Every other end event ends the branch which reaches it, and the engine
+completes the instance only where no token, no job and no event sub-process of it is left
+(`handlePlainEndEvent` in `pkg/bpmn/engine.go`). So before it reports, the handler reads where the
+tokens of the instance stand (`activeElementInstances` of `GET /v1/process-instances/{key}`):
+
+- A token stands at any element but an end marker or an end event (where the job of a message end
+  event holds it): another branch goes on. The job is completed without a report, and the end the
+  last branch reaches is reported.
+- No token stands anywhere else, but a child instance of the instance is active: an event
+  sub-process, which no token waits for, still runs, and the workflow ends once it ended. The job
+  is left to its lock, so the engine hands it out again after its `job-timeout`, until the
+  sub-process ended.
+- Nothing else runs: the end is reported. A read which a lagging node answers without the
+  instance leaves the job to its lock as well.
+
+The context names the end as `COMPLETED`, the end event, the job's instance as the workflow (a
+marker sits in the process itself, so that is the root of decision 28), the instance's business key
+where it has a non-empty one, its version and the moment of the report as the end time. The core
+reports every task it believes open in the workflow as cancelled before the `@WorkflowEnded` method
+runs, and the job is completed only after the core committed, so the instance ends after the
+report. A report which threw fails the job as decision 27 says, with a message naming the
+`@WorkflowEnded` method and the `retry-backoff` resolved for the task name `vanillabp__ended`, and
+not while the module shuts down; the type is subscribed with the `job-timeout` resolved for that
+name. An aggregate the application deleted is skipped by the core, and an instance which names no
+aggregate is not reported; in both cases the job is completed and the workflow ends. A process
+declared without a model subscribes the type of the end markers where a model the engine holds
+under the id carries them and the platform wants to hear about the end of the id's workflows, as
+decision 46 says for the start markers.
+
+**What this leaves over.** Two branches which reach their end markers at the same moment may both
+report the end, which the platform delivers at least once anyway. A message end event's own job
+runs after the report, because no marker can stand behind an end event. A workflow which ends in an
+interrupting event sub-process, or in an error event sub-process which caught an error end event,
+passes no end marker of the process itself and is not reported; Camunda 8 reports it, because its
+listener sits on the process. A read of the tokens which a lagging node answers (GAPS 20) can show
+a branch where it stood a moment ago, so where two branches end at once, both markers may see the
+other one still running and the end is not reported.
+
+### 53. A user task the end of its workflow took away is not told as cancelled by the poller
+
+Decided by the implementation pipeline in place of the maintainers, as their policy for the
+autonomous run asks.
+
+The report of the end of a workflow (decision 52) makes the core report every task it believes open
+in that workflow as cancelled, user tasks included: the notification of a user task's creation left
+an open record which names the root instance as the workflow (decision 28). The poller of decision
+12 would then tell the same cancellation again, under its own delivery id `<key>-canceled`, which
+the core runs as a delivery of its own: without this rule the application heard it twice in
+`ZenBpmUserTaskRestartIT#aUserTaskTheEndTookAwayIsToldOnceAcrossARestart`, without any restart, and
+the record of the second one outlived the release of `vanillabp.delivery.release-on-workflow-end`.
+
+So the notifier tells no cancellation of a user task whose workflow's root instance completed and
+holds a completed job of the process's end markers, wherever the process writes end markers: the
+end marker's job is completed only after the core committed the report. It asks the engine for the
+root instance and for that job, two reads per such cancellation. Every other cancellation is told
+as before: one of a cancelled instance, which passes no marker (GAPS 9), one of a workflow which
+goes on, and one of a process whose end nobody listens to.
+
+What this leaves over: a user task which came and went between two looks of a workflow which ended
+at a reported end is told nothing, because the core held no record of it. And where a branch's end
+marker completed without a report and the workflow then ended in an event sub-process, which is not
+reported (decision 52), its user tasks are not told as cancelled either.

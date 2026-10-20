@@ -147,12 +147,15 @@ read, so the same file gives the same deployment, and no rewrite overwrites what
    `outgoing` references, which the engine follows, and those whose `sourceRef` names it, and one
    new flow `<marker id>__flow` leads from the event to it. Where `workflowEndedHandlerExists` for
    the process (it also answers `true` when `release-on-workflow-end` is on), a service task
-   `vanillabp__ended__<endEventId>` is to go in front of every end event of the TOP-LEVEL process
-   (none, error, message, terminate), redirecting the end event's incoming flows to the task and
-   adding one flow task -> end event; it is written in the same change as the handler of its job.
-   Sub-processes and event sub-processes get no marker, because ZenBPM runs them as child
-   instances, and a called process gets neither marker. A marker is drawn as a `bpmndi:BPMNShape` of
-   60 x 40, its left edge 80 points right of its start event's left edge, with a
+   `vanillabp__ended__<endEventId>` with the type `vanillabp__ended__<scoped process id>` goes in
+   front of every none, message and terminate end event of the TOP-LEVEL process (decision 52),
+   taking over the flows which led to the end event, with one flow `<marker id>__flow` from the task
+   to the end event, which keeps its definition. An error end event gets none: where nothing catches
+   its error the engine raises an incident, and where an error event sub-process catches it the
+   workflow goes on there. Sub-processes and event sub-processes get no marker, because ZenBPM runs
+   them as child instances, and a called process gets neither marker. A marker is drawn as a
+   `bpmndi:BPMNShape` of 60 x 40, a start marker's left edge 80 points right of its start event's
+   left edge, an end marker's right edge 80 points left of its end event's right edge, with a
    `bpmndi:BPMNEdge` for the new flow; nothing else of the diagram moves. Where an element of the
    marker's id exists already, nothing is written, so a second rewrite of a document writes nothing.
 5. **Unsupported constructs** are refused BEFORE deployment with a message naming file, process and
@@ -430,11 +433,23 @@ a held model gives to a user task is handed to the poller from the same read.
 
 Both arrive as ordinary jobs of the marker tasks (section 3, step 4), served by two dedicated handlers:
 
-- `ZenBpmWorkflowEndedHandler`, which comes with the end marker: kind COMPLETED, `endEventId` from the marker's id, `workflowId` =
-  the root instance key (decision 28) and the business key; the core cancels the tasks it still
-  believes open in that workflow before `@WorkflowEnded` runs (platform decision 73). Then complete
-  the job so the instance ends. A canceled instance runs no marker, so kind CANCELED is never
-  reported.
+- `ZenBpmWorkflowEndedHandler` (decision 52), which the module's `ZenBpmJobHandler` hands the job
+  of an end marker, inside the module's drain and under the renewal of its lock. A terminate end
+  event reports at once. Before any other end event reports, the handler reads where the tokens of
+  the instance stand (`activeElementInstances` of `GET /v1/process-instances/{key}`): a token at an
+  element which is neither an end marker nor an end event means another branch goes on, and the job
+  is completed without a report; an active child instance which no token waits for is an event
+  sub-process still running, and the job is left to its lock until it ended; otherwise the end is
+  reported. The context: kind COMPLETED, `endEventId` from the marker's id, `workflowId` = the job's
+  instance, which is the root (decision 28) because a marker sits in the process itself, the
+  instance's non-empty business key, its version and the moment of the report as end time. The
+  core cancels the tasks it still believes open in that workflow before `@WorkflowEnded` runs
+  (platform decision 73), and only then is the job completed, so the instance ends after the
+  report. A report which threw fails the job like a task's handler (decision 27), with the
+  `retry-backoff` resolved for the name `vanillabp__ended` and a message naming the
+  `@WorkflowEnded` method. A canceled instance runs no marker, so kind CANCELED is never reported
+  (GAPS 9), and the user-task poller tells no cancellation of a user task whose workflow ended at a
+  reported end, which that report told already (decision 53).
 - `ZenBpmBpmsInitiatedStartHandler` (decisions 25 and 46), which the module's `ZenBpmJobHandler`
   hands the job of a start marker, inside the module's drain and under the renewal of its lock: the
   context carries the start event and its kind (remembered per process while wiring), the job's

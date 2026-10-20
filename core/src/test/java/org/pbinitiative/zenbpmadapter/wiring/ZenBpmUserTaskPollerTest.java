@@ -36,6 +36,7 @@ import org.pbinitiative.zenbpmadapter.ZenBpmInstanceCache;
 import org.pbinitiative.zenbpmadapter.ZenBpmProcessingContext;
 import org.pbinitiative.zenbpmadapter.ZenBpmProcessingContext.WiredProcess;
 import org.pbinitiative.zenbpmadapter.client.FakeEngine;
+import org.pbinitiative.zenbpmadapter.model.ZenBpmMarkerTasks;
 
 import io.vanillabp.integration.adapter.spi.NameClashAvoidance;
 import io.vanillabp.integration.adapter.spi.workflowtask.DeliveryOfAnUnknownWorkflowException;
@@ -66,6 +67,8 @@ class ZenBpmUserTaskPollerTest {
     private static final Pattern STATE = Pattern.compile("state=([a-z]+)");
 
     private static final Pattern PAGE = Pattern.compile("page=(\\d+)");
+
+    private static final Pattern INSTANCE = Pattern.compile("processInstanceKey=(\\d+)");
 
     private final JobRunning jobs = new JobRunning(2);
 
@@ -178,6 +181,87 @@ class ZenBpmUserTaskPollerTest {
 
         assertEquals(List.of("51-canceled"), beforeTheRestart);
         assertEquals(List.of("51-canceled", "51-canceled"), deliveryIds());
+    }
+
+    @Test
+    @DisplayName("A user task the end of its workflow took away is not told as cancelled where the workflow completed after its end marker's job, whose report told the application already, also after a restart, when nothing remembers what was told")
+    void aUserTaskTheEndOfItsWorkflowToldIsNotToldAgain() {
+        jobs.holdsEnded(ROOT, "order-1", "\"id\": \"order-1\"");
+        listsActive(userTask(51, ROOT));
+        startsPollingAProcessWhoseEndIsReported();
+        looks();
+        listsActive();
+        listsTerminated(terminated(51, ROOT), terminated(52, ROOT));
+        listed.put("completed/1/%d".formatted(ROOT), page(1, List.of(endMarker(ROOT))));
+
+        looksTwice();
+        startsPollingAProcessWhoseEndIsReported();
+        looks();
+
+        assertAll(
+                () -> assertEquals(List.of("51-created"), deliveryIds()),
+                () -> assertTrue(jobs.engine
+                        .requests()
+                        .stream()
+                        .anyMatch(request -> "/v1/jobs".equals(request.path()) && request
+                                .query()
+                                .contains(
+                                        "jobType=vanillabp__ended__shop__Order&state=completed&processInstanceKey=100")),
+                        () -> jobs.engine
+                                .requests()
+                                .toString()));
+    }
+
+    @Test
+    @DisplayName("A user task of a workflow whose end was not reported is told as cancelled: one which completed without a completed end marker, one which goes on where an end marker of another branch completed, and one of a process without end markers, which asks the engine nothing about it")
+    void aUserTaskOfAWorkflowWhoseEndWasNotReportedIsTold() {
+        jobs.holdsEnded(ROOT, "order-1", "\"id\": \"order-1\"");
+        jobs.holds(ROOT + 1, "default", null, "order-2", "\"id\": \"order-2\"");
+        listed.put("completed/1/%d".formatted(ROOT + 1), page(1, List.of(endMarker(ROOT + 1))));
+        listsTerminated(terminated(51, ROOT), terminated(52, ROOT + 1));
+        startsPollingAProcessWhoseEndIsReported();
+
+        looks();
+        final var reported = deliveryIds();
+        // a module of the process without end markers, which nobody listens to the end of
+        handler = null;
+        startsPolling(Duration.ofHours(1));
+        looks();
+
+        assertAll(
+                () -> assertEquals(List.of("51-canceled", "52-canceled"), reported
+                        .stream()
+                        .sorted()
+                        .toList()),
+                () -> assertEquals(4, deliveryIds().size(), deliveryIds()::toString),
+                () -> assertEquals(1, jobs.engine
+                        .requests()
+                        .stream()
+                        .filter(request -> (request.query() != null) && request
+                                .query()
+                                .contains("state=completed"))
+                        .count(),
+                        () -> jobs.engine
+                                .requests()
+                                .toString()));
+    }
+
+    @Test
+    @DisplayName("Where the end of the workflow of a cancelled user task cannot be read, it is not told, and a later look hands it over again")
+    void aCancellationWhoseEndCannotBeReadWaits() {
+        jobs.holdsEnded(ROOT, "order-1", "\"id\": \"order-1\"");
+        listsTerminated(terminated(51, ROOT));
+        listed.put("completed/1/%d".formatted(ROOT), "the engine broke down");
+        startsPollingAProcessWhoseEndIsReported();
+
+        looks();
+        final var whileItFailed = deliveryIds();
+        listed.remove("completed/1/%d".formatted(ROOT));
+        looks();
+
+        assertAll(
+                () -> assertEquals(List.of(), whileItFailed),
+                () -> assertEquals(List.of("51-canceled"), deliveryIds()));
     }
 
     @Test
@@ -774,8 +858,9 @@ class ZenBpmUserTaskPollerTest {
                 BILLING_TYPE))));
         startsPolling(Duration.ofHours(1));
         final var billing = new ZenBpmProcessingContext("billing");
-        billing.recordWiring(new WiredProcess("Invoice", "billing__Invoice", Set.of(), true, false, Map.of(), Map.of(
-                BILLING_TYPE, "check")));
+        billing.recordWiring(
+                new WiredProcess("Invoice", "billing__Invoice", Set.of(), true, false, Map.of(), Map.of(), Map.of(
+                        BILLING_TYPE, "check")));
         final var collaborators = TestCollaborators.withInvoker("orders", TestScoping.of(
                 NameClashAvoidance.USE_PREFIX), jobs.invoker);
         final var billingHandler = new ZenBpmJobHandler("orders", jobs.factory, collaborators, billing, ZenBpmRetryBackoffResolver.NONE);
@@ -906,7 +991,7 @@ class ZenBpmUserTaskPollerTest {
     void aModuleWithoutUserTasksStartsNoLooks() {
         final var context = new ZenBpmProcessingContext("billing");
         context.recordWiring(new WiredProcess("Invoice", "billing__Invoice", Set
-                .of("billing__Invoice__bill"), true, false, Map.of(), Map.of()));
+                .of("billing__Invoice__bill"), true, false, Map.of(), Map.of(), Map.of()));
         poller = new ZenBpmUserTaskPoller("orders", jobs.factory);
         poller.register(new ZenBpmUserTaskNotifier("orders", jobs.factory, TestCollaborators.withInvoker("orders",
                 TestScoping.of(NameClashAvoidance.USE_PREFIX), jobs.invoker), context, jobs.handler));
@@ -925,7 +1010,7 @@ class ZenBpmUserTaskPollerTest {
         if (handler == null) {
             final var context = new ZenBpmProcessingContext("shop");
             context.recordWiring(new WiredProcess("Order", "shop__Order", Set.of(JobRunning.JOB_TYPE), true, false, Map
-                    .of(), Map.of(USER_TASK_TYPE, "approve")));
+                    .of(), Map.of(), Map.of(USER_TASK_TYPE, "approve")));
             final var collaborators = TestCollaborators.withInvoker("orders", TestScoping.of(
                     NameClashAvoidance.USE_PREFIX), jobs.invoker);
             handler = new ZenBpmJobHandler("orders", jobs.factory, collaborators, context, ZenBpmRetryBackoffResolver.NONE);
@@ -936,12 +1021,29 @@ class ZenBpmUserTaskPollerTest {
         poller.register(notifier);
     }
 
+    // a fresh poller of the module 'shop' as above, whose process 'Order' has an end marker in front
+    // of its end event 'Approved'
+    private void startsPollingAProcessWhoseEndIsReported() {
+        jobs.invoker.servesUserTasks("approve");
+        final var context = new ZenBpmProcessingContext("shop");
+        context.recordWiring(new WiredProcess("Order", "shop__Order", Set.of(JobRunning.JOB_TYPE), true, true, Map
+                .of(), Map.of("Approved", ZenBpmMarkerTasks.Ending.BRANCH), Map.of(USER_TASK_TYPE, "approve")));
+        final var collaborators = TestCollaborators.withInvoker("orders", TestScoping.of(
+                NameClashAvoidance.USE_PREFIX), jobs.invoker);
+        handler = new ZenBpmJobHandler("orders", jobs.factory, collaborators, context, ZenBpmRetryBackoffResolver.NONE);
+        notifier = new ZenBpmUserTaskNotifier("orders", jobs.factory, collaborators, context, handler);
+        poller = new ZenBpmUserTaskPoller("orders", jobs.factory.rest(), jobs.factory.executor(), jobs.factory
+                .instances(), Duration.ofHours(1));
+        poller.register(notifier);
+    }
+
     // the workflow module 'billing', whose process 'Invoice' has a user task of the type of 'shop',
     // as two modules share the engine's default type
     private void startsBillingSharingTheType() {
         final var billing = new ZenBpmProcessingContext("billing");
-        billing.recordWiring(new WiredProcess("Invoice", "billing__Invoice", Set.of(), true, false, Map.of(), Map.of(
-                USER_TASK_TYPE, "check")));
+        billing.recordWiring(
+                new WiredProcess("Invoice", "billing__Invoice", Set.of(), true, false, Map.of(), Map.of(), Map.of(
+                        USER_TASK_TYPE, "check")));
         final var collaborators = TestCollaborators.withInvoker("orders", TestScoping.of(
                 NameClashAvoidance.USE_PREFIX), jobs.invoker);
         final var billingHandler = new ZenBpmJobHandler("orders", jobs.factory, collaborators, billing, ZenBpmRetryBackoffResolver.NONE);
@@ -959,8 +1061,13 @@ class ZenBpmUserTaskPollerTest {
             assertTrue(state.find() && page.find(), query);
             final var listedOfTheType = query.contains("jobType=%s".formatted(BILLING_TYPE)) ? listedForBilling
                     : listed;
-            FakeEngine.respond(exchange, 200, listedOfTheType.getOrDefault("%s/%s".formatted(state.group(1), page
-                    .group(1)), page(0, List.of())));
+            // a listing of one instance's jobs is answered for that instance alone
+            final var instance = INSTANCE.matcher(query);
+            final var listing = instance.find() ? "%s/%s/%s".formatted(state.group(1), page.group(1), instance.group(
+                    1)) : "%s/%s".formatted(state.group(1), page.group(1));
+            final var answer = listedOfTheType.getOrDefault(listing, page(0, List.of()));
+            FakeEngine.respond(exchange, answer.startsWith("{") ? 200 : 500, answer.startsWith("{") ? answer
+                    : "{\"code\": \"TECHNICAL_ERROR\", \"message\": \"%s\"}".formatted(answer));
         });
     }
 
@@ -1097,6 +1204,15 @@ class ZenBpmUserTaskPollerTest {
         final long instanceKey
     ) {
         return job(key, instanceKey, "USER_TASK", "active");
+    }
+
+    // as the engine lists the job of an end marker which was completed
+    private static String endMarker(final long instanceKey) {
+        return """
+                {"key": 90, "elementId": "vanillabp__ended__Approved", "type": "vanillabp__ended__shop__Order",
+                 "elementType": "SERVICE_TASK", "processInstanceKey": %d, "elementInstanceKey": 91,
+                 "state": "completed", "createdAt": "2026-10-19T10:00:00Z", "inputVariables": {"id": "order-1"}}"""
+                .formatted(instanceKey);
     }
 
     private static String terminated(

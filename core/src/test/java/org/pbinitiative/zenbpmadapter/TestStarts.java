@@ -100,7 +100,9 @@ public final class TestStarts {
             calls.add("%s%s".formatted(method.getName(), Arrays.toString(arguments)));
             return switch (method.getName()) {
                 case "startsAWorkflowOfItsOwn" -> !calledProcesses.contains((String) arguments[1]);
-                case "workflowEndedHandlerExists" -> processesWhoseEndIsHeard.contains((String) arguments[1]);
+                // as the core answers: the end of a called process is a step of its caller
+                case "workflowEndedHandlerExists" -> processesWhoseEndIsHeard
+                        .contains((String) arguments[1]) && !calledProcesses.contains((String) arguments[1]);
                 case "reportStartMessages", "validateBpmsInitiatedStarts" -> null;
                 default -> throw new AssertionError("%s.%s is not expected to be called".formatted(type
                         .getSimpleName(), method.getName()));

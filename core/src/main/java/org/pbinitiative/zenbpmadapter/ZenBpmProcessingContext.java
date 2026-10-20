@@ -253,9 +253,9 @@ public final class ZenBpmProcessingContext {
     }
 
     /**
-     * The job types of the workflow module's claimed processes, those of their start markers
-     * included, and of the process ids it declares without a model, each once, in the order the
-     * processes were wired.
+     * The job types of the workflow module's claimed processes, those of their start and end
+     * markers included, and of the process ids it declares without a model, each once, in the
+     * order the processes were wired.
      *
      * @return The job types as the engine knows them
      */
@@ -267,6 +267,9 @@ public final class ZenBpmProcessingContext {
                     jobTypes.addAll(wiredProcess.jobTypes());
                     wiredProcess
                             .startMarkerJobType()
+                            .ifPresent(jobTypes::add);
+                    wiredProcess
+                            .endMarkerJobType()
                             .ifPresent(jobTypes::add);
                 });
         return Collections.unmodifiableSet(jobTypes);
@@ -413,6 +416,10 @@ public final class ZenBpmProcessingContext {
      *            triggers it, see {@link ZenBpmMarkerTasks}; empty where the model gives none, which
      *            it does where the process starts no workflow of its own, or where the module
      *            brings no model for it
+     * @param endMarkers The end events the deployed model gives an end marker, each with how much of
+     *            the workflow it ends, see {@link ZenBpmMarkerTasks}; empty where the model gives
+     *            none, which it does where nobody listens to the end of its workflows, or where the
+     *            module brings no model for it
      * @param userTaskTypes The job types of its user tasks whose notifications the application
      *            wants, as the engine knows them, each with the task definition the application knows
      *            it by; a user task nobody is notified about is left out, and so is every one where the
@@ -425,16 +432,18 @@ public final class ZenBpmProcessingContext {
         boolean reportsItsStart,
         boolean reportsItsEnd,
         Map<String, BpmsStartTrigger.Kind> startMarkers,
+        Map<String, ZenBpmMarkerTasks.Ending> endMarkers,
         Map<String, String> userTaskTypes
     ) {
 
         /**
-         * Copies the job types, the start markers and the user-task types, so what was found stays
-         * what it was.
+         * Copies the job types, the markers and the user-task types, so what was found stays what
+         * it was.
          */
         public WiredProcess {
             jobTypes = Collections.unmodifiableSet(new LinkedHashSet<>(jobTypes));
             startMarkers = Collections.unmodifiableMap(new LinkedHashMap<>(startMarkers));
+            endMarkers = Collections.unmodifiableMap(new LinkedHashMap<>(endMarkers));
             userTaskTypes = Collections.unmodifiableMap(new LinkedHashMap<>(userTaskTypes));
         }
 
@@ -449,6 +458,19 @@ public final class ZenBpmProcessingContext {
                 return Optional.empty();
             }
             return Optional.of(ZenBpmMarkerTasks.startMarkerJobType(scopedBpmnProcessId));
+        }
+
+        /**
+         * The job type of the process's end markers.
+         *
+         * @return The job type as the engine knows it, empty where the model gives no end event a
+         *         marker
+         */
+        public Optional<String> endMarkerJobType() {
+            if (endMarkers.isEmpty()) {
+                return Optional.empty();
+            }
+            return Optional.of(ZenBpmMarkerTasks.endMarkerJobType(scopedBpmnProcessId));
         }
 
     }

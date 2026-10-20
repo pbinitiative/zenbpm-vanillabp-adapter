@@ -1,0 +1,83 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL"
+    xmlns:zenbpm="http://zenbpm.pbinitiative.org/1.0" id="settling" targetNamespace="http://bpmn.io/schema/bpmn"
+    xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI"
+    xmlns:dc="http://www.omg.org/spec/DD/20100524/DC"
+    xmlns:di="http://www.omg.org/spec/DD/20100524/DI">
+  <bpmn:message id="Message_Close" name="close" />
+  <bpmn:message id="Message_Agree" name="agree" />
+  <bpmn:process id="Settling" isExecutable="true">
+    <bpmn:startEvent id="Opened" name="Claim opened">
+      <bpmn:outgoing>Flow_ToCloseRequested</bpmn:outgoing>
+    </bpmn:startEvent>
+    <bpmn:intermediateCatchEvent id="CloseRequested" name="Close requested">
+      <bpmn:incoming>Flow_ToCloseRequested</bpmn:incoming>
+      <bpmn:outgoing>Flow_ToClosed</bpmn:outgoing>
+      <bpmn:messageEventDefinition id="CloseRequested_Definition" messageRef="Message_Close" />
+    </bpmn:intermediateCatchEvent>
+    <bpmn:endEvent id="Closed" name="Closed">
+      <bpmn:incoming>Flow_ToClosed</bpmn:incoming>
+    </bpmn:endEvent>
+    <bpmn:subProcess id="Negotiation" name="Negotiation" triggeredByEvent="true">
+      <bpmn:startEvent id="SoonAfterTheOpening" name="Soon after the opening" isInterrupting="false">
+        <bpmn:outgoing>Flow_ToAgreed</bpmn:outgoing>
+        <bpmn:timerEventDefinition id="SoonAfterTheOpening_Definition">
+          <bpmn:timeDuration>PT1S</bpmn:timeDuration>
+        </bpmn:timerEventDefinition>
+      </bpmn:startEvent>
+      <bpmn:intermediateCatchEvent id="Agreed" name="Agreed">
+        <bpmn:incoming>Flow_ToAgreed</bpmn:incoming>
+        <bpmn:outgoing>Flow_ToNegotiated</bpmn:outgoing>
+        <bpmn:messageEventDefinition id="Agreed_Definition" messageRef="Message_Agree" />
+      </bpmn:intermediateCatchEvent>
+      <bpmn:endEvent id="Negotiated">
+        <bpmn:incoming>Flow_ToNegotiated</bpmn:incoming>
+      </bpmn:endEvent>
+      <bpmn:sequenceFlow id="Flow_ToAgreed" sourceRef="SoonAfterTheOpening" targetRef="Agreed" />
+      <bpmn:sequenceFlow id="Flow_ToNegotiated" sourceRef="Agreed" targetRef="Negotiated" />
+    </bpmn:subProcess>
+    <bpmn:sequenceFlow id="Flow_ToCloseRequested" sourceRef="Opened" targetRef="CloseRequested" />
+    <bpmn:sequenceFlow id="Flow_ToClosed" sourceRef="CloseRequested" targetRef="Closed" />
+  </bpmn:process>
+  <bpmndi:BPMNDiagram id="BPMNDiagram_1">
+    <bpmndi:BPMNPlane id="BPMNPlane_1" bpmnElement="Settling">
+      <bpmndi:BPMNShape id="Opened_di" bpmnElement="Opened">
+        <dc:Bounds x="160" y="80" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="CloseRequested_di" bpmnElement="CloseRequested">
+        <dc:Bounds x="256" y="80" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Closed_di" bpmnElement="Closed">
+        <dc:Bounds x="352" y="80" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Negotiation_di" bpmnElement="Negotiation" isExpanded="true">
+        <dc:Bounds x="160" y="166" width="288" height="120" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="SoonAfterTheOpening_di" bpmnElement="SoonAfterTheOpening">
+        <dc:Bounds x="190" y="196" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Agreed_di" bpmnElement="Agreed">
+        <dc:Bounds x="286" y="196" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Negotiated_di" bpmnElement="Negotiated">
+        <dc:Bounds x="382" y="196" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNEdge id="Flow_ToAgreed_di" bpmnElement="Flow_ToAgreed">
+        <di:waypoint x="226" y="214" />
+        <di:waypoint x="286" y="214" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_ToNegotiated_di" bpmnElement="Flow_ToNegotiated">
+        <di:waypoint x="322" y="214" />
+        <di:waypoint x="382" y="214" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_ToCloseRequested_di" bpmnElement="Flow_ToCloseRequested">
+        <di:waypoint x="196" y="98" />
+        <di:waypoint x="256" y="98" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_ToClosed_di" bpmnElement="Flow_ToClosed">
+        <di:waypoint x="292" y="98" />
+        <di:waypoint x="352" y="98" />
+      </bpmndi:BPMNEdge>
+    </bpmndi:BPMNPlane>
+  </bpmndi:BPMNDiagram>
+</bpmn:definitions>

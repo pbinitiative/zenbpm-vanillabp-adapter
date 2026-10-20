@@ -22,3 +22,15 @@ vanillabp:
               adapters:
                 zenbpm:
                   job-timeout: PT2S
+        Returning:
+          tasks:
+            vanillabp__ended:
+              adapters:
+                zenbpm:
+                  retry-backoff: PT1S
+        Settling:
+          tasks:
+            vanillabp__ended:
+              adapters:
+                zenbpm:
+                  job-timeout: PT2S

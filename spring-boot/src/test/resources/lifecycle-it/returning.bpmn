@@ -1,0 +1,171 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL"
+    xmlns:zenbpm="http://zenbpm.pbinitiative.org/1.0" id="returning" targetNamespace="http://bpmn.io/schema/bpmn"
+    xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI"
+    xmlns:dc="http://www.omg.org/spec/DD/20100524/DC"
+    xmlns:di="http://www.omg.org/spec/DD/20100524/DI">
+  <bpmn:message id="Message_Refund" name="refund" />
+  <bpmn:message id="Message_Credit" name="credit" />
+  <bpmn:process id="Returning" isExecutable="true">
+    <bpmn:startEvent id="Requested" name="Return requested">
+      <bpmn:outgoing>Flow_ToSplit</bpmn:outgoing>
+    </bpmn:startEvent>
+    <bpmn:parallelGateway id="Split">
+      <bpmn:incoming>Flow_ToSplit</bpmn:incoming>
+      <bpmn:outgoing>Flow_ToInspection</bpmn:outgoing>
+      <bpmn:outgoing>Flow_ToAwait</bpmn:outgoing>
+    </bpmn:parallelGateway>
+    <bpmn:subProcess id="Inspection" name="Inspection">
+      <bpmn:incoming>Flow_ToInspection</bpmn:incoming>
+      <bpmn:outgoing>Flow_ToInspected</bpmn:outgoing>
+      <bpmn:startEvent id="InspectionStarted">
+        <bpmn:outgoing>Flow_ToInspect</bpmn:outgoing>
+      </bpmn:startEvent>
+      <bpmn:serviceTask id="Inspect" name="Inspect the goods">
+        <bpmn:extensionElements>
+          <zenbpm:taskDefinition type="inspect" />
+        </bpmn:extensionElements>
+        <bpmn:incoming>Flow_ToInspect</bpmn:incoming>
+        <bpmn:outgoing>Flow_ToInspectionDone</bpmn:outgoing>
+      </bpmn:serviceTask>
+      <bpmn:endEvent id="InspectionDone">
+        <bpmn:incoming>Flow_ToInspectionDone</bpmn:incoming>
+      </bpmn:endEvent>
+      <bpmn:sequenceFlow id="Flow_ToInspect" sourceRef="InspectionStarted" targetRef="Inspect" />
+      <bpmn:sequenceFlow id="Flow_ToInspectionDone" sourceRef="Inspect" targetRef="InspectionDone" />
+    </bpmn:subProcess>
+    <bpmn:endEvent id="Inspected" name="Inspected">
+      <bpmn:incoming>Flow_ToInspected</bpmn:incoming>
+    </bpmn:endEvent>
+    <bpmn:eventBasedGateway id="Await">
+      <bpmn:incoming>Flow_ToAwait</bpmn:incoming>
+      <bpmn:outgoing>Flow_ToRefundRequested</bpmn:outgoing>
+      <bpmn:outgoing>Flow_ToCreditRequested</bpmn:outgoing>
+    </bpmn:eventBasedGateway>
+    <bpmn:intermediateCatchEvent id="RefundRequested" name="Refund requested">
+      <bpmn:incoming>Flow_ToRefundRequested</bpmn:incoming>
+      <bpmn:outgoing>Flow_ToRefunded</bpmn:outgoing>
+      <bpmn:messageEventDefinition id="RefundRequested_Definition" messageRef="Message_Refund" />
+    </bpmn:intermediateCatchEvent>
+    <bpmn:endEvent id="Refunded" name="Refunded">
+      <bpmn:incoming>Flow_ToRefunded</bpmn:incoming>
+      <bpmn:terminateEventDefinition id="Refunded_Definition" />
+    </bpmn:endEvent>
+    <bpmn:intermediateCatchEvent id="CreditRequested" name="Credit requested">
+      <bpmn:incoming>Flow_ToCreditRequested</bpmn:incoming>
+      <bpmn:outgoing>Flow_ToCredited</bpmn:outgoing>
+      <bpmn:messageEventDefinition id="CreditRequested_Definition" messageRef="Message_Credit" />
+    </bpmn:intermediateCatchEvent>
+    <bpmn:endEvent id="Credited" name="Credited">
+      <bpmn:incoming>Flow_ToCredited</bpmn:incoming>
+    </bpmn:endEvent>
+    <bpmn:sequenceFlow id="Flow_ToSplit" sourceRef="Requested" targetRef="Split" />
+    <bpmn:sequenceFlow id="Flow_ToInspection" sourceRef="Split" targetRef="Inspection" />
+    <bpmn:sequenceFlow id="Flow_ToInspected" sourceRef="Inspection" targetRef="Inspected" />
+    <bpmn:sequenceFlow id="Flow_ToAwait" sourceRef="Split" targetRef="Await" />
+    <bpmn:sequenceFlow id="Flow_ToRefundRequested" sourceRef="Await" targetRef="RefundRequested" />
+    <bpmn:sequenceFlow id="Flow_ToCreditRequested" sourceRef="Await" targetRef="CreditRequested" />
+    <bpmn:sequenceFlow id="Flow_ToRefunded" sourceRef="RefundRequested" targetRef="Refunded" />
+    <bpmn:sequenceFlow id="Flow_ToCredited" sourceRef="CreditRequested" targetRef="Credited" />
+  </bpmn:process>
+  <bpmndi:BPMNDiagram id="BPMNDiagram_1">
+    <bpmndi:BPMNPlane id="BPMNPlane_1" bpmnElement="Returning">
+      <bpmndi:BPMNShape id="Requested_di" bpmnElement="Requested">
+        <dc:Bounds x="160" y="80" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Split_di" bpmnElement="Split">
+        <dc:Bounds x="256" y="80" width="50" height="50" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Inspection_di" bpmnElement="Inspection" isExpanded="true">
+        <dc:Bounds x="366" y="80" width="352" height="140" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="InspectionStarted_di" bpmnElement="InspectionStarted">
+        <dc:Bounds x="396" y="110" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Inspect_di" bpmnElement="Inspect">
+        <dc:Bounds x="492" y="110" width="100" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="InspectionDone_di" bpmnElement="InspectionDone">
+        <dc:Bounds x="652" y="110" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Await_di" bpmnElement="Await">
+        <dc:Bounds x="517" y="270" width="50" height="50" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Inspected_di" bpmnElement="Inspected">
+        <dc:Bounds x="778" y="80" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="RefundRequested_di" bpmnElement="RefundRequested">
+        <dc:Bounds x="778" y="166" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="CreditRequested_di" bpmnElement="CreditRequested">
+        <dc:Bounds x="778" y="252" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Refunded_di" bpmnElement="Refunded">
+        <dc:Bounds x="874" y="80" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Credited_di" bpmnElement="Credited">
+        <dc:Bounds x="874" y="166" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNEdge id="Flow_ToInspect_di" bpmnElement="Flow_ToInspect">
+        <di:waypoint x="432" y="128" />
+        <di:waypoint x="462" y="128" />
+        <di:waypoint x="462" y="150" />
+        <di:waypoint x="492" y="150" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_ToInspectionDone_di" bpmnElement="Flow_ToInspectionDone">
+        <di:waypoint x="592" y="150" />
+        <di:waypoint x="622" y="150" />
+        <di:waypoint x="622" y="128" />
+        <di:waypoint x="652" y="128" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_ToSplit_di" bpmnElement="Flow_ToSplit">
+        <di:waypoint x="196" y="98" />
+        <di:waypoint x="226" y="98" />
+        <di:waypoint x="226" y="105" />
+        <di:waypoint x="256" y="105" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_ToInspection_di" bpmnElement="Flow_ToInspection">
+        <di:waypoint x="306" y="105" />
+        <di:waypoint x="336" y="105" />
+        <di:waypoint x="336" y="150" />
+        <di:waypoint x="366" y="150" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_ToInspected_di" bpmnElement="Flow_ToInspected">
+        <di:waypoint x="718" y="150" />
+        <di:waypoint x="748" y="150" />
+        <di:waypoint x="748" y="98" />
+        <di:waypoint x="778" y="98" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_ToAwait_di" bpmnElement="Flow_ToAwait">
+        <di:waypoint x="306" y="105" />
+        <di:waypoint x="411" y="105" />
+        <di:waypoint x="411" y="295" />
+        <di:waypoint x="517" y="295" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_ToRefundRequested_di" bpmnElement="Flow_ToRefundRequested">
+        <di:waypoint x="567" y="295" />
+        <di:waypoint x="672" y="295" />
+        <di:waypoint x="672" y="184" />
+        <di:waypoint x="778" y="184" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_ToCreditRequested_di" bpmnElement="Flow_ToCreditRequested">
+        <di:waypoint x="567" y="295" />
+        <di:waypoint x="672" y="295" />
+        <di:waypoint x="672" y="270" />
+        <di:waypoint x="778" y="270" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_ToRefunded_di" bpmnElement="Flow_ToRefunded">
+        <di:waypoint x="814" y="184" />
+        <di:waypoint x="844" y="184" />
+        <di:waypoint x="844" y="98" />
+        <di:waypoint x="874" y="98" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_ToCredited_di" bpmnElement="Flow_ToCredited">
+        <di:waypoint x="814" y="270" />
+        <di:waypoint x="844" y="270" />
+        <di:waypoint x="844" y="184" />
+        <di:waypoint x="874" y="184" />
+      </bpmndi:BPMNEdge>
+    </bpmndi:BPMNPlane>
+  </bpmndi:BPMNDiagram>
+</bpmn:definitions>

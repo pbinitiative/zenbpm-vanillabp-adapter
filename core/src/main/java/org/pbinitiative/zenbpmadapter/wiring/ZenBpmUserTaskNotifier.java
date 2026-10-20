@@ -16,7 +16,10 @@ import org.pbinitiative.zenbpmadapter.ZenBpmInstanceCache.InstanceFacts;
 import org.pbinitiative.zenbpmadapter.ZenBpmProcessingContext;
 import org.pbinitiative.zenbpmadapter.ZenBpmProcessingContext.WiredProcess;
 import org.pbinitiative.zenbpmadapter.client.ZenBpmClientFactory;
+import org.pbinitiative.zenbpmadapter.client.ZenBpmRestClient;
+import org.pbinitiative.zenbpmadapter.client.api.JobFilter;
 import org.pbinitiative.zenbpmadapter.client.api.JobRef;
+import org.pbinitiative.zenbpmadapter.client.api.ProcessInstanceRef;
 
 import io.vanillabp.integration.adapter.spi.AdapterCollaborators;
 import io.vanillabp.integration.adapter.spi.workflowtask.DeliveryOfAnUnknownWorkflowException;
@@ -46,6 +49,12 @@ import lombok.extern.slf4j.Slf4j;
  * {@link ZenBpmOpenTaskProbe} of the process, as after every delivery of a job, so a creation or a
  * cancellation of a user task is a wake-up of its workflow like any other.
  * <p>
+ * A user task taken away by the end of its workflow is not notified as cancelled where the end was
+ * reported, which the workflow's root instance shows by having completed after its end marker's
+ * job: the core reported every user task it believed open in that workflow as cancelled before the
+ * end, so a notification would tell the application a second time, see decision 53 in the
+ * repository's DECISIONS.md.
+ * <p>
  * A notification runs inside the module's {@link ZenBpmDrain}, so the shutdown waits for it, and
  * one which starts while the module stops is not run.
  */
@@ -69,6 +78,8 @@ public final class ZenBpmUserTaskNotifier {
     private final ZenBpmInstanceCache instances;
 
     private final ZenBpmDeployedProcesses deployedProcesses;
+
+    private final ZenBpmRestClient rest;
 
     /**
      * The notifier of a workflow module whose processing starts.
@@ -101,6 +112,7 @@ public final class ZenBpmUserTaskNotifier {
         this.invoker = collaborators.workflowTaskInvoker();
         this.instances = factory.instances();
         this.deployedProcesses = factory.deployedProcesses();
+        this.rest = factory.rest();
     }
 
     /**
@@ -208,6 +220,22 @@ public final class ZenBpmUserTaskNotifier {
             if (notification.isEmpty()) {
                 return Outcome.AGAIN;
             }
+            final boolean toldByTheEnd;
+            try {
+                toldByTheEnd = (event == TaskEvent.Event.CANCELED) && theEndOfItsWorkflowToldIt(process, notification
+                        .get());
+            } catch (final RuntimeException e) {
+                log.debug(
+                        "ZenBPM[{}]: the end of the workflow of user task {} ('{}') could not be read; the next look at the user tasks hands it over again: {}",
+                        adapterId, job.key(), taskDefinition, e.getMessage());
+                return Outcome.AGAIN;
+            }
+            if (toldByTheEnd) {
+                log.debug(
+                        "ZenBPM[{}]: user task {} ('{}') was taken away by the end of its workflow, whose report told the application already, so it is not notified as {}",
+                        adapterId, job.key(), taskDefinition, event);
+                return Outcome.DONE;
+            }
             if (notification
                     .get()
                     .namesNoAggregate()) {
@@ -299,6 +327,35 @@ public final class ZenBpmUserTaskNotifier {
                     "ZenBPM[{}]: the other open tasks of the workflow of user task {} ('{}') could not be looked at; the next delivery of the workflow looks again",
                     adapterId, wakeUp.getTaskId(), wakeUp.getTaskDefinition(), e);
         }
+    }
+
+    // see decision 53 in the repository's DECISIONS.md: the end marker's job is completed only after
+    // the core committed the end, which reported every user task it believed open in the workflow
+    // as cancelled; a workflow which ends where a branch ends completes markers of its other branches
+    // without a report, so the workflow has to have ended as well
+    private boolean theEndOfItsWorkflowToldIt(
+        final WiredProcess process,
+        final Notification notification
+    ) {
+        final var endMarkerJobType = process.endMarkerJobType();
+        if (endMarkerJobType.isEmpty()) {
+            return false;
+        }
+        final var workflowId = notification.workflowId;
+        final var ended = rest
+                .instance(workflowId)
+                .map(ProcessInstanceRef::state)
+                .filter(ProcessInstanceRef.State.COMPLETED::equals)
+                .isPresent();
+        return ended && !rest
+                .jobs(JobFilter
+                        .anyJob()
+                        .withJobType(endMarkerJobType.get())
+                        .withState(JobRef.State.COMPLETED)
+                        .withProcessInstanceKey(workflowId)
+                        .withSize(1))
+                .items()
+                .isEmpty();
     }
 
     // an instance which names no aggregate was started past VanillaBP; a user task's job is not

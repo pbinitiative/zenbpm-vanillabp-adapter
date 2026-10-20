@@ -175,11 +175,17 @@ start event, a called process's included; the rewritten model deploys
 The runs on that commit and what they showed are recorded under S9.3.1. The end marker goes to
 S9.2.1, as the note there says.
 
+*Note from S9.2.1, 2026-10-20.* The end marker is written now, with the handler of its job
+(decision 52), so the condition of decision 26's last paragraph is met. The acceptance above which
+found no end marker describes the commit of S9.3.1: its test became
+`ZenBpmDeploymentWiringTest#aProcessWhoseStartAndEndAreHeardGetsItsMarkers`, which finds both. An
+error end event gets no end marker, unlike instruction 1 (see the fit check of S9.2.1).
+
 ## F9.2 The end of a workflow
 
 ### S9.2.1 `ZenBpmWorkflowEndedHandler`
 
-- [ ] **Depends on:** S9.1.1.
+- [x] **Depends on:** S9.1.1.
 
 **Instructions**
 
@@ -220,15 +226,137 @@ whose instance ended at an end event (the end already cancels the open tasks of 
 platform decision 73), and test it with `ZenBpmUserTaskRestartIT`. A cancelled instance runs no
 marker, so its user tasks keep being told by the poller (GAPS 9).
 
+*Fit check, 2026-10-20, decided by the Implementor where it says so.* Checked against `main`
+(`1bf5ad8`), `ADAPTER-AUTHORS.md` (the inbound notifications: name the workflow as the deliveries
+name it, skip a missing aggregate, `workflowEndedHandlerExists` is `false` for a called process),
+the platform as the adapter resolves it (`2.0.0-20261015.045823-21`: `WorkflowEndedInvoker`,
+`WorkflowEndedContext`, `WorkflowTaskRegistry#workflowEndedHandlerExists`, `#workflowEnded` and
+`#reportTheTasksTheEndedWorkflowTookAway`, `WorkflowEndedHandlers`, `DerivedCancelations`,
+`MigrationProcessService#deliverWorkflowTask`, read in the snapshot's sources), Camunda 8's
+`Camunda8WorkflowEndedHandler` and `Camunda8TaskWiring#attachWorkflowEndedListener`, and the engine
+at the pin `bdd795a3` (source exported with `git archive`: `handleEndEvent`, `handlePlainEndEvent`
+and `handleTerminateEndEvent` of `pkg/bpmn/engine.go`, `handleEndErrorEvent` and
+`failUnhandledEndError` of `pkg/bpmn/engine_error_end_event.go`, `GetProcessInstance` of
+`internal/rest/server.go` and `internal/cluster/server/server.go`, whose `activeElementInstances` are
+the instance's tokens which wait, run or failed); a scratch Go program against the engine's
+in-memory runtime and REST probes against the pinned image, then the ITs below. What did not fit,
+and what was decided:
+
+1. **Where, under which type, how drawn** (decision 52). As decision 44 says for the start markers:
+   written in `wireBpmn` right after `validateTaskWiring`, because the core answers
+   `workflowEndedHandlerExists` with no for a called process only then; type
+   `vanillabp__ended__<scoped process id>`; the marker takes over every flow which led to the end
+   event, and its right edge stands 80 points left of the end event's right edge.
+2. **End events the engine does not simply complete at** (open question 1, decided by the
+   Implementor as recommended, decision 52, which supersedes decision 26 in part). Measured on the
+   pinned image: a terminate end event while another branch waits completes the instance and
+   terminates the other branch's job and its embedded sub-process, so its marker reports at once. An
+   error end event which nothing catches, with an id on its definition as every modeller writes it,
+   raises an incident (`unhandled error end event <id>: <code>`) and leaves the instance active
+   without a token (`ZenBpmMarkerTasksIT#anUncaughtErrorEndEventRaisesAnIncident`); without an id on
+   the definition the pinned engine completes the instance instead, a quirk which was not chased
+   further. Zeebe raises an incident as well, and the Camunda 8 adapter, whose listener sits on the
+   process, then reports nothing, and an error event sub-process which catches the error lets the
+   workflow go on there. So no error end event gets a marker. A message end event's job is created
+   once the marker's job is completed, and the instance completes after it, so its marker stands in
+   front and the message end event's own task runs after the report, a named limit.
+3. **An end event which ends a branch only** (not foreseen by the plan, decided by the Implementor,
+   decision 52). A none end event in one branch while another branch still waits does not end the
+   instance (the engine completes it only where no token, job or event sub-process is left), so the
+   marker as planned would report too early, cancel the tasks of the other branch and release its
+   records: against the pinned image, without the check below, `ZenBpmLifecycleIT` was told the end
+   at `Inspected` while the refund branch still waited. Options: report at every end event; report
+   after the instance completed, which needs a poll or loses the report at a crash; read where the
+   tokens stand before the report. Decided the last: a token at anything but an end marker or an end
+   event means another branch goes on, and the job is completed without a report; no token elsewhere
+   but an active child instance means an event sub-process still runs, and the job is left to its
+   lock until it ended; otherwise the end is reported. A terminate end event skips the read. Named
+   limits: two branches which end at once may both report; a workflow which ends in an interrupting
+   event sub-process, or in an error event sub-process, is not reported, as nothing of the process
+   itself ends it; a lagging node (GAPS 20) can hide both of two ends which happen at once.
+   `ZenBpmRestClient#activeElementsOf` reads the tokens (`ZenBpmRestClientContractIT#theTokensOfAnInstanceStandWhereTheyWait`).
+4. **The user tasks of an ended workflow** (open question 2, decided by the Implementor as
+   recommended, decision 53, which supersedes decision 12 in part). Read in the resolved platform:
+   (a) `#reportTheTasksTheEndedWorkflowTookAway` reports every open record of the workflow id as
+   `CANCELED`, and a user task's creation leaves one (its method takes a `@TaskId`), so user tasks
+   are among them; (b) the core answers a delivery by its delivery key only, so the poller's
+   `<key>-canceled` runs the method a second time. Measured: with the rule switched off,
+   `ZenBpmUserTaskRestartIT#aUserTaskTheEndTookAwayIsToldOnceAcrossARestart` counted two
+   cancellations before any restart, and the second record outlived `release-on-workflow-end`. So
+   the notifier tells no cancellation of a user task whose workflow's root instance completed and
+   holds a completed job of the process's end markers, only for a process which writes end markers
+   (`WiredProcess#endMarkerJobType`); the completed job is the proof that the report committed,
+   because a marker's job is completed only after it, and a version without markers has none. A
+   cancelled instance's user tasks are told as before (GAPS 9).
+5. **A deleted aggregate** (open question 3). `WorkflowEndedHandlers#invokeHandler` logs it and
+   returns, and `DerivedCancelations` swallows the failed cancellation of its task; the marker's job
+   is completed and the workflow ends (`ZenBpmLifecycleIT#aWorkflowWhoseAggregateIsGoneEnds`).
+6. **The business key and a called process** (open question 4). The marker's job runs in the root
+   instance, so its business key is the root's, reported where it is not empty.
+   `TestStarts` now answers `workflowEndedHandlerExists` as the core does, `false` for a called
+   process, and `ZenBpmDeploymentWiringTest#aCalledProcessAndOneNobodyClaimsGetNoMarker` wires a
+   called process whose end the application listens to and finds no end marker.
+7. **The incident's cause sentence** (decided by the Implementor). The brief named
+   `ZenBpmTaskOutcomes#whereTheIncidentComesFrom`, which serves `completeTask` and `cancelTask` of a
+   task or user task carrying an incident; no application holds the key of a marker's job, so it
+   never reaches that method, which stays as it is. The failure message of the end marker's job,
+   which the engine writes into the incident at the last attempt, names the `@WorkflowEnded` method
+   instead (`ZenBpmWorkflowEndedHandlerTest#aReportWhichThrowsFailsTheJob`).
+8. **Retries.** The marker's job has the engine's default of one attempt (decision 38), so a
+   `@WorkflowEnded` method which throws raises an incident at once unless the model or
+   `JOBS_DEFAULT_RETRIES` gives more; `ZenBpmLifecycleIT` runs its engine with three, and
+   `#aReportWhichThrewIsRepeated` sees the second attempt after the `retry-backoff`.
+9. **Decision 26's last paragraph** ("until that change no end marker is written") is met by this
+   change; the entry is left as it is.
+10. **Existing tests the marker changes.** `ZenBpmDeploymentWiringTest#aProcessWhichStartsAWorkflowGetsItsStartMarkers`
+    became `#aProcessWhoseStartAndEndAreHeardGetsItsMarkers`, and `#aClaimedProcessGetsEveryWiringCallOnce`
+    expects the end marker of `Done`; `JobRunning`'s process carries two end markers. No assertion
+    was weakened. A process declared without a model serves the end markers of its held models
+    (`ZenBpmDeclaredProcessWorkersTest#theEndMarkersOfAHeldModelAreServed` and three more). The
+    Quarkus twin is S9.5.1's; the core's new classes are covered by the core's tests on both
+    platforms.
+11. GAPS 8, 9 and 10 now say what is built; no new gap was entered (GAPS 32 stays free). Decisions
+    52 and 53 are new.
+
 **Tests**: `ZenBpmWorkflowEndedHandlerTest`; Spring `ZenBpmLifecycleIT#theEndOfAWorkflowIsReportedWithItsEndEvent`
 (two end events, each reported with its own id), `#aCancelledWorkflowReportsNothing`,
 `#theEndCancelsTheTasksStillOpen` (a task waiting in a parallel branch inside an embedded
 sub-process is reported `CANCELED` before `@WorkflowEnded` runs, because both carry the root key).
+Added: `ZenBpmMarkerTasksTest` (nine cases of the end marker), `ZenBpmMarkerTasksIT#aWorkflowWaitsAtTheMarkerOfItsEndEvent`
+and `#anUncaughtErrorEndEventRaisesAnIncident`, `ZenBpmUserTaskPollerTest` (three cases),
+`ZenBpmDeclaredProcessWorkersTest` (four cases), `ZenBpmRestClientTest#whereTheTokensStandIsRead`,
+`ZenBpmRestClientContractIT#theTokensOfAnInstanceStandWhereTheyWait`, `ZenBpmLifecycleIT#aBranchWhichEndsWhileAnotherRunsReportsNothing`,
+`#theEndWaitsForAnEventSubProcessStillRunning`, `#aReportWhichThrewIsRepeated`,
+`#aWorkflowWhoseAggregateIsGoneEnds`, `ZenBpmUserTaskRestartIT#aUserTaskTheEndTookAwayIsToldOnceAcrossARestart`.
 
 **Acceptance criteria**
 
-- [ ] The instance completes only after the handler committed.
-- [ ] The context carries the root instance key as `workflowId`.
+- [x] The instance completes only after the handler committed. `ZenBpmLifecycleIT#theEndCancelsTheTasksStillOpen`
+  reads the instance from inside the `@WorkflowEnded` method and finds it active, and
+  `ZenBpmWorkflowEndedHandlerTest#theContextNamesWhatTheJobAndItsInstanceSay` finds no command sent
+  to the engine while the core is told; `ZenBpmMarkerTasksIT#aWorkflowWaitsAtTheMarkerOfItsEndEvent`
+  holds the instance active while the marker's job waits.
+- [x] The context carries the root instance key as `workflowId`. `ZenBpmWorkflowEndedHandlerTest#theContextNamesWhatTheJobAndItsInstanceSay`,
+  and against the pinned image `ZenBpmLifecycleIT#theEndCancelsTheTasksStillOpen`: the core finds
+  the task inside the embedded sub-process, recorded under the root, and cancels it before
+  `@WorkflowEnded` runs. Clean build of the
+  story's commit (`TZ=Etc/UTC mvn clean install` on OpenJDK 25.0.2, Docker ITs included, none
+  skipped): engine test support 12 + 5, core 1,142 + 96, Spring Boot 14 + 78, smoke test 38, Quarkus
+  runtime 13, deployment 52, integration tests 17, gate 37; coverage 100 % on both platforms (0 of
+  33,280 instructions missed on Spring Boot, 0 of 33,150 on Quarkus); `bin/check-deploy-safety.sh`
+  green. Mutants: 24 of 24 killed, 21 at the unit level (the read of the tokens, the read of the
+  child instances, the terminate end event's shortcut, a token at an end event, the default of an
+  end event the model does not hold, the instance a node does not know, the completion after the
+  report, the empty business key, the failure while stopping, the error end event's exclusion, the
+  second insertion, the terminate end event's kind, the drawing without bounds, the poller's read of
+  the root's state, its gate on the end markers, its failed read, the declared process's gate on the
+  end and its read for an id wired by element id, the gate on `workflowEndedHandlerExists` in
+  `wireBpmn`, the end markers' job-timeout, the routing of the marker's job) and 3 against the
+  pinned engine (the poller's rule, failing `ZenBpmUserTaskRestartIT#aUserTaskTheEndTookAwayIsToldOnceAcrossARestart`
+  with two cancellations before any restart; the read of the tokens, failing
+  `ZenBpmLifecycleIT#aBranchWhichEndsWhileAnotherRunsReportsNothing` and `#theEndCancelsTheTasksStillOpen`
+  with an end reported at `Inspected`; the read of the child instances, failing
+  `#theEndWaitsForAnEventSubProcessStillRunning`).
 
 ## F9.3 Workflows the engine starts itself
 

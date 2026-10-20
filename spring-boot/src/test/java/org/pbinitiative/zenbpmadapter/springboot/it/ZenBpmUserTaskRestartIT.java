@@ -33,8 +33,11 @@ import org.pbinitiative.zenbpmadapter.client.ZenBpmAdapterConfiguration;
 import org.pbinitiative.zenbpmadapter.client.ZenBpmRestClient;
 import org.pbinitiative.zenbpmadapter.client.api.InstanceFilter;
 import org.pbinitiative.zenbpmadapter.client.api.JobFilter;
+import org.pbinitiative.zenbpmadapter.client.api.ProcessInstanceRef;
 import org.pbinitiative.zenbpmadapter.springboot.it.usertask.Approval;
 import org.pbinitiative.zenbpmadapter.springboot.it.usertask.ApprovalRepository;
+import org.pbinitiative.zenbpmadapter.springboot.it.usertask.Endorsement;
+import org.pbinitiative.zenbpmadapter.springboot.it.usertask.EndorsementRepository;
 import org.pbinitiative.zenbpmadapter.springboot.it.usertask.UserTaskItApplication;
 import org.pbinitiative.zenbpmadapter.test.EngineUnderTest;
 import org.springframework.boot.builder.SpringApplicationBuilder;
@@ -54,7 +57,9 @@ import io.vanillabp.spi.process.ProcessService;
  * pinned engine: the restarted application has forgotten what its poller told, finds the user
  * tasks again, and the platform's record of deliveries answers every notification told before the
  * restart, while one the engine produced while the application was down is told, also for a user
- * task whose creation nobody was told of.
+ * task whose creation nobody was told of. A user task the end of its workflow took away is told
+ * as cancelled once, by the report of the end, and neither by the looks nor after a restart,
+ * although the platform released its record when the workflow ended.
  * <p>
  * The case boots {@link UserTaskItApplication} itself, twice, with <code>usertask-it.yaml</code>, on
  * one in-memory database which outlives both applications, as the database of an application
@@ -180,6 +185,56 @@ class ZenBpmUserTaskRestartIT {
                         .outcome()));
     }
 
+    @Test
+    @DisplayName("A user task the end of its workflow took away is told as cancelled once, by the report of the end, and neither by a look nor after a restart, although the platform released its record at the end of the workflow")
+    void aUserTaskTheEndTookAwayIsToldOnceAcrossARestart() throws Exception {
+        final var endorsementId = "endorsement-%s".formatted(UUID.randomUUID());
+        final var before = boot("--vanillabp.delivery.release-on-workflow-end=true");
+        final var instance = startEndorsing(before, endorsementId);
+        eventually(() -> endorsements(before)
+                .findById(endorsementId)
+                .filter(endorsement -> endorsement.getCreations() > 0));
+
+        // a person withdraws the request, whose terminate end event takes the user task away
+        engine.completeJob(eventually(() -> engine
+                .jobs(JobFilter
+                        .anyJob()
+                        .withProcessInstanceKey(instance))
+                .items()
+                .stream()
+                .filter(job -> "Withdraw".equals(job.elementId()))
+                .findFirst())
+                .key(), null);
+        eventually(() -> endorsements(before)
+                .findById(endorsementId)
+                .filter(endorsement -> endorsement.getEnds() > 0));
+        // three more looks, each of which would tell the cancellation again
+        LockSupport.parkNanos(Duration
+                .ofMillis(3_500)
+                .toNanos());
+        final var beforeTheRestart = endorsementCountsOf(before, endorsementId);
+        final var recordsAfterTheEnd = TaskDeliveryLogReader
+                .of(before.getBean(DataSource.class))
+                .deliveries()
+                .stream()
+                .filter(delivery -> endorsementId.equals(delivery.aggregateId()))
+                .toList();
+        before.close();
+        final var after = boot("--vanillabp.delivery.release-on-workflow-end=true");
+        LockSupport.parkNanos(Duration
+                .ofMillis(3_500)
+                .toNanos());
+
+        assertAll(
+                () -> assertEquals(List.of(1, 1, 1), beforeTheRestart),
+                () -> assertEquals(List.of(), recordsAfterTheEnd),
+                () -> assertEquals(ProcessInstanceRef.State.COMPLETED, engine
+                        .instance(instance)
+                        .orElseThrow()
+                        .state()),
+                () -> assertEquals(List.of(1, 1, 1), endorsementCountsOf(after, endorsementId)));
+    }
+
     private ConfigurableApplicationContext boot(final String... arguments) {
         final var context = new SpringApplicationBuilder(UserTaskItApplication.class)
                 .properties(
@@ -211,6 +266,42 @@ class ZenBpmUserTaskRestartIT {
                 .stream()
                 .findFirst())
                 .key();
+    }
+
+    private long startEndorsing(
+        final ConfigurableApplicationContext application,
+        final String endorsementId
+    ) {
+        final ProcessService<Endorsement> processService = application
+                .<ProcessService<Endorsement>>getBeanProvider(ResolvableType.forClassWithGenerics(
+                        ProcessService.class, Endorsement.class))
+                .getObject();
+        application
+                .getBean(TransactionTemplate.class)
+                .executeWithoutResult(status -> processService.startWorkflow(new Endorsement(endorsementId)));
+        return eventually(() -> engine
+                .instances(InstanceFilter
+                        .anyInstance()
+                        .withBusinessKey(endorsementId))
+                .items()
+                .stream()
+                .findFirst())
+                .key();
+    }
+
+    // the creations and the cancellations the application was told of, and the ends
+    private static List<Integer> endorsementCountsOf(
+        final ConfigurableApplicationContext application,
+        final String endorsementId
+    ) {
+        final var endorsement = endorsements(application)
+                .findById(endorsementId)
+                .orElseThrow();
+        return List.of(endorsement.getCreations(), endorsement.getCancellations(), endorsement.getEnds());
+    }
+
+    private static EndorsementRepository endorsements(final ConfigurableApplicationContext application) {
+        return application.getBean(EndorsementRepository.class);
     }
 
     // the creations and the cancellations the application was told of

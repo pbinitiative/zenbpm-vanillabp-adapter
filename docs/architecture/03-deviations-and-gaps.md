@@ -16,7 +16,7 @@ gap cites the same number.
 | 5 | A message nobody waits for is refused (404) and lost | `internal/cluster/node.go` `publishCorrelatedMessageByName`, `publishDefinitionMessageByName` (entered in `GAPS.md` by S7.1.1 with the evidence at the pin) | phase two answers `PhaseTwoRetryLater(workflow-visibility-timeout)`; the outbox is the buffer, bounded by `vanillabp.outbox.wait-for-visibility-at-most` (about four hours by default); a retry-later counts no attempt | E13.8 buffering with a TTL | |
 | 6 | ~~No retries: a failed job is an incident~~ **Closed by E13.3** (engine commit `bc3384b3`, 2026-10-12, contained in the pin `bdd795a3`): `fail` takes `retries`, `retryBackoff`, `message` and `deliveryToken` | `pkg/bpmn/engine.go` TODO, `jobs_api.go` `JobFailByKey` (before E13.3) | a thrown handler is failed without an error code and without `retries`, with the configured `retry-backoff` where a level sets one, a message naming task, aggregate and exception, the delivery token and `clientId`; the number of attempts is the model's or the engine's `JOBS_DEFAULT_RETRIES` (decisions 27 and 38). No local retry and no `max-redeliveries` | E13.3 done; adapter twin built (S6.2.1, 2026-10-18) | |
 | 7 | Job outputs reach the process only through output mappings | `pkg/bpmn/runtime/varholder.go:107`, `jobs_api.go:285` | `PATCH variables` before `complete` (decision 7) | E13.2 propagate-all where a task has no mappings | |
-| 8 | No execution or task listeners, no event stream | no `executionListener`/`taskListener` in `pkg/`, `internal/`, `openapi/` | marker service tasks after every start event of the top-level process and before every end event (decision 26); models deployed before the markers report nothing | E13.6 listener jobs or a job-like end event | |
+| 8 | No execution or task listeners, no event stream | no `executionListener`/`taskListener` in `pkg/`, `internal/`, `openapi/` | marker service tasks after every start event of the top-level process and before every none, message and terminate end event (decisions 26 and 52); models deployed before the markers report nothing, and neither does a workflow which ends in an event sub-process | E13.6 listener jobs or a job-like end event | |
 | 9 | A cancelled instance tells nobody | `pkg/bpmn/engine_api.go` `CancelInstanceByKey`: jobs `terminated`, no notification | an instance cancelled at the engine runs no marker, so `@WorkflowEnded` never reports `CANCELED` and its service tasks hear nothing; user tasks learn it by polling. A task taken away while its workflow goes on (an interrupting boundary or event sub-process) is reported `CANCELED` by the core at the next delivery of the same workflow, through the open-task probe (S6.1.3); a workflow which ends normally gets its open tasks cancelled before `@WorkflowEnded` | E13.6 | |
 | 10 | No user-task lifecycle events | user task = job of type `user-task-type`; no forms, candidates not stored | notifications by polling (decision 12), `PT5S` default | E13.5 | |
 | 11 | No tenant or namespace | no such field anywhere | `by-adapter` stays VanillaBP's default and is refused while deploying; every application configures `use-prefix` or `none`, one line per adapter id (decision 24) | none planned | |
@@ -60,8 +60,8 @@ what a remote BPMS looks like.
    failure raises an incident. Set `retries` on the task definition, or `JOBS_DEFAULT_RETRIES` at
    the engine (decision 38).
 7. **`@TaskEvent CANCELED` reaches a service task only at the next delivery of the same
-   workflow**, and not at all when the workflow is cancelled at the engine; `@WorkflowEnded` reports
-   no `CANCELED` workflow (GAPS 8, 9).
+   workflow, or when the workflow ends at an end event**, and not at all when the workflow is
+   cancelled at the engine; `@WorkflowEnded` reports no `CANCELED` workflow (GAPS 8, 9).
 8. **User-task notifications arrive with a delay** of up to `user-task-poll-interval` (GAPS 10).
 9. **Only `use-prefix` and `none` keep workflow modules apart**; the engine has no tenant.
    `by-adapter` stays VanillaBP's default and is refused while deploying, so every application
@@ -70,7 +70,12 @@ what a remote BPMS looks like.
 11. **Multi-instance index and total cost a lookup** per parent instance on the first delivery (GAPS 16).
 12. **Workflows started before the adapter deployed its markers** get no `@WorkflowEnded` and record
     no instance key at their start, and a process a workflow module declares without a model (a
-    renamed process) gets none either (GAPS 8).
+    renamed process) serves only the markers a model the engine holds under its id carries (GAPS 8).
+    A workflow which ends in an interrupting event sub-process, or in an error event sub-process
+    which caught an error end event, gets no `@WorkflowEnded` either, and an error end event which
+    nothing catches raises an incident instead of ending the workflow, as on Camunda 8 (decision
+    52). A message end event's own task runs after `@WorkflowEnded`, and two branches which end at
+    the same moment may report the end twice.
 13. **Conditional events, escalations, compensation, script tasks and signals** are refused while
     deploying, because the engine has none (GAPS 13, 14).
 14. **An expression in the model which reads an attribute the aggregate does not share is not found

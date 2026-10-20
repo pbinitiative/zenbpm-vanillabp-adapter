@@ -197,8 +197,30 @@ aggregate of its own starts it without the caller's business key and id, so the 
 method builds its aggregate (decision 45). A call activity is left as the modeller wrote it where
 they wrote a `zenbpm:in` of their own or a mapping of the called process's id variable, and where
 the called process belongs to another workflow module or application, which the boot cannot judge:
-there the model hands on whatever name the called workflow is to start with. No end of a workflow is
-reported yet.
+there the model hands on whatever name the called workflow is to start with.
+
+A claimed process whose end the application listens to, through a `@WorkflowEnded` method or
+`vanillabp.delivery.release-on-workflow-end`, gets an end marker in front of every none, message and
+terminate end event of its own (decision 52). Its job reports the end with the end event's id
+(`ZenBpmLifecycleIT#theEndOfAWorkflowIsReportedWithItsEndEvent`), after the platform told every task
+it believed open in the workflow as cancelled, a task inside an embedded sub-process included, and
+the instance ends only once the report committed (`#theEndCancelsTheTasksStillOpen`). An end event
+which ends one branch while another branch of the workflow still runs reports nothing, and the end
+the last branch reaches is reported (`#aBranchWhichEndsWhileAnotherRunsReportsNothing`); an end
+reached while a non-interrupting event sub-process still runs is reported once that sub-process
+ended (`#theEndWaitsForAnEventSubProcessStillRunning`). A workflow cancelled at the engine reports
+nothing (`#aCancelledWorkflowReportsNothing`), and neither does one which ends inside an interrupting
+event sub-process. An error end event gets no marker: where nothing catches the error, the engine
+raises an incident there and the workflow does not end
+(`ZenBpmMarkerTasksIT#anUncaughtErrorEndEventRaisesAnIncident`). A `@WorkflowEnded` method which
+throws fails the marker's job like a handler which threw, so the engine hands it out again after the
+`retry-backoff` where the job has retries left (`#aReportWhichThrewIsRepeated`), and a workflow whose
+aggregate the application deleted ends without a report (`#aWorkflowWhoseAggregateIsGoneEnds`). A
+user task the end took away is told as cancelled by that report alone, neither by the looks for user
+tasks nor after a restart (decision 53,
+`ZenBpmUserTaskRestartIT#aUserTaskTheEndTookAwayIsToldOnceAcrossARestart`). A report costs one job,
+one transaction and up to two reads of the instance; a message end event's own task runs after the
+report, and two branches which end at the same moment may report the end twice.
 
 A message is correlated in two phases. Phase one never asks the engine whether
 something waits. It refuses where the application calls a message which no version the engine holds

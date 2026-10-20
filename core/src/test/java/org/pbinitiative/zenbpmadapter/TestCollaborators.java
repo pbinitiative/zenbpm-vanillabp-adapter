@@ -172,6 +172,33 @@ public final class TestCollaborators {
     }
 
     /**
+     * A complete set of collaborators which hands an invoker of ends and none of starts, of which
+     * the scoping, the wiring and the invoker of ends may be called.
+     *
+     * @param adapterId The adapter id they are handed to
+     * @param scoping The platform's name-clash scoping, as the test wants it to answer
+     * @param workflowTaskWiring The platform's wiring, as the test wants it to answer
+     * @param starts The invokers whose invoker of ends is handed
+     * @return The collaborators
+     */
+    public static AdapterCollaborators hearingEndsOnly(
+        final String adapterId,
+        final NameClashAvoidanceSupport scoping,
+        final WorkflowTaskWiring workflowTaskWiring,
+        final TestStarts starts
+    ) {
+        return AdapterCollaborators
+                .forAdapter(adapterId)
+                .workflowTaskWiring(workflowTaskWiring)
+                .workflowTaskInvoker(servingUserTasks())
+                .scoping(scoping)
+                .workflowAggregateSync(unused(WorkflowAggregateSync.class))
+                .preCommitRegistrar(unused(PreCommitRegistrar.class))
+                .workflowEndedInvoker(starts.endedInvoker())
+                .build();
+    }
+
+    /**
      * A set of collaborators without the two optional invokers of the lifecycle of a workflow, as a
      * platform builds it for an application which asks for neither, of which the scoping and the
      * wiring may be called.
@@ -292,6 +319,29 @@ public final class TestCollaborators {
         final WorkflowTaskInvoker workflowTaskInvoker,
         final BpmsInitiatedStartInvoker bpmsInitiatedStartInvoker
     ) {
+        return withInvokers(adapterId, scoping, workflowTaskInvoker, bpmsInitiatedStartInvoker, unused(
+                WorkflowEndedInvoker.class));
+    }
+
+    /**
+     * A complete set of collaborators, of which only the scoping and the three invokers may be
+     * called: what the handlers of a workflow module's jobs meet, the handler of an end marker
+     * included.
+     *
+     * @param adapterId The adapter id they are handed to
+     * @param scoping The platform's name-clash scoping, as the test wants it to answer
+     * @param workflowTaskInvoker The platform's core as a job handler calls it
+     * @param bpmsInitiatedStartInvoker The platform's core as the handler of a start marker calls it
+     * @param workflowEndedInvoker The platform's core as the handler of an end marker calls it
+     * @return The collaborators
+     */
+    public static AdapterCollaborators withInvokers(
+        final String adapterId,
+        final NameClashAvoidanceSupport scoping,
+        final WorkflowTaskInvoker workflowTaskInvoker,
+        final BpmsInitiatedStartInvoker bpmsInitiatedStartInvoker,
+        final WorkflowEndedInvoker workflowEndedInvoker
+    ) {
         return AdapterCollaborators
                 .forAdapter(adapterId)
                 .workflowTaskWiring(unused(WorkflowTaskWiring.class))
@@ -299,7 +349,7 @@ public final class TestCollaborators {
                 .scoping(scoping)
                 .workflowAggregateSync(unused(WorkflowAggregateSync.class))
                 .preCommitRegistrar(unused(PreCommitRegistrar.class))
-                .workflowEndedInvoker(unused(WorkflowEndedInvoker.class))
+                .workflowEndedInvoker(workflowEndedInvoker)
                 .bpmsInitiatedStartInvoker(bpmsInitiatedStartInvoker)
                 .build();
     }

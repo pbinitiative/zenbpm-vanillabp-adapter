@@ -333,6 +333,30 @@ public class ZenBpmRestClient implements AutoCloseable {
     }
 
     /**
+     * Where the tokens of a process instance stand now (the <code>activeElementInstances</code> of
+     * <code>GET /v1/process-instances/{key}</code>): one element id per token which runs, waits or
+     * failed, an id twice where two tokens stand at one element. The tokens of its child instances
+     * are not among them; the token which waits for a child stands at the element which started it.
+     *
+     * @param key The process instance key
+     * @return The element ids, empty where the engine answers 404
+     * @throws ZenBpmApiException With status 502 where the key names a partition the engine does
+     *             not have: a key carries the partition which holds it
+     */
+    public Optional<List<String>> activeElementsOf(final long key) {
+        final var call = new Call(GET, "/v1/process-instances/%d".formatted(key));
+        final var answer = call.send(SUCCESS_OR_NOT_FOUND);
+        if (answer.status() == 404) {
+            return Optional.empty();
+        }
+        return Optional.of(call.decoded(answer, ZenBpmWire.ProcessInstanceTokens.class, read -> read
+                .activeElementInstances()
+                .stream()
+                .map(ZenBpmWire.ElementInstance::elementId)
+                .toList()));
+    }
+
+    /**
      * One page of a search for process instances (<code>GET /v1/process-instances</code>),
      * ordered by key within each partition of the engine. The page size applies per partition;
      * {@link Page#totalCount()} counts every match.

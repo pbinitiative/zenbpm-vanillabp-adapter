@@ -8,6 +8,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.time.Duration;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -27,6 +28,7 @@ import org.pbinitiative.zenbpmadapter.client.ReceivedJob;
 import org.pbinitiative.zenbpmadapter.client.ZenBpmAdapterConfiguration;
 import org.pbinitiative.zenbpmadapter.client.ZenBpmClientFactory;
 import org.pbinitiative.zenbpmadapter.client.grpc.Zenbpm.WaitingJob;
+import org.pbinitiative.zenbpmadapter.model.ZenBpmMarkerTasks;
 
 import com.google.protobuf.ByteString;
 
@@ -50,6 +52,13 @@ final class JobRunning implements AutoCloseable {
      */
     static final String START_MARKER_TYPE = "vanillabp__started__shop__Order";
 
+    /**
+     * The job type of the end markers of <code>shop__Order</code>, which stand in front of its end
+     * events <code>Shipped</code>, which ends its branch, and <code>Withdrawn</code>, a terminate end
+     * event.
+     */
+    static final String END_MARKER_TYPE = "vanillabp__ended__shop__Order";
+
     static final Duration JOB_TIMEOUT = Duration.ofMinutes(5);
 
     private static final Duration PATIENCE = Duration.ofSeconds(10);
@@ -59,6 +68,8 @@ final class JobRunning implements AutoCloseable {
     final TestInvoker invoker = new TestInvoker();
 
     final TestStartInvoker starts = new TestStartInvoker();
+
+    final TestEndInvoker ends = new TestEndInvoker();
 
     /**
      * The <code>retry-backoff</code> the configuration resolves, by
@@ -104,7 +115,8 @@ final class JobRunning implements AutoCloseable {
         factory = new ZenBpmClientFactory("orders", configuration, () -> "shop");
         dispatcher = new ZenBpmJobDispatcher("orders", factory);
         handler = handlerOf("shop", NameClashAvoidance.USE_PREFIX, new WiredProcess("Order", "shop__Order", Set.of(
-                JOB_TYPE), true, false, Map.of("Placed", BpmsStartTrigger.Kind.TIMER), Map.of()));
+                JOB_TYPE), true, true, Map.of("Placed", BpmsStartTrigger.Kind.TIMER), Map.of("Shipped",
+                        ZenBpmMarkerTasks.Ending.BRANCH, "Withdrawn", ZenBpmMarkerTasks.Ending.WORKFLOW), Map.of()));
         dispatcher.register(handler);
     }
 
@@ -127,7 +139,7 @@ final class JobRunning implements AutoCloseable {
             context.recordWiring(process);
         }
         return new ZenBpmJobHandler("orders", factory, TestCollaborators.withInvokers("orders", TestScoping.of(mode),
-                invoker, starts), context, (
+                invoker, starts, ends), context, (
                     module,
                     process,
                     taskDefinition) -> Optional.ofNullable(retryBackoffs.get("%s/%s/%s".formatted(module, process,
@@ -172,22 +184,71 @@ final class JobRunning implements AutoCloseable {
         final String businessKey,
         final String variables
     ) {
-        engine.answers("GET", "/v1/process-instances/%d".formatted(key), 200, """
-                {
-                  "key": %d,
-                  "processDefinitionKey": 4503599627370498,
-                  "bpmnProcessId": "%s",
-                  "version": 3,
-                  %s
-                  "createdAt": "2026-10-17T14:30:25.123Z",
-                  "state": "active",
-                  %s
-                  "processType": "%s",
-                  "variables": {%s}
-                }
-                """.formatted(key, scopedProcessId, businessKey == null ? "" : "\"businessKey\": \"%s\",".formatted(
-                businessKey), parentKey == null ? "" : "\"parentProcessInstanceKey\": %d,".formatted(parentKey),
-                processType, variables));
+        holds(key, scopedProcessId, processType, parentKey, businessKey, variables, List.of());
+    }
+
+    /**
+     * Lets the engine hold an instance of a process, version 3, whose tokens stand at elements.
+     *
+     * @param key The instance key
+     * @param scopedProcessId The process as the engine knows it
+     * @param processType <code>default</code>, <code>subprocess</code> or <code>callActivity</code>
+     * @param parentKey The instance it is part of or was called from, <code>null</code> for none
+     * @param businessKey The business key, <code>null</code> for none
+     * @param variables The variables, written as JSON as they are
+     * @param standingAt The element of each token of the instance
+     */
+    void holds(
+        final long key,
+        final String scopedProcessId,
+        final String processType,
+        final Long parentKey,
+        final String businessKey,
+        final String variables,
+        final List<String> standingAt
+    ) {
+        holds(key, scopedProcessId, processType, parentKey, businessKey, variables, standingAt, "active");
+    }
+
+    /**
+     * Lets the engine hold a root instance of <code>shop__Order</code>, version 3, which completed,
+     * so no token of it stands anywhere.
+     *
+     * @param key The instance key
+     * @param businessKey The business key, <code>null</code> for none
+     * @param variables The variables, written as JSON as they are
+     */
+    void holdsEnded(
+        final long key,
+        final String businessKey,
+        final String variables
+    ) {
+        holds(key, "shop__Order", "default", null, businessKey, variables, List.of(), "completed");
+    }
+
+    /**
+     * Lets the engine answer the child instances of an instance, each of <code>shop__Order</code>
+     * as an event sub-process starts it.
+     *
+     * @param key The instance key
+     * @param states The state of each child, e.g. <code>active</code>
+     */
+    void hasChildren(
+        final long key,
+        final String... states
+    ) {
+        final var children = new ArrayList<String>();
+        for (var index = 0; index < states.length; ++index) {
+            children.add("""
+                    {"key": %d, "processDefinitionKey": 4503599627370498, "bpmnProcessId": "shop__Order", \
+                    "version": 3, "createdAt": "2026-10-17T14:30:25.123Z", "state": "%s", \
+                    "parentProcessInstanceKey": %d, "processType": "subprocess", "variables": {}}"""
+                    .formatted(key + index + 1, states[index], key));
+        }
+        engine.answers("GET", "/v1/process-instances/%d/child-processes".formatted(key), 200, """
+                {"partitions": [{"partition": 1, "totalCount": %d, "items": [%s]}], "page": 1, "size": 100, \
+                "count": %d, "totalCount": %d}""".formatted(children.size(), String.join(",", children), children
+                .size(), children.size()));
     }
 
     /**
@@ -276,6 +337,35 @@ final class JobRunning implements AutoCloseable {
                 .setRetries(1)
                 .setAttempt(1)
                 .setInputVariables(ByteString.copyFromUtf8(inputVariables))
+                .build(), lockUntil.minus(JOB_TIMEOUT));
+    }
+
+    /**
+     * Job 42 of an end marker of <code>shop__Order</code> in an instance, delivered just now with a
+     * full lock, delivery token 7 and one retry, as the first attempt.
+     *
+     * @param instanceKey The instance of the job
+     * @param elementId The marker's id, e.g. <code>vanillabp__ended__Shipped</code>
+     * @return The job
+     */
+    static ReceivedJob endMarkerJob(
+        final long instanceKey,
+        final String elementId
+    ) {
+        final var lockUntil = Instant
+                .now()
+                .plus(JOB_TIMEOUT);
+        return new ReceivedJob(WaitingJob
+                .newBuilder()
+                .setKey(42)
+                .setInstanceKey(instanceKey)
+                .setType(END_MARKER_TYPE)
+                .setElementId(elementId)
+                .setLockUntil(lockUntil.toEpochMilli())
+                .setDeliveryToken(7)
+                .setRetries(1)
+                .setAttempt(1)
+                .setInputVariables(ByteString.copyFromUtf8("{\"id\": \"order-1\"}"))
                 .build(), lockUntil.minus(JOB_TIMEOUT));
     }
 
@@ -382,6 +472,44 @@ final class JobRunning implements AutoCloseable {
     public void close() {
         factory.close();
         engine.close();
+    }
+
+    private void holds(
+        final long key,
+        final String scopedProcessId,
+        final String processType,
+        final Long parentKey,
+        final String businessKey,
+        final String variables,
+        final List<String> standingAt,
+        final String state
+    ) {
+        final var tokens = standingAt
+                .stream()
+                .map(elementId -> """
+                        {"elementInstanceKey": 7, "createdAt": "2026-10-17T14:30:25.123Z", "state": "TokenStateWaiting", \
+                        "elementId": "%s"}"""
+                        .formatted(elementId))
+                .collect(Collectors.joining(","));
+        engine.answers("GET", "/v1/process-instances/%d".formatted(key), 200, """
+                {
+                  "key": %d,
+                  "processDefinitionKey": 4503599627370498,
+                  "bpmnProcessId": "%s",
+                  "version": 3,
+                  %s
+                  "createdAt": "2026-10-17T14:30:25.123Z",
+                  "state": "%s",
+                  %s
+                  "processType": "%s",
+                  "variables": {%s},
+                  "activeElementInstances": [%s]
+                }
+                """.formatted(key, scopedProcessId, businessKey == null ? "" : "\"businessKey\": \"%s\",".formatted(
+                businessKey), state, parentKey == null ? ""
+                        : "\"parentProcessInstanceKey\": %d,".formatted(
+                                parentKey),
+                processType, variables, tokens));
     }
 
 }
