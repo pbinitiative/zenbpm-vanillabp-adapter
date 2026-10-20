@@ -37,8 +37,9 @@ import lombok.extern.slf4j.Slf4j;
  * newer one is deployed. The version this start deployed is the newest one, and it is read from the
  * BPMN the deployment got back. The engine counts versions from one, so only a process whose
  * deployed version is a later one has others, which cost one request for the list and one per
- * version, at every start of the application. The names are those the engine holds, so scoped where
- * the deployment scoped them.
+ * version, at every start of the application, a model read for another question of the start
+ * excepted, see decision 56 in the repository's DECISIONS.md. The names are those the engine
+ * holds, so scoped where the deployment scoped them.
  * <p>
  * A process whose versions cannot be read is named in the result and in a WARN; the names read
  * until then count all the same, because each was read from a model the engine holds.
@@ -135,9 +136,8 @@ final class ZenBpmHeldMessages {
                         .orElse(0);
                 for (final var version : versions) {
                     final var isTheNewest = version.version() == newest;
-                    read(workflowModuleId, version.version(), scopedBpmnProcessId, rest
-                            .processDefinition(version.key())
-                            .bpmnData(), awaited, isTheNewest ? starting : new TreeSet<>(), startedByMessage);
+                    read(workflowModuleId, version.version(), scopedBpmnProcessId, factory.heldBpmnOf(version
+                            .key()), awaited, isTheNewest ? starting : new TreeSet<>(), startedByMessage);
                 }
             } catch (final RuntimeException e) {
                 log.debug("ZenBPM[{}]: the models the engine holds as '{}' could not be read again", adapterId,
@@ -157,14 +157,14 @@ final class ZenBpmHeldMessages {
         final Set<String> awaited,
         final Set<String> startedByMessage
     ) {
-        final var rest = factory.rest();
-        for (final var version : rest.processDefinitions(process.scopedBpmnProcessId(), false)) {
+        for (final var version : factory
+                .rest()
+                .processDefinitions(process.scopedBpmnProcessId(), false)) {
             if (version.key() == process.key()) {
                 continue;
             }
-            read(workflowModuleId, version.version(), process.scopedBpmnProcessId(), rest
-                    .processDefinition(version.key())
-                    .bpmnData(), awaited, new TreeSet<>(), startedByMessage);
+            read(workflowModuleId, version.version(), process.scopedBpmnProcessId(), factory.heldBpmnOf(version
+                    .key()), awaited, new TreeSet<>(), startedByMessage);
         }
     }
 

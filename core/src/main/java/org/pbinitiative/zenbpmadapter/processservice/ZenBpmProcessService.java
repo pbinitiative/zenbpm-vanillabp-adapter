@@ -322,8 +322,9 @@ public class ZenBpmProcessService<A> implements MigratableProcessService<A> {
      * <p>
      * The engine counts, the adapter adds up: one request for the list of versions, and per version
      * one for its model and one for its statistics. The platform asks before the application
-     * deployed anything, so every model is read from the engine. A task with an incident is not
-     * counted. Where the engine does not answer, the number is lost and nothing else, so the
+     * deployed anything, so every model is read from the engine, and kept for the other questions of
+     * the start which read the same models, see decision 56 in the repository's DECISIONS.md. A task
+     * with an incident is not counted. Where the engine does not answer, the number is lost and nothing else, so the
      * answer is <code>null</code> and the failure a DEBUG line. An adapter id without clients has
      * no engine to ask and answers <code>null</code> the same way.
      *
@@ -344,7 +345,7 @@ public class ZenBpmProcessService<A> implements MigratableProcessService<A> {
             final var rest = factory.rest();
             var open = 0L;
             for (final var version : rest.processDefinitions(scopedProcessId, false)) {
-                final var jobElements = jobElementsOf(workflowModuleId, version, rest);
+                final var jobElements = jobElementsOf(workflowModuleId, version, factory.heldBpmnOf(version.key()));
                 open += rest
                         .processDefinitionStatistics(version.key())
                         .elements()
@@ -759,11 +760,8 @@ public class ZenBpmProcessService<A> implements MigratableProcessService<A> {
     private static Set<String> jobElementsOf(
         final String workflowModuleId,
         final ProcessDefinitionRef version,
-        final ZenBpmRestClient rest
+        final String bpmn
     ) {
-        final var bpmn = rest
-                .processDefinition(version.key())
-                .bpmnData();
         final var jobElements = new LinkedHashSet<String>();
         ZenBpmModelReader
                 .read(workflowModuleId, "version %d of process '%s'".formatted(version.version(), version

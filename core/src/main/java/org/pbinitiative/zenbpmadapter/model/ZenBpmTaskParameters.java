@@ -5,8 +5,11 @@
 package org.pbinitiative.zenbpmadapter.model;
 
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 import java.util.TreeSet;
 import java.util.stream.Stream;
 
@@ -92,6 +95,23 @@ public final class ZenBpmTaskParameters {
                         .elementId()), carried);
             }
         }
+    }
+
+    /**
+     * The names each multi-instance element of a model maps into its body, those {@link #apply}
+     * wrote included: what reaches a job inside the body beside the item.
+     *
+     * @param model The model, as the engine holds it or as it is deployed
+     * @return The names by the id of the multi-instance element, in the order of the model
+     */
+    public static Map<String, Set<String>> mappedIntoMultiInstanceBodies(final ZenBpmBpmnModel model) {
+        final var elements = ZenBpmInputMappings.elementsById(model.document());
+        final var mapped = new LinkedHashMap<String, Set<String>>();
+        model
+                .multiInstanceElements()
+                .forEach(multiInstance -> mapped.put(multiInstance.elementId(), ZenBpmInputMappings.inputTargetsOf(
+                        elements.get(multiInstance.elementId()))));
+        return mapped;
     }
 
 }

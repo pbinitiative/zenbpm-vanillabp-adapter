@@ -1401,3 +1401,112 @@ repetition bounded by the job's lock, fails the method's invocation as an except
 would, so the job is failed with its `retry-backoff`. The notification of a user task reads its
 iterations the same way. Once the engine hands out `loopCounter` and `nrOfInstances`, the walk
 goes.
+
+### 55. The version catalog reads the versions and their tags from the engine's list of definitions
+
+Decided by the implementation pipeline in place of the maintainers, as their policy for the
+autonomous run asks.
+
+A job carries the version of its definition, so `@WorkflowTask(version = "1")` and every other
+specification made of numbers needs nothing from the engine. A specification which names a version
+tag needs to know which version carries the tag, and only the engine knows that. At the pinned commit
+`bdd795a3` the engine reads the tag of a model from the `versionTag` extension element of its
+process, in any namespace (`extractProcessVersionTag` of `pkg/bpmn/xml_loader.go`), keeps it with the
+definition, and hands it out in its list of definitions (`GET /v1/process-definitions`, `versionTag`
+of each item) and with each definition. It gives a tag to one version of a process only (GAPS 32).
+
+So every adapter id has one `ZenBpmProcessVersions`, a `CachingProcessVersionCatalog` of the
+platform. It lists the definitions under the process's id as the engine knows it, scoped as the
+deployment scopes it, with one request for every version and its tag (decision 14). The version a
+deployment of this start ended up with, with its tag, is recorded from the deployment's answer,
+without a request. `wireBpmn` registers the catalog for every process a workflow service claims, as
+the Camunda 8 adapter does, after the platform validated the process's tasks; a process nobody
+claims gets no wiring call at all. `processVersionCatalogOf` hands out the same
+catalog for a process id a workflow module declares without bringing a model for it, such as the old
+id of a renamed process, because the catalog asks by the id scoped as the deployment of that id
+scoped it; an adapter id without clients has no engine to ask and answers `null`.
+
+Registering the catalog switches on what the platform does with one, which this adapter, built
+without it, did not have: a tag no version carries is reported once at startup, a task of the version
+a start deployed which no method serves for that version ends the start (platform decision 126), and
+the versions older than the deployed one are checked.
+
+Because a tag names one version, a model deployed again with the tag and the content of an older
+version, as a workflow module rolled back to an earlier release brings it, gets that older version
+back (`200`, unchanged), while the engine starts every new workflow on its newest version. The
+platform checks the methods against the version a start deployed and the versions older than it,
+so the newest version, on which every new workflow runs, would be checked by nobody, and the
+application would start workflows on a model it does not bring. So where the engine answers a
+deployment as unchanged, the deployment compares the version it got with the newest version the
+catalog lists (the same list request the platform's check reads afterwards), and where an older
+version came back it ends the start, naming the file, both versions, the tag and the fix: a tag no
+version of the process carries yet, or none, with which the engine deploys the model as its newest
+version. A model the engine created is always its newest version and costs no list request here.
+
+### 56. A start reads each model the engine holds once, and the questions about a held version read it from there
+
+Decided by the implementation pipeline in place of the maintainers, as their policy for the
+autonomous run asks.
+
+Four questions of a start read the models the engine holds of a process, every version of them: the
+open tasks the platform asks for before anything is deployed (`openTaskCount`), the messages every
+version waits for (decision 42), the job types a process declared without a model needs (decision
+41), and the platform's check of the versions older than the one a start deployed, which asks the
+version catalog of decision 55 for the tasks, the start events, the elements which put a second
+token into a workflow and the identifiers of each such version. Each read costs a request
+(`GET /v1/process-definitions/{key}`), and each of them read the same models on its own, so a start
+read the model of an old version up to four times. A definition never changes once the engine
+created it, so its key names its model for good.
+
+So the client factory of every adapter id keeps the models it read, by definition key
+(`ZenBpmHeldModels`), and every one of those questions reads a model through it
+(`ZenBpmClientFactory#heldBpmnOf`); the model a deployment of this start got back is taken from
+`ZenBpmDeployedProcesses` without any request. A start reads each model once; the deployment's own
+`GET` of the definition it created stays, because it learns the version and the tag from it. The
+cache keeps at most 8 Mi characters of BPMN and drops the model asked for longest ago first, so an
+engine which holds a great many versions costs requests, not memory; it lives as long as the
+application, because a key never names another model. That goes beyond what the platform's contract asks
+(`ProcessVersionCatalog#identifiersOfVersion`: hold a model "while the version is being asked about,
+and drop it afterwards"), because the questions which read the same model are asked at different
+moments of a start, `openTaskCount` before anything is deployed and the check of the older versions
+after the deployment, and the bound caps what keeping them costs.
+
+The catalog keeps the definition key of every version from its list request, so a question about a
+held version costs no search for the key; a version neither listed nor deployed by this start costs
+one more list request. It answers about a held version from its model the way the wiring speaks
+about the model it deploys: its tasks and user tasks without the markers the adapter wrote, with
+their task definitions without the deployment's prefixes, each naming the multi-instance elements
+around it which hand no item to an iteration (the rule `ZenBpmMultiInstanceItems` applies to the
+model it deploys); the start events of the process itself; the elements which put a second token
+into a workflow; and the identifiers the model declares, read without rewriting it, the job types of
+the markers left out. Where the version is not held any more, or its model cannot be read, the answer
+is `null`, with a WARN where the engine failed, which the platform reads as "this adapter cannot
+say".
+
+How many workflows run on a version is what the engine counts: the totals of two searches for one
+item each (`GET /v1/process-instances`, filtered by the definition key, `state=active` and
+`state=failed`), whatever their number (decision 14). Each search names the earliest creation time
+there is (`createdFrom=1970-01-01T00:00:00Z`) as its lower bound: at `bdd795a3`
+`FindProcessInstancesPage` of `internal/sql/queries/process_instance.sql` searches the index of the
+definition's instances by creation time only where a definition and a lower bound are both given,
+and otherwise reads every instance the partition holds. A failed instance carries an incident which an
+operator resolves, so it still runs, as the probes count it. At the pinned commit `bdd795a3` the
+search finds the instances a call activity started as well (`GetProcessInstances` of
+`internal/cluster/server/server.go` includes the process type `callActivity` unless child processes
+are asked for), so the workflows of a called process are counted, and its total is the sum of exact
+counts per partition. Where the engine does not answer, the count is `null` with a WARN.
+
+What a workflow of an older version misses is read from the models, because this adapter brings
+VanillaBP's behaviour by writing it into the model it deploys (decision 26): the end markers the
+model this start deployed carries and an older one lacks, through which the end of a workflow is
+reported; the start markers alike; and the names the deployed model maps into a multi-instance body
+which an older one does not map in. Markers are written for every event of a kind at once, so a
+version holds them or does not. Only what the deployed model has is named, and a process id this
+start deployed nothing under, such as a declared one, is answered `null`, because there is no model
+to compare with. Only the older versions on which workflows run are compared, because the platform
+tells the answer to those workflows: the platform asks the count of every older version right before,
+and the catalog keeps the last count of each version, so the comparison asks the engine nothing more;
+a version whose count the engine did not give is compared as well, because nobody can say that none
+runs on it. The models are read one after the other, and of each only what it carries of the
+markers and mappings is kept, so a process with many versions does not hold all their models at
+once.

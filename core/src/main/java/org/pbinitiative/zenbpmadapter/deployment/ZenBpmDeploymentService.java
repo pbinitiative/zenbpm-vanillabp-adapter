@@ -32,6 +32,7 @@ import org.pbinitiative.zenbpmadapter.client.ZenBpmEnvironmentInfo;
 import org.pbinitiative.zenbpmadapter.client.ZenBpmErrors;
 import org.pbinitiative.zenbpmadapter.client.ZenBpmInstanceIdentity;
 import org.pbinitiative.zenbpmadapter.client.api.DeployedResource;
+import org.pbinitiative.zenbpmadapter.client.api.ProcessDefinitionRef;
 import org.pbinitiative.zenbpmadapter.health.ZenBpmHealth;
 import org.pbinitiative.zenbpmadapter.model.ZenBpmBpmnModel;
 import org.pbinitiative.zenbpmadapter.model.ZenBpmCallActivities;
@@ -61,6 +62,7 @@ import io.vanillabp.integration.adapter.spi.NameClashAvoidanceSupport.DeployedPr
 import io.vanillabp.integration.adapter.spi.NameClashAvoidanceSupport.ModelIdentifier;
 import io.vanillabp.integration.adapter.spi.NameClashAvoidanceSupport.ScopedIdentifierKind;
 import io.vanillabp.integration.adapter.spi.health.AdapterHealth;
+import io.vanillabp.integration.adapter.spi.version.ProcessVersionCatalog;
 import io.vanillabp.integration.adapter.spi.workflowstart.BpmsInitiatedStartInvoker;
 import io.vanillabp.integration.adapter.spi.workflowstart.BpmsInitiatedStartSpec;
 import io.vanillabp.integration.adapter.spi.workflowtask.WorkflowTaskWiring;
@@ -108,6 +110,13 @@ public class ZenBpmDeploymentService implements AdapterDeploymentService<ZenBpmB
     private final ZenBpmRetryBackoffResolver retryBackoffs;
 
     private StartupReport startupReport;
+
+    /**
+     * The versions of the processes the engine of this adapter id holds, registered for every
+     * claimed process and handed out for every process id a workflow module declares without a
+     * model.
+     */
+    private final ZenBpmProcessVersions processVersions;
 
     /**
      * The dispatcher of the jobs of this adapter id, built when the first workflow module starts
@@ -199,6 +208,7 @@ public class ZenBpmDeploymentService implements AdapterDeploymentService<ZenBpmB
         this.collaborators = collaborators;
         this.jobTimeouts = jobTimeouts;
         this.retryBackoffs = retryBackoffs;
+        this.processVersions = new ZenBpmProcessVersions(adapterId, factory, collaborators.scoping());
     }
 
     @Override
@@ -511,8 +521,9 @@ public class ZenBpmDeploymentService implements AdapterDeploymentService<ZenBpmB
      * <code>job-timeout</code> of each job type included, and the job type of each user task a
      * method serves, whose notifications are polled, see decision 12 in the repository's DECISIONS.md;
      * the platform is asked by the user task's task definition and by its element id, and a user
-     * task no method serves, one marked <code>implemented-externally</code>, is never looked for. No version
-     * catalog is registered yet, which the platform reads as "not asked yet".
+     * task no method serves, one marked <code>implemented-externally</code>, is never looked for. It
+     * registers the version catalog of this adapter id for the process, see
+     * {@link ZenBpmProcessVersions}, which the platform asks once the module is deployed.
      *
      * @param workflowModuleId The workflow module of the process
      * @param filename The name of the process's file
@@ -548,6 +559,7 @@ public class ZenBpmDeploymentService implements AdapterDeploymentService<ZenBpmB
                                 .userTasks()
                                 .stream())
                 .toList());
+        wiring.registerProcessVersions(adapterId, workflowModuleId, bpmnProcessId, processVersions);
         collaborators
                 .bpmsInitiatedStartInvoker()
                 .ifPresent(invoker -> reportTheStarts(invoker, workflowModuleId, bpmnProcessId, model));
@@ -611,7 +623,8 @@ public class ZenBpmDeploymentService implements AdapterDeploymentService<ZenBpmB
      * deployment with the engine's reason, naming file, workflow module and process; any other
      * failure names file and engine address. The engine keeps the files it took before, because it
      * deploys one file per request. Only where it took every file are the versions registered with
-     * the platform and remembered in {@link ZenBpmClientFactory#deployedProcesses()}, together
+     * the platform, recorded with their version tags in the version catalog of this adapter id, and
+     * remembered in {@link ZenBpmClientFactory#deployedProcesses()}, together
      * with the messages every version the engine holds of those processes waits for and starts
      * with, see {@link ZenBpmHeldMessages}, and an INFO names the processes a message starts and
      * what <code>message-start-lookup</code> does with them, with a WARN under <code>scan</code>;
@@ -670,6 +683,9 @@ public class ZenBpmDeploymentService implements AdapterDeploymentService<ZenBpmB
                     workflowModuleId, bpmnProcessId);
             final var resource = answerTo(file, () -> rest.deployBpmn(ZenBpmModelWriter.bytesOf(model)));
             final var definition = answerTo(file, () -> rest.processDefinition(resource.key()));
+            if (!resource.created()) {
+                refuseAnOlderVersionHandedBack(file, workflowModuleId, bpmnProcessId, definition);
+            }
             versions.add(new ZenBpmDeployedProcesses.DeployedProcess(workflowModuleId, bpmnProcessId, definition
                     .bpmnProcessId(), definition.key(), definition.version(), definition.versionTag(), definition
                             .bpmnData()));
@@ -678,6 +694,7 @@ public class ZenBpmDeploymentService implements AdapterDeploymentService<ZenBpmB
         }
         // only a deployment the engine took as a whole tells the platform its versions
         versions.forEach(version -> {
+            processVersions.recordDeployed(version);
             wiring.registerDeployedVersion(adapterId, workflowModuleId, version.bpmnProcessId(), String.valueOf(
                     version.version()));
             factory
@@ -702,6 +719,24 @@ public class ZenBpmDeploymentService implements AdapterDeploymentService<ZenBpmB
                 .scoping()
                 .reportIdentifiersTheModelsDeclare(adapterId, workflowModuleId, List.copyOf(context
                         .declaredIdentifiers()));
+    }
+
+    /**
+     * The versions the engine holds of a process id a workflow module declares without deploying a
+     * model under it, such as the old id of a renamed process: the catalog every claimed process is
+     * registered with, which asks the engine by the id scoped as the deployment of the id scoped it.
+     *
+     * @param workflowModuleId The workflow module
+     * @param bpmnProcessId The plain process id
+     * @return The catalog, <code>null</code> for an adapter id without clients, which has no engine
+     *         to ask
+     */
+    @Override
+    public ProcessVersionCatalog processVersionCatalogOf(
+        final String workflowModuleId,
+        final String bpmnProcessId
+    ) {
+        return factory.isConfigured() ? processVersions : null;
     }
 
     /**
@@ -1275,6 +1310,32 @@ public class ZenBpmDeploymentService implements AdapterDeploymentService<ZenBpmB
                             .configuration()
                             .engineAddress(), ZenBpmErrors.withoutAdapterId(adapterId, e)), e);
         }
+    }
+
+    // a model deployed again with the tag and the content of an older version gets that older version
+    // back, while the engine starts every new workflow on its newest one, which the platform's check
+    // of the deployed version would never see, see decision 55 in the repository's DECISIONS.md
+    private void refuseAnOlderVersionHandedBack(
+        final String file,
+        final String workflowModuleId,
+        final String bpmnProcessId,
+        final ProcessDefinitionRef definition
+    ) {
+        final var newest = processVersions
+                .deployedVersionsOf(workflowModuleId, bpmnProcessId)
+                .stream()
+                .mapToInt(version -> Integer.parseInt(version.version()))
+                .max();
+        if (newest.isEmpty() || (newest.getAsInt() <= definition.version())) {
+            return;
+        }
+        throw new IllegalStateException("""
+                ZenBPM hands back version %d for %s, because that version carries the same version tag '%s' and \
+                the same content, but the engine starts every new workflow on the newest version, %d, which is not \
+                the model this application brings. The engine gives a version tag to one version of a process only, \
+                so give the model a version tag no version of process '%s' carries yet, or none, and the engine \
+                deploys it as its newest version.""".formatted(definition.version(), file, definition.versionTag(),
+                newest.getAsInt(), definition.bpmnProcessId()));
     }
 
     private static String unchangedOrNot(final DeployedResource resource) {

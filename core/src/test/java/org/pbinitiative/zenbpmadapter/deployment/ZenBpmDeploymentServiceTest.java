@@ -649,6 +649,15 @@ class ZenBpmDeploymentServiceTest {
     }
 
     @Test
+    @DisplayName("An adapter id without clients has no engine to ask about the versions of a process the application declares without a model, so it hands out no catalog")
+    void anAdapterIdWithoutClientsHandsOutNoVersionCatalog() {
+        final var deploymentService = new ZenBpmDeploymentService("orders", withoutClients("orders"), TestCollaborators
+                .of("orders", TestScoping.of(NameClashAvoidance.USE_PREFIX)));
+
+        assertNull(deploymentService.processVersionCatalogOf("shop", "Shipping"));
+    }
+
+    @Test
     @DisplayName("Health is what the engine's readiness says: an adapter id without clients is UNKNOWN with its message")
     void healthIsAskedOfTheFactory() {
         final var deploymentService = new ZenBpmDeploymentService("orders", withoutClients("orders"), TestCollaborators

@@ -124,7 +124,7 @@ class ZenBpmDeploymentWiringTest {
             """;
 
     @Test
-    @DisplayName("A claimed process gets every wiring call once, with what the modeller wrote, and the context remembers its scoped id and the job types this application serves")
+    @DisplayName("A claimed process gets every wiring call once, with what the modeller wrote, the version catalog of the adapter id included, and the context remembers its scoped id and the job types this application serves")
     void aClaimedProcessGetsEveryWiringCallOnce() {
         final var wiring = TestWiring
                 .claiming("Orders")
@@ -153,6 +153,15 @@ class ZenBpmDeploymentWiringTest {
                         wiring.callsOf("validateTaskWiring")),
                 () -> assertEquals(List.of("reportConcurrentTokenElements[shop, Orders, [Fork, EveryParcel]]"), wiring
                         .callsOf("reportConcurrentTokenElements")),
+                () -> assertEquals(1, wiring
+                        .callsOf("registerProcessVersions")
+                        .size()),
+                () -> assertTrue(wiring
+                        .callsOf("registerProcessVersions")
+                        .getFirst()
+                        .startsWith("registerProcessVersions[orders, shop, Orders, %s@".formatted(
+                                ZenBpmProcessVersions.class.getName())),
+                        () -> String.valueOf(wiring.calls())),
                 () -> assertEquals(List.of(
                         "multiInstanceElementNames[shop, Orders, Ship]",
                         "multiInstanceElementNames[shop, Orders, ship]"),
