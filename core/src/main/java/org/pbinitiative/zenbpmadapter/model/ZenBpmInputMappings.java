@@ -6,9 +6,10 @@ package org.pbinitiative.zenbpmadapter.model;
 
 import java.util.Collection;
 import java.util.HashMap;
-import java.util.HashSet;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.function.UnaryOperator;
 
 import javax.xml.XMLConstants;
@@ -143,12 +144,14 @@ final class ZenBpmInputMappings {
         return elements;
     }
 
-    private static void mapIn(
-        final Element element,
-        final Collection<String> names,
-        final UnaryOperator<String> sourceOf
-    ) {
-        final var mapped = new HashSet<String>();
+    /**
+     * The names an element maps in: the targets of the inputs of its <code>ioMapping</code>s.
+     *
+     * @param element The BPMN element
+     * @return The names, in the order of the model
+     */
+    static Set<String> inputTargetsOf(final Element element) {
+        final var mapped = new LinkedHashSet<String>();
         for (final var ioMapping : ZenBpmModelReader.extensions(element, "ioMapping")) {
             for (var child = ioMapping.getFirstChild(); child != null; child = child.getNextSibling()) {
                 if (child instanceof Element input && "input".equals(input.getLocalName())) {
@@ -156,6 +159,15 @@ final class ZenBpmInputMappings {
                 }
             }
         }
+        return mapped;
+    }
+
+    private static void mapIn(
+        final Element element,
+        final Collection<String> names,
+        final UnaryOperator<String> sourceOf
+    ) {
+        final var mapped = inputTargetsOf(element);
         final var missing = names
                 .stream()
                 .filter(name -> !mapped.contains(name))

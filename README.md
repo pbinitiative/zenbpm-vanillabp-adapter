@@ -356,6 +356,16 @@ changed, because the adapter writes into the model it deploys; and a model deplo
 tag and the content of an older version gets that older version back, while new workflows start on
 the newest one (see [`GAPS.md`](./GAPS.md)).
 
+At startup the versions the engine holds of a process which are older than the one this start
+deployed are checked: the platform names such a version with the number of workflows which still
+run on it, a task of it which no method serves any more, and what those workflows miss, which the
+adapter reads from the models the engine holds, because it writes VanillaBP's behaviour into the
+model it deploys: the end markers, the start markers and the names mapped into a multi-instance
+body. A version faded out with `vanillabp.adapters.<id>.outfaded-versions` is not checked for its
+tasks; the workflows still running on it are named instead. The numbers are counted by the engine,
+so no page of instances is read, and every question of a start which reads a model the engine
+holds reads it through one cache of the adapter id, so a start reads each model once (decision 56).
+
 What is built next, and in which order, is the implementation plan in [`docs/`](docs/README.md).
 
 ## Modules

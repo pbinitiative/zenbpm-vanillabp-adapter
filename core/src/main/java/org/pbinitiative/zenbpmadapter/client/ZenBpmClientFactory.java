@@ -18,6 +18,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Supplier;
 
 import org.pbinitiative.zenbpmadapter.ZenBpmDeployedProcesses;
+import org.pbinitiative.zenbpmadapter.ZenBpmHeldModels;
 import org.pbinitiative.zenbpmadapter.ZenBpmInstanceCache;
 import org.pbinitiative.zenbpmadapter.client.api.EngineStatus;
 
@@ -97,6 +98,11 @@ public class ZenBpmClientFactory implements AutoCloseable {
      * What the deployments of this start brought to the engine.
      */
     private final ZenBpmDeployedProcesses deployedProcesses = new ZenBpmDeployedProcesses();
+
+    /**
+     * The models of the definitions the engine holds, as this application read them.
+     */
+    private final ZenBpmHeldModels heldModels = new ZenBpmHeldModels();
 
     /**
      * What the engine reported about itself when it was asked at startup.
@@ -324,6 +330,37 @@ public class ZenBpmClientFactory implements AutoCloseable {
      */
     public ZenBpmDeployedProcesses deployedProcesses() {
         return deployedProcesses;
+    }
+
+    /**
+     * The BPMN of a definition the engine holds, as the engine holds it: the one a deployment of
+     * this start got back, or the one read before for another question, or else read from the
+     * engine (<code>GET /v1/process-definitions/{key}</code>) and kept, see {@link ZenBpmHeldModels}.
+     *
+     * @param key The definition key
+     * @return The BPMN
+     * @throws IllegalStateException With the message of the validation where the factory has no
+     *             clients
+     * @throws RuntimeException Where the engine could not be asked, with status 404 where it holds
+     *             no such definition
+     */
+    public String heldBpmnOf(final long key) {
+        final var deployed = deployedProcesses.xmlOf(key);
+        if (deployed.isPresent()) {
+            return deployed.get();
+        }
+        return heldModels.bpmnOf(key, definitionKey -> rest()
+                .processDefinition(definitionKey)
+                .bpmnData());
+    }
+
+    /**
+     * The models of the definitions the engine holds, which this application read.
+     *
+     * @return The models
+     */
+    public ZenBpmHeldModels heldModels() {
+        return heldModels;
     }
 
     /**

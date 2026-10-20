@@ -10,7 +10,8 @@ import jakarta.persistence.Id;
 import jakarta.persistence.Table;
 
 /**
- * The workflow aggregate of the applications of <code>ZenBpmProcessVersionIT</code>: a consignment,
+ * The workflow aggregate of the applications of <code>ZenBpmProcessVersionIT</code> and
+ * <code>ZenBpmOldProcessVersionsIT</code>: a consignment,
  * which the task serving it marks with the method which ran, so a test reads which version
  * specification matched.
  */

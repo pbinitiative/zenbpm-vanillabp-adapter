@@ -186,7 +186,16 @@ runtime as a FEEL error (deviation 14). `registerProcessVersions` registers the 
 of the adapter id, `ZenBpmProcessVersions`, after the platform validated the tasks: it lists the
 versions and their tags under the scoped id with one request per process and records the version
 this start deployed from the deployment's answer (decision 55); `processVersionCatalogOf` hands out
-the same catalog for a process id a workflow module declares without a model.
+the same catalog for a process id a workflow module declares without a model. Asked about a held
+version, it reads the version's model (the key from the same list) and answers like the wiring
+answers for the model it deploys: the tasks without the markers, with plain task definitions and
+the multi-instance elements around each which hand no item over, the start events, the elements
+which put a second token into a workflow, and the plain identifiers; the workflows on a version are
+the totals of two searches of one item (`state=active` and `state=failed`), and what older versions
+miss is read from the models (end markers, start markers, names mapped into multi-instance bodies).
+Every model question of a start (`openTaskCount`, the held messages, the declared processes, the
+catalog) reads through one cache per adapter id, `ZenBpmHeldModels`, keyed by definition key, so a
+start reads each model once (decision 56).
 
 `deployResources`: `validateNoCollidingProcessIds` (before anything is sent), then
 `ZenBpmEngineWait` and `ZenBpmEnvironmentInfo`, then one `POST /v1/dmn-resource-definitions` per DMN
@@ -264,7 +273,7 @@ every other type a task, decision 51); then the job's instance through the cache
 in scope -> UNKNOWN; job `active` or `failed` -> ACTIVE, `completed` or `terminated` -> COMPLETED;
 every other failure -> BPMS_UNAVAILABLE. `openTaskCount(module, process)`: the versions under the
 scoped id (`GET /v1/process-definitions`), per version its model (`GET
-/v1/process-definitions/{key}`) and its statistics, the active counts of the elements which give a
+/v1/process-definitions/{key}`, through the cache of held models) and its statistics, the active counts of the elements which give a
 worker a job summed; `null` where the engine does not answer. The platform asks it before the
 application deployed anything. `workflowVisibilityDelay()` = the configured
 `workflow-visibility-timeout` (default `PT2S`, poll `PT0.25S`);

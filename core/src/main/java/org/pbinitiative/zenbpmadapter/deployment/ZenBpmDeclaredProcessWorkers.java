@@ -270,9 +270,7 @@ final class ZenBpmDeclaredProcessWorkers {
         final var endMarkerJobType = ZenBpmMarkerTasks.endMarkerJobType(scopedProcessId);
         final var rest = factory.rest();
         for (final var version : rest.processDefinitions(scopedProcessId, false)) {
-            final var bpmn = rest
-                    .processDefinition(version.key())
-                    .bpmnData();
+            final var bpmn = factory.heldBpmnOf(version.key());
             ZenBpmModelReader
                     .read(workflowModuleId, "version %d of process '%s'".formatted(version.version(),
                             scopedProcessId), new ByteArrayInputStream(bpmn.getBytes(StandardCharsets.UTF_8)))

@@ -112,6 +112,43 @@ public final class ZenBpmScoping {
         return List.copyOf(declared);
     }
 
+    /**
+     * The identifiers a model the engine holds declares, in their plain form: what
+     * {@link #apply(Document, String, String, NameClashAvoidanceSupport, String)} hands back for the
+     * file it rewrites, read here from a model which was rewritten when it was deployed, and which
+     * is left as it is. The job types of the markers the adapter wrote are no identifiers of the
+     * workflow module and are left out.
+     *
+     * @param document The model as the engine holds it
+     * @param workflowModuleId The workflow module which deployed it
+     * @param bpmnProcessId The plain id of its process
+     * @param scoping The platform's name-clash scoping, which takes the prefixes off
+     * @param adapterId The adapter id the model was deployed by
+     * @return The identifiers the model declares, plain, each once, in the order of the model
+     */
+    public static List<ModelIdentifier> declaredIn(
+        final Document document,
+        final String workflowModuleId,
+        final String bpmnProcessId,
+        final NameClashAvoidanceSupport scoping,
+        final String adapterId
+    ) {
+        final UnaryOperator<String> identifier = name -> scoping.plainIdentifier(workflowModuleId, name, adapterId);
+        final var declared = new LinkedHashSet<ModelIdentifier>();
+        valuesOf(bpmnElements(document, "message"), "name").forEach(name -> declared.add(new ModelIdentifier(
+                ScopedIdentifierKind.MESSAGE_NAME, identifier.apply(name), null)));
+        valuesOf(bpmnElements(document, "error"), "errorCode").forEach(code -> declared.add(new ModelIdentifier(
+                ScopedIdentifierKind.ERROR_CODE, identifier.apply(code), null)));
+        valuesOf(bpmnElements(document, "escalation"), "escalationCode").forEach(code -> declared.add(
+                new ModelIdentifier(ScopedIdentifierKind.ESCALATION_CODE, identifier.apply(code), null)));
+        valuesOf(extensions(document, "taskDefinition"), "type")
+                .stream()
+                .filter(type -> !type.startsWith(ZenBpmMarkerTasks.RESERVED_PREFIX))
+                .forEach(type -> declared.add(new ModelIdentifier(ScopedIdentifierKind.TASK_DEFINITION, scoping
+                        .plainTaskDefinition(workflowModuleId, bpmnProcessId, type, adapterId), bpmnProcessId)));
+        return List.copyOf(declared);
+    }
+
     // the engine reads a decision id holding a '.' as '<id of the DMN definitions>.<id of the
     // decision>' unless the decision is bound by its version tag, and the scoping prefixes the ids
     // of the decisions alone, so such an id is refused once it is scoped
@@ -165,6 +202,18 @@ public final class ZenBpmScoping {
             }
         }
         return plain;
+    }
+
+    // the values which name something, as rewrite reads them
+    private static List<String> valuesOf(
+        final List<Element> elements,
+        final String attribute
+    ) {
+        return elements
+                .stream()
+                .map(element -> element.getAttribute(attribute))
+                .filter(value -> !value.isEmpty())
+                .toList();
     }
 
     private static List<Element> bpmnElements(

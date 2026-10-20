@@ -124,7 +124,7 @@ longer says that the catalog "comes with E10".
 
 ### S10.2.1 Old versions, renamed processes, open task count
 
-- [ ] **Depends on:** S10.1.1.
+- [x] **Depends on:** S10.1.1.
 
 **Instructions**
 
@@ -167,9 +167,90 @@ core publishes (`DeployedProcessVersionsCheck.A_VERSION_OF_A_PROCESS`, `SERVED_B
 `STILL_RUN_ON_THIS_VERSION` and their siblings, platform decision 105), not copied text. They live
 in the platform's `migration-adapter` runtime artifact, not in the SPI, so the test scope needs it.
 
+*Fit check, 2026-10-20, decided by the Implementor where it says so.* Checked against the branch
+after S10.1.1, `ADAPTER-AUTHORS.md` (the version questions and "hold that model while the version is
+being asked about"), the platform as the adapter resolves it (`2.0.0-20261015.045823-21`:
+`ProcessVersionCatalog`, `DeployedProcessVersionsCheck#check`, `#reportWorkflowsOnOlderVersions`,
+`#reportUnservedTasks`, `#reportItemsThisVersionNeverNames`, its `InstanceCounts`), the Camunda 8
+template (`Camunda8ProcessVersions`, `Camunda8DeploymentService#taskSpecsOf`,
+`Camunda8OldProcessVersionsIT`), and the engine at the pin `bdd795a3` (`GetProcessInstances` of
+`internal/rest/server.go` and `internal/cluster/server/server.go`, `FindProcessInstancesPage` of
+`internal/sql/queries/process_instance.sql`, read with `git show` at the pin), then the tests below
+against the pinned image. What did not fit, and what was decided:
+
+1. **The models are shared by every question of a start** (open question 2 of the brief). Four
+   questions read the models the engine holds: `openTaskCount` (before anything is deployed), the
+   messages of every version (decision 42), the job types of a declared process (decision 41) and the
+   questions of this catalog. Decided by the Implementor, beyond the brief's two: all four read
+   through one cache of the adapter id, `ZenBpmHeldModels`, kept by the client factory, by definition
+   key, at most 8 Mi characters, the model asked for longest ago dropped first. A start reads every
+   model once; the deployment's own `GET` of the definition it created stays, because it learns the
+   version and the tag from it. `ZenBpmStartupQuestionCostTest` pins the requests of a whole start:
+   `4n + 5` for `n` versions of one process, every model once, whatever the number of workflows.
+   Decision 56 (new).
+2. **`activeInstanceCountOf`** (open question 3). Read at the pin: `GET /v1/process-instances`
+   filters by `processDefinitionKey` and `state`, its `totalCount` sums an exact `COUNT(*) OVER ()`
+   per partition, so a search for one item answers the number, and it finds the instances a call
+   activity started as well (process type `callActivity` unless child processes are asked for), so
+   the workflows of a called process count. The plan's `state=active` alone misses a workflow with an
+   incident, which the engine holds as `failed` and an operator resumes; decided by the Implementor:
+   active and failed, two searches of one item, as the probes count running workflows
+   (`ZenBpmRunningWorkflows#RUNNING`). `null` with a WARN where the engine does not answer.
+3. **`tasksOfVersion`** reads the held model through `ZenBpmModelReader`, which also reads the
+   markers the adapter wrote as tasks; they are left out, because no method serves them and the
+   platform would report them as unserved. The task definitions lose the deployment's prefixes
+   (`plainTaskDefinition`), a user task without one keeps the engine's default type, as the wiring
+   reports it, and `multiInstanceElementsWithoutAnItem` is filled with the rule
+   `ZenBpmMultiInstanceItems` applies (an empty list where every element hands over an item, so the
+   platform checks the version). `ZenBpmProcessVersionCatalogTest` compares the answers with what the
+   wiring and the deployment report for the same model, deployed by this adapter's own pipeline.
+4. **`identifiersOfVersion`** cannot use `ZenBpmScoping#apply`, which rewrites the model it reads;
+   `ZenBpmScoping#declaredIn` reads a held model without changing it, takes the prefixes off, and
+   leaves out the job types of the markers.
+5. **`whatOlderVersionsMiss`** (open question 4). The platform appends the answer to "so those
+   workflows never get it: ", asks it once per process and only where workflows run on an older
+   version. Camunda 8 answers one fixed sentence. Decided by the Implementor: read from the models,
+   comparing the model this start deployed with every older one the engine holds: the end markers
+   (a `@WorkflowEnded` method is not told the end), the start markers (their start was not reported,
+   so no aggregate for a workflow the engine started, no instance key in a start row) and the names
+   mapped into a multi-instance body; only what the deployed model has, so a version is never blamed
+   for what the deployed one lacks as well. A process id this start deployed nothing under, such as a
+   declared one, has no model to compare with and is answered `null`. The older models are the ones
+   `tasksOfVersion` reads next, so this costs no request of its own.
+6. **Renamed processes**: `processVersionCatalogOf` came with S10.1.1 (see its fit check); the
+   questions about the versions of a declared id are answered by the same catalog under the scoped
+   old id, `ZenBpmRenamedProcessTest`.
+7. **The planned assertions** of `ZenBpmOldProcessVersionsIT` use the platform's phrases
+   `A_VERSION_OF_A_PROCESS`, `STILL_RUN_ON_THIS_VERSION`, `SERVED_BY_NO_METHOD` and
+   `STILL_RUN_ON_AN_OUTFADED_VERSION`. The platform's notice about the workflows on older versions
+   publishes no phrase, so the test finds this adapter's own words in it.
+8. **Quarkus**: nothing in the build-time wiring changes; the suite runs unchanged in the clean build.
+
 **Acceptance criteria**
 
-- [ ] The report names version, count and what older versions miss; no page of instances is fetched.
+- [x] The report names version, count and what older versions miss; no page of instances is fetched.
+  `ZenBpmOldProcessVersionsIT` against the pinned image: after the change the startup box names
+  `version '1' of process 'Storing'`, "1 workflow(s) still run on this version", the task definition
+  `'weigh'` served by no method, and, in the platform's notice on the older versions, what that
+  workflow misses: "the end of such a workflow is not reported to a @WorkflowEnded method"; with
+  `vanillabp.adapters.zenbpm.outfaded-versions=1` the missing method is no longer named and the box
+  says "1 workflow(s) still run on version '1'" instead. `ZenBpmStartupQuestionCostTest` (2 and 5
+  versions, 1 and 1,000,000 workflows on each): `4n + 5` requests, each model read once, every
+  search for instances of one item. `ZenBpmProcessVersionCatalogTest` holds the answers about a held
+  version against what the wiring and the deployment report for the same model,
+  `ZenBpmRenamedProcessTest` the catalog of a declared id, `ZenBpmHeldModelsTest` the cache.
+  Clean build of the story's commit (`TZ=Etc/UTC mvn clean install` on OpenJDK 25.0.2, Docker ITs
+  included, none skipped): engine test support 12 + 5, core 1,200 + 100, Spring Boot 14 + 89, smoke
+  test 38, Quarkus runtime 13, deployment 52, integration tests 20, gate 37; coverage 100 % on both
+  platforms (0 of 35,654 instructions missed on Spring Boot, 0 of 35,524 on Quarkus);
+  `bin/check-deploy-safety.sh` green. Mutants: 15 written, 15 killed: the markers left out of the
+  tasks, the plain task definitions, the elements without an item, the failed instances counted,
+  the `null` where this start deployed nothing under the id, the older versions only, only what the
+  deployed model has, an element the older version lacks, the markers left out of the identifiers,
+  an empty name left out, the deployed model taken without a request, the cache's bound, a model
+  larger than the bound kept out (it survived first: the test let a lone model be dropped by the
+  bound itself; it now shows that without the guard such a model drops every model kept), the held
+  messages and the open tasks reading through the cache.
 
 ## F10.3 The viewer
 
