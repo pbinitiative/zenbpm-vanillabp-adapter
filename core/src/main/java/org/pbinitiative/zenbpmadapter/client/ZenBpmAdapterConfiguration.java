@@ -74,7 +74,8 @@ import java.util.stream.Collectors;
  * its next clean-up, see decision 31 in the repository's DECISIONS.md</li>
  * <li><code>instance-cache-max-entries</code> (default
  * {@value #DEFAULT_INSTANCE_CACHE_MAX_ENTRIES}) - the bound of the cache of process instance
- * facts</li>
+ * facts, and of the iterations of multi-instance bodies each workflow module keeps; <code>0</code>
+ * keeps none</li>
  * <li><code>message-start-lookup</code> (default <code>start-row</code>) - how a workflow which
  * <code>startWorkflowByMessage</code> started is found: <code>start-row</code> through the instance
  * key its start marker wrote into the start row, <code>scan</code> in addition by reading the
@@ -787,7 +788,8 @@ public class ZenBpmAdapterConfiguration {
     }
 
     /**
-     * The bound of the cache of process instance facts.
+     * The bound of the cache of process instance facts, and of the iterations of multi-instance
+     * bodies each workflow module keeps; <code>0</code> keeps none.
      *
      * @return The number of entries
      */
@@ -796,7 +798,8 @@ public class ZenBpmAdapterConfiguration {
     }
 
     /**
-     * The bound of the cache of process instance facts.
+     * The bound of the cache of process instance facts, and of the iterations of multi-instance
+     * bodies each workflow module keeps; <code>0</code> keeps none.
      *
      * @param instanceCacheMaxEntries The number of entries, or <code>null</code> for the default
      */

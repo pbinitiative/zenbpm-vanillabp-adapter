@@ -366,7 +366,9 @@ public class ZenBpmAdapterKeys {
     }
 
     /**
-     * <code>instance-cache-max-entries</code>: the bound of the cache of process instance facts.
+     * <code>instance-cache-max-entries</code>: the bound of the cache of process instance facts, and
+     * of the iterations of multi-instance bodies each workflow module keeps; <code>0</code> keeps
+     * none.
      *
      * @return The value, or <code>null</code> where the application did not set the key
      */
@@ -375,7 +377,9 @@ public class ZenBpmAdapterKeys {
     }
 
     /**
-     * <code>instance-cache-max-entries</code>: the bound of the cache of process instance facts.
+     * <code>instance-cache-max-entries</code>: the bound of the cache of process instance facts, and
+     * of the iterations of multi-instance bodies each workflow module keeps; <code>0</code> keeps
+     * none.
      *
      * @param instanceCacheMaxEntries The value as bound
      */

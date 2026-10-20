@@ -778,8 +778,12 @@ tests below. What did not fit, and what was decided:
    result of any other FEEL expression is kept only in the history row of the element in the parent
    instance, which cannot be told apart from another activation of the same element.
    `MultiInstanceValue#total` is an `int`, so the plan's `null` cannot reach the core, and Camunda 8
-   reports `-1` for a total it cannot tell. Decided `-1` with a DEBUG line; the README says so
-   (`ZenBpmMultiInstanceTest#aCollectionWrittenAsAnExpressionHasNoTotal`).
+   reports `-1` for a total it cannot tell. Decided `-1` with a DEBUG line; the README says so.
+   *Corrected after the reviews of the batch:* the body's copy is NOT what the engine iterates over.
+   The engine reads the collection of every iteration from the history row of the element's entry,
+   and the body's copy is written by every completion and push of the aggregate's values; the total
+   is now read from that history row, which also counts a FEEL expression. See the answers to the
+   reviews below.
 4. **Which element a body belongs to** (not foreseen, decided by the Implementor, decision 54). The
    REST API names a body's element in its tokens only, which are gone once the body ended. Decided the
    model: walking up, every body met is the next multi-instance element around the job from the
@@ -795,8 +799,9 @@ tests below. What did not fit, and what was decided:
    caller's elements. Built: the walk goes on in the caller, from the call activity of the caller's
    model which calls the process (as the engine knows it) and iterates exactly where the called
    instance hangs under a body; where the caller's model holds more than one such call activity, the
-   walk stops there, and the caller's iterations are not told
-   (`ZenBpmMultiInstanceTest#aCallerWithTwoCallsOfTheProcessIsNotAskedAbout`). A call activity which
+   walk stops there, and the caller's iterations are not told. *Corrected after the reviews:* where
+   there is more than one, the one the caller waits at is taken, and a WARN names the limit where
+   that still leaves none or several (see the answers below). A call activity which
    names its process by an expression never matches.
 7. **User tasks** (open question 4, decided as recommended). The notifier's context answers
    `getMultiInstances()` the same way (`ZenBpmUserTaskPollerTest#aUserTaskInAnIterationIsToldItsIteration`);
@@ -821,7 +826,8 @@ tests below. What did not fit, and what was decided:
     "Superseded by E13.7" stays open: the walk stays until the engine hands out `loopCounter` and
     `nrOfInstances` (E13.7 is out of the pipeline's scope).
 
-Built and added: `ZenBpmMultiInstanceTest` (19 cases against a fake engine in the pinned engine's
+Built and added: `ZenBpmMultiInstanceTest` (19 cases at the story's commit, 27 after the reviews,
+against a fake engine in the pinned engine's
 shape: a body with copied variables, iterations as children or jobs, listed by key and not in the
 order they were created), `ZenBpmJobHandlerTest#theIterationsAreReadOnceWhereTheMethodAsksForThem`
 and `#aReadOfTheIterationsWhichFailsFailsTheJob`,
@@ -861,6 +867,70 @@ multi-instance call activity). The aggregate's list `parcels` is a declared aggr
   agree; the order by creation is kept because the engine orders the iterations by it itself.
 - [ ] Superseded by E13.7 once the engine hands out `loopCounter` and `nrOfInstances`. Waits for
   E13.7, which is out of the pipeline's scope; until then the walk of decision 54 answers.
+
+**Answers to two reviews of e09-f9.4-f9.5, 2026-10-20** (one by Claude, approve after 1 Major, with
+2 Minor and 1 Nit; one by Copilot, changes requested, 1 Major). Every claim was checked in the code
+of the branch and, for the engine, at the pin `bdd795a3` and against its image. The Major was
+raised by both, so four distinct findings remain; all four were valid and are fixed. Decision 54,
+new on this branch, was corrected in place before the merge; no new decision was needed.
+
+- **The total was read from a copy which the adapter itself overwrites** (Claude 1, Copilot 1,
+  Major). The fit check took the body's copy of the variables for what the engine iterates over.
+  It is not: `handleMultiInstanceActivity` of `pkg/bpmn/multi_instance.go` reads the collection of
+  every iteration from the history row which `startParallelMultiInstance` and
+  `startSequentialMultiInstance` save for the element's entry in the instance the element stands
+  in, under the name of the input element, and never reads the body. The body's copy is written by
+  every completion inside the body (the aggregate's values go into every instance up to the
+  workflow) and by every push (decision 49), so a list the application shortened or grew while the
+  iterations run gave a reader without a kept body (another node, a restart, an evicted entry,
+  `instance-cache-max-entries: 0`) a total other than the number of iterations; Copilot reproduced
+  `total=1` for three iterations with the branch's classes. Probed again: after a `PATCH` of the
+  body, the root's history row keeps the three items, under the key of the root's token at the
+  element, for the parallel sub-process and for the sequential task during its second iteration;
+  an expression is kept evaluated, under `""` where the element names no input element. The total
+  is now the size of that row's collection (`ZenBpmRestClient#tokensAt`, the history's
+  `inputVariables`), read once per body and kept with it; where the instance shows no token at the
+  element, the history holds no list, or two activations at once differ in size, it is `-1`. So a
+  collection written as a FEEL expression is counted as well, and the `-1` for an expression is
+  gone. Tests: `ZenBpmMultiInstanceIT#aCollectionChangedWhileTheIterationsRunKeepsItsTotal` (the
+  list changed in the body, and in the workflow during the sequential task, then readers which
+  keep nothing; on the old code it reports `1` for each of the three iterations) and
+  `#aCollectionWrittenAsAnExpressionIsCounted` (`-1` on the old code),
+  `ZenBpmRestClientContractIT#theCollectionOfAnActivationIsKeptInTheHistory`,
+  `ZenBpmRestClientTest#theTokensAtAnElementAreRead`, and in `ZenBpmMultiInstanceTest`
+  `#theTotalIsNotReadFromTheBodysCopy`,
+  `#aCollectionWrittenAsAnExpressionIsCountedAsTheEngineEvaluatedIt`,
+  `#anActivationWithoutATokenHasNoTotal`, `#anEntryTheHistoryDoesNotListHasNoTotal`,
+  `#theEntryIsFoundOnALaterPage`, `#twoActivationsOfOneSizeTellIt`,
+  `#twoActivationsOfWhichTheHistoryListsOneHaveNoTotal`,
+  `#twoActivationsOfDifferentSizesHaveNoTotal`.
+  Decision 54, GAPS 16, the deviations row, the SPI mapping row and the README say what is built.
+- **No test held the tie-break by key** (Claude 2, Minor). The case asked for the iteration with a
+  millisecond of its own; it now asks for one of the two created in the same millisecond, and the
+  mutant without the tie-break is killed.
+- **An ambiguous caller ended the walk with a DEBUG line only** (Claude 3, Minor). Where the
+  caller's model calls the process from more than one call activity, the one at which the instance
+  the called one hangs under waits is now taken: probed, a body of a multi-instance call activity
+  shows its tokens at the call activity, pinned by the contract test above. Where that still leaves
+  none or several, a WARN once per version and called process names the fix (call the process from
+  one call activity, or hand the item over as a `@TaskParam`).
+  Tests: `ZenBpmMultiInstanceTest#aCallerWithTwoCallsOfTheProcessIsToldTheOneItsBodyWaitsAt` and
+  `#aCallerWithTwoCallsOfTheProcessWhichWaitsAtNoneIsNotTold`.
+- **`instance-cache-max-entries` was described as bounding the instance facts alone** (Claude 4,
+  Nit). Its descriptions (the configuration's javadoc, the Spring Boot keys which become the
+  configuration metadata, the Quarkus properties) now name the iterations of the bodies each
+  workflow module keeps, and `0` keeping none.
+
+Mutants of the new guards, each against a green unmutated run, 11 of 11 killed by
+`ZenBpmMultiInstanceTest`: every history entry taken, no empty input-element name, missing entries
+ignored, the last page ignored (killed by the surefire timeout), the tokens not asked again, the
+history not read again, no narrowing by the waiting token, narrowing only above two candidates, the
+WARN every time, no tie-break, differing totals taken. Against the pinned engine, the class as it
+was at the story's commit fails both cases of `ZenBpmMultiInstanceIT`. Clean build after the fixes
+(`TZ=Etc/UTC mvn clean install` on OpenJDK 25.0.2, Docker ITs included, none skipped): engine test
+support 12 + 5, core 1,176 + 100, Spring Boot 14 + 83, smoke test 38, Quarkus runtime 13,
+deployment 52, integration tests 20, gate 37; coverage 100 % on both platforms (0 of 34,526
+instructions missed on Spring Boot, 0 of 34,396 on Quarkus); `bin/check-deploy-safety.sh` green.
 
 ## F9.5 Quarkus twins
 

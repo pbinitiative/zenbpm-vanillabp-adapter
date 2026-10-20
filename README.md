@@ -241,21 +241,28 @@ multi-instance element (decision 54). ZenBPM hands a job neither an index nor a 
 element, only where a method asks for one and once for all its parameters
 (`ZenBpmJobHandlerTest#theIterationsAreReadOnceWhereTheMethodAsksForThem`). The element is the item
 of the iteration, the index counts from 0 in the order the engine handed out the items, and the
-total is the size of the collection where the modeller wrote it as a bare variable such as
-`=parcels`: for an iteration of a parallel multi-instance sub-process
+total is the size of the collection the engine iterates over, as it evaluated it when the element
+was entered, also where the aggregate's list changed since
+(`ZenBpmMultiInstanceIT#aCollectionChangedWhileTheIterationsRunKeepsItsTotal`): for an iteration of
+a parallel multi-instance sub-process
 (`ZenBpmLifecycleIT#theIterationIsReported`) and of a sequential multi-instance task
 (`#theIterationsOfASequentialTaskAreReportedOneAfterTheOther`), on Quarkus both in
-`ZenBpmWorkflowLifecycleTest#multiInstanceBindsElementIndexAndTotal`. For a collection written as any
-other expression the total is `-1`, as Camunda 8 reports a total it cannot tell
-(`ZenBpmMultiInstanceTest#aCollectionWrittenAsAnExpressionHasNoTotal`). Nested iterations are told
+`ZenBpmWorkflowLifecycleTest#multiInstanceBindsElementIndexAndTotal`. A collection written as an
+expression is counted as well (`ZenBpmMultiInstanceIT#aCollectionWrittenAsAnExpressionIsCounted`).
+Where two activations of the same element wait in one instance at once over collections of
+different sizes, the total is `-1`, as Camunda 8 reports a total it cannot tell
+(`ZenBpmMultiInstanceTest#twoActivationsOfDifferentSizesHaveNoTotal`). Nested iterations are told
 the outermost first (`#nestedIterationsAreToldOutermostFirst`). A task of a process which an
 iteration of a multi-instance call activity started is told the caller's iteration as well
-(`ZenBpmLifecycleIT#aCalledProcessIsToldTheIterationOfItsCaller`), unless the caller's model calls
-the process from two call activities which may both have started it
-(`ZenBpmMultiInstanceTest#aCallerWithTwoCallsOfTheProcessIsNotAskedAbout`). A user task is told its
+(`ZenBpmLifecycleIT#aCalledProcessIsToldTheIterationOfItsCaller`); where the caller's model calls
+the process from two call activities, from the one the caller waits at
+(`ZenBpmMultiInstanceTest#aCallerWithTwoCallsOfTheProcessIsToldTheOneItsBodyWaitsAt`), and where it
+waits at neither, the caller's iterations are not told, which a WARN says once
+(`#aCallerWithTwoCallsOfTheProcessWhichWaitsAtNoneIsNotTold`). A user task is told its
 iteration as a job is (`ZenBpmUserTaskPollerTest#aUserTaskInAnIterationIsToldItsIteration`). The
-reads cost the model once per version, the body of the element once, and the list of its iterations
-once per body and once more for every iteration of a sequential element; a read which fails fails
+reads cost the model once per version, the instance the element stands in and its history once per
+body, and the list of its iterations once per body and once more for every iteration of a sequential
+element; a read which fails fails
 the delivery like a method which threw
 (`ZenBpmJobHandlerTest#aReadOfTheIterationsWhichFailsFailsTheJob`).
 

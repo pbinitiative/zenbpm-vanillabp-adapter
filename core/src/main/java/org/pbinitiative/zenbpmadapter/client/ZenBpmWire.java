@@ -102,6 +102,15 @@ final class ZenBpmWire {
     record ElementInstance(@JsonProperty(required = true) String elementId) {
     }
 
+    record ProcessInstanceActivations(@JsonProperty(required = true) List<Activation> activeElementInstances) {
+    }
+
+    record Activation(
+        @JsonProperty(required = true) long elementInstanceKey,
+        @JsonProperty(required = true) String elementId
+    ) {
+    }
+
     record ProcessInstancePage(
         @JsonProperty(required = true) List<PartitionProcessInstances> partitions,
         @JsonProperty(required = true) long totalCount
@@ -146,7 +155,8 @@ final class ZenBpmWire {
         @JsonProperty(required = true) String createdAt,
         String completedAt,
         @JsonProperty(required = true) String elementId,
-        @JsonProperty(required = true) String elementType
+        @JsonProperty(required = true) String elementType,
+        @JsonProperty(required = true) Map<String, Object> inputVariables
     ) {
     }
 

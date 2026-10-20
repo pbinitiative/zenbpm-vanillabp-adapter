@@ -413,7 +413,8 @@ public interface VanillaBpZenBpmProperties {
 
         /**
          * <code>instance-cache-max-entries</code>: the bound of the cache of process instance
-         * facts.
+         * facts, and of the iterations of multi-instance bodies each workflow module keeps;
+         * <code>0</code> keeps none.
          *
          * @return The value, empty where the application did not set the key
          */

@@ -6,6 +6,7 @@ package org.pbinitiative.zenbpmadapter.wiring;
 
 import static org.junit.jupiter.api.Assertions.assertAll;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -30,6 +31,7 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
 import io.vanillabp.integration.adapter.spi.workflowtask.MultiInstanceValue;
+import io.vanillabp.integration.test.utils.CapturedOutput;
 import io.vanillabp.integration.test.utils.SuppressOutputExtension;
 
 /**
@@ -40,7 +42,9 @@ import io.vanillabp.integration.test.utils.SuppressOutputExtension;
  * sub-process or a call activity is a child instance of the body which holds the item, and an
  * iteration of a task is a job of the body which carries the item; every child takes the business
  * key and the definition of its parent, and the engine lists children and jobs by key, not in the
- * order they were created.
+ * order they were created. The collection an activation iterates over is the one the history of the
+ * instance the element stands in keeps for the entry of the token waiting at the element, under
+ * the name of the input element, as the engine evaluated it when the element was entered.
  */
 @ExtendWith(SuppressOutputExtension.class)
 class ZenBpmMultiInstanceTest {
@@ -65,6 +69,8 @@ class ZenBpmMultiInstanceTest {
 
     private static final String COLLECTION = "\"orderId\": \"order-1\", \"parcels\": [\"a\", \"b\", \"c\"]";
 
+    private static final String PARCELS_EVALUATED = "[\"a\", \"b\", \"c\"]";
+
     private final FakeEngine engine = FakeEngine.started();
 
     private final ZenBpmRestClient rest = restClient(engine);
@@ -74,6 +80,17 @@ class ZenBpmMultiInstanceTest {
      * <code>processInstanceKey</code>.
      */
     private final Map<Long, List<String>> jobs = new ConcurrentHashMap<>();
+
+    /**
+     * The tokens which stand in each instance, which <code>GET /v1/process-instances/{key}</code>
+     * answers as its <code>activeElementInstances</code>.
+     */
+    private final Map<Long, List<String>> tokens = new ConcurrentHashMap<>();
+
+    /**
+     * The entries of the history of each instance.
+     */
+    private final Map<Long, List<String>> histories = new ConcurrentHashMap<>();
 
     private final ZenBpmMultiInstance multiInstance = new ZenBpmMultiInstance("orders", "shop", rest, new ZenBpmInstanceCache(rest, 100), 100);
 
@@ -98,19 +115,21 @@ class ZenBpmMultiInstanceTest {
     void theIterationsAreCountedInTheOrderTheyWereCreated() {
         holdsTheModels();
         holds(ROOT, "default", null, ORDER, "shop__Order", COLLECTION);
+        entered(ROOT, "Parcels", 150L, "parcel", PARCELS_EVALUATED);
         holds(PARCELS, "multiInstance", ROOT, ORDER, "shop__Order", COLLECTION);
-        holds(203L, "subprocess", PARCELS, ORDER, "shop__Order", "\"parcel\": \"c\"");
+        holds(202L, "subprocess", PARCELS, ORDER, "shop__Order", "\"parcel\": \"b\"");
         hasChildren(PARCELS, child(203L, "2026-10-17T14:30:25.130Z", "subprocess", PARCELS, "\"parcel\": \"c\""),
                 child(202L, "2026-10-17T14:30:25.123Z", "subprocess", PARCELS, "\"parcel\": \"b\""), child(201L,
                         "2026-10-17T14:30:25.123Z", "subprocess", PARCELS, "\"parcel\": \"a\""));
 
-        assertEquals(new MultiInstanceValue("c", 2, 3), multiInstance
-                .iterationsOf(42L, 203L, "Pick", retry())
+        // 201 and 202 were created in the same millisecond, so their keys alone tell their order
+        assertEquals(new MultiInstanceValue("b", 1, 3), multiInstance
+                .iterationsOf(42L, 202L, "Pick", retry())
                 .get("Parcels"));
     }
 
     @Test
-    @DisplayName("A second task of the same body asks the engine nothing but its own instance: the model, the body and the iterations are kept")
+    @DisplayName("A second task of the same body asks the engine nothing but its own instance: the model, the body, its total and the iterations are kept")
     void aSecondTaskOfTheSameBodyReadsNothingAgain() {
         holdsTheParcelsBody();
         holds(203L, "subprocess", PARCELS, ORDER, "shop__Order", "\"parcel\": \"c\"");
@@ -122,9 +141,10 @@ class ZenBpmMultiInstanceTest {
                 () -> assertEquals(Map.of("Parcels", new MultiInstanceValue("b", 1, 3)), first),
                 () -> assertEquals(Map.of("Parcels", new MultiInstanceValue("c", 2, 3)), second),
                 () -> assertEquals(1, requestsFor("/v1/process-definitions/%d".formatted(ORDER))),
-                // once by the walk up, whose instance cache keeps no collection, and once for the
-                // copy of the collection
-                () -> assertEquals(2, requestsFor("/v1/process-instances/%d".formatted(PARCELS))),
+                () -> assertEquals(1, requestsFor("/v1/process-instances/%d".formatted(PARCELS))),
+                // once by the walk up, and once for the token which waits for the iterations
+                () -> assertEquals(2, requestsFor("/v1/process-instances/%d".formatted(ROOT))),
+                () -> assertEquals(1, requestsFor("/v1/process-instances/%d/history".formatted(ROOT))),
                 () -> assertEquals(1, requestsFor("/v1/process-instances/%d/child-processes".formatted(PARCELS))));
     }
 
@@ -133,6 +153,7 @@ class ZenBpmMultiInstanceTest {
     void aSequentialTaskFindsAnIterationCreatedLater() {
         holdsTheModels();
         holds(ROOT, "default", null, ORDER, "shop__Order", COLLECTION);
+        entered(ROOT, "Weigh", 350L, "parcel", PARCELS_EVALUATED);
         holds(WEIGHING, "multiInstance", ROOT, ORDER, "shop__Order", COLLECTION);
         hasJobs(WEIGHING, job(301L, "2026-10-17T14:30:25.123Z", "completed", "\"parcel\": \"a\""));
 
@@ -145,7 +166,8 @@ class ZenBpmMultiInstanceTest {
                 () -> assertEquals(Map.of("Weigh", new MultiInstanceValue("a", 0, 3)), first),
                 () -> assertEquals(Map.of("Weigh", new MultiInstanceValue("b", 1, 3)), second),
                 () -> assertEquals(2, requestsFor("/v1/jobs")),
-                () -> assertEquals(2, requestsFor("/v1/process-instances/%d".formatted(WEIGHING))));
+                // the total of the body is kept with it
+                () -> assertEquals(1, requestsFor("/v1/process-instances/%d/history".formatted(ROOT))));
     }
 
     @Test
@@ -156,6 +178,7 @@ class ZenBpmMultiInstanceTest {
         // body copies
         final var mappedIn = "\"parcel\": \"b\", \"boxes\": [\"x\", \"y\"]";
         holds(202L, "subprocess", PARCELS, ORDER, "shop__Order", mappedIn);
+        entered(202L, "Scan", 250L, "box", "[\"x\", \"y\"]");
         holds(SCANNING, "multiInstance", 202L, ORDER, "shop__Order", mappedIn);
         hasJobs(SCANNING, job(602L, "2026-10-17T14:30:27.123Z", "active", "\"box\": \"y\""), job(601L,
                 "2026-10-17T14:30:26.123Z", "active", "\"box\": \"x\""));
@@ -169,28 +192,140 @@ class ZenBpmMultiInstanceTest {
     }
 
     @Test
-    @DisplayName("The total of a collection written as an expression other than a bare variable is -1, as Camunda 8 reports a total it cannot tell, and the body is not read for it")
-    void aCollectionWrittenAsAnExpressionHasNoTotal() {
+    @DisplayName("The total of a collection written as an expression is the size of what the engine evaluated when the element was entered")
+    void aCollectionWrittenAsAnExpressionIsCountedAsTheEngineEvaluatedIt() {
         holdsTheModels();
         holds(ROOT, "default", null, ORDER, "shop__Order", COLLECTION);
+        entered(ROOT, "Stamp", 450L, "parcel", "[\"A\", \"B\", \"C\"]");
         holds(STAMPING, "multiInstance", ROOT, ORDER, "shop__Order", COLLECTION);
         hasJobs(STAMPING, job(401L, "2026-10-17T14:30:25.123Z", "active", "\"parcel\": \"A\""));
 
-        final var iterations = multiInstance.iterationsOf(401L, STAMPING, "Stamp", retry());
-
-        assertAll(
-                () -> assertEquals(Map.of("Stamp", new MultiInstanceValue("A", 0, ZenBpmMultiInstance.UNKNOWN_TOTAL)),
-                        iterations),
-                // by the walk up alone
-                () -> assertEquals(1, requestsFor("/v1/process-instances/%d".formatted(STAMPING))));
+        assertEquals(Map.of("Stamp", new MultiInstanceValue("A", 0, 3)), multiInstance.iterationsOf(401L, STAMPING,
+                "Stamp", retry()));
     }
 
     @Test
-    @DisplayName("The total of a body which holds no list under the name of the collection is -1")
-    void aBodyWhichHoldsNoListHasNoTotal() {
+    @DisplayName("The total is the size of the collection the engine iterates over, not of the body's copy of the variables, which a completion or a push of the aggregate's values writes")
+    void theTotalIsNotReadFromTheBodysCopy() {
+        holdsTheModels();
+        final var changedSinceTheElementWasEntered = "\"orderId\": \"order-1\", \"parcels\": [\"a\"]";
+        holds(ROOT, "default", null, ORDER, "shop__Order", changedSinceTheElementWasEntered);
+        entered(ROOT, "Parcels", 150L, "parcel", PARCELS_EVALUATED);
+        holds(PARCELS, "multiInstance", ROOT, ORDER, "shop__Order", changedSinceTheElementWasEntered);
+        holds(202L, "subprocess", PARCELS, ORDER, "shop__Order", "\"parcel\": \"b\"");
+        hasChildren(PARCELS, child(203L, "2026-10-17T14:30:25.127Z", "subprocess", PARCELS, "\"parcel\": \"c\""),
+                child(202L, "2026-10-17T14:30:25.125Z", "subprocess", PARCELS, "\"parcel\": \"b\""), child(201L,
+                        "2026-10-17T14:30:25.123Z", "subprocess", PARCELS, "\"parcel\": \"a\""));
+
+        assertEquals(Map.of("Parcels", new MultiInstanceValue("b", 1, 3)), multiInstance.iterationsOf(42L, 202L,
+                "Pick", retry()));
+    }
+
+    @Test
+    @DisplayName("The total of an activation whose collection in the history is no list is -1")
+    void aCollectionWhichIsNoListHasNoTotal() {
         holdsTheModels();
         holds(ROOT, "default", null, ORDER, "shop__Order", COLLECTION);
-        holds(WEIGHING, "multiInstance", ROOT, ORDER, "shop__Order", "\"parcels\": \"a, b, c\"");
+        entered(ROOT, "Weigh", 350L, "parcel", "\"a, b, c\"");
+        holds(WEIGHING, "multiInstance", ROOT, ORDER, "shop__Order", COLLECTION);
+        hasJobs(WEIGHING, job(301L, "2026-10-17T14:30:25.123Z", "active", "\"parcel\": \"a\""));
+
+        assertEquals(Map.of("Weigh", new MultiInstanceValue("a", 0, ZenBpmMultiInstance.UNKNOWN_TOTAL)),
+                multiInstance.iterationsOf(301L, WEIGHING, "Weigh", retry()));
+    }
+
+    @Test
+    @DisplayName("Where the instance the element stands in shows no token at the element, as on a node which lags behind, it is asked again, and then the total is -1")
+    void anActivationWithoutATokenHasNoTotal() {
+        holdsTheModels();
+        holds(ROOT, "default", null, ORDER, "shop__Order", COLLECTION);
+        holds(WEIGHING, "multiInstance", ROOT, ORDER, "shop__Order", COLLECTION);
+        hasJobs(WEIGHING, job(301L, "2026-10-17T14:30:25.123Z", "active", "\"parcel\": \"a\""));
+
+        final var iterations = multiInstance.iterationsOf(301L, WEIGHING, "Weigh", retry());
+
+        assertAll(
+                () -> assertEquals(Map.of("Weigh", new MultiInstanceValue("a", 0, ZenBpmMultiInstance.UNKNOWN_TOTAL)),
+                        iterations),
+                // once by the walk up, then more than once for the token
+                () -> assertTrue(requestsFor("/v1/process-instances/%d".formatted(ROOT)) > 2),
+                () -> assertEquals(0, requestsFor("/v1/process-instances/%d/history".formatted(ROOT))));
+    }
+
+    @Test
+    @DisplayName("Where the history does not list the entry of the token, as where it moved between two pages, it is read again, and then the total is -1")
+    void anEntryTheHistoryDoesNotListHasNoTotal() {
+        holdsTheModels();
+        holds(ROOT, "default", null, ORDER, "shop__Order", COLLECTION);
+        // the history holds the start event, but not the entry of the token at the element
+        entered(ROOT, "Start", 349L, "parcel", "[]");
+        waitsAt(ROOT, "Weigh", 350L);
+        holds(WEIGHING, "multiInstance", ROOT, ORDER, "shop__Order", COLLECTION);
+        hasJobs(WEIGHING, job(301L, "2026-10-17T14:30:25.123Z", "active", "\"parcel\": \"a\""));
+
+        final var iterations = multiInstance.iterationsOf(301L, WEIGHING, "Weigh", retry());
+
+        assertAll(
+                () -> assertEquals(Map.of("Weigh", new MultiInstanceValue("a", 0, ZenBpmMultiInstance.UNKNOWN_TOTAL)),
+                        iterations),
+                () -> assertTrue(requestsFor("/v1/process-instances/%d/history".formatted(ROOT)) > 1));
+    }
+
+    @Test
+    @DisplayName("The entry of the token is found on a later page of the history")
+    void theEntryIsFoundOnALaterPage() {
+        holdsTheModels();
+        holds(ROOT, "default", null, ORDER, "shop__Order", COLLECTION);
+        for (var visit = 0; visit < 100; ++visit) {
+            entered(ROOT, "Flow_%d".formatted(visit), 1000L + visit, "parcel", "[]");
+        }
+        entered(ROOT, "Weigh", 350L, "parcel", PARCELS_EVALUATED);
+        holds(WEIGHING, "multiInstance", ROOT, ORDER, "shop__Order", COLLECTION);
+        hasJobs(WEIGHING, job(301L, "2026-10-17T14:30:25.123Z", "active", "\"parcel\": \"a\""));
+
+        final var iterations = multiInstance.iterationsOf(301L, WEIGHING, "Weigh", retry());
+
+        assertAll(
+                () -> assertEquals(Map.of("Weigh", new MultiInstanceValue("a", 0, 3)), iterations),
+                () -> assertEquals(2, requestsFor("/v1/process-instances/%d/history".formatted(ROOT))));
+    }
+
+    @Test
+    @DisplayName("Two activations of the element at once which iterate over collections of one size tell that size")
+    void twoActivationsOfOneSizeTellIt() {
+        holdsTheModels();
+        holds(ROOT, "default", null, ORDER, "shop__Order", COLLECTION);
+        entered(ROOT, "Weigh", 350L, "parcel", PARCELS_EVALUATED);
+        entered(ROOT, "Weigh", 351L, "parcel", "[\"d\", \"e\", \"f\"]");
+        holds(WEIGHING, "multiInstance", ROOT, ORDER, "shop__Order", COLLECTION);
+        hasJobs(WEIGHING, job(301L, "2026-10-17T14:30:25.123Z", "active", "\"parcel\": \"a\""));
+
+        assertEquals(Map.of("Weigh", new MultiInstanceValue("a", 0, 3)), multiInstance.iterationsOf(301L, WEIGHING,
+                "Weigh", retry()));
+    }
+
+    @Test
+    @DisplayName("Two activations of the element at once, of which the history lists one, cannot be told apart, so the total is -1")
+    void twoActivationsOfWhichTheHistoryListsOneHaveNoTotal() {
+        holdsTheModels();
+        holds(ROOT, "default", null, ORDER, "shop__Order", COLLECTION);
+        entered(ROOT, "Weigh", 350L, "parcel", PARCELS_EVALUATED);
+        waitsAt(ROOT, "Weigh", 351L);
+        holds(WEIGHING, "multiInstance", ROOT, ORDER, "shop__Order", COLLECTION);
+        hasJobs(WEIGHING, job(301L, "2026-10-17T14:30:25.123Z", "active", "\"parcel\": \"a\""));
+
+        assertEquals(Map.of("Weigh", new MultiInstanceValue("a", 0, ZenBpmMultiInstance.UNKNOWN_TOTAL)),
+                multiInstance.iterationsOf(301L, WEIGHING, "Weigh", retry()));
+    }
+
+    @Test
+    @DisplayName("Two activations of the element at once which iterate over collections of different sizes cannot be told apart, so the total is -1")
+    void twoActivationsOfDifferentSizesHaveNoTotal() {
+        holdsTheModels();
+        holds(ROOT, "default", null, ORDER, "shop__Order", COLLECTION);
+        entered(ROOT, "Weigh", 350L, "parcel", PARCELS_EVALUATED);
+        entered(ROOT, "Weigh", 351L, "parcel", "[\"d\"]");
+        holds(WEIGHING, "multiInstance", ROOT, ORDER, "shop__Order", COLLECTION);
         hasJobs(WEIGHING, job(301L, "2026-10-17T14:30:25.123Z", "active", "\"parcel\": \"a\""));
 
         assertEquals(Map.of("Weigh", new MultiInstanceValue("a", 0, ZenBpmMultiInstance.UNKNOWN_TOTAL)),
@@ -202,9 +337,11 @@ class ZenBpmMultiInstanceTest {
     void aTaskOfACalledProcessIsToldTheIterationOfItsCaller() {
         holdsTheModels();
         holds(ROOT, "default", null, ORDER, "shop__Order", COLLECTION);
+        entered(ROOT, "Label", 160L, "parcel", PARCELS_EVALUATED);
         holds(LABELS, "multiInstance", ROOT, ORDER, "shop__Order", COLLECTION);
         final var calledVariables = "\"parcel\": \"b\", \"copies\": [1, 2]";
         holds(502L, "callActivity", LABELS, LABELLING, "shop__Labelling", calledVariables);
+        entered(502L, "Print", 560L, "copy", "[1, 2]");
         hasChildren(LABELS, child(503L, "2026-10-17T14:30:25.127Z", "callActivity", LABELS, "\"parcel\": \"c\""),
                 child(502L, "2026-10-17T14:30:25.125Z", "callActivity", LABELS, calledVariables), child(501L,
                         "2026-10-17T14:30:25.123Z", "callActivity", LABELS, "\"parcel\": \"a\""));
@@ -220,22 +357,60 @@ class ZenBpmMultiInstanceTest {
     }
 
     @Test
-    @DisplayName("A caller whose model calls the process from two call activities which may have started the instance is not asked about, and the called process's own iterations are told")
-    void aCallerWithTwoCallsOfTheProcessIsNotAskedAbout() {
+    @DisplayName("A caller whose model calls the process from two multi-instance call activities is told the iteration of the one its body waits at")
+    void aCallerWithTwoCallsOfTheProcessIsToldTheOneItsBodyWaitsAt() {
         holdsTheModel(ORDER, modelCalling(List.of("Label", "Relabel"), List.of()));
         holdsTheModel(LABELLING, modelOfLabelling());
         holds(ROOT, "default", null, ORDER, "shop__Order", COLLECTION);
+        entered(ROOT, "Relabel", 160L, "parcel", PARCELS_EVALUATED);
         holds(LABELS, "multiInstance", ROOT, ORDER, "shop__Order", COLLECTION);
+        waitsAt(LABELS, "Relabel", 161L);
         final var calledVariables = "\"parcel\": \"b\", \"copies\": [1, 2]";
         holds(502L, "callActivity", LABELS, LABELLING, "shop__Labelling", calledVariables);
+        hasChildren(LABELS, child(502L, "2026-10-17T14:30:25.125Z", "callActivity", LABELS, calledVariables), child(
+                501L, "2026-10-17T14:30:25.123Z", "callActivity", LABELS, "\"parcel\": \"a\""));
+        entered(502L, "Print", 560L, "copy", "[1, 2]");
         holds(PRINTING, "multiInstance", 502L, LABELLING, "shop__Labelling", calledVariables);
         hasJobs(PRINTING, job(701L, "2026-10-17T14:30:26.123Z", "active", "\"copy\": 1"));
 
         final var iterations = multiInstance.iterationsOf(701L, PRINTING, "Print", retry());
 
         assertAll(
-                () -> assertEquals(Map.of("Print", new MultiInstanceValue(1L, 0, 2)), iterations),
-                () -> assertEquals(0, requestsFor("/v1/process-instances/%d/child-processes".formatted(LABELS))));
+                () -> assertEquals(List.of("Relabel", "Print"), List.copyOf(iterations.keySet())),
+                () -> assertEquals(new MultiInstanceValue("b", 1, 3), iterations.get("Relabel")));
+    }
+
+    @Test
+    @DisplayName("A caller whose model calls the process from two call activities, of which its instance waits at none, is not told, and a WARN says once how to have it told; the called process's own iterations are told")
+    void aCallerWithTwoCallsOfTheProcessWhichWaitsAtNoneIsNotTold(final CapturedOutput output) {
+        holdsTheModel(ORDER, modelCalling(List.of("Label", "Relabel"), List.of()));
+        holdsTheModel(LABELLING, modelOfLabelling());
+        holds(ROOT, "default", null, ORDER, "shop__Order", COLLECTION);
+        holds(LABELS, "multiInstance", ROOT, ORDER, "shop__Order", COLLECTION);
+        final var calledVariables = "\"parcel\": \"b\", \"copies\": [1, 2]";
+        holds(502L, "callActivity", LABELS, LABELLING, "shop__Labelling", calledVariables);
+        entered(502L, "Print", 560L, "copy", "[1, 2]");
+        holds(PRINTING, "multiInstance", 502L, LABELLING, "shop__Labelling", calledVariables);
+        hasJobs(PRINTING, job(701L, "2026-10-17T14:30:26.123Z", "active", "\"copy\": 1"));
+
+        final var first = multiInstance.iterationsOf(701L, PRINTING, "Print", retry());
+        final var second = multiInstance.iterationsOf(701L, PRINTING, "Print", retry());
+
+        final var warning = """
+                ZenBPM[orders]: an instance of process 'shop__Labelling' was started by version 3 of process \
+                'shop__Order', whose model holds no single call activity which started it, so the methods serving \
+                tasks of 'shop__Labelling' are told none of the caller's multi-instance iterations; call \
+                'shop__Labelling' from one call activity of 'shop__Order' only, or hand the item of the caller's \
+                iteration over as a @TaskParam""";
+        final var log = output.getOutOfThisTest();
+        assertAll(
+                () -> assertEquals(Map.of("Print", new MultiInstanceValue(1L, 0, 2)), first),
+                () -> assertEquals(first, second),
+                () -> assertEquals(0, requestsFor("/v1/process-instances/%d/child-processes".formatted(LABELS))),
+                () -> assertTrue(log.contains(warning), log),
+                () -> assertFalse(log
+                        .substring(log.indexOf(warning) + warning.length())
+                        .contains(warning), log));
     }
 
     @Test
@@ -246,7 +421,9 @@ class ZenBpmMultiInstanceTest {
         holds(ROOT, "default", null, ORDER, "shop__Order", COLLECTION);
         holds(LABELS, "multiInstance", ROOT, ORDER, "shop__Order", COLLECTION);
         final var calledVariables = "\"parcel\": \"a\", \"copies\": [1]";
+        entered(ROOT, "Label", 160L, "parcel", PARCELS_EVALUATED);
         holds(501L, "callActivity", LABELS, LABELLING, "shop__Labelling", calledVariables);
+        entered(501L, "Print", 560L, "copy", "[1]");
         hasChildren(LABELS, child(501L, "2026-10-17T14:30:25.123Z", "callActivity", LABELS, calledVariables));
         holds(PRINTING, "multiInstance", 501L, LABELLING, "shop__Labelling", calledVariables);
         hasJobs(PRINTING, job(701L, "2026-10-17T14:30:26.123Z", "active", "\"copy\": 1"));
@@ -262,6 +439,7 @@ class ZenBpmMultiInstanceTest {
         holdsTheParcelsBody();
         final var calledVariables = "\"parcel\": \"b\", \"copies\": [1, 2]";
         holds(520L, "callActivity", 202L, LABELLING, "shop__Labelling", calledVariables);
+        entered(520L, "Print", 560L, "copy", "[1, 2]");
         holds(PRINTING, "multiInstance", 520L, LABELLING, "shop__Labelling", calledVariables);
         hasJobs(PRINTING, job(701L, "2026-10-17T14:30:26.123Z", "active", "\"copy\": 1"));
 
@@ -280,6 +458,7 @@ class ZenBpmMultiInstanceTest {
         holds(ROOT, "default", null, ORDER, "shop__Order", COLLECTION);
         final var calledVariables = "\"copies\": [1, 2]";
         holds(510L, "callActivity", ROOT, LABELLING, "shop__Labelling", calledVariables);
+        entered(510L, "Print", 560L, "copy", "[1, 2]");
         holds(PRINTING, "multiInstance", 510L, LABELLING, "shop__Labelling", calledVariables);
         hasJobs(PRINTING, job(701L, "2026-10-17T14:30:26.123Z", "active", "\"copy\": 1"));
 
@@ -318,10 +497,11 @@ class ZenBpmMultiInstanceTest {
     }
 
     @Test
-    @DisplayName("An element which names no input element hands no item, so the element of its iterations is null")
+    @DisplayName("An element which names no input element hands no item, so the element of its iterations is null, and the engine keeps its collection under the empty name")
     void anElementWithoutAnInputElementHasNoItem() {
         holdsTheModel(ORDER, modelWithoutAnItem());
         holds(ROOT, "default", null, ORDER, "shop__Order", COLLECTION);
+        entered(ROOT, "Weigh", 350L, "", PARCELS_EVALUATED);
         holds(WEIGHING, "multiInstance", ROOT, ORDER, "shop__Order", COLLECTION);
         hasJobs(WEIGHING, job(301L, "2026-10-17T14:30:25.123Z", "active", ""));
 
@@ -334,6 +514,7 @@ class ZenBpmMultiInstanceTest {
     void anIterationTheEngineDoesNotListIsAFailure() {
         holdsTheModels();
         holds(ROOT, "default", null, ORDER, "shop__Order", COLLECTION);
+        entered(ROOT, "Parcels", 150L, "parcel", PARCELS_EVALUATED);
         holds(PARCELS, "multiInstance", ROOT, ORDER, "shop__Order", COLLECTION);
         holds(202L, "subprocess", PARCELS, ORDER, "shop__Order", "\"parcel\": \"b\"");
         hasChildren(PARCELS, child(201L, "2026-10-17T14:30:25.123Z", "subprocess", PARCELS, "\"parcel\": \"a\""));
@@ -379,6 +560,7 @@ class ZenBpmMultiInstanceTest {
     private void holdsTheParcelsBody() {
         holdsTheModels();
         holds(ROOT, "default", null, ORDER, "shop__Order", COLLECTION);
+        entered(ROOT, "Parcels", 150L, "parcel", PARCELS_EVALUATED);
         holds(PARCELS, "multiInstance", ROOT, ORDER, "shop__Order", COLLECTION);
         holds(202L, "subprocess", PARCELS, ORDER, "shop__Order", "\"parcel\": \"b\"");
         hasChildren(PARCELS, child(203L, "2026-10-17T14:30:25.127Z", "subprocess", PARCELS, "\"parcel\": \"c\""),
@@ -399,12 +581,56 @@ class ZenBpmMultiInstanceTest {
         final String scopedProcessId,
         final String variables
     ) {
-        engine.answers("GET", "/v1/process-instances/%d".formatted(key), 200, """
-                {"key": %d, "processDefinitionKey": %d, "bpmnProcessId": "%s", "version": 3, \
-                "businessKey": "order-1", "createdAt": "2026-10-17T14:30:25.123Z", "state": "active", %s \
-                "processType": "%s", "variables": {%s}, "activeElementInstances": []}"""
-                .formatted(key, definitionKey, scopedProcessId, parentKey == null ? ""
-                        : "\"parentProcessInstanceKey\": %d,".formatted(parentKey), processType, variables));
+        engine.answers("GET", "/v1/process-instances/%d".formatted(key), exchange -> FakeEngine.respond(exchange, 200,
+                """
+                        {"key": %d, "processDefinitionKey": %d, "bpmnProcessId": "%s", "version": 3, \
+                        "businessKey": "order-1", "createdAt": "2026-10-17T14:30:25.123Z", "state": "active", %s \
+                        "processType": "%s", "variables": {%s}, "activeElementInstances": [%s]}"""
+                        .formatted(key, definitionKey, scopedProcessId, parentKey == null ? ""
+                                : "\"parentProcessInstanceKey\": %d,".formatted(parentKey), processType, variables,
+                                String.join(",", tokens.getOrDefault(key, List.of())))));
+    }
+
+    // the element was entered under the entry key: its token waits there, and the history keeps
+    // the collection under the name of the input element
+    private void entered(
+        final long instanceKey,
+        final String elementId,
+        final long entryKey,
+        final String inputElement,
+        final String collection
+    ) {
+        waitsAt(instanceKey, elementId, entryKey);
+        histories
+                .computeIfAbsent(instanceKey, key -> new ArrayList<>())
+                .add("""
+                        {"key": %d, "processInstanceKey": %d, "createdAt": "2026-10-17T14:30:25.120Z", \
+                        "elementId": "%s", "elementType": "SUB_PROCESS", "inputVariables": {"%s": %s}}"""
+                        .formatted(entryKey, instanceKey, elementId, inputElement, collection));
+        engine.answers("GET", "/v1/process-instances/%d/history".formatted(instanceKey), exchange -> {
+            final var page = Integer.parseInt(exchange
+                    .getRequestURI()
+                    .getRawQuery()
+                    .replaceAll(".*page=(\\d+).*", "$1"));
+            final var entries = histories.get(instanceKey);
+            final var onThePage = entries.subList(Math.min((page - 1) * 100, entries.size()), Math.min(page * 100,
+                    entries.size()));
+            FakeEngine.respond(exchange, 200, """
+                    {"items": [%s], "page": %d, "size": 100, "count": %d, "totalCount": %d}"""
+                    .formatted(String.join(",", onThePage), page, onThePage.size(), entries.size()));
+        });
+    }
+
+    private void waitsAt(
+        final long instanceKey,
+        final String elementId,
+        final long tokenKey
+    ) {
+        tokens
+                .computeIfAbsent(instanceKey, key -> new ArrayList<>())
+                .add("""
+                        {"elementInstanceKey": %d, "createdAt": "2026-10-17T14:30:25.120Z", \
+                        "state": "TokenStateWaiting", "elementId": "%s"}""".formatted(tokenKey, elementId));
     }
 
     private void hasChildren(

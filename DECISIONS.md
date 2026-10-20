@@ -1357,25 +1357,37 @@ one body per activation of a multi-instance element: an instance of the process 
 variables. An iteration of a multi-instance sub-process or call activity is a child instance of the
 body, which holds the item; an iteration of a multi-instance task is a job of the body, which carries
 the item. The body creates one iteration after the other, each with the item at the number of
-iterations created before it, and an iteration which ended stays listed until the body ended.
+iterations created before it, and an iteration which ended stays listed until the body ended. The
+collection the iterations take their items from is evaluated once, when the element is entered,
+and kept in the history of the instance the element stands in, at the entry of the token which
+waits there for the iterations, under the name of the input element (`""` where the element names
+none); the engine reads it from there for every iteration, never from the body
+(`ZenBpmRestClientContractIT#theCollectionOfAnActivationIsKeptInTheHistory`).
 
 So `ZenBpmMultiInstance` answers `getMultiInstances()` by walking up from the job's instance: every
 body met is the next multi-instance element around the job, from the inside out, as the model of the
 instance's version tells it, read once per version. The index is the position of the job's
 iteration among the iterations of its body, ordered by the moment the engine created them and then
-by key; the element is the item of that iteration; the total is the size of the collection where the
-modeller wrote it as a bare variable (`=parcels`), read from the body's copy of the variables, and
-`-1` for any other expression, as Camunda 8 reports a total it cannot tell. The map is keyed by the
-ids of the multi-instance elements, the outermost first. The iterations of a body are kept, bounded
-by `instance-cache-max-entries`, and read again where the iteration asked about is not among them
-yet, as the next iteration of a sequential element.
+by key; the element is the item of that iteration; the total is the size of the collection the
+engine iterates over, read from that entry of the history, whatever expression the modeller wrote.
+The body's copy of the variables is no source for it: a completion writes the aggregate's values
+into every instance up to the workflow and a push into every instance below it (decision 49), so
+the copy holds the aggregate's list as it is now, while the engine goes on with the list it
+evaluated (`ZenBpmMultiInstanceIT#aCollectionChangedWhileTheIterationsRunKeepsItsTotal`). Where
+the instance shows no token at the element, the history holds no list for it, or two activations of
+the element wait at once over collections of different sizes, the total is `-1`, as Camunda 8
+reports a total it cannot tell. The map is keyed by the ids of the multi-instance elements, the
+outermost first. The iterations of a body and its total are kept, bounded by
+`instance-cache-max-entries`, and the iterations are read again where the iteration asked about is
+not among them yet, as the next iteration of a sequential element.
 
 Where the walk meets an instance a call activity started, it goes on in the caller: the called
 process runs in the caller's iterations, which the platform asks for as names the called model does
 not know. The caller's call activity is the one of the caller's model which calls the process and
 iterates exactly where the called instance hangs under a body; where the caller's model calls the
-process from more than one such call activity, the walk stops there, and the caller's iterations
-are not told.
+process from more than one such call activity, the one at which the instance the called one hangs
+under waits. Where that leaves none or more than one, the walk stops there, the caller's iterations
+are not told, and a WARN says once per version and called process how to have them told.
 
 Camunda 8 writes input mappings at deployment instead, so that every job carries its index, total
 and element without a read. ZenBPM has no `loopCounter` for an index mapping to read, and decision 26

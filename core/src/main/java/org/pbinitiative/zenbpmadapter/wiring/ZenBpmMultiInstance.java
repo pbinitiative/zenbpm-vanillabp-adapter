@@ -17,15 +17,14 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Supplier;
-import java.util.regex.Pattern;
 
 import org.pbinitiative.zenbpmadapter.ZenBpmInstanceCache;
 import org.pbinitiative.zenbpmadapter.ZenBpmInstanceCache.InstanceFacts;
 import org.pbinitiative.zenbpmadapter.client.ZenBpmCommandRetry;
 import org.pbinitiative.zenbpmadapter.client.ZenBpmRestClient;
-import org.pbinitiative.zenbpmadapter.client.api.ProcessInstanceRef;
 import org.pbinitiative.zenbpmadapter.client.api.ProcessInstanceRef.ProcessType;
 import org.pbinitiative.zenbpmadapter.model.ZenBpmBpmnModel;
 import org.pbinitiative.zenbpmadapter.model.ZenBpmBpmnModel.MultiInstanceElement;
@@ -50,17 +49,21 @@ import lombok.extern.slf4j.Slf4j;
  * order they were created, which is the order in which the engine hands out the items;</li>
  * <li>the element is the item: the variable named by <code>inputElement</code> of the iteration's
  * instance, or of the job of a multi-instance task;</li>
- * <li>the total is the size of the collection, read from the body, which holds a copy of the
- * variables the collection was evaluated against. Only a collection written as a bare variable is
- * read so; for any other expression the total is {@value #UNKNOWN_TOTAL}, as Camunda 8 reports a
- * total it cannot tell.</li>
+ * <li>the total is the size of the collection the engine iterates over. The engine evaluates it once,
+ * when the element is entered, and keeps it in the history of the instance the element stands in,
+ * at the entry of the token which waits there for the iterations, under the name of the input
+ * element. The body holds a copy of the variables as well, but that copy is written by every
+ * completion and push of the aggregate's values, so it may no longer be what the engine iterates
+ * over. Where the entry cannot be read, the total is {@value #UNKNOWN_TOTAL}, as Camunda 8 reports
+ * a total it cannot tell.</li>
  * </ul>
  * Which multi-instance element a body belongs to is told by the model of the version an instance
  * runs on: walking up from the task, every body met is the next multi-instance element around the
  * task, from the inside out. A task of a called process runs in the iterations of its caller as
  * well, so where the walk meets the instance a call activity started, it goes on in the caller, from
- * the one call activity of the caller's model which calls the process. The map is keyed by the ids
- * of the multi-instance elements, the outermost first.
+ * the call activity of the caller's model which calls the process; where the model holds several,
+ * the one the caller's token waits at. The map is keyed by the ids of the multi-instance elements,
+ * the outermost first.
  * <p>
  * The iterations of a body are kept, bounded like the instance cache, and read again where the
  * iteration asked about is not among them yet, as the next iteration of a sequential element. An
@@ -74,8 +77,6 @@ public final class ZenBpmMultiInstance {
      * The total of an iteration whose collection cannot be read, as Camunda 8 reports it.
      */
     public static final int UNKNOWN_TOTAL = -1;
-
-    private static final Pattern BARE_VARIABLE = Pattern.compile("=?\\s*([A-Za-z_][A-Za-z0-9_]*)\\s*");
 
     private final String adapterId;
 
@@ -94,6 +95,11 @@ public final class ZenBpmMultiInstance {
      * The multi-instance elements and call activities of each version, by definition key.
      */
     private final Map<Long, Shape> shapes = new ConcurrentHashMap<>();
+
+    /**
+     * The versions and called processes whose caller could not be told, each warned about once.
+     */
+    private final Set<String> untoldCallers = ConcurrentHashMap.newKeySet();
 
     /**
      * Keeps nothing yet. Contacts nothing.
@@ -247,20 +253,38 @@ public final class ZenBpmMultiInstance {
         final var multiInstanceCall = segment
                 .firstInstance()
                 .processType() == ProcessType.MULTI_INSTANCE;
-        final var calls = shape.callsOf(segment.elementId(), multiInstanceCall);
+        var calls = shape.callsOf(segment.elementId(), multiInstanceCall);
+        if (calls.size() > 1) {
+            // the token which waits for the called instance stands at its call activity
+            final var waitingAt = retry
+                    .read("instance", () -> rest.activeElementsOf(segment
+                            .firstInstance()
+                            .key()), Optional::isEmpty)
+                    .orElse(List.of());
+            calls = calls
+                    .stream()
+                    .filter(waitingAt::contains)
+                    .toList();
+        }
         if (calls.size() != 1) {
-            log.debug(
-                    "ZenBPM[{}]: version {} of process '{}' holds {} call activities which may have called process '{}', so the iterations of the caller are not reported",
-                    adapterId, segment
-                            .firstInstance()
-                            .version(),
-                    segment
-                            .firstInstance()
-                            .scopedProcessId(),
-                    calls.size(), segment.elementId());
+            warnTheCallerIsNotTold(segment);
             return new ArrayDeque<>();
         }
         return new ArrayDeque<>(shape.chainOf(calls.getFirst()));
+    }
+
+    private void warnTheCallerIsNotTold(final Segment segment) {
+        final var caller = segment.firstInstance();
+        if (!untoldCallers.add("%d %s".formatted(caller.definitionKey(), segment.elementId()))) {
+            return;
+        }
+        log.warn("""
+                ZenBPM[{}]: an instance of process '{}' was started by version {} of process '{}', whose model \
+                holds no single call activity which started it, so the methods serving tasks of '{}' are told \
+                none of the caller's multi-instance iterations; call '{}' from one call activity of '{}' only, \
+                or hand the item of the caller's iteration over as a @TaskParam""", adapterId, segment.elementId(),
+                caller.version(), caller.scopedProcessId(), segment.elementId(), segment.elementId(), caller
+                        .scopedProcessId());
     }
 
     private Shape shapeOf(
@@ -349,32 +373,61 @@ public final class ZenBpmMultiInstance {
                 .toList();
     }
 
-    // the body holds a copy of the variables the collection was evaluated against
+    // the collection as the engine evaluated it when the element was entered, which no write of a
+    // variable changes; the body's copy of the variables does not stay so, see decision 54 in the
+    // repository's DECISIONS.md
     private int totalOf(
         final InstanceFacts body,
         final MultiInstanceElement element,
         final ZenBpmCommandRetry retry
     ) {
-        final var bareVariable = BARE_VARIABLE.matcher(Objects.requireNonNullElse(element.inputCollection(), ""));
-        if (!bareVariable.matches()) {
-            log.debug(
-                    "ZenBPM[{}]: the input collection '{}' of multi-instance element '{}' is no bare variable, so the total of its iterations is reported as {}",
-                    adapterId, element.inputCollection(), element.elementId(), UNKNOWN_TOTAL);
-            return UNKNOWN_TOTAL;
-        }
-        final var name = bareVariable.group(1);
-        final var collection = retry
-                .read("instance", () -> rest.instance(body.key()), Optional::isEmpty)
-                .map(ProcessInstanceRef::variables)
-                .map(variables -> variables.get(name))
-                .orElse(null);
-        if (collection instanceof List<?> items) {
-            return items.size();
+        final long standsIn = body.parentKey();
+        final var entries = retry
+                .read("instance", () -> rest.tokensAt(standsIn, element.elementId()), read -> read
+                        .map(List::isEmpty)
+                        .orElse(true))
+                .orElse(List.of());
+        final var collections = retry.read("history of instance %d".formatted(standsIn), () -> collectionsOf(
+                standsIn, entries, element), read -> read.size() < entries.size());
+        // two activations of the element at once can only be told apart where they iterate alike
+        final var totals = collections
+                .values()
+                .stream()
+                .map(collection -> collection instanceof List<?> items ? items.size() : UNKNOWN_TOTAL)
+                .distinct()
+                .toList();
+        if ((totals.size() == 1) && (collections.size() == entries.size())) {
+            return totals.getFirst();
         }
         log.debug(
-                "ZenBPM[{}]: the body {} of multi-instance element '{}' holds no list '{}', so the total of its iterations is reported as {}",
-                adapterId, body.key(), element.elementId(), name, UNKNOWN_TOTAL);
+                "ZenBPM[{}]: instance {} shows no single collection of multi-instance element '{}' in its history, so the total of its iterations is reported as {}",
+                adapterId, standsIn, element.elementId(), UNKNOWN_TOTAL);
         return UNKNOWN_TOTAL;
+    }
+
+    // the collections of the entries named, by entry: the engine keeps an element's collection
+    // under the name of its input element, and under "" where it names none
+    private Map<Long, Object> collectionsOf(
+        final long instanceKey,
+        final List<Long> entries,
+        final MultiInstanceElement element
+    ) {
+        final var name = Objects.requireNonNullElse(element.inputElement(), "");
+        final var collections = new HashMap<Long, Object>();
+        for (var page = 1; collections.size() < entries.size(); ++page) {
+            final var read = rest.history(instanceKey, page);
+            read
+                    .items()
+                    .stream()
+                    .filter(entry -> entries.contains(entry.key()))
+                    .forEach(entry -> collections.put(entry.key(), entry
+                            .inputVariables()
+                            .get(name)));
+            if (read.last()) {
+                break;
+            }
+        }
+        return collections;
     }
 
     private synchronized Body keptBody(final long bodyKey) {

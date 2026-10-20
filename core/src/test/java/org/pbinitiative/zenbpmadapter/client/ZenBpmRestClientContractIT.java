@@ -48,6 +48,7 @@ import org.pbinitiative.zenbpmadapter.client.api.HistoryEntry;
 import org.pbinitiative.zenbpmadapter.client.api.InstanceFilter;
 import org.pbinitiative.zenbpmadapter.client.api.JobFilter;
 import org.pbinitiative.zenbpmadapter.client.api.JobRef;
+import org.pbinitiative.zenbpmadapter.client.api.Page;
 import org.pbinitiative.zenbpmadapter.client.api.ProcessDefinitionRef;
 import org.pbinitiative.zenbpmadapter.client.api.ProcessInstanceRef;
 import org.pbinitiative.zenbpmadapter.client.grpc.ZenBpmGrpc;
@@ -105,6 +106,7 @@ class ZenBpmRestClientContractIT {
         client.deployBpmn(fixture("contract-start-mapped.bpmn"));
         client.deployBpmn(fixture("contract-iterations.bpmn"));
         client.deployBpmn(fixture("contract-multi-instance.bpmn"));
+        client.deployBpmn(fixture("contract-multi-instance-call.bpmn"));
         decision = client.deployDmn(fixture("contract-decision.dmn"));
     }
 
@@ -559,6 +561,62 @@ class ZenBpmRestClientContractIT {
                                 .inputVariables()
                                 .get("item"))
                         .toList()));
+    }
+
+    @Test
+    @DisplayName("The collection an activation of a multi-instance element iterates over is kept in the history of the instance the element stands in, at the entry of the token waiting at the element, under the name of the input element, and a change of the body's copy does not change it; the body of a multi-instance call activity shows its tokens at the call activity")
+    void theCollectionOfAnActivationIsKeptInTheHistory() {
+        final var started = client.createInstance(CreateInstanceRequest
+                .latestVersionOf("contract-multi-instance")
+                .withBusinessKey(uniqueBusinessKey())
+                .withVariables(Map.of("items", List.of("x", "y", "z"))));
+        final var body = eventually(() -> client
+                .children(started.key())
+                .stream()
+                .findFirst());
+        final var tokens = eventually(() -> client
+                .tokensAt(started.key(), "Each")
+                .filter(keys -> !keys.isEmpty()));
+        client.patchVariables(body.key(), Map.of("items", List.of("x")));
+        final var entries = new ArrayList<HistoryEntry>();
+        var page = 0;
+        Page<HistoryEntry> read;
+        do {
+            read = client.history(started.key(), ++page);
+            read
+                    .items()
+                    .stream()
+                    .filter(entry -> tokens.contains(entry.key()))
+                    .forEach(entries::add);
+        } while (!read.last());
+        final var caller = client.createInstance(CreateInstanceRequest
+                .latestVersionOf("contract-multi-instance-call")
+                .withBusinessKey(uniqueBusinessKey())
+                .withVariables(Map.of("items", List.of("p", "q"))));
+        final var callBody = eventually(() -> client
+                .children(caller.key())
+                .stream()
+                .findFirst());
+        final var callsWaitingAt = eventually(() -> client
+                .activeElementsOf(callBody.key())
+                .filter(elements -> elements.size() == 2));
+
+        assertAll(
+                () -> assertEquals(1, tokens.size()),
+                () -> assertEquals(List.of("Each"), entries
+                        .stream()
+                        .map(HistoryEntry::elementId)
+                        .toList()),
+                () -> assertEquals(List.of("x", "y", "z"), entries
+                        .getFirst()
+                        .inputVariables()
+                        .get("item")),
+                () -> assertEquals(List.of("x"), client
+                        .instance(body.key())
+                        .orElseThrow()
+                        .variables()
+                        .get("items")),
+                () -> assertEquals(List.of("CallEach", "CallEach"), callsWaitingAt));
     }
 
     @Test

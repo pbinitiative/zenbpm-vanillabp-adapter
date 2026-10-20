@@ -117,7 +117,12 @@ class ZenBpmJobHandlerTest {
         jobs.close();
         jobs = new JobRunning(2, configuration -> configuration.setInstanceCacheMaxEntries(0));
         final var variables = "\"id\": \"order-1\", \"parcels\": [\"a\", \"b\"]";
-        jobs.holds(ROOT, "default", null, "order-1", variables);
+        jobs.holds(ROOT, "shop__Order", "default", null, "order-1", variables, List.of("Ship"));
+        // the collection the engine evaluated when it entered the element, at the entry of the token
+        jobs.engine.answers("GET", "/v1/process-instances/%d/history".formatted(ROOT), 200, """
+                {"items": [{"key": 7, "processInstanceKey": %d, "createdAt": "2026-10-17T14:30:25.123Z",
+                  "elementId": "Ship", "elementType": "SERVICE_TASK", "inputVariables": {"parcel": ["a", "b"]}}],
+                 "page": 1, "size": 100, "count": 1, "totalCount": 1}""".formatted(ROOT));
         // the body of the multi-instance task 'Ship', with a copy of the variables of the root
         jobs.holds(BODY, "multiInstance", ROOT, "order-1", variables);
         jobs.takesTheCommands(BODY, ROOT);
