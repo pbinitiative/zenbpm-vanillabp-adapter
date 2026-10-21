@@ -671,3 +671,29 @@ What E10 leaves to the engine (GAPS 1, 32 and 33): a business key for a workflow
 (E13.4), a tag several versions may carry, and a state on an entry of the history, an end on an
 instance and the element instance which started a child; all out of the pipeline's scope. The
 adapter's answers above hold until then.
+
+**S10.3.1 and S10.4.1 done 2026-10-21**, merged to `main` as `298abca` (pull request #71: stories
+`4455edb` and `9fb2d51`, review fixes `c2ce31f`, CodeRabbit fix `037bd2a`). F10.3 and F10.4 are
+complete, and so is E10. On `298abca` (GitHub keeps run logs for 90 days, so what they showed is
+written here as well):
+
+- `Checks`, run
+  [39523262705](https://github.com/pbinitiative/zenbpm-vanillabp-adapter/actions/runs/39523262705):
+  green on both JDKs. `bin/check-engine-copies.sh` (in the JDK 25 job) reported both copies as the
+  engine's files of `bdd795a3...`. On both JDKs `ZenBpmWorkflowViewerTest` ran 40 tests,
+  `ZenBpmModelReaderTest` 37, `ZenBpmRestClientContractIT` 32, `ZenBpmViewerApiIT` 4,
+  `ZenBpmProcessVersionIT` 5, `ZenBpmOldProcessVersionsIT` 1 and the Quarkus
+  `ZenBpmWorkflowLifecycleTest` 22, none skipped (engine test support 12 unit and 5 integration
+  tests, core 1,260 unit and 104 integration tests, Spring Boot 14 unit and 93 integration tests,
+  smoke test 38, Quarkus runtime 13, Quarkus deployment 52, Quarkus integration tests 23, coverage
+  gate 37). The gate measured 100 % on both platforms: of 37,699 instructions for Spring Boot and
+  37,569 for Quarkus on JDK 25, of 37,687 and 37,557 on JDK 21.
+- `Publish snapshots`, run
+  [39523262692](https://github.com/pbinitiative/zenbpm-vanillabp-adapter/actions/runs/39523262692):
+  green. The core snapshot it published to GitHub Packages, `2.0.0-20261021.004557-67`, holds the
+  batch's new main classes (`ZenBpmWorkflowViewer` with `Shape`, `Element` and `Read`,
+  `IncidentRef`, `ZenBpmBpmnModel.CalledVersion`) and the changed ones (`ZenBpmProcessService`,
+  `ZenBpmMessageStartScan`, `ZenBpmModelReader`, `ZenBpmBpmnModel` with `CallActivity`,
+  `ProcessInstanceRef`, `ZenBpmRestClient`), 258 classes, and no test class, fake, fixture or BPMN
+  file. Both report pages (`spring-boot-report/index.html`, `quarkus-report/index.html`) answer
+  HTTP 200 and show 0 of 37,699 (Spring Boot) and 0 of 37,569 (Quarkus) instructions missed.
