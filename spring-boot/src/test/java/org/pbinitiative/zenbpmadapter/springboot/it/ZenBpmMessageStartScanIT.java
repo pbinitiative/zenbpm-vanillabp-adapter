@@ -15,6 +15,8 @@ import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.locks.LockSupport;
 import java.util.function.Supplier;
+import java.util.regex.Pattern;
+import java.util.stream.Collectors;
 
 import javax.sql.DataSource;
 
@@ -120,10 +122,11 @@ class ZenBpmMessageStartScanIT {
                         "Skipped re-dispatched phase two of starting the workflow by message 'postcardPosted' of aggregate '%s' (BPMN process 'Postcards' of workflow module 'deploy-it'): adapter 'zenbpm' already knows the workflow (ACTIVE)"
                                 .formatted(postcardId)),
                         log),
-                () -> assertTrue(output
-                        .getAll()
+                () -> assertTrue(configurationTopicOf(output.getAll())
                         .contains(
-                                "ZenBPM[zenbpm]: vanillabp.adapters.zenbpm.message-start-lookup is 'scan': where the start row does not know a workflow of the processes 'Postcards' of workflow module 'deploy-it', a probe reads their instances to find it by its id variable, at most 1000 (vanillabp.adapters.zenbpm.message-start-lookup-max-instances), and answers BPMS_UNAVAILABLE where it would have to read more."),
+                                """
+                                        workflow module 'deploy-it', zenbpm adapter 'zenbpm'
+                                              vanillabp.adapters.zenbpm.message-start-lookup is 'scan': where the start row does not know a workflow of the processes 'Postcards', a probe reads their instances to find it by its id variable, at most 1000 (vanillabp.adapters.zenbpm.message-start-lookup-max-instances), and answers BPMS_UNAVAILABLE where it would have to read more."""),
                         output::getAll));
     }
 
@@ -179,6 +182,31 @@ class ZenBpmMessageStartScanIT {
                     .ofMillis(100)
                     .toNanos());
         }
+    }
+
+    // what the block the platform writes at the end of the start holds under the heading
+    // CONFIGURATION: the lines up to the next heading or the ruler which closes the block
+    private static String configurationTopicOf(final String log) {
+        final var heading = Pattern.compile("^CONFIGURATION \\(\\d+\\)$");
+        final var endOfTheTopic = Pattern.compile("^([A-Z][A-Z ]+ \\(\\d+\\)|-{20,})$");
+        final var inTopic = new boolean[1];
+        return log
+                .lines()
+                .filter(line -> {
+                    if (heading
+                            .matcher(line)
+                            .matches()) {
+                        inTopic[0] = true;
+                        return false;
+                    }
+                    if (inTopic[0] && endOfTheTopic
+                            .matcher(line)
+                            .matches()) {
+                        inTopic[0] = false;
+                    }
+                    return inTopic[0];
+                })
+                .collect(Collectors.joining("\n"));
     }
 
 }

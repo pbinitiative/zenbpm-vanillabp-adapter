@@ -175,6 +175,27 @@ final class SmokeApplication {
     }
 
     /**
+     * A test of an application whose workflow module brings the model of the process
+     * <code>Shipping</code> and declares the old id <code>Parcels</code> without one, see
+     * {@link RenamedShippingWorkflowService}, without the BPMS double. It holds
+     * {@link StandInEngine}, so a test which boots it finds the engine from the application's class
+     * loader as well.
+     *
+     * @return The test, to be given the keys of the case
+     */
+    static QuarkusExtensionTest withADeclaredProcess() {
+        return withoutTheBpmsDouble(new QuarkusExtensionTest()
+                .setArchiveProducer(() -> ShrinkWrap
+                        .create(JavaArchive.class)
+                        .addClasses(Aggregate.class, RenamedShippingWorkflowService.class, SmokeApplication.class,
+                                StartupBlock.class, StandInEngine.class)
+                        .addAsResource("application.yaml")
+                        .addAsResource("workflow-module-descriptor/workflow-module", "META-INF/workflow-module")
+                        .addAsResource("with-shipping/Shipping.bpmn"))
+                .setLogRecordPredicate(record -> true));
+    }
+
+    /**
      * A test of the smoke application with the setup of a migration: the new engine is first
      * priority and complete, the old one is nowhere first, its <code>deployment-failure</code>
      * policy is <code>warn</code>, and its address cannot work.

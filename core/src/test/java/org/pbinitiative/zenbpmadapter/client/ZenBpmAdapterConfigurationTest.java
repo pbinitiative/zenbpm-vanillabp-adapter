@@ -707,7 +707,9 @@ class ZenBpmAdapterConfigurationTest {
         assertThrows(IllegalStateException.class, configuration::engineAddress);
         assertThrows(IllegalStateException.class, configuration::restBaseUri);
         assertThrows(IllegalStateException.class, configuration::instanceIdentity);
-        assertThrows(IllegalStateException.class, configuration::grpcAddressInUse);
+        assertEquals(
+                "The address of the engine is derived from a valid rest-address only; validate the configuration first",
+                assertThrows(IllegalStateException.class, configuration::grpcAddressInUse).getMessage());
     }
 
     @Test
@@ -717,7 +719,7 @@ class ZenBpmAdapterConfigurationTest {
         notices.add("one");
         final var warnings = new ArrayList<String>();
         warnings.add("four");
-        final var validation = new ZenBpmAdapterConfiguration.ValidationResult(Kind.COMPLETE, "", false, notices, warnings);
+        final var validation = new ZenBpmAdapterConfiguration.ValidationResult(Kind.COMPLETE, "", "", false, notices, warnings);
         notices.add("two");
         warnings.add("five");
 

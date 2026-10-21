@@ -15,11 +15,14 @@ import io.vanillabp.spi.service.WorkflowTask;
 /**
  * The workflow of a shipment after the rename, under the process id <code>Dispatch</code>, which
  * declares the old id <code>Shipping</code> as well, so the workflows started before the rename keep
- * being served.
+ * being served. It also declares <code>Parcels</code>, an id under which the engine holds no model,
+ * so the start of its processing finds a task definition which reaches no workflow.
  */
 @Service
 @WorkflowService(workflowAggregateClass = Shipment.class, bpmnProcess = @BpmnProcess(bpmnProcessId = "Dispatch"),
-        secondaryBpmnProcesses = @BpmnProcess(bpmnProcessId = "Shipping"))
+        secondaryBpmnProcesses = {
+                @BpmnProcess(bpmnProcessId = "Shipping"), @BpmnProcess(bpmnProcessId = "Parcels")
+        })
 public class DispatchWorkflow {
 
     /**

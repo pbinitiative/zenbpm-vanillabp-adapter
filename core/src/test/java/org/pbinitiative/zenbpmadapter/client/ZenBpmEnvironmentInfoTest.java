@@ -76,7 +76,7 @@ class ZenBpmEnvironmentInfoTest {
         configuration.setClientId("node-7");
 
         try (var factory = new ZenBpmClientFactory(ADAPTER_ID, configuration, () -> "shop")) {
-            ZenBpmEnvironmentInfo.logOnce(factory, report);
+            ZenBpmEnvironmentInfo.logOnce(factory, new ZenBpmFindings(report));
 
             assertAll(
                     () -> assertTrue(output
@@ -98,13 +98,16 @@ class ZenBpmEnvironmentInfoTest {
         engine.answers("GET", "/system/status", 200, status("0123456789ab"));
 
         try (var factory = new ZenBpmClientFactory(ADAPTER_ID, configuration(), () -> "shop")) {
-            ZenBpmEnvironmentInfo.logOnce(factory, report);
+            ZenBpmEnvironmentInfo.logOnce(factory, new ZenBpmFindings(report));
 
             assertAll(
                     () -> assertEquals(List.of(
                             new Finding("warn", StartupTopic.INFRASTRUCTURE, "zenbpm adapter 'orders'", "The engine reports commit 0123456789ab (version 1.2.0), but this adapter was tested with engine commit %s, and an engine is supported only where it was tested. Run the engine image this adapter's release names, or an adapter release tested with this engine."
                                     .formatted(EngineUnderTest.pinnedCommit()))),
                             report.findings()),
+                    () -> assertTrue(report.showsInTheBlock(report
+                            .findings()
+                            .getFirst()), report::drawn),
                     () -> assertFalse(report
                             .findings()
                             .getFirst()
@@ -125,7 +128,7 @@ class ZenBpmEnvironmentInfoTest {
         engine.answers("GET", "/system/status", 200, status(TESTED_SHORT_COMMIT.substring(0, length)));
 
         try (var factory = new ZenBpmClientFactory(ADAPTER_ID, configuration(), () -> "shop")) {
-            ZenBpmEnvironmentInfo.logOnce(factory, report);
+            ZenBpmEnvironmentInfo.logOnce(factory, new ZenBpmFindings(report));
 
             assertEquals(1, report
                     .findings()
@@ -139,7 +142,7 @@ class ZenBpmEnvironmentInfoTest {
         engine.answers("GET", "/system/status", 200, status(TESTED_SHORT_COMMIT.substring(0, 7)));
 
         try (var factory = new ZenBpmClientFactory(ADAPTER_ID, configuration(), () -> "shop")) {
-            ZenBpmEnvironmentInfo.logOnce(factory, report);
+            ZenBpmEnvironmentInfo.logOnce(factory, new ZenBpmFindings(report));
 
             assertEquals(List.of(), report.findings());
         }
@@ -151,7 +154,7 @@ class ZenBpmEnvironmentInfoTest {
         engine.answers("GET", "/system/status", 200, status(TESTED_SHORT_COMMIT.toUpperCase()));
 
         try (var factory = new ZenBpmClientFactory(ADAPTER_ID, configuration(), () -> "shop")) {
-            ZenBpmEnvironmentInfo.logOnce(factory, report);
+            ZenBpmEnvironmentInfo.logOnce(factory, new ZenBpmFindings(report));
 
             assertEquals(List.of(), report.findings());
         }
@@ -163,8 +166,8 @@ class ZenBpmEnvironmentInfoTest {
         engine.answers("GET", "/system/status", 200, status("0123456789ab"));
 
         try (var factory = new ZenBpmClientFactory(ADAPTER_ID, configuration(), () -> "shop")) {
-            ZenBpmEnvironmentInfo.logOnce(factory, report);
-            ZenBpmEnvironmentInfo.logOnce(factory, report);
+            ZenBpmEnvironmentInfo.logOnce(factory, new ZenBpmFindings(report));
+            ZenBpmEnvironmentInfo.logOnce(factory, new ZenBpmFindings(report));
 
             assertAll(
                     () -> assertEquals(1, engine
@@ -177,24 +180,45 @@ class ZenBpmEnvironmentInfoTest {
     }
 
     @Test
-    @DisplayName("An engine which does not say what it runs is logged, and nothing is reported")
-    void anUnansweredStatusIsLoggedOnly(final CapturedOutput output) throws IOException {
+    @DisplayName("An engine which does not say what it runs is one warning of topic INFRASTRUCTURE, scoped to the adapter id, naming the address, the reason, the tested commit and what to check")
+    void anUnansweredStatusIsAWarning() throws IOException {
         final var configuration = new ZenBpmAdapterConfiguration();
         configuration.setRestAddress(closedPortAddress());
 
         try (var factory = new ZenBpmClientFactory(ADAPTER_ID, configuration, () -> "shop")) {
-            ZenBpmEnvironmentInfo.logOnce(factory, report);
+            ZenBpmEnvironmentInfo.logOnce(factory, new ZenBpmFindings(report));
 
             assertAll(
-                    () -> assertEquals(List.of(), report.findings()),
-                    () -> assertEquals(Optional.empty(), factory.engineStatusAtStart()),
-                    () -> assertTrue(output
-                            .getAllOfThisTest()
-                            .contains(
-                                    "WARN  o.p.z.client.ZenBpmEnvironmentInfo - ZenBPM[orders]: the engine at %s did not say which version it runs, so whether it is the one this adapter was tested with (commit %s) is unknown: GET /system/status got no answer"
-                                            .formatted(configuration
-                                                    .getRestAddress(), EngineUnderTest.pinnedCommit())),
-                            output.getAllOfThisTest()));
+                    () -> assertEquals(
+                            List.of(new Finding("warn", StartupTopic.INFRASTRUCTURE, "zenbpm adapter 'orders'", """
+                                    The engine at %s did not say which version it runs: GET /system/status got no \
+                                    answer (java.net.ConnectException). So it is unknown whether it runs engine commit \
+                                    %s, which this adapter was tested with, and an engine this adapter was not tested \
+                                    with is not supported. Check that the engine answers GET /system/status; the next \
+                                    start asks again."""
+                                    .formatted(configuration.getRestAddress(), EngineUnderTest.pinnedCommit()))),
+                            report.findings()),
+                    () -> assertTrue(report.showsInTheBlock(report
+                            .findings()
+                            .getFirst()), report::drawn),
+                    () -> assertEquals(Optional.empty(), factory.engineStatusAtStart()));
+        }
+    }
+
+    @Test
+    @DisplayName("Without a startup report, a finding goes into the log with its scope, at the level the report would use")
+    void withoutAReportTheFindingIsLogged(final CapturedOutput output) {
+        engine.answers("GET", "/system/status", 200, status("0123456789ab"));
+
+        try (var factory = new ZenBpmClientFactory(ADAPTER_ID, configuration(), () -> "shop")) {
+            ZenBpmEnvironmentInfo.logOnce(factory, new ZenBpmFindings());
+
+            assertTrue(output
+                    .getAllOfThisTest()
+                    .contains(
+                            "WARN  o.p.z.client.ZenBpmFindings - zenbpm adapter 'orders': The engine reports commit 0123456789ab (version 1.2.0), but this adapter was tested with engine commit %s"
+                                    .formatted(EngineUnderTest.pinnedCommit())),
+                    output.getAllOfThisTest());
         }
     }
 
@@ -204,7 +228,7 @@ class ZenBpmEnvironmentInfoTest {
         final var factory = ZenBpmClientFactory.unconfigured(ADAPTER_ID, new ZenBpmAdapterConfiguration(),
                 "configure me");
 
-        ZenBpmEnvironmentInfo.logOnce(factory, report);
+        ZenBpmEnvironmentInfo.logOnce(factory, new ZenBpmFindings(report));
 
         assertAll(
                 () -> assertEquals(List.of(), report.findings()),

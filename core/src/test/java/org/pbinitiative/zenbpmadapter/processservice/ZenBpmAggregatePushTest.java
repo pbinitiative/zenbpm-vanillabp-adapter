@@ -95,7 +95,7 @@ class ZenBpmAggregatePushTest {
 
     @Test
     @DisplayName("A push of the workflow writes the instance of the start row's key, then every instance below it which runs, at any depth, each before the instances below it are read; it passes over one which ended and does not enter one a call activity started for another aggregate")
-    void aGlobalPushWritesTheRootAndEveryRunningInstanceBelowIt() throws Exception {
+    void aGlobalPushWritesTheRootAndEveryRunningInstanceBelowIt(final CapturedOutput output) throws Exception {
         engine.answers("GET", instancePath(ROOT), 200,
                 instance(ROOT, "shop__Order", "active", "default", null, "order-1",
                         "order-1"));
@@ -129,7 +129,13 @@ class ZenBpmAggregatePushTest {
                         requests()),
                 () -> assertTrue(bodiesOfTheWrites()
                         .stream()
-                        .allMatch(VALUES_AS_JSON::equals), bodiesOfTheWrites()::toString));
+                        .allMatch(VALUES_AS_JSON::equals), bodiesOfTheWrites()::toString),
+                () -> assertTrue(output
+                        .getAllOfThisTest()
+                        .contains(
+                                "ZenBPM[orders]: pushed the changed aggregate 'order-1' into workflow %d and the instances %s below it"
+                                        .formatted(ROOT, List.of(PACKING, CALLED_ON_THE_SAME_AGGREGATE, ITERATION))),
+                        output::getAllOfThisTest));
     }
 
     @ParameterizedTest(name = "the key of the start row leads to {0}")
@@ -337,7 +343,7 @@ class ZenBpmAggregatePushTest {
 
     @Test
     @DisplayName("A push into the scope of a task writes the values into the instance the task's job waits in, and into no other")
-    void aTaskScopedPushWritesTheInstanceTheTaskWaitsInAndNothingElse() throws Exception {
+    void aTaskScopedPushWritesTheInstanceTheTaskWaitsInAndNothingElse(final CapturedOutput output) throws Exception {
         engine.answers("GET", "/v1/jobs/%d".formatted(JOB), 200, job());
         everyWriteIsTaken();
 
@@ -347,7 +353,13 @@ class ZenBpmAggregatePushTest {
                 () -> assertEquals(List.of("GET /v1/jobs/%d".formatted(JOB), "PATCH "
                         + variablesPath(PACKING)),
                         requests()),
-                () -> assertEquals(List.of(VALUES_AS_JSON), bodiesOfTheWrites()));
+                () -> assertEquals(List.of(VALUES_AS_JSON), bodiesOfTheWrites()),
+                () -> assertTrue(output
+                        .getAllOfThisTest()
+                        .contains(
+                                "ZenBPM[orders]: pushed the changed aggregate 'order-1' into instance %d, which task '%d' waits in"
+                                        .formatted(PACKING, JOB)),
+                        output::getAllOfThisTest));
     }
 
     @Test

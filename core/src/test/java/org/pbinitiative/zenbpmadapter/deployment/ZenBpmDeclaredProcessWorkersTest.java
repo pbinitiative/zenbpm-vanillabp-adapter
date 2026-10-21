@@ -30,6 +30,7 @@ import org.pbinitiative.zenbpmadapter.TestScoping;
 import org.pbinitiative.zenbpmadapter.TestStarts;
 import org.pbinitiative.zenbpmadapter.TestWiring;
 import org.pbinitiative.zenbpmadapter.ZenBpmProcessingContext;
+import org.pbinitiative.zenbpmadapter.client.CollectedStartupReport;
 import org.pbinitiative.zenbpmadapter.client.FakeEngine;
 import org.pbinitiative.zenbpmadapter.client.FakeJobStreamEngine;
 import org.pbinitiative.zenbpmadapter.client.ZenBpmAdapterConfiguration;
@@ -45,6 +46,7 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
 import io.vanillabp.integration.adapter.spi.NameClashAvoidance;
+import io.vanillabp.integration.spi.startup.StartupTopic;
 import io.vanillabp.integration.test.utils.CapturedOutput;
 import io.vanillabp.integration.test.utils.SuppressOutputExtension;
 import io.vanillabp.spi.service.BpmsStartTrigger;
@@ -61,6 +63,13 @@ import io.vanillabp.spi.service.BpmsStartTrigger;
 @ExtendWith(SuppressOutputExtension.class)
 class ZenBpmDeclaredProcessWorkersTest {
 
+    // where a finding goes without a startup report: into the log, after its scope
+    private static final String FINDING = "WARN  o.p.z.client.ZenBpmFindings - process 'OrdersBeforeTheRename' of workflow module 'shop', zenbpm adapter 'orders': ";
+
+    // how the block the platform writes at the end of a start begins a finding about the declared
+    // process: its scope on a line of its own, its text indented below
+    private static final String ENTRY = "  process 'OrdersBeforeTheRename' of workflow module 'shop', zenbpm adapter 'orders'\n      ";
+
     private static final String ADAPTER_ID = "orders";
 
     private static final String DECLARED = "OrdersBeforeTheRename";
@@ -72,6 +81,8 @@ class ZenBpmDeclaredProcessWorkersTest {
     private final FakeJobStreamEngine stream = new FakeJobStreamEngine().startOverTcp();
 
     private final ZenBpmClientRegistry registry = registry();
+
+    private final CollectedStartupReport report = new CollectedStartupReport();
 
     @AfterEach
     void stopTheEngines() {
@@ -90,6 +101,7 @@ class ZenBpmDeclaredProcessWorkersTest {
                 .claiming("Orders")
                 .servedElsewhere("Notify")
                 .declaringWithoutAModel(DECLARED, "charge", "legacy", "refund", "review"));
+        deploymentService.setStartupReport(report);
         final var context = wired(deploymentService);
 
         deploymentService.startWorkflowProcessing("shop", context);
@@ -156,10 +168,22 @@ class ZenBpmDeclaredProcessWorkersTest {
                                 [shop__OrdersBeforeTheRename__charge, shop__OrdersBeforeTheRename__refund] subscribed \
                                 for it and the user-task poller for the task definition(s) [review], which a user task \
                                 of a model held under that id carries, and which the job stream never takes, because \
-                                it cannot tell a user task's job from a task's. Not served: the task definition(s) \
-                                [legacy], which no model held under that id names. A job of those \
-                                workflows carries the variables of its scope, and inside a multi-instance body only \
-                                what the model held maps into it."""), output::getOutOfThisTest));
+                                it cannot tell a user task's job from a task's. A job of those workflows carries the \
+                                variables of its scope, and inside a multi-instance body only what the model held maps \
+                                into it."""), output::getOutOfThisTest),
+                () -> assertTrue(report
+                        .block(StartupTopic.DEPLOYED_VERSIONS)
+                        .contains(
+                                """
+                                        %sThis BPMN process is declared without a model deployed under it, and not \
+                                        everything the methods serving it name reaches its workflows, which run at the \
+                                        engine under the id 'shop__OrdersBeforeTheRename'. Not served: the task definition(s) [legacy], which no model \
+                                        held under that id names. A task whose job nobody takes waits without an incident, \
+                                        because such a job has not failed. Name in those methods the task definitions the \
+                                        models held under that id give to their tasks, or keep deploying the old model under \
+                                        its old id until those workflows have ended."""
+                                        .formatted(ENTRY)),
+                        report::drawn));
     }
 
     @Test
@@ -311,6 +335,7 @@ class ZenBpmDeclaredProcessWorkersTest {
                 .claiming("Orders")
                 .servedElsewhere("Notify")
                 .declaringWithoutAModel(DECLARED));
+        deploymentService.setStartupReport(report);
         final var context = wired(deploymentService);
 
         deploymentService.startWorkflowProcessing("shop", context);
@@ -327,29 +352,31 @@ class ZenBpmDeclaredProcessWorkersTest {
                         () -> rest
                                 .requests()
                                 .toString()),
-                () -> assertTrue(output
-                        .getOutOfThisTest()
+                () -> assertTrue(report
+                        .block(StartupTopic.DEPLOYED_VERSIONS)
                         .contains(
                                 """
                                         The start and end markers of the models the engine holds under that id are served all \
                                         the same, because they need no task definition."""),
-                        output::getOutOfThisTest),
+                        report::drawn),
                 () -> assertFalse(context
                         .wiredProcesses()
                         .containsKey(DECLARED)),
-                () -> assertTrue(output
-                        .getOutOfThisTest()
+                () -> assertTrue(report
+                        .block(StartupTopic.DEPLOYED_VERSIONS)
                         .contains("""
-                                ZenBPM[orders]: workflow module 'shop' declares BPMN process 'OrdersBeforeTheRename' \
-                                without deploying a model under it, and no @WorkflowTask method serving that id names \
-                                a task definition"""), output::getOutOfThisTest),
-                () -> assertTrue(output
-                        .getOutOfThisTest()
+                                %sThis BPMN process is declared without a model deployed under it, and no \
+                                @WorkflowTask method serving it names a task definition""".formatted(ENTRY)),
+                        report::drawn),
+                () -> assertTrue(report
+                        .block(StartupTopic.DEPLOYED_VERSIONS)
                         .contains("""
                                 Either wire those methods by task definition ('@WorkflowTask(taskDefinition = ...)', \
                                 which is what the model's 'zenbpm:taskDefinition' carries), or keep deploying the old \
-                                model under its old id until those workflows have ended."""),
-                        output::getOutOfThisTest));
+                                model under its old id until those workflows have ended. The start and end markers of \
+                                the models the engine holds under that id are served all the same, because they need \
+                                no task definition."""),
+                        report::drawn));
     }
 
     @Test
@@ -382,13 +409,14 @@ class ZenBpmDeclaredProcessWorkersTest {
     }
 
     @Test
-    @DisplayName("The held models of a declared process id whose methods are all wired by element id which cannot be read leave its start markers unserved, which a WARN says")
+    @DisplayName("The held models of a declared process id whose methods are all wired by element id which cannot be read leave its start markers unserved, which a warning of the start about the infrastructure says")
     void theStartMarkersOfAnIdWiredByElementIdWhoseModelsCannotBeReadAreAWarn(final CapturedOutput output) {
         rest.answers("GET", "/v1/process-definitions", 503, null);
         final var deploymentService = deploymentService(NameClashAvoidance.USE_PREFIX, TestWiring
                 .claiming("Orders")
                 .servedElsewhere("Notify")
                 .declaringWithoutAModel(DECLARED));
+        deploymentService.setStartupReport(report);
         final var context = wired(deploymentService);
 
         deploymentService.startWorkflowProcessing("shop", context);
@@ -397,16 +425,14 @@ class ZenBpmDeclaredProcessWorkersTest {
                 () -> assertFalse(context
                         .wiredProcesses()
                         .containsKey(DECLARED)),
-                () -> assertTrue(output
-                        .getOutOfThisTest()
+                () -> assertTrue(report
+                        .block(StartupTopic.INFRASTRUCTURE)
                         .contains("""
-                                ZenBPM[orders]: the models the engine holds as 'shop__OrdersBeforeTheRename' could not \
-                                be read ("""), output::getOutOfThisTest),
-                () -> assertTrue(output
-                        .getOutOfThisTest()
-                        .contains("""
-                                so the start and end markers they may carry are not served. The next start of the \
-                                application reads them again."""), output::getOutOfThisTest));
+                                %sThe models the engine holds as 'shop__OrdersBeforeTheRename' could not be read \
+                                (GET /v1/process-definitions was answered with status 503), so the start and end \
+                                markers they may carry are not served. Where the engine did not answer, check that it \
+                                does; the next start of the application reads them again.""".formatted(ENTRY)),
+                        report::drawn));
     }
 
     @Test
@@ -481,6 +507,7 @@ class ZenBpmDeclaredProcessWorkersTest {
                 .claiming("Orders")
                 .servedElsewhere("Notify")
                 .declaringWithoutAModel(DECLARED, "charge"));
+        deploymentService.setStartupReport(report);
         final var context = wired(deploymentService);
 
         deploymentService.startWorkflowProcessing("shop", context);
@@ -493,20 +520,19 @@ class ZenBpmDeclaredProcessWorkersTest {
                 () -> assertFalse(context
                         .wiredProcesses()
                         .containsKey(DECLARED)),
-                () -> assertTrue(output
-                        .getOutOfThisTest()
+                () -> assertTrue(report
+                        .block(StartupTopic.INFRASTRUCTURE)
                         .contains(
                                 """
-                                        and the models the engine holds as 'shop__OrdersBeforeTheRename' could not be read \
-                                        (ZenBPM adapter 'orders': GET /v1/process-definitions was answered with status 503), so \
-                                        nothing serves"""),
-                        output::getOutOfThisTest),
-                () -> assertTrue(output
-                        .getOutOfThisTest()
-                        .contains("""
-                                so nothing serves the workflows still running under that id: a task definition alone \
-                                cannot tell the job of a task from a user task, which the engine hands out alike. The \
-                                next start of the application reads them again."""), output::getOutOfThisTest));
+                                        %sThis BPMN process is declared without a model deployed under it, and the \
+                                        models the engine holds as 'shop__OrdersBeforeTheRename' could not be read (GET \
+                                        /v1/process-definitions was answered with status 503), so nothing serves the \
+                                        workflows still running under that id: a task definition alone cannot tell the job \
+                                        of a task from a user task, which the engine hands out alike. Where the engine did \
+                                        not answer, check that it does; the next start of the application reads them \
+                                        again."""
+                                        .formatted(ENTRY)),
+                        report::drawn));
     }
 
     @Test
@@ -548,7 +574,8 @@ class ZenBpmDeclaredProcessWorkersTest {
                                 """
                                         Not served: the tasks of the task definition(s) [charge] in the versions which give its \
                                         type to a task, because a user task of another version carries the type, which the job \
-                                        stream never takes, and the user-task poller passes a task's job over."""),
+                                        stream never takes, and the user-task poller passes a task's job over. A task whose job \
+                                        nobody takes waits without an incident"""),
                         output::getOutOfThisTest));
     }
 
@@ -787,7 +814,7 @@ class ZenBpmDeclaredProcessWorkersTest {
     }
 
     @Test
-    @DisplayName("The held models of a declared process id wired by element id which cannot be read leave its end markers unserved, which a WARN says")
+    @DisplayName("The held models of a declared process id wired by element id which cannot be read leave its end markers unserved, which a warning of the start about the infrastructure says")
     void theEndMarkersOfAnIdWiredByElementIdWhoseModelsCannotBeReadAreAWarn(final CapturedOutput output) {
         rest.answers("GET", "/v1/process-definitions", 503, null);
         final var wiring = TestWiring
@@ -805,7 +832,8 @@ class ZenBpmDeclaredProcessWorkersTest {
         assertTrue(output
                 .getOutOfThisTest()
                 .contains(
-                        "could not be read (ZenBPM adapter 'orders': GET /v1/process-definitions was answered with status 503)"),
+                        "%sThe models the engine holds as 'shop__OrdersBeforeTheRename' could not be read (GET /v1/process-definitions was answered with status 503)"
+                                .formatted(FINDING)),
                 output::getOutOfThisTest);
         assertTrue(output
                 .getOutOfThisTest()
@@ -839,12 +867,16 @@ class ZenBpmDeclaredProcessWorkersTest {
                         .getOutOfThisTest()
                         .contains(
                                 """
-                                        WARN  o.p.z.d.ZenBpmDeclaredProcessWorkers - ZenBPM[orders]: workflow module 'shop' declares \
+                                        INFO  o.p.z.d.ZenBpmDeclaredProcessWorkers - ZenBPM[orders]: workflow module 'shop' declares \
                                         BPMN process 'OrdersBeforeTheRename' without deploying a model under it, and the engine holds it \
                                         as 'shop__OrdersBeforeTheRename': its workflows are served by the job type \
-                                        'vanillabp__started__shop__OrdersBeforeTheRename' of the start markers of [Placed]. Not served: \
-                                        the task definition(s) [legacy], which no model held under that id names.
-                                        """),
+                                        'vanillabp__started__shop__OrdersBeforeTheRename' of the start markers of [Placed]. A job of \
+                                        those workflows"""),
+                        output::getOutOfThisTest),
+                () -> assertTrue(output
+                        .getOutOfThisTest()
+                        .contains(
+                                "Not served: the task definition(s) [legacy], which no model held under that id names."),
                         output::getOutOfThisTest));
     }
 
@@ -872,7 +904,7 @@ class ZenBpmDeclaredProcessWorkersTest {
     }
 
     @Test
-    @DisplayName("A declared process id none of whose task definitions a held model gives to a task is named in a WARN which says that nothing serves its workflows")
+    @DisplayName("A declared process id none of whose task definitions a held model gives to a task is a warning of the start about the versions the engine holds, naming what is not served and the two ways out, and no line says what serves it")
     void aDeclaredIdNothingServesIsAWarn(final CapturedOutput output) throws Exception {
         final var held = "shop__%s".formatted(DECLARED);
         theEngineHolds(held, model(held, "shop__%s__charge".formatted(DECLARED), null));
@@ -880,20 +912,32 @@ class ZenBpmDeclaredProcessWorkersTest {
                 .claiming("Orders")
                 .servedElsewhere("Notify")
                 .declaringWithoutAModel(DECLARED, "legacy"));
+        deploymentService.setStartupReport(report);
         final var context = wired(deploymentService);
 
         deploymentService.startWorkflowProcessing("shop", context);
 
-        assertTrue(output
-                .getOutOfThisTest()
+        assertTrue(report
+                .block(StartupTopic.DEPLOYED_VERSIONS)
                 .contains(
                         """
-                                WARN  o.p.z.d.ZenBpmDeclaredProcessWorkers - ZenBPM[orders]: workflow module 'shop' declares \
-                                BPMN process 'OrdersBeforeTheRename' without deploying a model under it, and the engine holds it \
-                                as 'shop__OrdersBeforeTheRename': nothing serves its workflows. Not served: the task \
-                                definition(s) [legacy], which no model held under that id names.
-                                """),
-                output::getOutOfThisTest);
+                                %sThis BPMN process is declared without a model deployed under it, and not \
+                                everything the methods serving it name reaches its workflows, which run at the engine \
+                                under the id 'shop__OrdersBeforeTheRename'. Not served: the task definition(s) [legacy], which no model \
+                                held under that id names. A task whose job nobody takes waits without an incident, \
+                                because such a job has not failed. Name in those methods the task definitions the \
+                                models held under that id give to their tasks, or keep deploying the old model under \
+                                its old id until those workflows have ended."""
+                                .formatted(ENTRY)),
+                report::drawn);
+        assertEquals(List.of("warn"), report
+                .findings()
+                .stream()
+                .map(CollectedStartupReport.Finding::level)
+                .toList());
+        assertFalse(output
+                .getOutOfThisTest()
+                .contains("its workflows are served by"), output::getOutOfThisTest);
     }
 
     @Test

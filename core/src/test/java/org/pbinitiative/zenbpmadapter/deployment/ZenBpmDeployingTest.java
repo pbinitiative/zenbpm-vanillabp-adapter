@@ -33,6 +33,7 @@ import org.pbinitiative.zenbpmadapter.TestWiring;
 import org.pbinitiative.zenbpmadapter.ZenBpmDeployedProcesses;
 import org.pbinitiative.zenbpmadapter.ZenBpmDeployedProcesses.ModuleMessages;
 import org.pbinitiative.zenbpmadapter.ZenBpmProcessingContext;
+import org.pbinitiative.zenbpmadapter.client.CollectedStartupReport;
 import org.pbinitiative.zenbpmadapter.client.FakeEngine;
 import org.pbinitiative.zenbpmadapter.client.ZenBpmAdapterConfiguration;
 import org.pbinitiative.zenbpmadapter.client.ZenBpmAdapterConfiguration.MessageStartLookup;
@@ -45,6 +46,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 
 import io.vanillabp.integration.adapter.spi.NameClashAvoidance;
 import io.vanillabp.integration.adapter.spi.version.DeployedProcessVersion;
+import io.vanillabp.integration.spi.startup.StartupTopic;
 import io.vanillabp.integration.test.utils.CapturedOutput;
 import io.vanillabp.integration.test.utils.SuppressOutputExtension;
 
@@ -504,7 +506,7 @@ class ZenBpmDeployingTest {
     }
 
     @Test
-    @DisplayName("Versions the engine does not hand out are named with the reason, in the result and in a WARN which says that correlations are not refused then; what was read counts all the same")
+    @DisplayName("Versions the engine does not hand out are named with the reason, in the result and in a warning of the start about the infrastructure, scoped to the workflow module, which says that correlations are not refused then; what was read counts all the same")
     void versionsWhichCannotBeReadAreNamed(final CapturedOutput output) throws Exception {
         engine.answers("POST", "/v1/process-definitions", 201, "{\"processDefinitionKey\":11}");
         engine.answers("GET", "/v1/process-definitions/11", 200, definition(11, 2, heldOrder("shop__paid")));
@@ -514,32 +516,37 @@ class ZenBpmDeployingTest {
         try (var registry = registry()) {
             final var deploymentService = deploymentService(registry, TestScoping.of(NameClashAvoidance.USE_PREFIX),
                     TestWiring.claiming("Order"));
+            final var report = new CollectedStartupReport();
+            deploymentService.setStartupReport(report);
             deploymentService.deployResources("shop", prepared(deploymentService, ORDER));
 
             final var unread = "the versions of process 'shop__Order' (GET /v1/process-definitions was answered with status 500, TECHNICAL_ERROR: database is locked)";
+            final var finding = new CollectedStartupReport.Finding("warn", StartupTopic.INFRASTRUCTURE, "workflow module 'shop', zenbpm adapter 'orders'", """
+                    What the engine holds could not be read: %s. So a correlation of a message which the \
+                    models read do not wait for is not refused when the application calls: it is \
+                    published, and the outbox repeats it for as long as nothing waits for it. Where the \
+                    engine did not answer, check that it does; the next start of the application reads \
+                    them again."""
+                    .formatted(unread));
             assertAll(
                     () -> assertEquals(Optional.of(new ModuleMessages(List.of("shop__Order"), Set.of("shop__paid"), Set
                             .of(), Set.of(), List.of(unread))), deployedProcesses(registry).messagesOf("shop")),
-                    () -> assertTrue(output
+                    () -> assertEquals(List.of(finding), report.findings()),
+                    () -> assertTrue(report.showsInTheBlock(finding), report::drawn),
+                    () -> assertFalse(output
                             .getAllOfThisTest()
-                            .contains(
-                                    """
-                                            ZenBPM[orders]: %s of workflow module 'shop' could not be read, so a correlation of a \
-                                            message which the models read do not wait for is not refused when the application \
-                                            calls: it is published, and the outbox repeats it for as long as nothing waits for \
-                                            it. The next start of the application reads them again."""
-                                            .formatted(unread)),
-                            output::getAllOfThisTest));
+                            .contains("What the engine holds could not be read"), output::getAllOfThisTest));
         }
     }
 
     @ParameterizedTest(name = "{0}")
     @EnumSource(MessageStartLookup.class)
-    @DisplayName("Once a workflow module is deployed, one INFO names its processes a message starts and what message-start-lookup does with them, and under scan a WARN names the bound and what the lookup cannot do")
+    @DisplayName("Once a workflow module is deployed, one INFO names its processes a message starts and what message-start-lookup does with them, and under scan a warning of the start, scoped to the workflow module, names the bound, what the lookup cannot do and the default")
     void theProcessesAMessageStartsAreNamedOnce(
         final MessageStartLookup lookup,
         final CapturedOutput output
     ) throws Exception {
+        final var report = new CollectedStartupReport();
         engine.answers("POST", "/v1/process-definitions", 201, "{\"processDefinitionKey\":11}");
         engine.answers("GET", "/v1/process-definitions/11", 200, definition(11, 1, heldOrder("shop__paid")
                 .replace("<bpmn:process id=\"shop__Order\" isExecutable=\"true\">", """
@@ -556,6 +563,7 @@ class ZenBpmDeployingTest {
                     .setMessageStartLookup(lookup);
             final var deploymentService = deploymentService(registry, TestScoping.of(NameClashAvoidance.USE_PREFIX),
                     TestWiring.claiming("Order"));
+            deploymentService.setStartupReport(report);
             deploymentService.deployResources("shop", prepared(deploymentService, ORDER.replace(
                     "<bpmn:process id=\"Order\" isExecutable=\"true\">", """
                             <bpmn:message id="Message_Ordered" name="ordered" />
@@ -591,21 +599,25 @@ class ZenBpmDeployingTest {
                     startWorkflowByMessage is refused for them. Set the key to 'start-row', the default, or to 'scan' \
                     to start them.""";
         };
-        final var expected = lookup == MessageStartLookup.SCAN
-                ? List.of(named + what,
-                        """
-                                WARN  o.p.z.d.ZenBpmDeploymentService - ZenBPM[orders]: \
-                                vanillabp.adapters.orders.message-start-lookup is 'scan': where the start row does not know a \
-                                workflow of the processes 'Order' of workflow module 'shop', a probe reads their instances to \
-                                find it by its id variable, at most 1000 \
-                                (vanillabp.adapters.orders.message-start-lookup-max-instances), and answers BPMS_UNAVAILABLE \
-                                where it would have to read more. A workflow of them which ended is not read where the platform \
-                                asks which adapter holds a workflow, so it is answered as unknown to the engine, as under \
-                                'start-row', which the platform's contract for adapters does not allow: an operation on it is then treated as one on \
-                                a workflow the engine never held. The lookup is an opt-in until ZenBPM gives a workflow it \
-                                starts by a message a business key.""")
-                : List.of(named + what);
-        assertEquals(expected, lines);
+        final var scan = new CollectedStartupReport.Finding("warn", StartupTopic.CONFIGURATION, "workflow module 'shop', zenbpm adapter 'orders'", """
+                vanillabp.adapters.orders.message-start-lookup is 'scan': where the start row does not know a \
+                workflow of the processes 'Order', a probe reads their instances to find it by its id \
+                variable, at most 1000 (vanillabp.adapters.orders.message-start-lookup-max-instances), and \
+                answers BPMS_UNAVAILABLE where it would have to read more. A workflow of them which ended is \
+                not read where the platform asks which adapter holds a workflow, so it is answered as unknown \
+                to the engine, as under 'start-row', which the platform's contract for adapters does not \
+                allow: an operation on it is then treated as one on a workflow the engine never held. The \
+                lookup is an opt-in until ZenBPM gives a workflow it starts by a message a business key; set \
+                the key to 'start-row', the default, unless a start sent again after its answer was lost must \
+                find the workflow it started.""");
+        final var expected = lookup == MessageStartLookup.SCAN ? List.of(scan)
+                : List.<CollectedStartupReport.Finding>of();
+        assertAll(
+                () -> assertEquals(List.of(named + what), lines),
+                () -> assertEquals(expected, report.findings()),
+                () -> assertTrue(expected
+                        .stream()
+                        .allMatch(report::showsInTheBlock), report::drawn));
     }
 
     @Test

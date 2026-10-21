@@ -74,6 +74,18 @@ public abstract class ZenBpmExecutor {
 
     private static final String SHUTS_DOWN = "ZenBPM[%s]: the adapter shuts down, so the handler is not run";
 
+    /**
+     * What is said where a handler threw although it handles its own failures: every handler of
+     * the adapter answers the engine itself, so an exception which reaches the executor is a defect.
+     */
+    private static final String A_HANDLER_THREW = "a handler threw instead of handling its failure itself, which is a defect of the adapter: report it with this stack trace at https://github.com/pbinitiative/zenbpm-vanillabp-adapter/issues";
+
+    /**
+     * What is said where the listener of freed slots threw, which hands the next queued job on: an
+     * exception which reaches the executor from it is a defect as well.
+     */
+    private static final String THE_LISTENER_THREW = "the listener of freed slots threw while it handed the next queued job on, which is a defect of the adapter: report it with this stack trace at https://github.com/pbinitiative/zenbpm-vanillabp-adapter/issues";
+
     private final String adapterId;
 
     private final int slots;
@@ -342,10 +354,10 @@ public abstract class ZenBpmExecutor {
         } catch (final Exception e) {
             // Exception, not only RuntimeException: a handler can throw a checked one sneakily,
             // and it would end a platform thread unlogged
-            log.error("ZenBPM[{}]: a handler threw", adapterId, e);
+            log.error("ZenBPM[{}]: {}", adapterId, A_HANDLER_THREW, e);
         } catch (final Error e) {
             // logged with the adapter id, and not swallowed: the thread ends, and the JVM decides
-            log.error("ZenBPM[{}]: a handler threw", adapterId, e);
+            log.error("ZenBPM[{}]: {}", adapterId, A_HANDLER_THREW, e);
             throw e;
         } finally {
             freeSlots.release();
@@ -368,7 +380,7 @@ public abstract class ZenBpmExecutor {
             log.debug("ZenBPM[{}]: a freed slot is not used, because the adapter shuts down", adapterId, e);
         } catch (final Exception e) {
             // Exception, as for a handler: a listener can throw a checked one sneakily as well
-            log.error("ZenBPM[{}]: the listener of freed slots threw", adapterId, e);
+            log.error("ZenBPM[{}]: {}", adapterId, THE_LISTENER_THREW, e);
         }
     }
 

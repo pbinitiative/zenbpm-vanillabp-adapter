@@ -16,9 +16,11 @@ import org.pbinitiative.zenbpmadapter.ZenBpmDeployedProcesses.DeployedProcess;
 import org.pbinitiative.zenbpmadapter.ZenBpmDeployedProcesses.ModuleMessages;
 import org.pbinitiative.zenbpmadapter.client.ZenBpmClientFactory;
 import org.pbinitiative.zenbpmadapter.client.ZenBpmErrors;
+import org.pbinitiative.zenbpmadapter.client.ZenBpmFindings;
 import org.pbinitiative.zenbpmadapter.client.api.ProcessDefinitionRef;
 import org.pbinitiative.zenbpmadapter.model.ZenBpmModelReader;
 
+import io.vanillabp.integration.spi.startup.StartupTopic;
 import lombok.extern.slf4j.Slf4j;
 
 /**
@@ -41,8 +43,9 @@ import lombok.extern.slf4j.Slf4j;
  * excepted, see decision 56 in the repository's DECISIONS.md. The names are those the engine
  * holds, so scoped where the deployment scoped them.
  * <p>
- * A process whose versions cannot be read is named in the result and in a WARN; the names read
- * until then count all the same, because each was read from a model the engine holds.
+ * A process whose versions cannot be read is named in the result and in a warning of the start
+ * about the infrastructure; the names read until then count all the same, because each was read
+ * from a model the engine holds.
  * <p>
  * Read again, which phase one does before it refuses a name, every version is read from the
  * engine, because another node may have deployed a newer one since this start.
@@ -54,18 +57,23 @@ final class ZenBpmHeldMessages {
 
     private final ZenBpmClientFactory factory;
 
+    private final ZenBpmFindings findings;
+
     /**
      * The reader of one adapter id.
      *
      * @param adapterId The adapter id
      * @param factory The factory of the adapter id, whose engine holds the models
+     * @param findings Where the start is told of a process whose versions could not be read
      */
     ZenBpmHeldMessages(
         final String adapterId,
-        final ZenBpmClientFactory factory
+        final ZenBpmClientFactory factory,
+        final ZenBpmFindings findings
     ) {
         this.adapterId = adapterId;
         this.factory = factory;
+        this.findings = findings;
     }
 
     /**
@@ -100,11 +108,12 @@ final class ZenBpmHeldMessages {
             }
         }
         if (!unread.isEmpty()) {
-            log.warn("""
-                    ZenBPM[{}]: {} of workflow module '{}' could not be read, so a correlation of a message which \
-                    the models read do not wait for is not refused when the application calls: it is published, and \
-                    the outbox repeats it for as long as nothing waits for it. The next start of the application \
-                    reads them again.""", adapterId, String.join(" and ", unread), workflowModuleId);
+            findings.warn(StartupTopic.INFRASTRUCTURE, ZenBpmFindings.ofModule(adapterId, workflowModuleId), """
+                    What the engine holds could not be read: %s. So a correlation of a message which the models \
+                    read do not wait for is not refused when the application calls: it is published, and the outbox \
+                    repeats it for as long as nothing waits for it. Where the engine did not answer, check that it \
+                    does; the next start of the application reads them again.""".formatted(String.join(" and ",
+                    unread)));
         }
         return new ModuleMessages(scopedIds, awaited, starting, startedByMessage, unread);
     }

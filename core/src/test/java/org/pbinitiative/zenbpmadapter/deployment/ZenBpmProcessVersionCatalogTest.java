@@ -26,10 +26,12 @@ import org.pbinitiative.zenbpmadapter.TestScoping;
 import org.pbinitiative.zenbpmadapter.TestStarts;
 import org.pbinitiative.zenbpmadapter.TestWiring;
 import org.pbinitiative.zenbpmadapter.ZenBpmDeployedProcesses;
+import org.pbinitiative.zenbpmadapter.client.CollectedStartupReport;
 import org.pbinitiative.zenbpmadapter.client.FakeEngine;
 import org.pbinitiative.zenbpmadapter.client.ZenBpmAdapterConfiguration;
 import org.pbinitiative.zenbpmadapter.client.ZenBpmClientFactory;
 import org.pbinitiative.zenbpmadapter.client.ZenBpmClientRegistry;
+import org.pbinitiative.zenbpmadapter.client.ZenBpmFindings;
 import org.pbinitiative.zenbpmadapter.model.ZenBpmModelWriter;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
@@ -40,7 +42,7 @@ import io.vanillabp.integration.adapter.spi.NameClashAvoidanceSupport.ModelIdent
 import io.vanillabp.integration.adapter.spi.NameClashAvoidanceSupport.ScopedIdentifierKind;
 import io.vanillabp.integration.adapter.spi.workflowstart.BpmsInitiatedStartSpec;
 import io.vanillabp.integration.adapter.spi.workflowtask.BpmnTaskSpec;
-import io.vanillabp.integration.test.utils.CapturedOutput;
+import io.vanillabp.integration.spi.startup.StartupTopic;
 import io.vanillabp.integration.test.utils.SuppressOutputExtension;
 import io.vanillabp.spi.service.BpmsStartTrigger;
 
@@ -68,6 +70,8 @@ class ZenBpmProcessVersionCatalogTest {
 
     private ZenBpmProcessVersions versions;
 
+    private final CollectedStartupReport report = new CollectedStartupReport();
+
     @BeforeEach
     void startTheEngine() {
         engine = FakeEngine.started();
@@ -75,7 +79,7 @@ class ZenBpmProcessVersionCatalogTest {
         configuration.setRestAddress(engine.address());
         registry = new ZenBpmClientRegistry(List.of(new ZenBpmClientFactory(ADAPTER_ID, configuration, () -> "shop")));
         versions = new ZenBpmProcessVersions(ADAPTER_ID, registry.getFactory(ADAPTER_ID), TestScoping.of(
-                NameClashAvoidance.USE_PREFIX));
+                NameClashAvoidance.USE_PREFIX), new ZenBpmFindings(report));
         engine.answers("GET", "/v1/process-definitions", 200, TWO_VERSIONS);
     }
 
@@ -136,8 +140,8 @@ class ZenBpmProcessVersionCatalogTest {
     }
 
     @Test
-    @DisplayName("A version the engine does not hold, and a model the engine does not hand back, are answered with null, the second with a WARN naming the version and what cannot be told")
-    void whatCannotBeReadIsNull(final CapturedOutput output) {
+    @DisplayName("A version the engine does not hold, and a model the engine does not hand back, are answered with null, the second with a warning of the start about the infrastructure, naming the version and what cannot be told")
+    void whatCannotBeReadIsNull() {
         engine.answers("GET", "/v1/process-definitions/9", 500, """
                 {"code":"TECHNICAL_ERROR","message":"database is locked"}""");
 
@@ -148,11 +152,18 @@ class ZenBpmProcessVersionCatalogTest {
                 () -> assertNull(versions.startEventsOfVersion("shop", "Orders", "1")),
                 () -> assertNull(versions.concurrentTokenElementsOfVersion("shop", "Orders", "1")),
                 () -> assertNull(versions.identifiersOfVersion("shop", "Orders", "1")),
-                () -> assertTrue(output
-                        .getAllOfThisTest()
-                        .contains(
-                                "WARN  o.p.z.d.ZenBpmProcessVersions - ZenBPM[orders]: the model of version 1 of BPMN process 'Orders' (workflow module 'shop') could not be read, so VanillaBP cannot tell whether this application still serves its tasks: GET /v1/process-definitions/9 was answered with status 500"),
-                        output::getAllOfThisTest));
+                () -> assertTrue(reportedAboutOrders(
+                        "The model of version 1 of this BPMN process could not be read (GET /v1/process-definitions/9 was answered with status 500, TECHNICAL_ERROR: database is locked), so VanillaBP cannot tell whether this application still serves its tasks. Where the engine did not answer, check that it does; the next start reads it again."),
+                        report::drawn),
+                () -> assertTrue(reportedAboutOrders(
+                        "The model of version 1 of this BPMN process could not be read (GET /v1/process-definitions/9 was answered with status 500, TECHNICAL_ERROR: database is locked), so VanillaBP cannot tell which start events it holds. Where the engine did not answer, check that it does; the next start reads it again."),
+                        report::drawn),
+                () -> assertTrue(reportedAboutOrders(
+                        "The model of version 1 of this BPMN process could not be read (GET /v1/process-definitions/9 was answered with status 500, TECHNICAL_ERROR: database is locked), so VanillaBP cannot tell which of its elements put a second token into a workflow. Where the engine did not answer, check that it does; the next start reads it again."),
+                        report::drawn),
+                () -> assertTrue(reportedAboutOrders(
+                        "The model of version 1 of this BPMN process could not be read (GET /v1/process-definitions/9 was answered with status 500, TECHNICAL_ERROR: database is locked), so VanillaBP cannot tell which names it still declares. Where the engine did not answer, check that it does; the next start reads it again."),
+                        report::drawn));
     }
 
     @Test
@@ -193,19 +204,17 @@ class ZenBpmProcessVersionCatalogTest {
     }
 
     @Test
-    @DisplayName("The workflows on a version the engine does not hold, or where the engine does not count, are not known, the second with a WARN")
-    void aCountTheEngineDoesNotGiveIsNull(final CapturedOutput output) {
+    @DisplayName("The workflows on a version the engine does not hold, or where the engine does not count, are not known, the second with a warning of the start about the infrastructure")
+    void aCountTheEngineDoesNotGiveIsNull() {
         engine.answers("GET", "/v1/process-instances", 500, """
                 {"code":"TECHNICAL_ERROR","message":"database is locked"}""");
 
         assertAll(
                 () -> assertNull(versions.activeInstanceCountOf("shop", "Orders", "3")),
                 () -> assertNull(versions.activeInstanceCountOf("shop", "Orders", "1")),
-                () -> assertTrue(output
-                        .getAllOfThisTest()
-                        .contains(
-                                "WARN  o.p.z.d.ZenBpmProcessVersions - ZenBPM[orders]: the engine did not say how many workflows run on version 1 of BPMN process 'Orders' (workflow module 'shop'): GET /v1/process-instances was answered with status 500"),
-                        output::getAllOfThisTest));
+                () -> assertTrue(reportedAboutOrders(
+                        "The engine did not say how many workflows run on version 1 of this BPMN process (GET /v1/process-instances was answered with status 500, TECHNICAL_ERROR: database is locked), so VanillaBP cannot tell whether any does. Check that the engine answers; the next start asks again."),
+                        report::drawn));
     }
 
     @Test
@@ -323,8 +332,8 @@ class ZenBpmProcessVersionCatalogTest {
     }
 
     @Test
-    @DisplayName("Nothing is said about what older versions miss where this start deployed no model under the id, or where a model cannot be read, the second with a WARN")
-    void whatOlderVersionsMissIsNullWithoutAnAnswer(final CapturedOutput output) throws JsonProcessingException {
+    @DisplayName("Nothing is said about what older versions miss where this start deployed no model under the id, or where a model cannot be read, the second with a warning of the start about the infrastructure")
+    void whatOlderVersionsMissIsNullWithoutAnAnswer() throws JsonProcessingException {
         recordDeployed(deployed(TestWiring.claiming("Orders"), TestStarts.everyProcessStartingAWorkflow()));
         engine.answers("GET", "/v1/process-definitions/9", 500, """
                 {"code":"TECHNICAL_ERROR","message":"database is locked"}""");
@@ -332,11 +341,22 @@ class ZenBpmProcessVersionCatalogTest {
         assertAll(
                 () -> assertNull(versions.whatOlderVersionsMiss("shop", "Shipping")),
                 () -> assertNull(versions.whatOlderVersionsMiss("shop", "Orders")),
-                () -> assertTrue(output
-                        .getAllOfThisTest()
-                        .contains(
-                                "WARN  o.p.z.d.ZenBpmProcessVersions - ZenBPM[orders]: the models of the versions of BPMN process 'Orders' (workflow module 'shop') could not be read, so VanillaBP does not say what the workflows on older versions miss: GET /v1/process-definitions/9 was answered with status 500"),
-                        output::getAllOfThisTest));
+                () -> assertTrue(reportedAboutOrders(
+                        "The models of the versions of this BPMN process could not be read (GET /v1/process-definitions/9 was answered with status 500, TECHNICAL_ERROR: database is locked), so VanillaBP does not say what the workflows on older versions miss. Where the engine did not answer, check that it does; the next start reads them again."),
+                        report::drawn));
+    }
+
+    // a warning reached the report, and the block the platform writes at the end of the start
+    // shows it under its topic, below its scope
+    private boolean reportedAboutOrders(final String message) {
+        final var finding = aboutOrders(message);
+        return report
+                .findings()
+                .contains(finding) && report.showsInTheBlock(finding);
+    }
+
+    private static CollectedStartupReport.Finding aboutOrders(final String message) {
+        return new CollectedStartupReport.Finding("warn", StartupTopic.INFRASTRUCTURE, "process 'Orders' of workflow module 'shop', zenbpm adapter 'orders'", message);
     }
 
     private void recordDeployed(final String bpmn) {

@@ -29,8 +29,9 @@ class ZenBpmUnworkableNumberTest {
             .assertException(failure -> {
                 final var message = SmokeApplication.rootMessageOf(failure);
                 assertAll(
-                        () -> assertTrue(message.startsWith("ZenBPM adapter 'old' is configured inconsistently:"),
-                                message),
+                        () -> assertTrue(message.contains("""
+                                zenbpm adapter 'old'
+                                      This adapter is configured inconsistently:"""), message),
                         () -> assertTrue(message.contains("vanillabp.adapters.old.worker-threads"), message),
                         () -> assertTrue(message.contains(
                                 "A number or a duration which cannot work ends the boot even where"), message));

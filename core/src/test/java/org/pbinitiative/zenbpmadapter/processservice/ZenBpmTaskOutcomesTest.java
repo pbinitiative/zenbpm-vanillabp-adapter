@@ -119,7 +119,10 @@ class ZenBpmTaskOutcomesTest {
             "completed", "terminated"
     })
     @DisplayName("A task whose job ended is not found, naming the task and the state, for a completion and a cancellation")
-    void aTaskWhichEndedIsNotFound(final String state) {
+    void aTaskWhichEndedIsNotFound(
+        final String state,
+        final CapturedOutput output
+    ) {
         engine.answers("GET", JOB_PATH, 200, job(state));
 
         registerTheChecks();
@@ -134,6 +137,11 @@ class ZenBpmTaskOutcomesTest {
                             gone
                                     .getMessage());
                 }));
+        assertTrue(output
+                .getAllOfThisTest()
+                .contains("ZenBPM[orders]: the check before the commit found task '%d' gone: the engine holds it as %s"
+                        .formatted(JOB, state)),
+                output::getAllOfThisTest);
     }
 
     @Test
@@ -357,7 +365,10 @@ class ZenBpmTaskOutcomesTest {
             "COMPLETE_TASK", "CANCEL_TASK", "COMPLETE_USER_TASK", "CANCEL_USER_TASK"
     })
     @DisplayName("A job of the other kind is not found, whatever its state, naming what the job is and the methods which end it, and its instance is not read")
-    void aJobOfTheOtherKindIsNotFound(final String operation) {
+    void aJobOfTheOtherKindIsNotFound(
+        final String operation,
+        final CapturedOutput output
+    ) {
         final var askedForAUserTask = operation.contains("USER_TASK");
         engine.answers("GET", JOB_PATH, 200, askedForAUserTask ? job("completed") : userTaskJob("active"));
 
@@ -384,6 +395,14 @@ class ZenBpmTaskOutcomesTest {
                                 element is ended by ProcessService#completeUserTask or #cancelUserTask."""
                                 .formatted(JOB, completesOrCancels),
                         gone.getMessage()),
+                () -> assertTrue(output
+                        .getAllOfThisTest()
+                        .contains(askedForAUserTask
+                                ? "ZenBPM[orders]: the check before the commit found no user task '%d': its job is one of a SERVICE_TASK, which is no user task"
+                                        .formatted(JOB)
+                                : "ZenBPM[orders]: the check before the commit found no task '%d': its job is one of a user task"
+                                        .formatted(JOB)),
+                        output::getAllOfThisTest),
                 () -> assertEquals(List.of("GET %s".formatted(JOB_PATH)), requests()));
     }
 

@@ -6,6 +6,7 @@ package org.pbinitiative.zenbpmadapter.client;
 
 import static org.junit.jupiter.api.Assertions.assertAll;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -68,17 +69,22 @@ class ReceivedJobTest {
     }
 
     @Test
-    @DisplayName("A job without input variables, or with a JSON null, has none; one carrying no JSON object is refused, naming why")
+    @DisplayName("A job without input variables, or with a JSON null, has none; one carrying no JSON object, or no JSON at all, is refused, naming why without quoting the workflow's data")
     void aJobWithoutAJsonObjectHasNoneOrIsRefused() {
-        final var refusal = assertThrows(IllegalStateException.class, () -> received(RECEIVED, "[1, 2]")
+        final var array = assertThrows(IllegalStateException.class, () -> received(RECEIVED, "[\"secret\"]")
+                .inputVariables());
+        final var broken = assertThrows(IllegalStateException.class, () -> received(RECEIVED, "{\"pin\": secret")
                 .inputVariables());
 
         assertAll(
                 () -> assertEquals(Map.of(), received(RECEIVED, "").inputVariables()),
                 () -> assertEquals(Map.of(), received(RECEIVED, "null").inputVariables()),
-                () -> assertTrue(refusal
-                        .getMessage()
-                        .startsWith("The variables of a job are no JSON object: "), refusal.getMessage()));
+                () -> assertEquals("The variables of a job are JSON, but no JSON object.", array.getMessage()),
+                () -> assertEquals(
+                        "The variables of a job are no JSON the adapter can read: the engine's answer breaks off or is malformed.",
+                        broken.getMessage()),
+                () -> assertNull(array.getCause()),
+                () -> assertNull(broken.getCause()));
     }
 
     private static ReceivedJob received(

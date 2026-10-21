@@ -17,11 +17,14 @@ import java.util.TreeSet;
 import java.util.stream.Stream;
 
 import org.pbinitiative.zenbpmadapter.client.ZenBpmClientFactory;
+import org.pbinitiative.zenbpmadapter.client.ZenBpmErrors;
+import org.pbinitiative.zenbpmadapter.client.ZenBpmFindings;
 import org.pbinitiative.zenbpmadapter.model.ZenBpmMarkerTasks;
 import org.pbinitiative.zenbpmadapter.model.ZenBpmModelReader;
 
 import io.vanillabp.integration.adapter.spi.AdapterCollaborators;
 import io.vanillabp.integration.adapter.spi.workflowtask.BpmnTaskSpec;
+import io.vanillabp.integration.spi.startup.StartupTopic;
 import io.vanillabp.spi.service.BpmsStartTrigger;
 import lombok.extern.slf4j.Slf4j;
 
@@ -42,9 +45,12 @@ import lombok.extern.slf4j.Slf4j;
  * creates a job for a worker and none gives it to a user task, see decision 41 in the repository's
  * DECISIONS.md. A type one of them gives to a user task is handed to the user-task poller instead,
  * which tells a user task's job by its element type, see decision 12 in the repository's
- * DECISIONS.md. Both are named in the line the start writes, and so are a type none of them gives to
- * any element and every reason why the workflows of the id may stand still: a method wired by
- * element id, which names no task definition, and models which cannot be read.
+ * DECISIONS.md. Both are named in the line the start writes. A type none of them gives to any
+ * element, and every reason why the workflows of the id may stand still, a method wired by element
+ * id, which names no task definition, and models which cannot be read, are findings of the start,
+ * scoped to the declared process. The platform starts the workflow processing after the block at
+ * the end of a Spring Boot start, so there they reach the log on their own, see decision 60 in the
+ * repository's DECISIONS.md.
  * <p>
  * Its tasks are served with what their jobs carry: the variables of their scope, and inside a
  * multi-instance body only what the model held maps into it, which the version of the application
@@ -69,21 +75,26 @@ final class ZenBpmDeclaredProcessWorkers {
 
     private final AdapterCollaborators collaborators;
 
+    private final ZenBpmFindings findings;
+
     /**
      * The composer of one adapter id.
      *
      * @param adapterId The adapter id
      * @param factory The factory of the adapter id, whose engine holds the models
      * @param collaborators What the platform hands to the adapter id
+     * @param findings Where the start is told of a declared process whose workflows may stand still
      */
     ZenBpmDeclaredProcessWorkers(
         final String adapterId,
         final ZenBpmClientFactory factory,
-        final AdapterCollaborators collaborators
+        final AdapterCollaborators collaborators,
+        final ZenBpmFindings findings
     ) {
         this.adapterId = adapterId;
         this.factory = factory;
         this.collaborators = collaborators;
+        this.findings = findings;
     }
 
     /**
@@ -126,19 +137,19 @@ final class ZenBpmDeclaredProcessWorkers {
         final var endsMayBeReported = collaborators
                 .workflowEndedInvoker()
                 .isPresent();
+        final var scope = ZenBpmFindings.ofProcess(adapterId, workflowModuleId, bpmnProcessId);
         if (taskDefinitions.isEmpty()) {
-            log.warn("""
-                    ZenBPM[{}]: workflow module '{}' declares BPMN process '{}' without deploying a model under it, \
-                    and no @WorkflowTask method serving that id names a task definition: every one of them is wired \
-                    to a BPMN element id instead. A job type is composed from a task definition, which the model of \
-                    that process would name, and this application does not bring it any more. The workflows still \
-                    running under that id therefore stand still at their next task, without an incident, because a \
-                    job nobody takes has not failed. Either wire those methods by task definition \
-                    ('@WorkflowTask(taskDefinition = ...)', which is what the model's 'zenbpm:taskDefinition' \
-                    carries), or keep deploying the old model under its old id until those workflows have ended.{}""",
-                    adapterId, workflowModuleId, bpmnProcessId,
-                    markersServedAllTheSame(startsAreHeard, endsMayBeReported));
-            final var held = startsAreHeard || endsMayBeReported ? markersHeld(workflowModuleId, scopedProcessId,
+            findings.warn(StartupTopic.DEPLOYED_VERSIONS, scope, """
+                    This BPMN process is declared without a model deployed under it, and no @WorkflowTask method \
+                    serving it names a task definition: every one of them is wired to a BPMN element id instead. A \
+                    job type is composed from a task definition, which the model of that process would name, and \
+                    this application does not bring it any more. The workflows still running under that id \
+                    therefore stand still at their next task, without an incident, because a job nobody takes has \
+                    not failed. Either wire those methods by task definition ('@WorkflowTask(taskDefinition = \
+                    ...)', which is what the model's 'zenbpm:taskDefinition' carries), or keep deploying the old \
+                    model under its old id until those workflows have ended.%s""".formatted(markersServedAllTheSame(
+                    startsAreHeard, endsMayBeReported)));
+            final var held = startsAreHeard || endsMayBeReported ? markersHeld(workflowModuleId, scope, scopedProcessId,
                     startsAreHeard, endsMayBeReported) : new HeldTypes(Set.of(), Set.of(), Map.of(), Map.of());
             return new DeclaredProcess(bpmnProcessId, scopedProcessId, Map.of(), held.startMarkers(), held
                     .endMarkers(), Map.of());
@@ -149,13 +160,12 @@ final class ZenBpmDeclaredProcessWorkers {
         } catch (final RuntimeException e) {
             log.debug("ZenBPM[{}]: the models the engine holds as '{}' could not be read", adapterId, scopedProcessId,
                     e);
-            log.warn("""
-                    ZenBPM[{}]: workflow module '{}' declares BPMN process '{}' without deploying a model under it, \
-                    and the models the engine holds as '{}' could not be read ({}), so nothing serves the workflows \
-                    still running under that id: a task definition alone cannot tell the job of a task from a user \
-                    task, which the engine hands out alike. The next start of the application reads them again.""",
-                    adapterId, workflowModuleId, bpmnProcessId, scopedProcessId, Objects.requireNonNullElse(e
-                            .getMessage(), e.toString()));
+            findings.warn(StartupTopic.INFRASTRUCTURE, scope, """
+                    This BPMN process is declared without a model deployed under it, and the models the engine holds \
+                    as '%s' could not be read (%s), so nothing serves the workflows still running under that id: a \
+                    task definition alone cannot tell the job of a task from a user task, which the engine hands out \
+                    alike. Where the engine did not answer, check that it does; the next start of the application \
+                    reads them again.""".formatted(scopedProcessId, ZenBpmErrors.withoutAdapterId(adapterId, e)));
             return new DeclaredProcess(bpmnProcessId, scopedProcessId, Map.of(), Map.of(), Map.of(), Map.of());
         }
         final var served = new LinkedHashMap<String, String>();
@@ -188,8 +198,8 @@ final class ZenBpmDeclaredProcessWorkers {
             }
             heldNowhere.add(taskDefinition);
         }
-        report(workflowModuleId, bpmnProcessId, scopedProcessId, served, types, subscribedBefore, userTasks,
-                heldNowhere, sharedWithATask);
+        report(workflowModuleId, bpmnProcessId, scopedProcessId, served, types, subscribedBefore, userTasks);
+        warnAboutWhatIsNotServed(scope, scopedProcessId, heldNowhere, sharedWithATask);
         return new DeclaredProcess(bpmnProcessId, scopedProcessId, served, types.startMarkers(), types
                 .endMarkers(), userTasks);
     }
@@ -198,6 +208,7 @@ final class ZenBpmDeclaredProcessWorkers {
     // methods name none, see decisions 46 and 52 in the repository's DECISIONS.md
     private HeldTypes markersHeld(
         final String workflowModuleId,
+        final String scope,
         final String scopedProcessId,
         final boolean startsAreHeard,
         final boolean endsMayBeReported
@@ -207,11 +218,11 @@ final class ZenBpmDeclaredProcessWorkers {
         } catch (final RuntimeException e) {
             log.debug("ZenBPM[{}]: the models the engine holds as '{}' could not be read", adapterId, scopedProcessId,
                     e);
-            log.warn("""
-                    ZenBPM[{}]: the models the engine holds as '{}' could not be read ({}), so the {} they may \
-                    carry are not served. The next start of the application reads them again.""", adapterId,
-                    scopedProcessId, Objects.requireNonNullElse(e.getMessage(), e.toString()), markersOf(
-                            startsAreHeard, endsMayBeReported));
+            findings.warn(StartupTopic.INFRASTRUCTURE, scope, """
+                    The models the engine holds as '%s' could not be read (%s), so the %s they may carry are not \
+                    served. Where the engine did not answer, check that it does; the next start of the application \
+                    reads them again.""".formatted(scopedProcessId, ZenBpmErrors.withoutAdapterId(adapterId, e),
+                    markersOf(startsAreHeard, endsMayBeReported)));
             return new HeldTypes(Set.of(), Set.of(), Map.of(), Map.of());
         }
     }
@@ -317,9 +328,7 @@ final class ZenBpmDeclaredProcessWorkers {
         final Map<String, String> served,
         final HeldTypes types,
         final Set<String> subscribedBefore,
-        final Map<String, String> userTasks,
-        final Set<String> heldNowhere,
-        final Set<String> sharedWithATask
+        final Map<String, String> userTasks
     ) {
         final var subscribed = new TreeSet<String>();
         final var sharing = new TreeSet<String>();
@@ -357,6 +366,23 @@ final class ZenBpmDeclaredProcessWorkers {
                     id carries, and which the job stream never takes, because it cannot tell a user task's job from \
                     a task's""".formatted(new TreeSet<>(userTasks.values())));
         }
+        if (servedBy.isEmpty()) {
+            return;
+        }
+        log.info("""
+                ZenBPM[{}]: workflow module '{}' declares BPMN process '{}' without deploying a model under it, and \
+                the engine holds it as '{}': its workflows are served by {}. A job of those workflows carries the \
+                variables of its scope, and inside a multi-instance body only what the model held maps into it.""",
+                adapterId, workflowModuleId, bpmnProcessId, scopedProcessId, String.join(" and ", servedBy));
+    }
+
+    // what the methods serving a declared id name and which reaches none of its workflows
+    private void warnAboutWhatIsNotServed(
+        final String scope,
+        final String scopedProcessId,
+        final Set<String> heldNowhere,
+        final Set<String> sharedWithATask
+    ) {
         final var notServed = new ArrayList<String>();
         if (!heldNowhere.isEmpty()) {
             notServed.add("the task definition(s) %s, which no model held under that id names".formatted(
@@ -368,20 +394,18 @@ final class ZenBpmDeclaredProcessWorkers {
                     user task of another version carries the type, which the job stream never takes, and the \
                     user-task poller passes a task's job over""".formatted(sharedWithATask));
         }
-        final var line = """
-                workflow module '%s' declares BPMN process '%s' without deploying a model under it, and the engine \
-                holds it as '%s': %s.%s""".formatted(workflowModuleId, bpmnProcessId, scopedProcessId, servedBy
-                .isEmpty() ? "nothing serves its workflows"
-                        : "its workflows are served by %s".formatted(String.join(" and ", servedBy)),
-                notServed
-                        .isEmpty() ? "" : " Not served: %s.".formatted(String.join("; ", notServed)));
-        if (served.isEmpty() && userTasks.isEmpty()) {
-            log.warn("ZenBPM[{}]: {}", adapterId, line);
+        if (notServed.isEmpty()) {
             return;
         }
-        log.info("""
-                ZenBPM[{}]: {} A job of those workflows carries the variables of its scope, and inside a \
-                multi-instance body only what the model held maps into it.""", adapterId, line);
+        findings.warn(StartupTopic.DEPLOYED_VERSIONS, scope,
+                """
+                        This BPMN process is declared without a model deployed under it, and not everything the methods \
+                        serving it name reaches its workflows, which run at the engine under the id '%s'. Not served: %s. A task whose job nobody \
+                        takes waits without an incident, because such a job has not failed. Name in those methods the task \
+                        definitions the models held under that id give to their tasks, or keep deploying the old model \
+                        under its old id until those workflows have ended."""
+                        .formatted(scopedProcessId, String.join("; ",
+                                notServed)));
     }
 
     /**

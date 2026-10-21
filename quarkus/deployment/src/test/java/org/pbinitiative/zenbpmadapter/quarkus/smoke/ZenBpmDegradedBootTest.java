@@ -33,7 +33,9 @@ class ZenBpmDegradedBootTest {
                 final var block = StartupBlock.configuration(SmokeApplication.logOf(records));
                 assertAll(
                         () -> assertTrue(block.contains("  zenbpm adapter 'old'\n"), block),
-                        () -> assertTrue(block.contains("ZenBPM adapter 'old' is configured inconsistently:"), block),
+                        () -> assertTrue(block.contains("""
+                                zenbpm adapter 'old'
+                                      This adapter is configured inconsistently:"""), block),
                         () -> assertTrue(block.contains(
                                 "- vanillabp.adapters.old.rest-address needs the scheme http or https"), block),
                         () -> assertTrue(block.contains("so the application boots DEGRADED"), block));

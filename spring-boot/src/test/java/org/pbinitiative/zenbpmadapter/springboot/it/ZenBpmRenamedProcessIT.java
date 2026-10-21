@@ -84,7 +84,7 @@ class ZenBpmRenamedProcessIT {
     }
 
     @Test
-    @DisplayName("A workflow started on a process before the application renamed it finishes after the rename, served by the job type the old model carries, with the variables of its scope as the task's parameters")
+    @DisplayName("A workflow started on a process before the application renamed it finishes after the rename, served by the job type the old model carries, with the variables of its scope as the task's parameters; a declared id the engine holds no model of is a finding the start of the processing reports after the block")
     void aWorkflowOfARenamedProcessFinishesAfterTheRename(final CapturedOutput output) {
         final var shipmentId = "shipment-%s".formatted(UUID.randomUUID());
         final var before = boot(RenamedBeforeApplication.class, "before");
@@ -113,6 +113,17 @@ class ZenBpmRenamedProcessIT {
                                 workflow module 'deploy-it' declares BPMN process 'Shipping' without deploying a model \
                                 under it, and the engine holds it as 'deploy-it__Shipping': its workflows are served \
                                 by the job types [deploy-it__Shipping__ship] subscribed for it"""),
+                        output::getAllOfThisTest),
+                // Spring Boot starts the processing after the block at the end of the start, so the
+                // platform's report writes what the adapter finds there into the log on its own
+                () -> assertTrue(output
+                        .getAllOfThisTest()
+                        .contains("""
+                                StartupFindings - process 'Parcels' of workflow module 'deploy-it', zenbpm adapter \
+                                'zenbpm': This BPMN process is declared without a model deployed under it, and not \
+                                everything the methods serving it name reaches its workflows, which run at the engine \
+                                under the id 'deploy-it__Parcels'. Not served: the task definition(s) [ship], which no \
+                                model held under that id names."""),
                         output::getAllOfThisTest));
     }
 

@@ -36,8 +36,9 @@ class ZenBpmAsyncTaskKeysTest {
             .assertException(failure -> {
                 final var message = SmokeApplication.rootMessageOf(failure);
                 assertAll(
-                        () -> assertTrue(message.startsWith("ZenBPM adapter 'zenbpm' is configured inconsistently:"),
-                                message),
+                        () -> assertTrue(message.contains("""
+                                zenbpm adapter 'zenbpm'
+                                      This adapter is configured inconsistently:"""), message),
                         () -> assertTrue(message.contains(
                                 "  - vanillabp.adapters.zenbpm.async-task-lock-renewal is PT1H, which is not shorter than vanillabp.delivery.retention (PT1H)."),
                                 message),

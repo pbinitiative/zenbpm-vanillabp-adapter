@@ -23,6 +23,7 @@ import org.springframework.boot.builder.SpringApplicationBuilder;
 import org.springframework.context.ConfigurableApplicationContext;
 
 import io.vanillabp.integration.spi.PhaseOperation;
+import io.vanillabp.integration.spi.startup.StartupTopic;
 import io.vanillabp.integration.test.utils.CapturedOutput;
 import io.vanillabp.integration.test.utils.SuppressOutputExtension;
 
@@ -77,7 +78,7 @@ class ZenBpmStartupValidationBootTest {
                             + SCOPE
                             + "\n"), block),
                     () -> assertTrue(block.contains(
-                            "ZenBPM adapter 'zenbpm' is not configured: 'vanillabp.adapters.zenbpm.rest-address' is missing."),
+                            "      This adapter is not configured: 'vanillabp.adapters.zenbpm.rest-address' is missing."),
                             block),
                     () -> assertTrue(message.startsWith(
                             "ZenBPM adapter 'zenbpm' is not configured: 'vanillabp.adapters.zenbpm.rest-address' is missing."),
@@ -139,7 +140,7 @@ class ZenBpmStartupValidationBootTest {
     }
 
     @Test
-    @DisplayName("A workflow module with BPMN files under name-clash-avoidance 'none' is warned about while it is prepared, naming the alternatives of ZenBPM")
+    @DisplayName("A workflow module with BPMN files under name-clash-avoidance 'none' is a warning in the block, scoped to the module and the adapter id and naming the alternatives of ZenBPM, also where the start ends on the engine afterwards")
     void noneIsWarnedAboutWhileTheModuleIsPrepared(final CapturedOutput output) {
         final var failure = rootOf(assertThrows(Exception.class, () -> run("vanillabp.prioritized-adapters=zenbpm",
                 "vanillabp.adapters.zenbpm.rest-address=http://localhost:1",
@@ -147,12 +148,19 @@ class ZenBpmStartupValidationBootTest {
                 "vanillabp.adapters.zenbpm.name-clash-avoidance=none",
                 "vanillabp.adapters.zenbpm.resources-location=%s".formatted(WITH_BPMN))
                 .close()));
-        final var log = output.getAllOfThisTest();
+        final var block = StartupBlock.configuration(output.getAllOfThisTest());
 
         assertAll(
-                () -> assertTrue(log.contains(
-                        "Workflow module 'smoke-app' is deployed to ZenBPM (adapter 'zenbpm') with name-clash-avoidance 'none'."),
-                        log),
+                () -> assertTrue(block.contains("""
+                        workflow module 'smoke-app', zenbpm adapter 'zenbpm'
+                              This workflow module is deployed to ZenBPM with name-clash-avoidance 'none'."""),
+                        block),
+                () -> assertTrue(block.contains(
+                        "  vanillabp.adapters.zenbpm.name-clash-avoidance: use-prefix   # VanillaBP prefixes the identifiers with the workflow module id"),
+                        block),
+                () -> assertTrue(block.contains(
+                        "  vanillabp.workflow-modules.smoke-app.adapters.zenbpm.accept-unscoped-identifiers: true"),
+                        block),
                 () -> assertTrue(failure
                         .getMessage()
                         .contains("http://localhost:1"), failure.getMessage()));
@@ -194,7 +202,7 @@ class ZenBpmStartupValidationBootTest {
     }
 
     @Test
-    @DisplayName("An inconsistent adapter id which is first priority ends the start, naming the keys")
+    @DisplayName("An inconsistent adapter id which is first priority is refused through the platform's report: the start ends with the refusal under CONFIGURATION, scoped to the adapter id, naming the keys")
     void anInconsistentFirstPriorityAdapterIdEndsTheStart() {
         final var failure = rootOf(assertThrows(Exception.class, () -> run("vanillabp.prioritized-adapters=zenbpm",
                 "vanillabp.adapters.zenbpm.rest-address=ftp://engine:8080").close()));
@@ -202,12 +210,45 @@ class ZenBpmStartupValidationBootTest {
         assertAll(
                 () -> assertTrue(failure
                         .getMessage()
-                        .startsWith("ZenBPM adapter 'zenbpm' is configured inconsistently:\n"
-                                + "  - vanillabp.adapters.zenbpm.rest-address "),
+                        .contains("""
+                                %s (1)
+                                  zenbpm adapter 'zenbpm'
+                                      This adapter is configured inconsistently:
+                                        - vanillabp.adapters.zenbpm.rest-address needs the scheme http or https"""
+                                .formatted(StartupTopic.CONFIGURATION.heading())),
                         failure.getMessage()),
                 () -> assertTrue(failure
                         .getMessage()
                         .contains("The adapter is first priority somewhere, so it cannot boot degraded."),
+                        failure.getMessage()));
+    }
+
+    @Test
+    @DisplayName("Two adapter ids configured inconsistently, of which neither may boot degraded, end the start with one exception of the platform which names both, each under its own scope")
+    void twoAdapterIdsWhichEndTheStartAreNamedInOneStart() {
+        final var failure = rootOf(assertThrows(Exception.class, () -> run(
+                "vanillabp.prioritized-adapters=zenbpm-new,zenbpm-old",
+                "vanillabp.adapters.zenbpm-new.type=zenbpm",
+                "vanillabp.adapters.zenbpm-new.rest-address=ftp://engine:8080",
+                "vanillabp.adapters.zenbpm-old.type=zenbpm",
+                "vanillabp.adapters.zenbpm-old.rest-address=ftp://engine:8081").close()));
+
+        assertAll(
+                () -> assertTrue(failure
+                        .getMessage()
+                        .contains("cannot start this application: 2 things have to change."), failure.getMessage()),
+                () -> assertTrue(failure
+                        .getMessage()
+                        .contains("%s (2)".formatted(StartupTopic.CONFIGURATION.heading())), failure.getMessage()),
+                () -> assertTrue(failure
+                        .getMessage()
+                        .contains(
+                                "  zenbpm adapter 'zenbpm-new'\n      This adapter is configured inconsistently:\n        - vanillabp.adapters.zenbpm-new.rest-address needs the scheme http or https"),
+                        failure.getMessage()),
+                () -> assertTrue(failure
+                        .getMessage()
+                        .contains(
+                                "  zenbpm adapter 'zenbpm-old'\n      This adapter is configured inconsistently:\n        - vanillabp.adapters.zenbpm-old.rest-address needs the scheme http or https"),
                         failure.getMessage()));
     }
 
@@ -264,7 +305,7 @@ class ZenBpmStartupValidationBootTest {
             assertAll(
                     () -> assertFalse(factory.isConfigured()),
                     () -> assertTrue(block.contains("  zenbpm adapter 'old'\n"), block),
-                    () -> assertTrue(block.contains("ZenBPM adapter 'old' is configured inconsistently:"), block),
+                    () -> assertTrue(block.contains("      This adapter is configured inconsistently:"), block),
                     () -> assertTrue(
                             block.contains("- vanillabp.adapters.old.rest-address needs the scheme http or https"),
                             block),
@@ -282,7 +323,9 @@ class ZenBpmStartupValidationBootTest {
         assertAll(
                 () -> assertTrue(failure
                         .getMessage()
-                        .startsWith("ZenBPM adapter 'old' is configured inconsistently:"), failure.getMessage()),
+                        .contains("""
+                                zenbpm adapter 'old'
+                                      This adapter is configured inconsistently:"""), failure.getMessage()),
                 () -> assertTrue(failure
                         .getMessage()
                         .contains("vanillabp.adapters.old.worker-threads"), failure.getMessage()),

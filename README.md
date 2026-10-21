@@ -502,6 +502,86 @@ Where the status says less than it seems:
   which answers `404` to a call of a job, for example because its routes leave out a path, is read
   as a gone job like the engine's own answer.
 
+## Boot behavior
+
+**What the start finds (validated at startup).** Every finding of the start goes into the block
+VanillaBP writes once, at its end, under the topic where its fix lies. A finding stands under its
+scope, the thing it is about: `zenbpm adapter '<id>'`, `workflow module '<module>', zenbpm adapter
+'<id>'` or `process '<process>' of workflow module '<module>', zenbpm adapter '<id>'`. Its text
+does not repeat that scope and names the property keys to set, written out in full so they can be
+copied (decision 60 in [`DECISIONS.md`](./DECISIONS.md)):
+
+- an adapter id without `rest-address` is a warning under `CONFIGURATION`. The application boots,
+  and every use of the adapter id fails with the same message, which names the adapter id where the
+  block's scope does
+  (`ZenBpmStartupValidationBootTest#anUnconfiguredAdapterIdBootsWithAWarning`, the Quarkus
+  `ZenBpmStartupValidationTest`);
+- an address or a client id which cannot work, on an adapter id which is nowhere first priority and
+  whose `deployment-failure` is `warn`, is a warning as well, and the application boots DEGRADED
+  (`ZenBpmStartupValidationBootTest#anAddressDefectWhichMayDegradeBootsDegraded`,
+  `ZenBpmDegradedBootTest`);
+- every other key which cannot work is refused. The platform collects the refusal and ends the
+  start with every reason it collected, before it deploys anything, so a developer who got the keys
+  of two adapter ids wrong reads both in one start
+  (`ZenBpmStartupValidationBootTest#anInconsistentFirstPriorityAdapterIdEndsTheStart`,
+  `ZenBpmStartupValidationBootTest#twoAdapterIdsWhichEndTheStartAreNamedInOneStart`,
+  `ZenBpmInconsistentConfigurationTest`, `ZenBpmStartupValidationTest#everyAdapterIdWhichEndsTheStartIsRefused`);
+- a `rest-address` which ends with `/v1`, and an `https` address beside a job stream without TLS,
+  are notices (`ZenBpmStartupValidationBootTest#aNoticeStandsOnceInTheBlock`,
+  `ZenBpmNoticeOnceTest`, `ZenBpmAdapterConfigurationTest#aTlsRestAddressBesideAPlaintextJobStreamIsNoticed`);
+- a `shutdown-grace` above thirty seconds, and a `user-task-poll-interval` of zero or below a
+  second, are warnings (`ZenBpmStartupValidationBootTest#aLongShutdownGraceIsWarnedAboutInTheBlock`,
+  `ZenBpmLongShutdownGraceTest`,
+  `ZenBpmAdapterConfigurationTest#aUserTaskPollIntervalWhichWorksAgainstTheApplicationIsWarnedAbout`);
+- a protobuf runtime too old for the job stream is handed to the platform's report as a refusal
+  under `PARTS AND VERSIONS` on Spring Boot, and no adapter id gets clients
+  (`ZenBpmStartupValidationTest#anUnfitProtobufRuntimeIsRefused`), and it ends the build on
+  Quarkus (`ZenBpmIntegrationProcessorTest#aRuntimeWithoutRuntimeVersionFailsTheBuild`);
+- a workflow module deployed with `name-clash-avoidance: none` is a warning under `CONFIGURATION`
+  which names `use-prefix`, an engine of its own and the keys which accept unique identifiers
+  (`ZenBpmStartupValidationBootTest#noneIsWarnedAboutWhileTheModuleIsPrepared`,
+  `ZenBpmDeploymentServiceTest#noneWarnsNamingTheAlternatives`), and so is
+  `message-start-lookup: scan` (`ZenBpmMessageStartScanIT`,
+  `ZenBpmDeployingTest#theProcessesAMessageStartsAreNamedOnce`);
+- an engine which runs another commit than the one this adapter was tested with, or which does not
+  say which one it runs, is a warning under `INFRASTRUCTURE` (`ZenBpmEnvironmentInfoTest`), and so
+  is a model the start could not read or a count the engine did not give
+  (`ZenBpmDeployingTest#versionsWhichCannotBeReadAreNamed`, `ZenBpmProcessVersionCatalogTest`);
+- a process id a workflow module declares without bringing its model, as the old id of a renamed
+  process, is a warning under `DEPLOYED VERSIONS` where a task definition of its methods reaches
+  none of its workflows, and under `INFRASTRUCTURE` where the models the engine holds under that id
+  could not be read (`ZenBpmDeclaredProcessWorkersTest`).
+
+That last finding comes from the start of the workflow processing. On Quarkus that is part of the
+start, so the finding stands in the block (`ZenBpmDeclaredProcessFindingTest`). On Spring Boot the
+platform starts the processing once the application is ready, after the block, and its report
+writes such a finding into the log on its own, with its scope (`ZenBpmRenamedProcessIT`).
+
+**What ends the deployment.** A model ZenBPM cannot run, `name-clash-avoidance: by-adapter`, a
+process declared in two files, a message which starts one workflow and which another waits for, two
+`job-timeout`s of one job type, a file the engine refuses, and an engine which does not report ready
+within `startup-wait` end the deployment of the workflow module with an exception which names what
+it is about and the way out. They are thrown and not refused through the report, because the
+platform decides what follows from its `deployment-failure` policy: the start ends, or, where the
+adapter id is nowhere first priority and the policy is `warn`, the application boots and the failure
+stands in the block (`ZenBpmUnsupportedModelBootTest`,
+`ZenBpmStartupValidationBootTest#byAdapterOfOneWorkflowEndsTheStartNamingItsKey`,
+`ZenBpmDeploymentServiceTest#twoFilesDeclaringOneProcessAreRefused`,
+`ZenBpmDeploymentServiceTest#aMessageWhichStartsAndIsAwaitedEndsPreparing`, `ZenBpmJobTimeoutBootTest`,
+`ZenBpmRefusedFileBootTest`, `ZenBpmEngineWaitTest#aWaitWhichRunsOutSaysEverything`).
+
+**What stays a line of the log.** What the adapter reports about doing its work is no finding: the
+engine it reached, the tasks it wired, the files it deployed, the job types it subscribed, its wait
+for the engine (`ZenBpmEnvironmentInfoTest#oneLineNamesTheEnvironment`,
+`ZenBpmWorkflowProcessingTest`, `ZenBpmEngineWaitTest#theWaitReturnsOnceTheEngineIsReady`). And what
+happens once the application runs is logged where it happens: the job stream writes one WARN when it
+goes down, however long the outage lasts, and one INFO when it is back
+(`ZenBpmJobStreamTest#anOutageIsWarnedAboutOnce`, `ZenBpmJobStreamTest#aStreamIsReportedBackOnce`).
+
+No message carries a password or the data of a workflow: an address which carries a user is refused
+(`ZenBpmAdapterConfigurationTest`), and the variables of a job are never quoted, not even where they
+cannot be read (`ReceivedJobTest#aJobWithoutAJsonObjectHasNoneOrIsRefused`).
+
 ## Health
 
 Each adapter id adds an entry named after it to the platform's health check (the readiness check

@@ -28,6 +28,7 @@ import org.pbinitiative.zenbpmadapter.client.FakeEngine;
 import org.pbinitiative.zenbpmadapter.client.ZenBpmAdapterConfiguration;
 import org.pbinitiative.zenbpmadapter.client.ZenBpmClientFactory;
 import org.pbinitiative.zenbpmadapter.client.ZenBpmEnvironmentInfo;
+import org.pbinitiative.zenbpmadapter.client.ZenBpmFindings;
 
 import io.vanillabp.integration.adapter.spi.health.AdapterHealth;
 import io.vanillabp.integration.spi.startup.StartupReport;
@@ -103,7 +104,7 @@ class ZenBpmHealthTest {
                 {"git":{"commitId":"0123456789ab"},"build":{"version":"1.2.0"},"nodes":{"node-1":{}}}""");
 
         try (var factory = factory(engine.address())) {
-            ZenBpmEnvironmentInfo.logOnce(factory, new IgnoredStartupReport());
+            ZenBpmEnvironmentInfo.logOnce(factory, new ZenBpmFindings(new IgnoredStartupReport()));
 
             final var health = ZenBpmHealth.check(factory);
 

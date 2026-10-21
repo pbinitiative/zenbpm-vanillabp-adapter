@@ -30,6 +30,7 @@ import org.pbinitiative.zenbpmadapter.client.ZenBpmClientRegistry;
 import org.pbinitiative.zenbpmadapter.client.ZenBpmEngineWait;
 import org.pbinitiative.zenbpmadapter.client.ZenBpmEnvironmentInfo;
 import org.pbinitiative.zenbpmadapter.client.ZenBpmErrors;
+import org.pbinitiative.zenbpmadapter.client.ZenBpmFindings;
 import org.pbinitiative.zenbpmadapter.client.ZenBpmInstanceIdentity;
 import org.pbinitiative.zenbpmadapter.client.api.DeployedResource;
 import org.pbinitiative.zenbpmadapter.client.api.ProcessDefinitionRef;
@@ -69,6 +70,7 @@ import io.vanillabp.integration.adapter.spi.workflowstart.BpmsInitiatedStartSpec
 import io.vanillabp.integration.adapter.spi.workflowtask.WorkflowTaskWiring;
 import io.vanillabp.integration.spi.parts.VanillaBpParts;
 import io.vanillabp.integration.spi.startup.StartupReport;
+import io.vanillabp.integration.spi.startup.StartupTopic;
 import io.vanillabp.spi.service.BpmsStartTrigger;
 import lombok.extern.slf4j.Slf4j;
 
@@ -110,7 +112,11 @@ public class ZenBpmDeploymentService implements AdapterDeploymentService<ZenBpmB
 
     private final ZenBpmRetryBackoffResolver retryBackoffs;
 
-    private StartupReport startupReport;
+    /**
+     * Where this adapter id says what it finds while the application starts: the platform's
+     * startup report, once the platform module hands it in, and the log before that.
+     */
+    private final ZenBpmFindings findings = new ZenBpmFindings();
 
     /**
      * What this adapter id measures in addition to what the core measures. The platform module
@@ -217,7 +223,7 @@ public class ZenBpmDeploymentService implements AdapterDeploymentService<ZenBpmB
         this.collaborators = collaborators;
         this.jobTimeouts = jobTimeouts;
         this.retryBackoffs = retryBackoffs;
-        this.processVersions = new ZenBpmProcessVersions(adapterId, factory, collaborators.scoping());
+        this.processVersions = new ZenBpmProcessVersions(adapterId, factory, collaborators.scoping(), findings);
     }
 
     @Override
@@ -280,7 +286,8 @@ public class ZenBpmDeploymentService implements AdapterDeploymentService<ZenBpmB
 
     /**
      * Warns that a workflow module reaches the engine with plain identifiers, naming what ZenBPM
-     * offers instead: prefixing, or an engine per workflow module. Where
+     * offers instead: prefixing, or an engine per workflow module. The warning is a finding of the
+     * start, scoped to the workflow module and the adapter id. Where
      * <code>accept-unscoped-identifiers</code> says that the identifiers are unique, a DEBUG line
      * names the key which said so, because the warning asks for a decision which is on record then.
      *
@@ -301,25 +308,25 @@ public class ZenBpmDeploymentService implements AdapterDeploymentService<ZenBpmB
                     adapterId, workflowModuleId, accepted.get());
             return;
         }
-        log.warn(
+        findings.warn(StartupTopic.CONFIGURATION, ZenBpmFindings.ofModule(adapterId, workflowModuleId),
                 """
-                        Workflow module '{}' is deployed to ZenBPM (adapter '{}') with name-clash-avoidance 'none'. Its \
-                        identifiers reach the engine as they are - BPMN process ids, message names, error codes, \
-                        decision ids and job types - so a second workflow module using the same identifier addresses \
-                        the very same processes and jobs, and neither VanillaBP nor the engine can tell. Keep 'none' \
-                        only as long as your identifiers are unique across ALL workflow modules of this application. \
-                        ZenBPM has no tenants, so 'by-adapter' is no choice; choose instead:
-                          vanillabp.adapters.{}.name-clash-avoidance: use-prefix   # VanillaBP prefixes the identifiers with the workflow module id
+                        This workflow module is deployed to ZenBPM with name-clash-avoidance 'none'. Its identifiers \
+                        reach the engine as they are - BPMN process ids, message names, error codes, decision ids and \
+                        job types - so a second workflow module using the same identifier addresses the very same \
+                        processes and jobs, and neither VanillaBP nor the engine can tell. Keep 'none' only as long as \
+                        your identifiers are unique across ALL workflow modules of this application. ZenBPM has no \
+                        tenants, so 'by-adapter' is no choice; choose instead:
+                          vanillabp.adapters.%s.name-clash-avoidance: use-prefix   # VanillaBP prefixes the identifiers with the workflow module id
                         or give the workflow module an engine of its own: an adapter id of its own with its own \
                         vanillabp.adapters.<id>.rest-address. The mode may be set per workflow module as well \
-                        (vanillabp.workflow-modules.{}.adapters.{}.name-clash-avoidance). It is not a runtime switch - \
-                        changing it once workflows are running is a BPMS migration. If the identifiers ARE unique, \
-                        say so once and this warning is gone:
-                          vanillabp.adapters.{}.accept-unscoped-identifiers: true
+                        (vanillabp.workflow-modules.%s.adapters.%s.name-clash-avoidance). It is not a runtime switch - \
+                        changing it once workflows are running is a BPMS migration. If the identifiers ARE unique, say \
+                        so once and this warning is gone:
+                          vanillabp.adapters.%s.accept-unscoped-identifiers: true
                         or for this workflow module only:
-                          vanillabp.workflow-modules.{}.adapters.{}.accept-unscoped-identifiers: true""",
-                workflowModuleId,
-                adapterId, adapterId, workflowModuleId, adapterId, adapterId, workflowModuleId, adapterId);
+                          vanillabp.workflow-modules.%s.adapters.%s.accept-unscoped-identifiers: true"""
+                        .formatted(adapterId,
+                                workflowModuleId, adapterId, adapterId, workflowModuleId, adapterId));
     }
 
     /**
@@ -371,17 +378,18 @@ public class ZenBpmDeploymentService implements AdapterDeploymentService<ZenBpmB
      * @return The platform's startup report, or <code>null</code> where the platform gave none
      */
     public StartupReport getStartupReport() {
-        return startupReport;
+        return findings.report();
     }
 
     /**
      * Where this adapter id reports what it finds while the application starts: the block the
-     * platform writes at the end of a start.
+     * platform writes at the end of a start. A finding which comes later, as one of the start of
+     * the workflow processing on Spring Boot, the report writes into the log itself.
      *
      * @param startupReport The platform's startup report
      */
     public void setStartupReport(final StartupReport startupReport) {
-        this.startupReport = startupReport;
+        findings.reportTo(startupReport);
     }
 
     /**
@@ -690,7 +698,7 @@ public class ZenBpmDeploymentService implements AdapterDeploymentService<ZenBpmB
                         .map(bpmnProcessId -> new DeployedProcess(workflowModuleId, bpmnProcessId))
                         .toList());
         ZenBpmEngineWait.awaitReady(factory);
-        ZenBpmEnvironmentInfo.logOnce(factory, startupReport);
+        ZenBpmEnvironmentInfo.logOnce(factory, findings);
         final var rest = factory.rest();
         final var wiring = collaborators.workflowTaskWiring();
         final var deployed = new ArrayList<String>();
@@ -738,7 +746,7 @@ public class ZenBpmDeploymentService implements AdapterDeploymentService<ZenBpmB
                     .record(version);
         });
         if (!versions.isEmpty()) {
-            final var heldMessages = new ZenBpmHeldMessages(adapterId, factory);
+            final var heldMessages = new ZenBpmHeldMessages(adapterId, factory, findings);
             final var messages = heldMessages.of(workflowModuleId, versions);
             factory
                     .deployedProcesses()
@@ -996,7 +1004,7 @@ public class ZenBpmDeploymentService implements AdapterDeploymentService<ZenBpmB
                 .stream()
                 .filter(process -> !declared.containsKey(process.bpmnProcessId()))
                 .forEach(process -> subscribedBefore.addAll(process.jobTypes()));
-        new ZenBpmDeclaredProcessWorkers(adapterId, factory, collaborators)
+        new ZenBpmDeclaredProcessWorkers(adapterId, factory, collaborators, findings)
                 .compose(workflowModuleId, declared, subscribedBefore)
                 .forEach(process -> serve(workflowModuleId, process, context));
     }
@@ -1293,18 +1301,19 @@ public class ZenBpmDeploymentService implements AdapterDeploymentService<ZenBpmB
         if (lookup != MessageStartLookup.SCAN) {
             return;
         }
-        log.warn("""
-                ZenBPM[{}]: {} is '{}': where the start row does not know a workflow of the processes {} of \
-                workflow module '{}', a probe reads their instances to find it by its id variable, at most {} \
-                ({}), and answers BPMS_UNAVAILABLE where it would have to read more. A workflow of them which \
-                ended is not read where the platform asks which adapter holds a workflow, so it is answered as \
-                unknown to the engine, as under 'start-row', which the platform's contract for adapters does \
-                not allow: an operation on it is then treated as one on a workflow the engine never held. The \
-                lookup is an opt-in until ZenBPM gives a workflow it starts by a message a business key.""", adapterId,
-                key, lookup
-                        .configured(),
-                processes, workflowModuleId, configuration.getMessageStartLookupMaxInstances(),
-                ZenBpmAdapterConfiguration.propertyKey(adapterId, "message-start-lookup-max-instances"));
+        findings.warn(StartupTopic.CONFIGURATION, ZenBpmFindings.ofModule(adapterId, workflowModuleId), """
+                %s is '%s': where the start row does not know a workflow of the processes %s, a probe reads their \
+                instances to find it by its id variable, at most %d (%s), and answers BPMS_UNAVAILABLE where it \
+                would have to read more. A workflow of them which ended is not read where the platform asks which \
+                adapter holds a workflow, so it is answered as unknown to the engine, as under '%s', which the \
+                platform's contract for adapters does not allow: an operation on it is then treated as one on a \
+                workflow the engine never held. The lookup is an opt-in until ZenBPM gives a workflow it starts by \
+                a message a business key; set the key to '%s', the default, unless a start sent again after its \
+                answer was lost must find the workflow it started.""".formatted(key, lookup.configured(), processes,
+                configuration.getMessageStartLookupMaxInstances(), ZenBpmAdapterConfiguration.propertyKey(adapterId,
+                        "message-start-lookup-max-instances"),
+                MessageStartLookup.START_ROW.configured(),
+                MessageStartLookup.START_ROW.configured()));
     }
 
     // every start event of the process itself, NONE and MESSAGE included, so the platform can judge

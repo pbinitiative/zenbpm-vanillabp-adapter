@@ -549,9 +549,10 @@ class ZenBpmMultiInstanceTest {
                 "Pick", retry()));
 
         assertAll(
-                () -> assertTrue(failure
-                        .getMessage()
-                        .contains("iteration 202 of multi-instance element 'Parcels'"), failure::getMessage),
+                () -> assertEquals(
+                        "ZenBPM[orders]: the iteration 202 of multi-instance element 'Parcels' is not among the iterations of its body, instance %d, which the engine node asked lists; it may lag behind"
+                                .formatted(PARCELS),
+                        failure.getMessage()),
                 () -> assertTrue(requestsFor("/v1/process-instances/%d/child-processes".formatted(PARCELS)) > 1));
     }
 
@@ -566,9 +567,10 @@ class ZenBpmMultiInstanceTest {
         final var failure = assertThrows(IllegalStateException.class, () -> multiInstance.iterationsOf(42L, 202L,
                 "Pick", retry()));
 
-        assertTrue(failure
-                .getMessage()
-                .contains("instance %d".formatted(PARCELS)), failure::getMessage);
+        assertEquals(
+                "ZenBPM[orders]: instance %d, on the way up to the iterations a task runs in, is not known to the engine node asked, which may lag behind"
+                        .formatted(PARCELS),
+                failure.getMessage());
     }
 
     @Test

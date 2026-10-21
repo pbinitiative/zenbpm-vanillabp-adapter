@@ -22,6 +22,7 @@ import org.pbinitiative.zenbpmadapter.client.FakeEngine;
 import org.pbinitiative.zenbpmadapter.client.ZenBpmAdapterConfiguration;
 import org.pbinitiative.zenbpmadapter.client.ZenBpmClientFactory;
 import org.pbinitiative.zenbpmadapter.client.ZenBpmClientRegistry;
+import org.pbinitiative.zenbpmadapter.client.ZenBpmFindings;
 
 import io.vanillabp.integration.adapter.spi.NameClashAvoidance;
 import io.vanillabp.integration.adapter.spi.version.DeployedProcessVersion;
@@ -58,7 +59,7 @@ class ZenBpmProcessVersionsTest {
         configuration.setRestAddress(engine.address());
         registry = new ZenBpmClientRegistry(List.of(new ZenBpmClientFactory(ADAPTER_ID, configuration, () -> "shop")));
         versions = new ZenBpmProcessVersions(ADAPTER_ID, registry.getFactory(ADAPTER_ID), TestScoping.of(
-                NameClashAvoidance.USE_PREFIX));
+                NameClashAvoidance.USE_PREFIX), new ZenBpmFindings());
     }
 
     @AfterEach

@@ -263,7 +263,7 @@ class ZenBpmWorkflowProcessingTest {
 
     @Test
     @DisplayName("A module without a job type subscribes nothing and asks the engine nothing, also for an adapter id without clients")
-    void aModuleWithoutAJobTypeSubscribesNothing() {
+    void aModuleWithoutAJobTypeSubscribesNothing(final CapturedOutput output) {
         final var deploymentService = new ZenBpmDeploymentService(ADAPTER_ID, new ZenBpmClientRegistry(List.of(
                 ZenBpmClientFactory.unconfigured(ADAPTER_ID, new ZenBpmAdapterConfiguration(),
                         "not configured"))), TestCollaborators.of(ADAPTER_ID, TestScoping.of(NameClashAvoidance.NONE),
@@ -277,7 +277,12 @@ class ZenBpmWorkflowProcessingTest {
         deploymentService.startWorkflowProcessing("shop", context);
         deploymentService.stopWorkflowProcessing("shop", context);
 
-        assertEquals(0, engine.callCount());
+        assertAll(
+                () -> assertEquals(0, engine.callCount()),
+                () -> assertTrue(output
+                        .getAllOfThisTest()
+                        .contains("ZenBPM[orders]: workflow module 'shop' has no job type to subscribe"),
+                        output::getAllOfThisTest));
     }
 
     @Test

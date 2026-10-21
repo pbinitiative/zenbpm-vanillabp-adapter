@@ -41,6 +41,11 @@ class ZenBpmStartupValidationTest {
 
     private static final String MISSING_ADDRESS = "ZenBPM adapter 'zenbpm' is not configured: 'vanillabp.adapters.zenbpm.rest-address' is missing.";
 
+    // the same words in the block, whose scope names the adapter id
+    private static final String MISSING_ADDRESS_IN_THE_BLOCK = """
+            zenbpm adapter 'zenbpm'
+                  This adapter is not configured: 'vanillabp.adapters.zenbpm.rest-address' is missing.""";
+
     @RegisterExtension
     static final QuarkusExtensionTest extensionTest = SmokeApplication
             .extensionTest()
@@ -49,7 +54,7 @@ class ZenBpmStartupValidationTest {
                 final var block = StartupBlock.configuration(SmokeApplication.logOf(records));
                 assertAll(
                         () -> assertTrue(block.contains("  zenbpm adapter 'zenbpm'\n"), block),
-                        () -> assertTrue(block.contains(MISSING_ADDRESS), block));
+                        () -> assertTrue(block.contains(MISSING_ADDRESS_IN_THE_BLOCK), block));
             });
 
     @Inject

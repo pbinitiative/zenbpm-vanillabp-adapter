@@ -65,6 +65,14 @@
       <artifactId>test-utils</artifactId>
       <scope>test</scope>
     </dependency>
+    <!-- the platform's startup report, so a test reads a finding in the block the platform
+         writes at the end of a start -->
+    <dependency>
+      <groupId>io.vanillabp.adapter</groupId>
+      <artifactId>migration-adapter</artifactId>
+      <version>${adapter-platform.version}</version>
+      <scope>test</scope>
+    </dependency>
     <dependency>
       <groupId>org.junit.jupiter</groupId>
       <artifactId>junit-jupiter</artifactId>

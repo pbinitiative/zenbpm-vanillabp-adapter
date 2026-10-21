@@ -14,12 +14,10 @@ import java.util.function.Function;
 import java.util.function.Predicate;
 import java.util.function.Supplier;
 
-import org.pbinitiative.zenbpmadapter.ZenBpmAdapter;
 import org.pbinitiative.zenbpmadapter.client.ZenBpmAdapterConfiguration.ValidationResult;
 
 import io.vanillabp.integration.spi.startup.StartupReport;
 import io.vanillabp.integration.spi.startup.StartupTopic;
-import lombok.extern.slf4j.Slf4j;
 
 /**
  * What both platforms do with the ZenBPM adapter ids while an application starts: validate the
@@ -33,15 +31,19 @@ import lombok.extern.slf4j.Slf4j;
  * <li>an adapter id which is not configured is a warning, and its factory has no clients;</li>
  * <li>an inconsistent one which may boot degraded is a warning as well, with a factory without
  * clients;</li>
- * <li>an inconsistent one which may not ends the start, and so does a protobuf runtime which
- * cannot run the job stream of an adapter id with clients;</li>
+ * <li>an inconsistent one which may not is refused, and so is a protobuf runtime which cannot run
+ * the job stream of an adapter id with clients;</li>
  * <li>a complete one gets a factory with clients, which contacts nothing yet.</li>
  * </ul>
  * Findings are reported under {@link StartupTopic#CONFIGURATION} with the adapter id as their
- * scope, see {@link #scopeOf(String)}. Where the platform offers no startup report, they go to
- * the log at the same levels.
+ * scope, see {@link #scopeOf(String)}, and the protobuf runtime under
+ * {@link StartupTopic#PARTS_AND_VERSIONS}. A refusal is collected like every other finding: the
+ * platform ends the start with every reason it collected, before it deploys anything, so a
+ * developer who got a key of this adapter and something else wrong reads both in one start. The
+ * adapter id refused gets a factory without clients meanwhile. Where the platform offers no
+ * startup report, the findings go to the log at the same levels, and a refusal is thrown at once.
+ * See decision 60 in the repository's DECISIONS.md.
  */
-@Slf4j
 public final class ZenBpmStartupValidation {
 
     private ZenBpmStartupValidation() {
@@ -54,17 +56,21 @@ public final class ZenBpmStartupValidation {
      * @return E.g. <code>zenbpm adapter 'orders'</code>
      */
     public static String scopeOf(final String adapterId) {
-        return "%s adapter '%s'".formatted(ZenBpmAdapter.ADAPTER_TYPE, adapterId);
+        return ZenBpmFindings.ofAdapter(adapterId);
     }
 
     /**
      * Validates every adapter id of type <code>zenbpm</code>, reports what was found and builds
      * one factory per adapter id. Nothing contacts the engine.
      * <p>
-     * Every adapter id is validated before the start ends, so a developer who got two of them
-     * wrong reads both messages in one exception. Where the start ends, no factory was built yet.
-     * Where building one fails, or the registry refuses them, the factories built so far are
-     * closed before the failure is thrown, because each has started a thread of its HTTP client.
+     * Every adapter id is validated before the start ends, so a developer who got two of them wrong
+     * reads both in one exception: with a report, each refusal is handed to it and the platform ends
+     * the start with all of them; without one, they are thrown together once every adapter id was
+     * validated. An adapter id refused gets a factory without
+     * clients, and so does every adapter id where the protobuf runtime is refused, so nothing
+     * loads a class of the job stream. Where building a factory fails, or the registry refuses
+     * them, the factories built so far are closed before the failure is thrown, because each has
+     * started a thread of its HTTP client.
      *
      * @param adapterIds The adapter ids of type <code>zenbpm</code>, as the platform's core
      *            properties name them, never as the adapter's own configuration names them
@@ -77,10 +83,12 @@ public final class ZenBpmStartupValidation {
      * @param deliveryRetention The platform's <code>vanillabp.delivery.retention</code>, which
      *            <code>async-task-lock-renewal</code> has to stay below
      * @param applicationName The application's name as the platform knows it
-     * @param startupReport Where the findings go; <code>null</code> sends them to the log
+     * @param startupReport Where the findings go; <code>null</code> sends them to the log and
+     *            throws a refusal at once
      * @return The registry, with a factory per adapter id in the given order
-     * @throws IllegalStateException With the messages of every adapter id whose configuration ends
-     *             the start, or the message of {@link ProtobufRuntimeCheck}
+     * @throws IllegalStateException Only without a startup report: with the messages of every
+     *             adapter id whose configuration ends the start, or the message of
+     *             {@link ProtobufRuntimeCheck}
      */
     public static ZenBpmClientRegistry registryOf(
         final List<String> adapterIds,
@@ -111,6 +119,7 @@ public final class ZenBpmStartupValidation {
         final Supplier<Optional<String>> protobufDefect,
         final BiFunction<String, ZenBpmAdapterConfiguration, ZenBpmClientFactory> factoryWithClients
     ) {
+        final var findings = new ZenBpmFindings(startupReport);
         final var validated = new ArrayList<Validated>();
         final var endingTheStart = new ArrayList<String>();
         for (final var adapterId : adapterIds) {
@@ -122,40 +131,42 @@ public final class ZenBpmStartupValidation {
             final var scope = scopeOf(adapterId);
             result
                     .notices()
-                    .forEach(notice -> notice(startupReport, scope, notice));
+                    .forEach(notice -> findings.notice(StartupTopic.CONFIGURATION, scope, notice));
             result
                     .warnings()
-                    .forEach(warning -> warn(startupReport, scope, warning));
+                    .forEach(warning -> findings.warn(StartupTopic.CONFIGURATION, scope, warning));
             if (result.endsTheBoot()) {
+                // without a startup report, the refusals are thrown together once every id is read
                 endingTheStart.add(result.message());
+                if (startupReport != null) {
+                    startupReport.refuse(StartupTopic.CONFIGURATION, scope, result.finding());
+                }
             } else if (result.kind() != ValidationResult.Kind.COMPLETE) {
-                warn(startupReport, scope, result.message());
+                findings.warn(StartupTopic.CONFIGURATION, scope, result.finding());
             }
             validated.add(new Validated(adapterId, configuration, result));
         }
-        if (!endingTheStart.isEmpty()) {
+        if ((startupReport == null) && !endingTheStart.isEmpty()) {
             throw new IllegalStateException(String.join("\n\n", endingTheStart));
         }
 
         // only where a job stream will run: an application whose adapter ids have no clients does
         // not run one, and the stream checks again when it is built once the keys are set
-        if (validated
+        final var protobufRefused = validated
                 .stream()
-                .anyMatch(Validated::isComplete)) {
-            protobufDefect
-                    .get()
-                    .ifPresent(defect -> {
-                        throw new IllegalStateException(defect);
-                    });
+                .anyMatch(Validated::isComplete) ? protobufDefect.get() : Optional.<String>empty();
+        if (protobufRefused.isPresent()) {
+            if (startupReport == null) {
+                throw new IllegalStateException(protobufRefused.get());
+            }
+            startupReport.refuse(StartupTopic.PARTS_AND_VERSIONS, ProtobufRuntimeCheck.DEPENDENCY, protobufRefused
+                    .get());
         }
 
         final var factories = new ArrayList<ZenBpmClientFactory>();
         try {
             for (final var adapter : validated) {
-                factories.add(adapter.isComplete()
-                        ? factoryWithClients.apply(adapter.adapterId, adapter.configuration)
-                        : ZenBpmClientFactory.unconfigured(adapter.adapterId, adapter.configuration, adapter.result
-                                .message()));
+                factories.add(factoryOf(adapter, protobufRefused, factoryWithClients));
             }
             return new ZenBpmClientRegistry(factories);
         } catch (final RuntimeException | Error e) {
@@ -164,30 +175,21 @@ public final class ZenBpmStartupValidation {
         }
     }
 
-    // without a startup report, as in a test which builds the registry by hand, at the same level
-    // in the log
-    private static void notice(
-        final StartupReport startupReport,
-        final String scope,
-        final String message
+    // a factory without clients refuses every use with the message which says why, also where the
+    // start is refused: the platform ends it before anything uses a client
+    private static ZenBpmClientFactory factoryOf(
+        final Validated adapter,
+        final Optional<String> protobufRefused,
+        final BiFunction<String, ZenBpmAdapterConfiguration, ZenBpmClientFactory> factoryWithClients
     ) {
-        if (startupReport == null) {
-            log.info("{}: {}", scope, message);
-        } else {
-            startupReport.notice(StartupTopic.CONFIGURATION, scope, message);
+        if (!adapter.isComplete()) {
+            return ZenBpmClientFactory.unconfigured(adapter.adapterId, adapter.configuration, adapter.result
+                    .message());
         }
-    }
-
-    private static void warn(
-        final StartupReport startupReport,
-        final String scope,
-        final String message
-    ) {
-        if (startupReport == null) {
-            log.warn("{}: {}", scope, message);
-        } else {
-            startupReport.warn(StartupTopic.CONFIGURATION, scope, message);
+        if (protobufRefused.isPresent()) {
+            return ZenBpmClientFactory.unconfigured(adapter.adapterId, adapter.configuration, protobufRefused.get());
         }
+        return factoryWithClients.apply(adapter.adapterId, adapter.configuration);
     }
 
     private static void closeAll(
