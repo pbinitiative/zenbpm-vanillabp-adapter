@@ -586,6 +586,30 @@ test 42 + 1, election integration test 0 + 8, Quarkus runtime 13, deployment 54,
 38,395 on Quarkus); `bin/check-deploy-safety.sh` green (13 files deployed by the green build,
 none of the new module, and nothing by the red gate).
 
+**S11.3.1 done 2026-10-21**, merged to `main` as `3cf1e32` (pull request #77: story `77b8a72`,
+review fixes `207ef98`; CodeRabbit had no comment). On `3cf1e32` (GitHub keeps run logs for 90
+days, so what they showed is written here as well):
+
+- `Checks`, run
+  [39646351093](https://github.com/pbinitiative/zenbpm-vanillabp-adapter/actions/runs/39646351093):
+  green on both JDKs at the first attempt. `bin/check-engine-copies.sh` (in the JDK 25 job)
+  reported both copies as the engine's files of `bdd795a3...`. On both JDKs the new module
+  `election-integration-test` ran `ZenBpmNextToTheDoubleIT` 3 and `ZenBpmSharedEngineElectionIT` 5
+  tests against the pinned image, none skipped (engine test support 12 unit and 5 integration
+  tests, core 1,275 unit and 104 integration tests, Spring Boot 14 unit and 95 integration tests,
+  smoke test 42 + 1, election integration test 8, Quarkus runtime 13, Quarkus deployment 54,
+  Quarkus integration tests 25, coverage gate 37). The gate measured 100 % on both platforms: of
+  38,473 instructions for Spring Boot and 38,395 for Quarkus on JDK 25, of 38,461 and 38,383 on
+  JDK 21.
+- `Publish snapshots`, run
+  [39646350771](https://github.com/pbinitiative/zenbpm-vanillabp-adapter/actions/runs/39646350771):
+  green. It skipped the deployment of `election-integration-test` ("Skipping artifact
+  deployment"), and GitHub Packages knows no such artifact (its `maven-metadata.xml` answers 404).
+  The snapshot it published, `2.0.0-20261021.174349-73`, holds the core's 266 classes as before
+  (the story adds no main class) and no test class, fake, fixture or BPMN file. Both report pages
+  (`spring-boot-report/index.html`, `quarkus-report/index.html`) answer HTTP 200 and show 0 of
+  38,473 (Spring Boot) and 0 of 38,395 (Quarkus) instructions missed.
+
 ## S11.4.1 Native image
 
 - [ ] **Depends on:** E9.
