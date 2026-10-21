@@ -419,6 +419,36 @@ branch, was corrected in place before the merge; no new decision was needed.
   gate). Mutants: 17 topics (one per finding site of the core) and the second refusal, 18 of 18
   killed.
 
+**S11.2.1 done 2026-10-21**, merged to `main` as `d8eefef` (pull request #75: story `304da90`,
+review fixes `2310dd0`; CodeRabbit had no comment). On `d8eefef` (GitHub keeps run logs for 90
+days, so what they showed is written here as well):
+
+- `Checks`, run
+  [39604986109](https://github.com/pbinitiative/zenbpm-vanillabp-adapter/actions/runs/39604986109):
+  green on both JDKs. Its first attempt failed on JDK 21 only: Maven Central answered `502 Bad
+  Gateway` for `maven-builder-support` while the Quarkus runtime resolved its plugin. The JDK 21
+  job was rerun once and passed. `bin/check-engine-copies.sh` (in the JDK 25 job) reported both
+  copies as the engine's files of `bdd795a3...`. On both JDKs `ZenBpmDeclaredProcessWorkersTest`
+  ran 25 tests, `ZenBpmDeployingTest` 17, `ZenBpmProcessVersionCatalogTest` 11,
+  `ZenBpmEnvironmentInfoTest` 11, the core `ZenBpmStartupValidationTest` 17, `ZenBpmExecutorTest`
+  50, `ZenBpmStartupValidationBootTest` 18, `ZenBpmDistinctInstancesBootTest` 2,
+  `ZenBpmMessageStartScanIT` 1, `ZenBpmRenamedProcessIT` 1, the Quarkus
+  `ZenBpmDeclaredProcessFindingTest` 1, `ZenBpmInconsistentConfigurationTest` 1,
+  `ZenBpmOneEngineTwoModesTest` 1 and `ZenBpmStartupValidationTest` 2, none skipped (engine test
+  support 12 unit and 5 integration tests, core 1,275 unit and 104 integration tests, Spring Boot
+  14 unit and 95 integration tests, smoke test 42 + 1, Quarkus runtime 13, Quarkus deployment 54,
+  Quarkus integration tests 25, coverage gate 37). The gate measured 100 % on both platforms: of
+  38,473 instructions for Spring Boot and 38,395 for Quarkus on JDK 25, of 38,461 and 38,383 on
+  JDK 21.
+- `Publish snapshots`, run
+  [39604986164](https://github.com/pbinitiative/zenbpm-vanillabp-adapter/actions/runs/39604986164):
+  green. The snapshot it published to GitHub Packages, `2.0.0-20261021.130555-71`, holds the
+  batch's new main class `ZenBpmFindings` in the core (266 classes), the review fixes' wording
+  (the declared id's finding "run at the engine under the id", the executor's issue tracker), and
+  no test class, fake, fixture or BPMN file. Both report pages (`spring-boot-report/index.html`,
+  `quarkus-report/index.html`) answer HTTP 200 and show 0 of 38,473 (Spring Boot) and 0 of 38,395
+  (Quarkus) instructions missed.
+
 ## S11.3.1 Election ITs
 
 - [ ] **Depends on:** S3.3.1, E7.
