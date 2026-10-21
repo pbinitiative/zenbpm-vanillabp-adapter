@@ -71,6 +71,7 @@ class ZenBpmStartupValidationTest {
                             message),
                     () -> assertEquals(message, assertThrows(IllegalStateException.class, factory::rest).getMessage()));
         }
+        assertEveryFindingIsInTheBlock(report);
     }
 
     @Test
@@ -113,6 +114,7 @@ class ZenBpmStartupValidationTest {
                             .getFactory("orders")
                             .isConfigured()));
         }
+        assertEveryFindingIsInTheBlock(report);
     }
 
     @Test
@@ -142,6 +144,7 @@ class ZenBpmStartupValidationTest {
                             .getFactory("orders")
                             .isConfigured()));
         }
+        assertEveryFindingIsInTheBlock(report);
     }
 
     @Test
@@ -165,6 +168,7 @@ class ZenBpmStartupValidationTest {
                     () -> assertTrue(message.contains("boots DEGRADED"), message),
                     () -> assertTrue(message.contains("vanillabp.adapters.old.rest-address"), message));
         }
+        assertEveryFindingIsInTheBlock(report);
     }
 
     @Test
@@ -218,6 +222,7 @@ class ZenBpmStartupValidationTest {
                             .isConfigured()),
                     () -> assertEquals(List.of("shipping"), built));
         }
+        assertEveryFindingIsInTheBlock(report);
     }
 
     @Test
@@ -270,6 +275,7 @@ class ZenBpmStartupValidationTest {
                                     "  - vanillabp.workflow-modules.shop.adapters.orders.retry-backoff is PT-1S and must not be negative"),
                             refusal.message()));
         }
+        assertEveryFindingIsInTheBlock(report);
     }
 
     @Test
@@ -292,6 +298,7 @@ class ZenBpmStartupValidationTest {
                             .getFactory("orders")
                             .unconfiguredMessage()));
         }
+        assertEveryFindingIsInTheBlock(report);
     }
 
     @Test
@@ -452,6 +459,7 @@ class ZenBpmStartupValidationTest {
                             refusal),
                     () -> assertTrue(refusal.contains("vanillabp.delivery.retention (PT2H)"), refusal));
         }
+        assertEveryFindingIsInTheBlock(report);
     }
 
     private static ZenBpmClientRegistry registryOf(
@@ -490,6 +498,15 @@ class ZenBpmStartupValidationTest {
             built.add(adapterId);
             return new ZenBpmClientFactory(adapterId, configuration, () -> "shop");
         };
+    }
+
+    // the block the platform writes at the end of the start shows every finding under the heading
+    // of its topic, its scope on the line above its text
+    private static void assertEveryFindingIsInTheBlock(final CollectedStartupReport report) {
+        assertAll(report
+                .findings()
+                .stream()
+                .map(finding -> () -> assertTrue(report.showsInTheBlock(finding), report::drawn)));
     }
 
 }

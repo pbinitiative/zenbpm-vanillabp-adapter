@@ -78,13 +78,13 @@ public abstract class ZenBpmExecutor {
      * What is said where a handler threw although it handles its own failures: every handler of
      * the adapter answers the engine itself, so an exception which reaches the executor is a defect.
      */
-    private static final String A_HANDLER_THREW = "a handler threw instead of handling its failure itself, which is a defect of the adapter: report it with this stack trace";
+    private static final String A_HANDLER_THREW = "a handler threw instead of handling its failure itself, which is a defect of the adapter: report it with this stack trace at https://github.com/pbinitiative/zenbpm-vanillabp-adapter/issues";
 
     /**
      * What is said where the listener of freed slots threw, which hands the next queued job on: an
      * exception which reaches the executor from it is a defect as well.
      */
-    private static final String THE_LISTENER_THREW = "the listener of freed slots threw while it handed the next queued job on, which is a defect of the adapter: report it with this stack trace";
+    private static final String THE_LISTENER_THREW = "the listener of freed slots threw while it handed the next queued job on, which is a defect of the adapter: report it with this stack trace at https://github.com/pbinitiative/zenbpm-vanillabp-adapter/issues";
 
     private final String adapterId;
 

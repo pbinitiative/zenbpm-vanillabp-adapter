@@ -86,12 +86,13 @@ public final class ZenBpmEnvironmentInfo {
                     .rest()
                     .status();
         } catch (final RuntimeException e) {
-            findings.warn(StartupTopic.INFRASTRUCTURE, scope, """
-                    The engine at %s did not say which version it runs (%s), so whether it runs engine commit %s, \
-                    which this adapter was tested with, is unknown, and an engine this adapter was not tested with \
-                    is not supported. Check that the engine answers GET /system/status; the next start asks \
-                    again.""".formatted(configuration.engineAddress(), ZenBpmErrors.withoutAdapterId(adapterId, e),
-                    testedCommit));
+            findings.warn(StartupTopic.INFRASTRUCTURE, scope,
+                    """
+                            The engine at %s did not say which version it runs: %s. So it is unknown whether it runs engine \
+                            commit %s, which this adapter was tested with, and an engine this adapter was not tested with is \
+                            not supported. Check that the engine answers GET /system/status; the next start asks again."""
+                            .formatted(configuration.engineAddress(), ZenBpmErrors.withoutAdapterId(adapterId, e),
+                                    testedCommit));
             return null;
         }
         log.info(

@@ -120,10 +120,10 @@ class ZenBpmRenamedProcessIT {
                         .getAllOfThisTest()
                         .contains("""
                                 StartupFindings - process 'Parcels' of workflow module 'deploy-it', zenbpm adapter \
-                                'zenbpm': This BPMN process is declared without a model deployed under it, and the \
-                                engine holds it as 'deploy-it__Parcels', but not everything the methods serving it \
-                                name reaches its workflows. Not served: the task definition(s) [ship], which no model \
-                                held under that id names."""),
+                                'zenbpm': This BPMN process is declared without a model deployed under it, and not \
+                                everything the methods serving it name reaches its workflows, which run at the engine \
+                                under the id 'deploy-it__Parcels'. Not served: the task definition(s) [ship], which no \
+                                model held under that id names."""),
                         output::getAllOfThisTest));
     }
 

@@ -51,9 +51,9 @@ import io.vanillabp.integration.test.utils.SuppressOutputExtension;
 @ExtendWith(SuppressOutputExtension.class)
 class ZenBpmExecutorTest {
 
-    private static final String HANDLER_THREW = "ZenBPM[orders]: a handler threw instead of handling its failure itself, which is a defect of the adapter: report it with this stack trace";
+    private static final String HANDLER_THREW = "ZenBPM[orders]: a handler threw instead of handling its failure itself, which is a defect of the adapter: report it with this stack trace at https://github.com/pbinitiative/zenbpm-vanillabp-adapter/issues";
 
-    private static final String LISTENER_THREW = "ZenBPM[orders]: the listener of freed slots threw while it handed the next queued job on, which is a defect of the adapter: report it with this stack trace";
+    private static final String LISTENER_THREW = "ZenBPM[orders]: the listener of freed slots threw while it handed the next queued job on, which is a defect of the adapter: report it with this stack trace at https://github.com/pbinitiative/zenbpm-vanillabp-adapter/issues";
 
     private static final String ADAPTER_ID = "orders";
 

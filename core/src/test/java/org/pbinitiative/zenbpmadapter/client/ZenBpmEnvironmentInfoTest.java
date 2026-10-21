@@ -105,6 +105,9 @@ class ZenBpmEnvironmentInfoTest {
                             new Finding("warn", StartupTopic.INFRASTRUCTURE, "zenbpm adapter 'orders'", "The engine reports commit 0123456789ab (version 1.2.0), but this adapter was tested with engine commit %s, and an engine is supported only where it was tested. Run the engine image this adapter's release names, or an adapter release tested with this engine."
                                     .formatted(EngineUnderTest.pinnedCommit()))),
                             report.findings()),
+                    () -> assertTrue(report.showsInTheBlock(report
+                            .findings()
+                            .getFirst()), report::drawn),
                     () -> assertFalse(report
                             .findings()
                             .getFirst()
@@ -188,12 +191,16 @@ class ZenBpmEnvironmentInfoTest {
             assertAll(
                     () -> assertEquals(
                             List.of(new Finding("warn", StartupTopic.INFRASTRUCTURE, "zenbpm adapter 'orders'", """
-                                    The engine at %s did not say which version it runs (GET /system/status got no \
-                                    answer (java.net.ConnectException)), so whether it runs engine commit %s, which this adapter was tested with, \
-                                    is unknown, and an engine this adapter was not tested with is not supported. \
-                                    Check that the engine answers GET /system/status; the next start asks again."""
+                                    The engine at %s did not say which version it runs: GET /system/status got no \
+                                    answer (java.net.ConnectException). So it is unknown whether it runs engine commit \
+                                    %s, which this adapter was tested with, and an engine this adapter was not tested \
+                                    with is not supported. Check that the engine answers GET /system/status; the next \
+                                    start asks again."""
                                     .formatted(configuration.getRestAddress(), EngineUnderTest.pinnedCommit()))),
                             report.findings()),
+                    () -> assertTrue(report.showsInTheBlock(report
+                            .findings()
+                            .getFirst()), report::drawn),
                     () -> assertEquals(Optional.empty(), factory.engineStatusAtStart()));
         }
     }

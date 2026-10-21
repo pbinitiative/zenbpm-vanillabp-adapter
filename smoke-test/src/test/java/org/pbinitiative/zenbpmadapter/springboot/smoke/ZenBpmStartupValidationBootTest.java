@@ -224,6 +224,35 @@ class ZenBpmStartupValidationBootTest {
     }
 
     @Test
+    @DisplayName("Two adapter ids configured inconsistently, of which neither may boot degraded, end the start with one exception of the platform which names both, each under its own scope")
+    void twoAdapterIdsWhichEndTheStartAreNamedInOneStart() {
+        final var failure = rootOf(assertThrows(Exception.class, () -> run(
+                "vanillabp.prioritized-adapters=zenbpm-new,zenbpm-old",
+                "vanillabp.adapters.zenbpm-new.type=zenbpm",
+                "vanillabp.adapters.zenbpm-new.rest-address=ftp://engine:8080",
+                "vanillabp.adapters.zenbpm-old.type=zenbpm",
+                "vanillabp.adapters.zenbpm-old.rest-address=ftp://engine:8081").close()));
+
+        assertAll(
+                () -> assertTrue(failure
+                        .getMessage()
+                        .contains("cannot start this application: 2 things have to change."), failure.getMessage()),
+                () -> assertTrue(failure
+                        .getMessage()
+                        .contains("%s (2)".formatted(StartupTopic.CONFIGURATION.heading())), failure.getMessage()),
+                () -> assertTrue(failure
+                        .getMessage()
+                        .contains(
+                                "  zenbpm adapter 'zenbpm-new'\n      This adapter is configured inconsistently:\n        - vanillabp.adapters.zenbpm-new.rest-address needs the scheme http or https"),
+                        failure.getMessage()),
+                () -> assertTrue(failure
+                        .getMessage()
+                        .contains(
+                                "  zenbpm adapter 'zenbpm-old'\n      This adapter is configured inconsistently:\n        - vanillabp.adapters.zenbpm-old.rest-address needs the scheme http or https"),
+                        failure.getMessage()));
+    }
+
+    @Test
     @DisplayName("An async-task-lock-renewal not below the platform's delivery retention and an async-task-max-age-action which names no action end the start, naming the keys and the fix")
     void theKeysOfTasksLeftOpenAreValidatedAgainstThePlatform() {
         final var failure = rootOf(assertThrows(Exception.class, () -> run("vanillabp.prioritized-adapters=zenbpm",

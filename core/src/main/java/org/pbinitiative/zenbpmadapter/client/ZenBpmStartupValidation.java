@@ -63,8 +63,10 @@ public final class ZenBpmStartupValidation {
      * Validates every adapter id of type <code>zenbpm</code>, reports what was found and builds
      * one factory per adapter id. Nothing contacts the engine.
      * <p>
-     * Every adapter id is validated before anything is refused, so a developer who got two of them
-     * wrong reads both messages in one exception. An adapter id refused gets a factory without
+     * Every adapter id is validated before the start ends, so a developer who got two of them wrong
+     * reads both in one exception: with a report, each refusal is handed to it and the platform ends
+     * the start with all of them; without one, they are thrown together once every adapter id was
+     * validated. An adapter id refused gets a factory without
      * clients, and so does every adapter id where the protobuf runtime is refused, so nothing
      * loads a class of the job stream. Where building a factory fails, or the registry refuses
      * them, the factories built so far are closed before the failure is thrown, because each has

@@ -512,7 +512,8 @@ does not repeat that scope and names the property keys to set, written out in fu
 copied (decision 60 in [`DECISIONS.md`](./DECISIONS.md)):
 
 - an adapter id without `rest-address` is a warning under `CONFIGURATION`. The application boots,
-  and every use of the adapter id fails with the same words, which name the adapter id
+  and every use of the adapter id fails with the same message, which names the adapter id where the
+  block's scope does
   (`ZenBpmStartupValidationBootTest#anUnconfiguredAdapterIdBootsWithAWarning`, the Quarkus
   `ZenBpmStartupValidationTest`);
 - an address or a client id which cannot work, on an adapter id which is nowhere first priority and
@@ -520,9 +521,10 @@ copied (decision 60 in [`DECISIONS.md`](./DECISIONS.md)):
   (`ZenBpmStartupValidationBootTest#anAddressDefectWhichMayDegradeBootsDegraded`,
   `ZenBpmDegradedBootTest`);
 - every other key which cannot work is refused. The platform collects the refusal and ends the
-  start with every reason it collected, before it deploys anything, so a developer who got a key of
-  this adapter and something else wrong reads both in one start
+  start with every reason it collected, before it deploys anything, so a developer who got the keys
+  of two adapter ids wrong reads both in one start
   (`ZenBpmStartupValidationBootTest#anInconsistentFirstPriorityAdapterIdEndsTheStart`,
+  `ZenBpmStartupValidationBootTest#twoAdapterIdsWhichEndTheStartAreNamedInOneStart`,
   `ZenBpmInconsistentConfigurationTest`, `ZenBpmStartupValidationTest#everyAdapterIdWhichEndsTheStartIsRefused`);
 - a `rest-address` which ends with `/v1`, and an `https` address beside a job stream without TLS,
   are notices (`ZenBpmStartupValidationBootTest#aNoticeStandsOnceInTheBlock`,
@@ -531,8 +533,9 @@ copied (decision 60 in [`DECISIONS.md`](./DECISIONS.md)):
   second, are warnings (`ZenBpmStartupValidationBootTest#aLongShutdownGraceIsWarnedAboutInTheBlock`,
   `ZenBpmLongShutdownGraceTest`,
   `ZenBpmAdapterConfigurationTest#aUserTaskPollIntervalWhichWorksAgainstTheApplicationIsWarnedAbout`);
-- a protobuf runtime too old for the job stream is refused under `PARTS AND VERSIONS` on Spring
-  Boot (`ZenBpmStartupValidationTest#anUnfitProtobufRuntimeIsRefused`), and ends the build on
+- a protobuf runtime too old for the job stream is handed to the platform's report as a refusal
+  under `PARTS AND VERSIONS` on Spring Boot, and no adapter id gets clients
+  (`ZenBpmStartupValidationTest#anUnfitProtobufRuntimeIsRefused`), and it ends the build on
   Quarkus (`ZenBpmIntegrationProcessorTest#aRuntimeWithoutRuntimeVersionFailsTheBuild`);
 - a workflow module deployed with `name-clash-avoidance: none` is a warning under `CONFIGURATION`
   which names `use-prefix`, an engine of its own and the keys which accept unique identifiers

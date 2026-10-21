@@ -335,9 +335,12 @@ engine was needed. What did not fit, and what was decided:
   `ZenBpmTaskProbesTest#aJobOfAnInstanceTheNodeDoesNotHoldIsUnavailable`), the two "pushed" lines,
   the two lines of the check before the commit, "has no job type to subscribe", the address derived
   from an unvalidated `rest-address`. The remaining sites pass on a message which is asserted where
-  it is built. Every finding of the start is asserted as the report receives it (core, with
-  `CollectedStartupReport`) and in the block on both platforms where the platform writes one; the
-  README's "Boot behavior" names the test of each sentence.
+  it is built. Every finding of the start is asserted as the report receives it, with its level,
+  topic, scope and text, and in the block the platform's own `StartupFindings` draws from it, under
+  the heading of its topic (core, `CollectedStartupReport`, which hands every finding on to the
+  platform's class; see the answers to the reviews below). On the platforms, the block is asserted
+  where a test boots with the finding; the README's "Boot behavior" names the test of each
+  sentence.
 - [x] No startup finding of the adapter bypasses the `StartupReport`: every one goes through
   `ZenBpmFindings` or the validation's refusal. The refusal reaches the platform's exception on both
   platforms (`ZenBpmStartupValidationBootTest#anInconsistentFirstPriorityAdapterIdEndsTheStart`,
@@ -357,6 +360,64 @@ engine was needed. What did not fit, and what was decided:
   runtime 13, deployment 54, integration tests 25, gate 37; coverage 100 % on both platforms (0 of
   38,473 instructions missed on Spring Boot, 0 of 38,395 on Quarkus); `bin/check-deploy-safety.sh`
   green (13 files deployed by the green build, nothing by the red gate).
+
+
+**Answers to two reviews of e11-s11.2.1, 2026-10-21** (one by Claude, approve with minor changes:
+2 Minor, 6 Nits; one by Copilot, changes requested: 1 Major). Every claim was checked in the code of
+the branch and the platform's `StartupFindings`. Claude's first finding and Copilot's only one are
+the same gap seen from two sides; all findings were valid and are fixed. Decision 60, new on this
+branch, was corrected in place before the merge; no new decision was needed.
+
+- **The topic and the block of the startup findings were not asserted** (Claude 1, Minor; Copilot
+  1, Major). The tests of the declared process ids, of the held messages and of `scan` built the
+  deployment service without a report. So the findings went to the log fallback, which drops the
+  topic. Other tests read the findings only from `CollectedStartupReport`'s list, which renders
+  nothing. Claude's mutant (six topics set to `CODE`) survived the core and the two Spring ITs.
+  The version catalog's test checked only one of its four questions. `CollectedStartupReport` now
+  hands every finding on to the platform's own `StartupFindings` (the core has
+  `io.vanillabp.adapter:migration-adapter` as a test dependency). `block(topic)` reads what the
+  block or the platform's refusal draws under a topic's heading. `showsInTheBlock(finding)` checks
+  the scope line with the indented text below it. The tests which drive each startup finding now
+  hand in the report and assert the finding there:
+  - `ZenBpmDeclaredProcessWorkersTest`: the four findings about a declared id;
+  - `ZenBpmDeployingTest#versionsWhichCannotBeReadAreNamed` and
+    `#theProcessesAMessageStartsAreNamedOnce`;
+  - `ZenBpmProcessVersionCatalogTest`: all four questions, the count and the older versions;
+  - `ZenBpmEnvironmentInfoTest`: both warnings;
+  - `ZenBpmStartupValidationTest`: every notice, warning and refusal of eight tests.
+
+  `ZenBpmMessageStartScanIT` reads its finding under `CONFIGURATION`. 17 topic mutants, one per
+  finding site of the core, all killed by the core tests. The rendering is one class of the
+  platform on both platforms. What differs per platform is how the report reaches the adapter,
+  which the platform tests already boot with (`ZenBpmStartupValidationBootTest`,
+  `ZenBpmDistinctInstancesBootTest`, `ZenBpmMessageStartScanIT`, `ZenBpmRenamedProcessIT`, the
+  Quarkus `ZenBpmInconsistentConfigurationTest`, `ZenBpmOneEngineTwoModesTest`,
+  `ZenBpmDeclaredProcessFindingTest`).
+- **Two README promises were not held by the tests they named** (Claude 2, Minor). No test showed
+  two refusals in one start on a platform. The new
+  `ZenBpmStartupValidationBootTest#twoAdapterIdsWhichEndTheStartAreNamedInOneStart` boots with two
+  inconsistent adapter ids and reads both in the platform's one exception (`CONFIGURATION (2)`).
+  A mutant which hands only the first refusal to the report is killed by it. The README and decision
+  60 now promise what it shows: the keys of two adapter ids. The protobuf sentence now says what
+  its core test shows: a refusal handed to the platform's report, and no adapter id gets clients.
+- **"The engine holds it as" where it holds no model** (Claude 3, Nit). The finding now reads "...
+  reaches its workflows, which run at the engine under the id '<id>'".
+- **"With the same words"** (Claude 4, Nit). The README now says "with the same message, which
+  names the adapter id where the block's scope does".
+- **The javadoc of `registryOf`** (Claude 5, Nit) now says how both paths end in one exception.
+- **Decision 60's layout** (Claude 6, Nit): the list of findings is now a bulleted list, and every
+  line fits in 100 columns.
+- **"Report it" without a place** (Claude 7, Nit): both defect messages of the executor now name
+  the issue tracker (`https://github.com/pbinitiative/zenbpm-vanillabp-adapter/issues`).
+- **Nested parentheses** (Claude 8, Nit): "did not say which version it runs: <reason>. So it is
+  unknown whether ...".
+- Build after the fixes (`TZ=Etc/UTC mvn clean install`, OpenJDK 25.0.2, Docker ITs included, none
+  skipped): engine test support 12 + 5, core 1,275 + 104, Spring Boot 14 + 95, smoke test 42 + 1,
+  Quarkus runtime 13, deployment 54, integration tests 25, gate 37; coverage 100 % on both
+  platforms (0 of 38,473 instructions missed on Spring Boot, 0 of 38,395 on Quarkus);
+  `bin/check-deploy-safety.sh` green (13 files deployed by the green build, nothing by the red
+  gate). Mutants: 17 topics (one per finding site of the core) and the second refusal, 18 of 18
+  killed.
 
 ## S11.3.1 Election ITs
 

@@ -399,8 +399,8 @@ final class ZenBpmDeclaredProcessWorkers {
         }
         findings.warn(StartupTopic.DEPLOYED_VERSIONS, scope,
                 """
-                        This BPMN process is declared without a model deployed under it, and the engine holds it as '%s', \
-                        but not everything the methods serving it name reaches its workflows. Not served: %s. A task whose job nobody \
+                        This BPMN process is declared without a model deployed under it, and not everything the methods \
+                        serving it name reaches its workflows, which run at the engine under the id '%s'. Not served: %s. A task whose job nobody \
                         takes waits without an incident, because such a job has not failed. Name in those methods the task \
                         definitions the models held under that id give to their tasks, or keep deploying the old model \
                         under its old id until those workflows have ended."""
