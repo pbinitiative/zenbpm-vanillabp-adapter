@@ -29,6 +29,7 @@ import org.pbinitiative.zenbpmadapter.client.FakeEngine;
 import org.pbinitiative.zenbpmadapter.client.ReceivedJob;
 import org.pbinitiative.zenbpmadapter.client.ZenBpmExecutor;
 import org.pbinitiative.zenbpmadapter.client.grpc.Zenbpm.WaitingJob;
+import org.pbinitiative.zenbpmadapter.observability.ZenBpmMetrics;
 
 import io.vanillabp.integration.adapter.spi.NameClashAvoidance;
 import io.vanillabp.integration.adapter.spi.workflowtask.WorkflowTaskOutcome;
@@ -41,7 +42,8 @@ import io.vanillabp.integration.test.utils.SuppressOutputExtension;
  * is not started; a job goes to the module which serves its instance's process with its type; a job
  * of a type no module subscribes, of a process no module serves, of an instance the engine does not
  * know or cannot answer for, of a module which stopped, and one arriving while the adapter shuts
- * down is left to its lock.
+ * down is left to its lock. Every job the stream hands over is counted, a delivery of a job the
+ * engine handed out before as a redelivery, and a job which waits for a slot once as queued.
  */
 @ExtendWith(SuppressOutputExtension.class)
 class ZenBpmJobDispatcherTest {
@@ -65,7 +67,7 @@ class ZenBpmJobDispatcherTest {
     }
 
     @Test
-    @DisplayName("More jobs than slots all run, one after the other, in the order they came")
+    @DisplayName("More jobs than slots all run, one after the other, in the order they came, and each one which waited for the slot is counted once as queued")
     void moreJobsThanSlotsAllRun() throws InterruptedException {
         final var release = new CountDownLatch(1);
         jobs.invoker.answers(context -> {
@@ -86,6 +88,10 @@ class ZenBpmJobDispatcherTest {
         jobs.awaitFreeSlots();
 
         assertAll(
+                () -> assertEquals(3, jobs.counted(ZenBpmMetrics.JOBS_RECEIVED)),
+                // the second was refused the slot once or twice and the third never, and neither
+                // found it free when it arrived
+                () -> assertEquals(2, jobs.counted(ZenBpmMetrics.JOBS_QUEUED)),
                 () -> assertTrue(whileTheFirstRuns <= 1, () -> "%d invocations".formatted(whileTheFirstRuns)),
                 () -> assertEquals(List.of("41", "42", "43"), jobs.invoker
                         .invocations()
@@ -101,7 +107,8 @@ class ZenBpmJobDispatcherTest {
     void aRefusedJobTakesASlotWhichCameFreeMeanwhile() {
         final var executor = new RefusingOnce();
         final var dispatcher = new ZenBpmJobDispatcher("orders", executor, jobs.factory
-                .instances(), new ZenBpmLockRenewal("orders", jobs.factory.rest(), "shop-1", executor.timing()));
+                .instances(), new ZenBpmLockRenewal("orders", jobs.factory.rest(), "shop-1", executor
+                        .timing(), jobs.metrics), jobs.metrics);
         dispatcher.register(jobs.handlerOf("shop", NameClashAvoidance.USE_PREFIX,
                 new WiredProcess("Order", "shop__Order", Set.of(JobRunning.JOB_TYPE), true, false, Map.of(), Map
                         .of(), Map
@@ -116,7 +123,10 @@ class ZenBpmJobDispatcherTest {
             executor.shutdown();
         }
 
-        assertEquals(2, executor.offers.get());
+        assertAll(
+                () -> assertEquals(2, executor.offers.get()),
+                () -> assertEquals(0, jobs.counted(ZenBpmMetrics.JOBS_QUEUED),
+                        "the slot was free before the job left the dispatcher"));
     }
 
     @Test
@@ -146,7 +156,8 @@ class ZenBpmJobDispatcherTest {
                 () -> assertTrue(output
                         .getAllOfThisTest()
                         .contains("job 42 of type 'shop__Order__ship' waited for a handler slot until its lock lapsed"),
-                        output::getAllOfThisTest));
+                        output::getAllOfThisTest),
+                () -> assertEquals(1, jobs.counted(ZenBpmMetrics.JOBS_QUEUED)));
     }
 
     @Test
@@ -323,7 +334,29 @@ class ZenBpmJobDispatcherTest {
 
         jobs.dispatcher.accept(job(42));
 
-        assertEquals(List.of(), jobs.invoker.invocations());
+        assertAll(
+                () -> assertEquals(List.of(), jobs.invoker.invocations()),
+                () -> assertEquals(1, jobs.counted(ZenBpmMetrics.JOBS_RECEIVED)),
+                () -> assertEquals(0, jobs.counted(ZenBpmMetrics.JOBS_QUEUED), "nothing waits for a slot any more"));
+    }
+
+    @Test
+    @DisplayName("Every job the stream hands over is counted as received, and one whose delivery token says that the engine handed it out before as redelivered, a job of a type nobody subscribes included")
+    void everyJobIsCountedAndARedeliveryAsSuch() {
+        final var lockUntil = Instant
+                .now()
+                .plus(Duration.ofMinutes(5));
+
+        jobs.runs(JobRunning.job(41, INSTANCE, JobRunning.JOB_TYPE, lockUntil, 1));
+        jobs.runs(JobRunning.job(43, INSTANCE, JobRunning.JOB_TYPE, lockUntil, 2));
+        // a leader which issues no tokens, as during a rolling upgrade of the engine
+        jobs.runs(JobRunning.job(44, INSTANCE, JobRunning.JOB_TYPE, lockUntil, 0));
+        jobs.runs(JobRunning.job(45, INSTANCE, "somebody-elses", lockUntil, 3));
+
+        assertAll(
+                () -> assertEquals(4, jobs.counted(ZenBpmMetrics.JOBS_RECEIVED)),
+                () -> assertEquals(2, jobs.counted(ZenBpmMetrics.JOBS_REDELIVERED)),
+                () -> assertEquals(0, jobs.counted(ZenBpmMetrics.JOBS_QUEUED), "every job found the slot free"));
     }
 
     private static ReceivedJob job(final long key) {

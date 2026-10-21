@@ -30,6 +30,7 @@ import org.pbinitiative.zenbpmadapter.client.ZenBpmRestClient;
 import org.pbinitiative.zenbpmadapter.client.api.JobFailure;
 import org.pbinitiative.zenbpmadapter.client.api.JobRef;
 import org.pbinitiative.zenbpmadapter.model.ZenBpmMarkerTasks;
+import org.pbinitiative.zenbpmadapter.observability.ZenBpmMetrics;
 import org.pbinitiative.zenbpmadapter.processservice.ZenBpmSharedValues;
 
 import io.vanillabp.integration.adapter.spi.AdapterCollaborators;
@@ -112,6 +113,10 @@ import lombok.extern.slf4j.Slf4j;
  * it when it returns, so the module's stop can wait for it. While the module stops, a job which
  * arrives is not started, an outcome a handler reached is still reported, and a handler which threw
  * is not failed at the engine, so its job keeps its retries.
+ * <p>
+ * <b>What is counted.</b> A completion and a BPMN error the engine took count as a completed job, a
+ * failure it took, with or without retries, as a failed one; the start and end markers count alike.
+ * A task left open, and an answer which found the job gone, count as neither.
  */
 @Slf4j
 public final class ZenBpmJobHandler {
@@ -146,6 +151,8 @@ public final class ZenBpmJobHandler {
     private final AsyncTaskMaxAgeAction asyncTaskMaxAgeAction;
 
     private final ZenBpmRetryBackoffResolver retryBackoffs;
+
+    private final ZenBpmMetrics metrics;
 
     /**
      * What the core asks about the other open tasks of a workflow, by plain process id.
@@ -186,13 +193,15 @@ public final class ZenBpmJobHandler {
      * @param context What the deployment of the module collected
      * @param retryBackoffs The <code>retry-backoff</code> of each task, resolved over the four
      *            levels of the configuration
+     * @param metrics What the completed and the failed jobs are counted into
      */
     public ZenBpmJobHandler(
         final String adapterId,
         final ZenBpmClientFactory factory,
         final AdapterCollaborators collaborators,
         final ZenBpmProcessingContext context,
-        final ZenBpmRetryBackoffResolver retryBackoffs
+        final ZenBpmRetryBackoffResolver retryBackoffs,
+        final ZenBpmMetrics metrics
     ) {
         this.adapterId = adapterId;
         this.workflowModuleId = context.workflowModuleId();
@@ -215,14 +224,15 @@ public final class ZenBpmJobHandler {
                 .configuration()
                 .asyncTaskMaxAgeActionInUse();
         this.retryBackoffs = retryBackoffs;
+        this.metrics = metrics;
         this.drain = new ZenBpmDrain(adapterId, workflowModuleId);
         this.starts = collaborators
                 .bpmsInitiatedStartInvoker()
-                .map(invoker -> new ZenBpmBpmsInitiatedStartHandler(adapterId, workflowModuleId, invoker, rest, clientId, retryBackoffs))
+                .map(invoker -> new ZenBpmBpmsInitiatedStartHandler(adapterId, workflowModuleId, invoker, rest, clientId, retryBackoffs, metrics))
                 .orElse(null);
         this.ends = new ZenBpmWorkflowEndedHandler(adapterId, workflowModuleId, collaborators
                 .workflowEndedInvoker()
-                .orElse(null), rest, clientId, retryBackoffs);
+                .orElse(null), rest, clientId, retryBackoffs, metrics);
         this.multiInstance = new ZenBpmMultiInstance(adapterId, workflowModuleId, rest, instances, factory
                 .configuration()
                 .getInstanceCacheMaxEntries());
@@ -496,6 +506,7 @@ public final class ZenBpmJobHandler {
                     delivery.taskDefinition(), aggregate.id());
             return false;
         }
+        metrics.jobCompleted(adapterId);
         return true;
     }
 
@@ -539,6 +550,8 @@ public final class ZenBpmJobHandler {
                     .getKey(), delivery.taskDefinition(), aggregate.id(), outcome.errorCode());
             return false;
         }
+        // an outcome the handler chose, which the model may catch
+        metrics.jobCompleted(adapterId);
         warnWhereNothingCaughtIt(job.getKey(), errorCode, aggregate, outcome, delivery);
         return true;
     }
@@ -738,6 +751,7 @@ public final class ZenBpmJobHandler {
                     .withMessage(message)
                     .withRetries(0)
                     .ofTheDelivery(job.getDeliveryToken(), clientId)));
+            metrics.jobFailed(adapterId);
         } catch (final RuntimeException e) {
             if (!ZenBpmErrors.isGoneJob(e)) {
                 throw e;
@@ -798,6 +812,7 @@ public final class ZenBpmJobHandler {
                 .ofTheDelivery(job.getDeliveryToken(), clientId);
         try {
             delivery.retry().send("failure", () -> rest.failJob(job.getKey(), failure));
+            metrics.jobFailed(adapterId);
         } catch (final RuntimeException e) {
             if (!ZenBpmErrors.isGoneJob(e)) {
                 throw e;

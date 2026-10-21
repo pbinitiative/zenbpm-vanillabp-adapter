@@ -280,7 +280,7 @@ public final class FakeJobStreamEngine implements AutoCloseable {
          *
          * @param status The status
          */
-        void fail(final Status status) {
+        public void fail(final Status status) {
             responses.onError(status.asRuntimeException());
         }
 

@@ -21,6 +21,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.pbinitiative.zenbpmadapter.observability.ZenBpmMetrics;
 
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.json.JsonMapper;
@@ -34,7 +35,8 @@ import io.vanillabp.integration.test.utils.SuppressOutputExtension;
  * configured <code>retry-backoff</code>, or none where no level sets it; the exception's type and
  * message beside the task and the aggregate; the delivery's token and the job stream's client id.
  * The WARN names the type, the attempt and the retries left, and a failure the engine answers with
- * <code>409</code> is a WARN and nothing else.
+ * <code>409</code> is a WARN and nothing else. A failure the engine took is counted, one it answered
+ * with <code>409</code> is not.
  */
 @ExtendWith(SuppressOutputExtension.class)
 class ZenBpmJobFailureTest {
@@ -76,7 +78,9 @@ class ZenBpmJobFailureTest {
                 () -> assertTrue(log.contains(
                         "the handler of job 42 (task 'ship', workflow aggregate 'order-1') threw java.lang.IllegalStateException at attempt 1; the job is failed with 2 retries left, and the engine hands it out again after PT7S"),
                         log),
-                () -> assertTrue(log.contains("java.lang.IllegalStateException: the warehouse is closed\n\tat "), log));
+                () -> assertTrue(log.contains("java.lang.IllegalStateException: the warehouse is closed\n\tat "), log),
+                () -> assertEquals(1, jobs.counted(ZenBpmMetrics.JOBS_FAILED)),
+                () -> assertEquals(0, jobs.counted(ZenBpmMetrics.JOBS_COMPLETED)));
     }
 
     @Test
@@ -143,7 +147,8 @@ class ZenBpmJobFailureTest {
                 () -> assertTrue(log.contains(
                         "job 42 (task 'ship', workflow aggregate 'order-1') was gone when its failure was to be sent: the engine handed it out again and the newer delivery decides"),
                         log),
-                () -> assertFalse(log.contains("could not be answered to the engine"), log));
+                () -> assertFalse(log.contains("could not be answered to the engine"), log),
+                () -> assertEquals(0, jobs.counted(ZenBpmMetrics.JOBS_FAILED), "the engine took no failure"));
     }
 
     @Test

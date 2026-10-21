@@ -45,6 +45,7 @@ import org.pbinitiative.zenbpmadapter.model.ZenBpmMultiInstanceItems;
 import org.pbinitiative.zenbpmadapter.model.ZenBpmScoping;
 import org.pbinitiative.zenbpmadapter.model.ZenBpmTaskParameters;
 import org.pbinitiative.zenbpmadapter.model.ZenBpmUnsupportedConstructs;
+import org.pbinitiative.zenbpmadapter.observability.ZenBpmMetrics;
 import org.pbinitiative.zenbpmadapter.wiring.ZenBpmDrain;
 import org.pbinitiative.zenbpmadapter.wiring.ZenBpmJobDispatcher;
 import org.pbinitiative.zenbpmadapter.wiring.ZenBpmJobHandler;
@@ -110,6 +111,14 @@ public class ZenBpmDeploymentService implements AdapterDeploymentService<ZenBpmB
     private final ZenBpmRetryBackoffResolver retryBackoffs;
 
     private StartupReport startupReport;
+
+    /**
+     * What this adapter id measures in addition to what the core measures. The platform module
+     * hands it in after construction, because it exists once per application, while deployment
+     * services exist per adapter id; {@link ZenBpmMetrics#NONE} for an application without a
+     * metrics backend.
+     */
+    private ZenBpmMetrics metrics = ZenBpmMetrics.NONE;
 
     /**
      * The versions of the processes the engine of this adapter id holds, registered for every
@@ -373,6 +382,33 @@ public class ZenBpmDeploymentService implements AdapterDeploymentService<ZenBpmB
      */
     public void setStartupReport(final StartupReport startupReport) {
         this.startupReport = startupReport;
+    }
+
+    /**
+     * What this adapter id measures into.
+     *
+     * @return The metrics, {@link ZenBpmMetrics#NONE} where the application has no metrics backend
+     */
+    public ZenBpmMetrics getMetrics() {
+        return metrics;
+    }
+
+    /**
+     * Hands over what this adapter id measures into, and registers its job stream and its handler
+     * slots there at once: the clients are built before this, and contact nothing for it. An adapter
+     * id without clients has neither, and none of its meters could ever move, so it registers
+     * nothing.
+     *
+     * @param metrics What to measure into; <code>null</code> measures nothing
+     */
+    public void setMetrics(final ZenBpmMetrics metrics) {
+        this.metrics = metrics == null ? ZenBpmMetrics.NONE : metrics;
+        if (!factory.isConfigured()) {
+            return;
+        }
+        final var stream = factory.stream();
+        final var executor = factory.executor();
+        this.metrics.registerAdapter(adapterId, stream::reconnects, executor::getBusySlots, executor::getFreeSlots);
     }
 
     /**
@@ -789,7 +825,7 @@ public class ZenBpmDeploymentService implements AdapterDeploymentService<ZenBpmB
         }
         final var stream = factory.stream();
         final var dispatcher = dispatcher();
-        final var handler = new ZenBpmJobHandler(adapterId, factory, collaborators, context, retryBackoffs);
+        final var handler = new ZenBpmJobHandler(adapterId, factory, collaborators, context, retryBackoffs, metrics);
         final var userTasks = new ZenBpmUserTaskNotifier(adapterId, factory, collaborators, context, handler);
         final var poller = userTaskPoller();
         final var slots = factory
@@ -1151,7 +1187,7 @@ public class ZenBpmDeploymentService implements AdapterDeploymentService<ZenBpmB
     // built once per adapter id, by the first module which starts
     private synchronized ZenBpmUserTaskPoller userTaskPoller() {
         if (userTaskPoller == null) {
-            userTaskPoller = new ZenBpmUserTaskPoller(adapterId, factory);
+            userTaskPoller = new ZenBpmUserTaskPoller(adapterId, factory, metrics);
         }
         return userTaskPoller;
     }
@@ -1160,7 +1196,7 @@ public class ZenBpmDeploymentService implements AdapterDeploymentService<ZenBpmB
     // from then on
     private synchronized ZenBpmJobDispatcher dispatcher() {
         if (dispatcher == null) {
-            dispatcher = new ZenBpmJobDispatcher(adapterId, factory);
+            dispatcher = new ZenBpmJobDispatcher(adapterId, factory, metrics);
             factory
                     .stream()
                     .onJob(dispatcher);

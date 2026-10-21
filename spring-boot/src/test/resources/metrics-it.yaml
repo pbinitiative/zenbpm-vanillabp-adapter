@@ -1,0 +1,25 @@
+spring:
+  jpa:
+    hibernate:
+      ddl-auto: update
+vanillabp:
+  prioritized-adapters:
+    - zenbpm
+  adapters:
+    zenbpm:
+      name-clash-avoidance: use-prefix
+      resources-location: classpath*:metrics-it
+      worker-threads: 1
+      retry-backoff: PT1S
+  outbox:
+    housekeeping:
+      zone: UTC
+  workflow-modules:
+    deploy-it:
+      workflows:
+        Crating:
+          tasks:
+            weigh:
+              adapters:
+                zenbpm:
+                  job-timeout: PT2S

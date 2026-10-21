@@ -9,6 +9,7 @@ import org.pbinitiative.zenbpmadapter.ZenBpmAdapter;
 import org.pbinitiative.zenbpmadapter.client.ProtobufRuntimeCheck;
 import org.pbinitiative.zenbpmadapter.quarkus.runtime.ZenBpmClientProducer;
 import org.pbinitiative.zenbpmadapter.quarkus.runtime.ZenBpmDeploymentServiceProducer;
+import org.pbinitiative.zenbpmadapter.quarkus.runtime.ZenBpmMetricsProducer;
 import org.pbinitiative.zenbpmadapter.quarkus.runtime.ZenBpmProcessServiceProducer;
 import org.pbinitiative.zenbpmadapter.quarkus.runtime.ZenBpmStartupObserver;
 
@@ -34,6 +35,8 @@ import io.vanillabp.integration.deployment.processservice.VanillaBpMigratablePro
 class ZenBpmIntegrationProcessor {
 
     private static final String FEATURE = "vanillabp-zenbpm";
+
+    private static final String MICROMETER_EXTENSION_PROCESSOR = "io.quarkus.micrometer.deployment.MicrometerProcessor";
 
     /**
      * Quarkus builds the processor while it builds the application, to run the steps below.
@@ -92,6 +95,33 @@ class ZenBpmIntegrationProcessor {
     }
 
     /**
+     * Registers the producer of this adapter's own meters, but only for an application which uses
+     * the Micrometer extension. The adapter does not bring Micrometer: metrics are the
+     * application's decision, and an application without them boots unchanged.
+     * <p>
+     * The signal is the build-step class of the Micrometer extension on the deployment classpath,
+     * as the VanillaBP platform integration detects it. Micrometer's own classes are no signal: a
+     * library may bring them as a dependency of its own, and then nothing produces the
+     * {@code MeterRegistry} the binder is applied to. A step which produces nothing is never run by
+     * Quarkus, so it produces the registration or nothing through the producer it is handed.
+     *
+     * @param additionalBeans Where the producer of the meters is registered
+     */
+    @BuildStep
+    void registerTheMetersWhereTheApplicationUsesMicrometer(final BuildProducer<AdditionalBeanBuildItem> additionalBeans) {
+        if (!isOnTheDeploymentClasspath(MICROMETER_EXTENSION_PROCESSOR)) {
+            return;
+        }
+        additionalBeans.produce(AdditionalBeanBuildItem
+                .builder()
+                .addBeanClass(ZenBpmMetricsProducer.class)
+                // applied by Micrometer's own startup and asked for by the deployment services
+                // through an Instance, which CDI does not count as a use
+                .setUnremovable()
+                .build());
+    }
+
+    /**
      * Refuses an application whose protobuf runtime cannot run the job stream, while it is built
      * and not when the first job stream class is loaded in production. The classes this step sees
      * are those the application is built with, protobuf's included, so the answer is the one the
@@ -108,6 +138,17 @@ class ZenBpmIntegrationProcessor {
                 .defect()
                 .ifPresent(defect -> errors.produce(new ValidationErrorBuildItem(new IllegalStateException(
                         defect))));
+    }
+
+    private static boolean isOnTheDeploymentClasspath(final String className) {
+        try {
+            Class.forName(className, false, Thread
+                    .currentThread()
+                    .getContextClassLoader());
+            return true;
+        } catch (final ClassNotFoundException | LinkageError e) {
+            return false;
+        }
     }
 
 }

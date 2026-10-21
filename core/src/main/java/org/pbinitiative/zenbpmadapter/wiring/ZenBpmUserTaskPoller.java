@@ -29,6 +29,7 @@ import org.pbinitiative.zenbpmadapter.client.ZenBpmExecutor;
 import org.pbinitiative.zenbpmadapter.client.ZenBpmRestClient;
 import org.pbinitiative.zenbpmadapter.client.api.JobFilter;
 import org.pbinitiative.zenbpmadapter.client.api.JobRef;
+import org.pbinitiative.zenbpmadapter.observability.ZenBpmMetrics;
 
 import io.vanillabp.spi.service.TaskEvent;
 import lombok.extern.slf4j.Slf4j;
@@ -84,6 +85,8 @@ import lombok.extern.slf4j.Slf4j;
  * {@value #LONGEST_WAIT_IN_LOOKS}. So a notification which keeps failing cannot take the handler
  * slots from the others at every look. Its method's failure is said at WARN, and a failure right
  * after another one of the method at DEBUG.
+ * <p>
+ * Every look is counted as a poll of the user tasks, one the engine did not answer included.
  */
 @Slf4j
 public final class ZenBpmUserTaskPoller {
@@ -106,6 +109,8 @@ public final class ZenBpmUserTaskPoller {
     private final Duration interval;
 
     private final ThreadFactory looks;
+
+    private final ZenBpmMetrics metrics;
 
     /**
      * The notifiers of the workflow modules whose processing runs, by workflow module id.
@@ -155,14 +160,16 @@ public final class ZenBpmUserTaskPoller {
      *
      * @param adapterId The adapter id
      * @param factory The clients of the adapter id
+     * @param metrics What the looks are counted into
      */
     public ZenBpmUserTaskPoller(
         final String adapterId,
-        final ZenBpmClientFactory factory
+        final ZenBpmClientFactory factory,
+        final ZenBpmMetrics metrics
     ) {
         this(adapterId, factory.rest(), factory.executor(), factory.instances(), factory
                 .configuration()
-                .getUserTaskPollInterval());
+                .getUserTaskPollInterval(), metrics);
     }
 
     ZenBpmUserTaskPoller(
@@ -170,7 +177,8 @@ public final class ZenBpmUserTaskPoller {
         final ZenBpmRestClient rest,
         final ZenBpmExecutor executor,
         final ZenBpmInstanceCache instances,
-        final Duration interval
+        final Duration interval,
+        final ZenBpmMetrics metrics
     ) {
         this.adapterId = adapterId;
         this.rest = rest;
@@ -178,6 +186,7 @@ public final class ZenBpmUserTaskPoller {
         this.timing = executor.timing();
         this.instances = instances;
         this.interval = interval;
+        this.metrics = metrics;
         this.looks = Thread
                 .ofVirtual()
                 .name("zenbpm-%s-user-tasks".formatted(adapterId))
@@ -262,6 +271,7 @@ public final class ZenBpmUserTaskPoller {
      */
     void look() {
         ++lookNumber;
+        metrics.userTaskPoll(adapterId);
         final var userTaskTypes = new LinkedHashSet<String>();
         modules
                 .values()

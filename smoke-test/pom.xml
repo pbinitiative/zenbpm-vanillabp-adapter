@@ -50,6 +50,13 @@
       <artifactId>spring-boot-health</artifactId>
       <scope>test</scope>
     </dependency>
+    <!-- an application which brings Micrometer, so the adapter's meters exist; ZenBpmMetricsBootTest
+         hides it again to boot an application without it -->
+    <dependency>
+      <groupId>io.micrometer</groupId>
+      <artifactId>micrometer-core</artifactId>
+      <scope>test</scope>
+    </dependency>
     <!-- a second adapter type, so an application can boot without any ZenBPM adapter id -->
     <dependency>
       <groupId>io.vanillabp</groupId>

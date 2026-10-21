@@ -8,10 +8,14 @@ package org.pbinitiative.zenbpmadapter.springboot.client;
 import org.pbinitiative.zenbpmadapter.ZenBpmAdapter;
 import org.pbinitiative.zenbpmadapter.client.ZenBpmClientRegistry;
 import org.pbinitiative.zenbpmadapter.client.ZenBpmStartupValidation;
+import org.pbinitiative.zenbpmadapter.observability.MicrometerZenBpmMetrics;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.boot.autoconfigure.AutoConfiguration;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnClass;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
 import org.springframework.core.env.Environment;
 
 import io.vanillabp.integration.adapter.migration.config.DeploymentFailurePolicy;
@@ -72,6 +76,40 @@ public class ZenBpmClientAutoConfiguration {
                 () -> environment
                         .getProperty(APPLICATION_NAME_PROPERTY),
                 startupReport.getIfAvailable());
+    }
+
+    /**
+     * What this adapter measures on top of the core's meters, per adapter id: the jobs, the locks,
+     * the job stream's reconnects, the looks at the user tasks and the handler slots. Micrometer is
+     * optional, so this whole configuration depends on it, and an application without Micrometer
+     * boots unchanged and publishes none of it. Spring Boot applies a {@code MeterBinder} bean to its
+     * registries itself.
+     */
+    @Configuration(proxyBeanMethods = false)
+    // by name, not by class literal: Spring reads the annotation of a nested configuration class by
+    // reflection, and a class literal of a missing optional dependency would fail there, before the
+    // condition is checked
+    @ConditionalOnClass(name = "io.micrometer.core.instrument.MeterRegistry")
+    public static class ZenBpmMetricsConfiguration {
+
+        /**
+         * Built by Spring Boot where Micrometer is on the classpath.
+         */
+        public ZenBpmMetricsConfiguration() {
+        }
+
+        /**
+         * Publishes the adapter's meter binder, which every deployment service of the adapter
+         * measures into.
+         *
+         * @return The meter binder of this adapter's own numbers
+         */
+        @Bean
+        @ConditionalOnMissingBean
+        public MicrometerZenBpmMetrics zenBpmMetrics() {
+            return new MicrometerZenBpmMetrics();
+        }
+
     }
 
 }

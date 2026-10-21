@@ -11,6 +11,7 @@ import org.eclipse.microprofile.config.ConfigProvider;
 import org.pbinitiative.zenbpmadapter.ZenBpmAdapter;
 import org.pbinitiative.zenbpmadapter.client.ZenBpmClientRegistry;
 import org.pbinitiative.zenbpmadapter.deployment.ZenBpmDeploymentService;
+import org.pbinitiative.zenbpmadapter.observability.ZenBpmMetrics;
 
 import io.smallrye.config.SmallRyeConfig;
 import io.vanillabp.integration.adapter.migration.config.MigrationAdapterProperties;
@@ -42,7 +43,8 @@ import jakarta.inject.Singleton;
  * <p>
  * A deployment service reads the <code>job-timeout</code> of a task from
  * {@link VanillaBpZenBpmProperties}, which resolves it from the task, the workflow, the workflow
- * module and the adapter id.
+ * module and the adapter id. It measures into the adapter's {@link ZenBpmMetrics} bean where the
+ * application uses the Micrometer extension, and into {@link ZenBpmMetrics#NONE} where it does not.
  */
 @ApplicationScoped
 public class ZenBpmDeploymentServiceProducer {
@@ -68,6 +70,8 @@ public class ZenBpmDeploymentServiceProducer {
      *            to be told
      * @param bpmsInitiatedStartInvoker What is called when the engine starts a workflow on its own
      * @param startupReport Where a finding of the adapter goes while the application starts
+     * @param metrics Where the adapter's own numbers go, unresolvable where the application does not
+     *            use the Micrometer extension
      * @return One deployment service per configured adapter id of this type
      */
     @Produces
@@ -81,7 +85,8 @@ public class ZenBpmDeploymentServiceProducer {
         final PreCommitRegistrar preCommitRegistrar,
         @Any final Instance<WorkflowEndedInvoker> workflowEndedInvoker,
         @Any final Instance<BpmsInitiatedStartInvoker> bpmsInitiatedStartInvoker,
-        final StartupReport startupReport
+        final StartupReport startupReport,
+        final Instance<ZenBpmMetrics> metrics
     ) {
         // read as the client producer reads it: a mapping of the configuration, never injected
         final var overlay = ConfigProvider
@@ -106,6 +111,8 @@ public class ZenBpmDeploymentServiceProducer {
                                             taskDefinition, adapterId));
                     // the block both platform integrations write at the end of a start
                     deploymentService.setStartupReport(startupReport);
+                    // the adapter's own meters, where the application uses the Micrometer extension
+                    deploymentService.setMetrics(metrics.isResolvable() ? metrics.get() : ZenBpmMetrics.NONE);
                     return asListElement(deploymentService);
                 })
                 .toList();

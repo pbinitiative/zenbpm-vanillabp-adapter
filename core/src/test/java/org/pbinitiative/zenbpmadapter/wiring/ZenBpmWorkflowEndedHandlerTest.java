@@ -29,6 +29,7 @@ import org.pbinitiative.zenbpmadapter.ZenBpmProcessingContext;
 import org.pbinitiative.zenbpmadapter.ZenBpmProcessingContext.WiredProcess;
 import org.pbinitiative.zenbpmadapter.client.FakeEngine;
 import org.pbinitiative.zenbpmadapter.client.ReceivedJob;
+import org.pbinitiative.zenbpmadapter.observability.ZenBpmMetrics;
 
 import io.vanillabp.integration.adapter.spi.NameClashAvoidance;
 import io.vanillabp.integration.test.utils.CapturedOutput;
@@ -98,7 +99,8 @@ class ZenBpmWorkflowEndedHandlerTest {
                         .getEndTime()
                         .isBefore(before)),
                 () -> assertEquals(List.of(List.of()), commandsWhenTold),
-                () -> assertEquals(List.of("POST /v1/jobs/42/complete"), jobs.commands()));
+                () -> assertEquals(List.of("POST /v1/jobs/42/complete"), jobs.commands()),
+                () -> assertEquals(1, jobs.counted(ZenBpmMetrics.JOBS_COMPLETED)));
     }
 
     @Test
@@ -277,7 +279,7 @@ class ZenBpmWorkflowEndedHandlerTest {
         // the collaborators of the module as the platform builds them without an invoker of ends
         jobs.dispatcher.register(new ZenBpmJobHandler("orders", jobs.factory, TestCollaborators.withInvokers(
                 "orders", TestScoping.of(NameClashAvoidance.USE_PREFIX), jobs.invoker, jobs.starts,
-                null), context, ZenBpmRetryBackoffResolver.NONE));
+                null), context, ZenBpmRetryBackoffResolver.NONE, jobs.metrics));
         holds(ROOT, "order-1", "\"id\": \"order-1\"", SHIPPED);
         jobs.takesTheCommands(ROOT);
 
@@ -354,7 +356,9 @@ class ZenBpmWorkflowEndedHandlerTest {
                 () -> assertTrue(output
                         .getAllOfThisTest()
                         .contains("its job is failed with 0 retries left, so the engine raises an incident"),
-                        output::getAllOfThisTest));
+                        output::getAllOfThisTest),
+                () -> assertEquals(1, jobs.counted(ZenBpmMetrics.JOBS_FAILED)),
+                () -> assertEquals(0, jobs.counted(ZenBpmMetrics.JOBS_COMPLETED)));
     }
 
     @Test
@@ -422,7 +426,9 @@ class ZenBpmWorkflowEndedHandlerTest {
                 () -> assertTrue(output
                         .getAllOfThisTest()
                         .contains("of end event 'Withdrawn' was gone when its failure was to be sent"),
-                        output::getAllOfThisTest));
+                        output::getAllOfThisTest),
+                () -> assertEquals(0, jobs.counted(ZenBpmMetrics.JOBS_COMPLETED), "the engine took no completion"),
+                () -> assertEquals(0, jobs.counted(ZenBpmMetrics.JOBS_FAILED), "and no failure"));
     }
 
     @Test

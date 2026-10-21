@@ -9,6 +9,7 @@ import org.pbinitiative.zenbpmadapter.ZenBpmAdapter;
 import org.pbinitiative.zenbpmadapter.client.ZenBpmClientFactory;
 import org.pbinitiative.zenbpmadapter.client.ZenBpmClientRegistry;
 import org.pbinitiative.zenbpmadapter.deployment.ZenBpmDeploymentService;
+import org.pbinitiative.zenbpmadapter.observability.ZenBpmMetrics;
 import org.pbinitiative.zenbpmadapter.processservice.ZenBpmProcessService;
 import org.pbinitiative.zenbpmadapter.springboot.client.VanillaBpZenBpmProperties;
 import org.springframework.beans.factory.BeanRegistrar;
@@ -30,7 +31,9 @@ import io.vanillabp.integration.spi.startup.StartupReport;
  * A process service reads the <code>history-time-to-live</code> of a workflow from
  * {@link VanillaBpZenBpmProperties}, which resolves it from the workflow, the workflow module and
  * the adapter id, and a deployment service the <code>job-timeout</code> of a task, which it
- * resolves from the task as well.
+ * resolves from the task as well. A deployment service measures into the adapter's
+ * {@link ZenBpmMetrics} bean where the application brings Micrometer, and into
+ * {@link ZenBpmMetrics#NONE} where it does not.
  * <p>
  * The ids come from the configuration at runtime, so the beans are registered in code, through
  * {@link AdapterBeanRegistrarSupport#forEachConfiguredAdapterId}, which reads the same ids the
@@ -80,6 +83,10 @@ public class ZenBpmAdapterBeanRegistrar implements BeanRegistrar {
                         deploymentService.setStartupReport(supplierContext
                                 .beanProvider(StartupReport.class)
                                 .getIfAvailable());
+                        // the adapter's own meters, where the application brings Micrometer
+                        deploymentService.setMetrics(supplierContext
+                                .beanProvider(ZenBpmMetrics.class)
+                                .getIfAvailable(() -> ZenBpmMetrics.NONE));
                         return deploymentService;
                     }));
         });

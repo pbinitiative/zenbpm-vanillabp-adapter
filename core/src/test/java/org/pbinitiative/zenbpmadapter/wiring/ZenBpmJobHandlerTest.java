@@ -28,6 +28,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.pbinitiative.zenbpmadapter.ZenBpmDeployedProcesses.DeployedProcess;
 import org.pbinitiative.zenbpmadapter.client.FakeEngine;
+import org.pbinitiative.zenbpmadapter.observability.ZenBpmMetrics;
 
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.json.JsonMapper;
@@ -243,7 +244,9 @@ class ZenBpmJobHandlerTest {
                 () -> assertEquals(variables, json(jobs
                         .bodiesOf("POST", "/v1/jobs/42/complete")
                         .getFirst())),
-                () -> assertEquals(List.of("shop/Order/order-1/FULL"), jobs.invoker.syncedReads()));
+                () -> assertEquals(List.of("shop/Order/order-1/FULL"), jobs.invoker.syncedReads()),
+                () -> assertEquals(1, jobs.counted(ZenBpmMetrics.JOBS_COMPLETED)),
+                () -> assertEquals(0, jobs.counted(ZenBpmMetrics.JOBS_FAILED)));
     }
 
     @Test
@@ -314,7 +317,8 @@ class ZenBpmJobHandlerTest {
                 () -> assertTrue(output
                         .getAllOfThisTest()
                         .contains("job 42 (task 'ship' of workflow module 'shop') is failed without retries"),
-                        output::getAllOfThisTest));
+                        output::getAllOfThisTest),
+                () -> assertEquals(1, jobs.counted(ZenBpmMetrics.JOBS_FAILED)));
     }
 
     @Test
@@ -341,7 +345,9 @@ class ZenBpmJobHandlerTest {
                 () -> assertEquals(jobs.factory.clientId(), failure.get("clientId")),
                 () -> assertTrue(log.contains("job 42 (task 'ship') is about a workflow this application does not own"),
                         log),
-                () -> assertFalse(log.contains(DeliveryOfAnUnknownWorkflowException.class.getName()), log));
+                () -> assertFalse(log.contains(DeliveryOfAnUnknownWorkflowException.class.getName()), log),
+                () -> assertEquals(1, jobs.counted(ZenBpmMetrics.JOBS_FAILED)),
+                () -> assertEquals(0, jobs.counted(ZenBpmMetrics.JOBS_COMPLETED)));
     }
 
     @Test
@@ -367,9 +373,11 @@ class ZenBpmJobHandlerTest {
 
         jobs.runs(JobRunning.job(ROOT));
 
-        assertFalse(output
-                .getAllOfThisTest()
-                .contains("could not be answered"), output::getAllOfThisTest);
+        assertAll(
+                () -> assertFalse(output
+                        .getAllOfThisTest()
+                        .contains("could not be answered"), output::getAllOfThisTest),
+                () -> assertEquals(0, jobs.counted(ZenBpmMetrics.JOBS_FAILED), "the engine took no failure"));
     }
 
     @Test
@@ -428,7 +436,8 @@ class ZenBpmJobHandlerTest {
                 () -> assertTrue(log.contains(
                         "job 42 (task 'ship', workflow aggregate 'order-1') was gone when it was to be completed"),
                         log),
-                () -> assertFalse(log.contains("could not be answered"), log));
+                () -> assertFalse(log.contains("could not be answered"), log),
+                () -> assertEquals(0, jobs.counted(ZenBpmMetrics.JOBS_COMPLETED), "the engine took no completion"));
     }
 
     @Test
@@ -530,7 +539,10 @@ class ZenBpmJobHandlerTest {
                 () -> assertFalse(failure.containsKey("retries"), failure::toString),
                 () -> assertFalse(output
                         .getAllOfThisTest()
-                        .contains("so the engine raised an incident"), output::getAllOfThisTest));
+                        .contains("so the engine raised an incident"), output::getAllOfThisTest),
+                () -> assertEquals(1, jobs.counted(ZenBpmMetrics.JOBS_COMPLETED),
+                        "a BPMN error is an outcome the handler chose"),
+                () -> assertEquals(0, jobs.counted(ZenBpmMetrics.JOBS_FAILED)));
     }
 
     @Test
@@ -593,7 +605,9 @@ class ZenBpmJobHandlerTest {
                         log),
                 () -> assertTrue(log.contains(
                         "ended or was cancelled while the handler ran, so the job is not failed with its BPMN error"),
-                        log));
+                        log),
+                () -> assertEquals(0, jobs.counted(ZenBpmMetrics.JOBS_COMPLETED),
+                        "the engine took neither BPMN error"));
     }
 
     @Test
@@ -633,7 +647,10 @@ class ZenBpmJobHandlerTest {
                 () -> assertEquals(List.of("POST /v1/jobs/42/extend-lock", "POST /v1/jobs/42/extend-lock"), jobs
                         .commands()),
                 () -> assertEquals(List.of(parking, parking), jobs.bodiesOf("POST", "/v1/jobs/42/extend-lock")),
-                () -> assertEquals(List.of(), jobs.invoker.syncedReads()));
+                () -> assertEquals(List.of(), jobs.invoker.syncedReads()),
+                () -> assertEquals(0, jobs.counted(ZenBpmMetrics.JOBS_COMPLETED),
+                        "a task left open is completed later"),
+                () -> assertEquals(0, jobs.counted(ZenBpmMetrics.JOBS_FAILED)));
     }
 
     @Test
@@ -707,7 +724,9 @@ class ZenBpmJobHandlerTest {
                     () -> assertTrue(output
                             .getAllOfThisTest()
                             .contains("job 42 is failed without retries, so an incident shows it: Task 'ship'"),
-                            output::getAllOfThisTest));
+                            output::getAllOfThisTest),
+                    () -> assertEquals(1, incidents.counted(ZenBpmMetrics.JOBS_FAILED)),
+                    () -> assertEquals(0, incidents.counted(ZenBpmMetrics.JOBS_COMPLETED)));
         }
     }
 

@@ -25,6 +25,8 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
+import java.util.TreeMap;
 import java.util.UUID;
 import java.util.concurrent.locks.LockSupport;
 import java.util.function.BooleanSupplier;
@@ -39,6 +41,7 @@ import org.junit.jupiter.api.extension.RegisterExtension;
 import org.pbinitiative.zenbpmadapter.client.ZenBpmAdapterConfiguration;
 import org.pbinitiative.zenbpmadapter.client.ZenBpmRestClient;
 import org.pbinitiative.zenbpmadapter.client.api.CreateInstanceRequest;
+import org.pbinitiative.zenbpmadapter.observability.ZenBpmMetrics;
 import org.pbinitiative.zenbpmadapter.test.EngineLog;
 import org.pbinitiative.zenbpmadapter.test.EngineUnderTest;
 import org.testcontainers.DockerClientFactory;
@@ -84,7 +87,8 @@ import io.vanillabp.integration.test.utils.SuppressOutputExtension;
  * earlier version of the application would have, so the application deploys version 2 of each: a
  * task of either version of <code>Sorting</code> runs the method of its version's tag, and the boot names
  * the older version of <code>Storing</code>, its workflow, the task no method serves any more and
- * what that workflow misses.
+ * what that workflow misses. The application uses the Micrometer extension, so the adapter id
+ * publishes its meters, which move with the work.
  * <p>
  * The Spring Boot integration tests prove the same, and that is the point: a correct core says
  * nothing about whether the glue of a platform ever calls it, which is why coverage is measured per
@@ -878,6 +882,36 @@ class ZenBpmWorkflowLifecycleTest {
                         log));
     }
 
+    @Test
+    @DisplayName("Where the application uses the Micrometer extension, the adapter id publishes its eleven meters, and they move with the work: a workflow which ends adds received and completed jobs, and the looks at the user tasks go on every second")
+    void theMetersOfTheAdapterIdMoveWithTheWork() {
+        final var before = metersOf("zenbpm");
+        final var id = uniqueAggregateId();
+
+        post("introspect/start/%s".formatted(id));
+        awaitTheEndOf(id);
+        await(() -> metersOf("zenbpm").get(ZenBpmMetrics.USER_TASK_POLLS) > before.get(ZenBpmMetrics.USER_TASK_POLLS),
+                "a further look at the user tasks of 'Reviewing'");
+        final var after = metersOf("zenbpm");
+
+        assertAll(
+                () -> assertEquals(Set.of(ZenBpmMetrics.JOBS_RECEIVED, ZenBpmMetrics.JOBS_COMPLETED,
+                        ZenBpmMetrics.JOBS_FAILED, ZenBpmMetrics.JOBS_QUEUED, ZenBpmMetrics.JOBS_REDELIVERED,
+                        ZenBpmMetrics.LOCK_RENEWED, ZenBpmMetrics.LOCK_LOST, ZenBpmMetrics.STREAM_RECONNECTS,
+                        ZenBpmMetrics.USER_TASK_POLLS, ZenBpmMetrics.SLOTS_BUSY, ZenBpmMetrics.SLOTS_FREE),
+                        after
+                                .keySet()),
+                // the job of the task and that of the end marker, and the others the class runs meanwhile
+                () -> assertTrue(after.get(ZenBpmMetrics.JOBS_RECEIVED) >= before.get(ZenBpmMetrics.JOBS_RECEIVED) + 1,
+                        () -> "%s, then %s".formatted(before, after)),
+                () -> assertTrue(
+                        after.get(ZenBpmMetrics.JOBS_COMPLETED) >= before.get(ZenBpmMetrics.JOBS_COMPLETED) + 1,
+                        () -> "%s, then %s".formatted(before, after)),
+                () -> assertTrue(after.get(ZenBpmMetrics.SLOTS_FREE) + after.get(ZenBpmMetrics.SLOTS_BUSY) > 0,
+                        after::toString),
+                () -> assertEquals(Map.of(), metersOf("an-adapter-id-nobody-configured")));
+    }
+
     // the ids of every test are new, because all tests of the class share one engine
     private static String uniqueAggregateId() {
         return "e2e-%s".formatted(UUID.randomUUID());
@@ -1195,6 +1229,14 @@ class ZenBpmWorkflowLifecycleTest {
                 .statusCode(200)
                 .extract()
                 .as(Map.class);
+    }
+
+    private static Map<String, Double> metersOf(final String adapterId) {
+        final var values = new TreeMap<String, Double>();
+        object("introspect/meters/%s".formatted(adapterId)).forEach((
+            name,
+            value) -> values.put(name, ((Number) value).doubleValue()));
+        return values;
     }
 
     private static String text(final String path) {

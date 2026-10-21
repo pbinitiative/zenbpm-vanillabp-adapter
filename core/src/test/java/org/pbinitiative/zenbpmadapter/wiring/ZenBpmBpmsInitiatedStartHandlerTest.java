@@ -20,6 +20,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.pbinitiative.zenbpmadapter.client.ReceivedJob;
+import org.pbinitiative.zenbpmadapter.observability.ZenBpmMetrics;
 
 import io.vanillabp.integration.adapter.spi.AggregateSyncMode;
 import io.vanillabp.integration.adapter.spi.workflowstart.BpmsInitiatedStartResult;
@@ -101,7 +102,9 @@ class ZenBpmBpmsInitiatedStartHandlerTest {
                 () -> assertTrue(jobs
                         .bodiesOf("PATCH", "/v1/process-instances/100/variables")
                         .getFirst()
-                        .contains("\"status\":\"new\"")));
+                        .contains("\"status\":\"new\"")),
+                () -> assertEquals(1, jobs.counted(ZenBpmMetrics.JOBS_COMPLETED)),
+                () -> assertEquals(0, jobs.counted(ZenBpmMetrics.JOBS_FAILED)));
     }
 
     @Test
@@ -224,7 +227,9 @@ class ZenBpmBpmsInitiatedStartHandlerTest {
                 () -> assertTrue(output
                         .getAllOfThisTest()
                         .contains("its job is failed with 0 retries left, so the engine raises an incident"),
-                        output::getAllOfThisTest));
+                        output::getAllOfThisTest),
+                () -> assertEquals(1, jobs.counted(ZenBpmMetrics.JOBS_FAILED)),
+                () -> assertEquals(0, jobs.counted(ZenBpmMetrics.JOBS_COMPLETED)));
     }
 
     @Test
@@ -306,7 +311,9 @@ class ZenBpmBpmsInitiatedStartHandlerTest {
                         .contains("was gone when it was to be completed"), output::getAllOfThisTest),
                 () -> assertTrue(output
                         .getAllOfThisTest()
-                        .contains("was gone when its failure was to be sent"), output::getAllOfThisTest));
+                        .contains("was gone when its failure was to be sent"), output::getAllOfThisTest),
+                () -> assertEquals(0, jobs.counted(ZenBpmMetrics.JOBS_COMPLETED), "the engine took no completion"),
+                () -> assertEquals(0, jobs.counted(ZenBpmMetrics.JOBS_FAILED), "and no failure"));
     }
 
     @Test

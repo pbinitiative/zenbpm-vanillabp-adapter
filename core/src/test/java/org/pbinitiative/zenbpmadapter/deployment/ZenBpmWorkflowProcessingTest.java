@@ -7,6 +7,7 @@ package org.pbinitiative.zenbpmadapter.deployment;
 import static org.junit.jupiter.api.Assertions.assertAll;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -41,8 +42,12 @@ import org.pbinitiative.zenbpmadapter.client.ZenBpmClientRegistry;
 import org.pbinitiative.zenbpmadapter.client.grpc.Zenbpm.JobStreamResponse;
 import org.pbinitiative.zenbpmadapter.client.grpc.Zenbpm.StreamSubscriptionRequest;
 import org.pbinitiative.zenbpmadapter.client.grpc.Zenbpm.WaitingJob;
+import org.pbinitiative.zenbpmadapter.observability.MicrometerZenBpmMetrics;
+import org.pbinitiative.zenbpmadapter.observability.ZenBpmMetrics;
 import org.pbinitiative.zenbpmadapter.wiring.ZenBpmRetryBackoffResolver;
 
+import io.grpc.Status;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import io.vanillabp.integration.adapter.spi.NameClashAvoidance;
 import io.vanillabp.integration.test.utils.CapturedOutput;
 import io.vanillabp.integration.test.utils.SuppressOutputExtension;
@@ -471,9 +476,103 @@ class ZenBpmWorkflowProcessingTest {
                 .contains(warning), output::getAllOfThisTest);
     }
 
+    @Test
+    @DisplayName("The deployment service registers the meters of its adapter id: the reconnects of its job stream, its handler slots, and the jobs its dispatcher takes")
+    void theDeploymentServiceRegistersTheMetersOfItsAdapterId() {
+        final var meters = new SimpleMeterRegistry();
+        final var metrics = new MicrometerZenBpmMetrics();
+        metrics.bindTo(meters);
+        final var deploymentService = deploymentService(TestWiring.claiming());
+        final var factory = registry.getFactory(ADAPTER_ID);
+
+        deploymentService.setMetrics(metrics);
+        deploymentService.startWorkflowProcessing("shop", withJobTypes("shop", "charge"));
+        final var first = engine.call(0);
+        first.subscriptions(1);
+        first.fail(Status.UNAVAILABLE.withDescription("connection reset"));
+        final var second = engine.call(1);
+        second.subscriptions(1);
+        second.send(JobStreamResponse
+                .newBuilder()
+                .setJob(WaitingJob
+                        .newBuilder()
+                        .setKey(42)
+                        .setType("refund")
+                        .setDeliveryToken(2))
+                .build());
+        final var deadline = Instant
+                .now()
+                .plus(DELIVERY_TIMEOUT);
+        while ((counted(meters, ZenBpmMetrics.JOBS_RECEIVED) == 0) && Instant
+                .now()
+                .isBefore(deadline)) {
+            LockSupport.parkNanos(Duration
+                    .ofMillis(20)
+                    .toNanos());
+        }
+
+        assertAll(
+                () -> assertSame(metrics, deploymentService.getMetrics()),
+                () -> assertEquals(1, counted(meters, ZenBpmMetrics.JOBS_RECEIVED)),
+                () -> assertEquals(1, counted(meters, ZenBpmMetrics.JOBS_REDELIVERED)),
+                () -> assertTrue(counted(meters, ZenBpmMetrics.STREAM_RECONNECTS) >= 1),
+                () -> assertEquals(factory
+                        .stream()
+                        .reconnects(), counted(meters, ZenBpmMetrics.STREAM_RECONNECTS)),
+                () -> assertEquals(factory
+                        .executor()
+                        .getSlots(),
+                        meters
+                                .get(ZenBpmMetrics.SLOTS_FREE)
+                                .tag(ZenBpmMetrics.TAG_ADAPTER, ADAPTER_ID)
+                                .gauge()
+                                .value()),
+                () -> assertEquals(0.0, meters
+                        .get(ZenBpmMetrics.SLOTS_BUSY)
+                        .tag(ZenBpmMetrics.TAG_ADAPTER, ADAPTER_ID)
+                        .gauge()
+                        .value()));
+    }
+
+    @Test
+    @DisplayName("An adapter id without clients registers no meter, which could never move, and a deployment service handed no metrics measures nothing")
+    void anAdapterIdWithoutClientsRegistersNoMeter() {
+        final var meters = new SimpleMeterRegistry();
+        final var metrics = new MicrometerZenBpmMetrics();
+        metrics.bindTo(meters);
+        final var deploymentService = new ZenBpmDeploymentService(ADAPTER_ID, new ZenBpmClientRegistry(List.of(
+                ZenBpmClientFactory.unconfigured(ADAPTER_ID, new ZenBpmAdapterConfiguration(),
+                        "not configured"))), TestCollaborators.of(ADAPTER_ID, TestScoping.of(NameClashAvoidance.NONE),
+                                TestWiring
+                                        .claiming()
+                                        .wiring(),
+                                TestStarts.everyProcessStartingAWorkflow()));
+        final var beforeAny = deploymentService.getMetrics();
+
+        deploymentService.setMetrics(metrics);
+        final var registered = List.copyOf(meters.getMeters());
+        deploymentService.setMetrics(null);
+
+        assertAll(
+                () -> assertSame(ZenBpmMetrics.NONE, beforeAny),
+                () -> assertEquals(List.of(), registered),
+                () -> assertSame(ZenBpmMetrics.NONE, deploymentService.getMetrics()));
+    }
+
     private ZenBpmDeploymentService deploymentService(final TestWiring wiring) {
         return new ZenBpmDeploymentService(ADAPTER_ID, registry, TestCollaborators.of(ADAPTER_ID, TestScoping.of(
                 NameClashAvoidance.USE_PREFIX), wiring.wiring(), TestStarts.everyProcessStartingAWorkflow()));
+    }
+
+    private static long counted(
+        final SimpleMeterRegistry meters,
+        final String meterName
+    ) {
+        return (long) meters
+                .get(meterName)
+                .tag(ZenBpmMetrics.TAG_ADAPTER, ADAPTER_ID)
+                .functionCounter()
+                .count();
     }
 
     private static ZenBpmProcessingContext withJobTypes(
