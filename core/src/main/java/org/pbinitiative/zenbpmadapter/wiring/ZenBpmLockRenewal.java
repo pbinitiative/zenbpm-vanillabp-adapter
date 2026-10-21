@@ -19,6 +19,7 @@ import org.pbinitiative.zenbpmadapter.client.ReceivedJob;
 import org.pbinitiative.zenbpmadapter.client.ZenBpmCommandRetry;
 import org.pbinitiative.zenbpmadapter.client.ZenBpmErrors;
 import org.pbinitiative.zenbpmadapter.client.ZenBpmRestClient;
+import org.pbinitiative.zenbpmadapter.observability.ZenBpmMetrics;
 
 import lombok.extern.slf4j.Slf4j;
 
@@ -55,6 +56,10 @@ import lombok.extern.slf4j.Slf4j;
  * shorten the parked lock again. Where the engine answers a deadline shorter than the window by
  * more than {@link #CLOCK_TOLERANCE}, a WARN says so once per adapter id, naming
  * <code>JOB_MANAGER_MAX_LOCK_DURATION_MS</code>, which the engine lowers every lock to.
+ * <p>
+ * Every extension of a running handler's lock the engine granted is counted as renewed, and every
+ * renewal which ended because the lock is lost or lapses while the handler runs as lost; the
+ * extension which parks a job is neither.
  */
 @Slf4j
 public final class ZenBpmLockRenewal {
@@ -80,6 +85,8 @@ public final class ZenBpmLockRenewal {
 
     private final ThreadFactory calls;
 
+    private final ZenBpmMetrics metrics;
+
     private final AtomicBoolean shorterLockReported = new AtomicBoolean();
 
     private final AtomicBoolean shorterParkingReported = new AtomicBoolean();
@@ -91,17 +98,20 @@ public final class ZenBpmLockRenewal {
      * @param rest The REST client of the adapter id
      * @param clientId The client id of the job stream the jobs are delivered to
      * @param timing The timing threads of the adapter id, which schedule the extensions
+     * @param metrics What the renewed and the lost locks are counted into
      */
     public ZenBpmLockRenewal(
         final String adapterId,
         final ZenBpmRestClient rest,
         final String clientId,
-        final ScheduledExecutorService timing
+        final ScheduledExecutorService timing,
+        final ZenBpmMetrics metrics
     ) {
         this.adapterId = adapterId;
         this.rest = rest;
         this.clientId = clientId;
         this.timing = timing;
+        this.metrics = metrics;
         this.calls = Thread
                 .ofVirtual()
                 .name("zenbpm-%s-lock-renewal".formatted(adapterId))
@@ -339,6 +349,7 @@ public final class ZenBpmLockRenewal {
             }
             unanswered = 0;
             lockEnd = sent.plus(jobTimeout);
+            metrics.lockRenewed(adapterId);
             reportAShorterLock(jobKey, granted, lockEnd, jobTimeout);
             schedule(Duration
                     .between(Instant.now(), lockEnd)
@@ -352,6 +363,7 @@ public final class ZenBpmLockRenewal {
             }
             if (ZenBpmErrors.lockLost(failure)) {
                 ended = true;
+                metrics.lockLost(adapterId);
                 log.warn("""
                         ZenBPM[{}]: the lock of job {} (task '{}', workflow aggregate '{}') is lost while its handler \
                         runs: the lock lapsed, or another client holds the job. The engine may hand the job out \
@@ -382,6 +394,7 @@ public final class ZenBpmLockRenewal {
                 }
             }
             ended = true;
+            metrics.lockLost(adapterId);
             log.warn("""
                     ZenBPM[{}]: the lock of job {} (task '{}', workflow aggregate '{}') could not be renewed while its \
                     handler runs, so it lapses at {}. The engine may hand the job out again then, so a second \

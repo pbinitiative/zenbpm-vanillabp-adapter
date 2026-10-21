@@ -384,6 +384,10 @@ whose history and definitions are read through that context; a context which bel
 workflow is not served. The engine keeps no state of an element, so none is reported as cancelled
 (see [`GAPS.md`](./GAPS.md)).
 
+What an operator sees is in the sections [Health](#health) and [Metrics](#metrics): an entry of the
+platform's health check per adapter id, which names the state of the job stream, and, where the
+application brings Micrometer, eleven meters per adapter id tagged with it.
+
 What is built next, and in which order, is the implementation plan in [`docs/`](docs/README.md).
 
 ## Modules
@@ -497,6 +501,65 @@ Where the status says less than it seems:
 - A `404` or `409` is read from its status, method and path alone. A proxy in front of the engine
   which answers `404` to a call of a job, for example because its routes leave out a path, is read
   as a gone job like the engine's own answer.
+
+## Health
+
+Each adapter id adds an entry named after it to the platform's health check (the readiness check
+on Quarkus). The entry asks the engine's own readiness probe, `GET /system/health/ready`, once per
+check:
+
+- an adapter id without clients is `UNKNOWN`, with the message of the startup validation, which
+  names the key to set;
+- an engine which answers ready is `UP`, with the details `address`, `versionAtStart` and
+  `commitAtStart` (what the engine reported when the application started) and `jobStream`;
+- an engine which answers not ready is `DOWN`, with its reasons, and one which cannot be reached or
+  does not answer within `request-timeout` is `DOWN`, with what the REST client reported and the
+  detail `requestTimeout`.
+
+`UP` says that the engine answers over REST, not that jobs arrive: the job stream is a connection
+of its own, over gRPC, which a wrong `grpc-address`, a TLS mismatch or a blocked port keeps down
+while REST works. So every entry of an adapter id with clients names the stream's state as the
+detail `jobStream`: `not opened yet`, `connecting`, `connected`, `down since <instant>, <n>
+attempt(s)` or `closed`. A stream which is down never turns the entry `DOWN`, however long it
+stays down (decision 58 in [`DECISIONS.md`](./DECISIONS.md)): a readiness probe which went down
+for it would take every replica out of service and fix nothing, while starts, correlations and
+probes still go over REST. What an operator alerts on is the pair of meters below:
+`vanillabp.zenbpm.stream.reconnects` rising while `vanillabp.zenbpm.jobs.received` stays flat.
+`ZenBpmHealthTest` checks each of these answers.
+
+## Metrics
+
+Where the application brings Micrometer, each adapter id with clients publishes the meters below,
+on top of those the platform publishes for every BPMS. On Spring Boot the adapter registers its
+`MeterBinder` where `io.micrometer.core.instrument.MeterRegistry` is on the classpath; on Quarkus
+where the application uses the Micrometer extension. The adapter does not bring Micrometer, and
+an application without it boots unchanged and publishes none of them. Every meter carries the tag
+`adapter` with the adapter id, so two adapter ids publish two sets which differ in that tag only.
+An adapter id without clients publishes none: nothing could ever move them. An application which
+brings its own bean of the core's `ZenBpmMetrics` gets that one measured into instead of the
+adapter's binder, on both platforms.
+
+|                Meter                 |  Kind   |   Tags    |                                              What it says                                               |
+|--------------------------------------|---------|-----------|---------------------------------------------------------------------------------------------------------|
+| `vanillabp.zenbpm.jobs.received`     | counter | `adapter` | jobs the job stream handed over, every delivery, those of a type nobody subscribes included             |
+| `vanillabp.zenbpm.jobs.completed`    | counter | `adapter` | jobs a handler answered with a completion or a BPMN error, start and end markers included               |
+| `vanillabp.zenbpm.jobs.failed`       | counter | `adapter` | jobs failed at the engine: a handler threw, or the adapter failed the job without retries (an incident) |
+| `vanillabp.zenbpm.jobs.queued`       | counter | `adapter` | jobs which found no free handler slot and waited for one, each delivery once                            |
+| `vanillabp.zenbpm.jobs.redelivered`  | counter | `adapter` | deliveries of a job the engine had handed out before, as its delivery token says                        |
+| `vanillabp.zenbpm.lock.renewed`      | counter | `adapter` | extensions of a running handler's lock the engine granted                                               |
+| `vanillabp.zenbpm.lock.lost`         | counter | `adapter` | locks which ended while their handler ran: lost at the engine, or not renewed before they lapsed        |
+| `vanillabp.zenbpm.stream.reconnects` | counter | `adapter` | attempts of the job stream to open its call again after it broke                                        |
+| `vanillabp.zenbpm.usertasks.polls`   | counter | `adapter` | looks at the user tasks, one per round, those the engine did not answer included                        |
+| `vanillabp.zenbpm.slots.busy`        | gauge   | `adapter` | handler slots taken right now                                                                           |
+| `vanillabp.zenbpm.slots.free`        | gauge   | `adapter` | handler slots free right now                                                                            |
+
+A task left open for its asynchronous completion counts as neither completed nor failed, neither
+when its handler returns nor when the application completes or cancels it later through the process
+service, and a user task does not count either: the job meters count what the handlers answered, so
+that they add up against `jobs.received`. The extension which parks a task is no renewal. The two gauges read the semaphore of the handler slots and
+the reconnects counter reads the job stream, values already in memory, so reading a meter never
+asks the engine anything. `MicrometerZenBpmMetricsTest` fails when this table and the meters the
+adapter registers differ in a name, a kind or a tag.
 
 ## Building
 

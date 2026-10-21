@@ -285,7 +285,7 @@ class ZenBpmHealthTest {
     }
 
     @Test
-    @DisplayName("A ready engine whose job stream cannot connect is UP, and says that the stream is down")
+    @DisplayName("A ready engine whose job stream cannot connect is UP however often the stream tries again, and says that the stream is down, as the README's section 'Health' promises")
     void aReadyEngineWithAStreamDownSaysSo() throws IOException {
         engine.answers("GET", "/system/health/ready", 200, "{\"status\":\"UP\",\"reasons\":[]}");
         final var configuration = configuration(engine.address());
@@ -302,7 +302,10 @@ class ZenBpmHealthTest {
                             .check(factory)
                             .details()
                             .get("jobStream");
-                    if (state.startsWith("down since ")) {
+                    // a stream which failed again and again, not one which just lost its first call
+                    if (state.startsWith("down since ") && (factory
+                            .stream()
+                            .reconnects() >= 3)) {
                         return state;
                     }
                     Thread.sleep(50);

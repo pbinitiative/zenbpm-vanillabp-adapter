@@ -560,11 +560,14 @@ client id.
 
 - Every message names module, process, aggregate id, the attempted operation and the way out, keys in
   full (`vanillabp.adapters.<id>.<key>`), following the config-validation skill.
-- Meters where Micrometer is present (`ZenBpmMetrics`, optional on both platforms):
-  `vanillabp.zenbpm.jobs.received`, `.completed`, `.failed`, `.queued` (waiting for a slot), `.lock.renewed`, `.lock.lost`,
-  `.redelivered` (a delivery id seen before), `vanillabp.zenbpm.stream.reconnects`,
-  `vanillabp.zenbpm.slots.busy` / `.free`, `vanillabp.zenbpm.usertasks.polls`.
-- Health contributes the engine's readiness per adapter id.
+- Meters where Micrometer is present (`ZenBpmMetrics`, optional on both platforms, decision 59), each
+  tagged `adapter=<id>`: the counters `vanillabp.zenbpm.jobs.received`, `.completed`, `.failed`,
+  `.queued` (waited for a slot), `.redelivered` (a job the engine handed out before, by its delivery
+  token), `vanillabp.zenbpm.lock.renewed`, `.lost`, `vanillabp.zenbpm.stream.reconnects`,
+  `vanillabp.zenbpm.usertasks.polls`, and the gauges `vanillabp.zenbpm.slots.busy` / `.free`. The
+  README's section "Metrics" lists what each says.
+- Health contributes the engine's readiness per adapter id, over REST; the job stream's state is a
+  detail and never turns it DOWN (decision 58).
 
 ## 8. Test infrastructure
 

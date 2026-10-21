@@ -29,11 +29,14 @@ import org.pbinitiative.zenbpmadapter.client.ZenBpmAdapterConfiguration;
 import org.pbinitiative.zenbpmadapter.client.ZenBpmClientFactory;
 import org.pbinitiative.zenbpmadapter.client.grpc.Zenbpm.WaitingJob;
 import org.pbinitiative.zenbpmadapter.model.ZenBpmMarkerTasks;
+import org.pbinitiative.zenbpmadapter.observability.MicrometerZenBpmMetrics;
+import org.pbinitiative.zenbpmadapter.observability.ZenBpmMetrics;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.google.protobuf.ByteString;
 
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import io.vanillabp.integration.adapter.spi.NameClashAvoidance;
 import io.vanillabp.spi.service.BpmsStartTrigger;
 
@@ -86,6 +89,14 @@ final class JobRunning implements AutoCloseable {
      */
     final Map<String, Duration> retryBackoffs = new ConcurrentHashMap<>();
 
+    /**
+     * What the dispatcher, the renewal of the locks and the handlers count into, bound to
+     * {@link #meters}.
+     */
+    final MicrometerZenBpmMetrics metrics = new MicrometerZenBpmMetrics();
+
+    final SimpleMeterRegistry meters = new SimpleMeterRegistry();
+
     final ZenBpmClientFactory factory;
 
     final ZenBpmJobDispatcher dispatcher;
@@ -121,7 +132,8 @@ final class JobRunning implements AutoCloseable {
         configuration.setWorkerThreads(String.valueOf(workerThreads));
         keys.accept(configuration);
         factory = new ZenBpmClientFactory("orders", configuration, () -> "shop");
-        dispatcher = new ZenBpmJobDispatcher("orders", factory);
+        metrics.bindTo(meters);
+        dispatcher = new ZenBpmJobDispatcher("orders", factory, metrics);
         handler = handlerOf("shop", NameClashAvoidance.USE_PREFIX, new WiredProcess("Order", "shop__Order", Set.of(
                 JOB_TYPE), true, true, Map.of("Placed", BpmsStartTrigger.Kind.TIMER), Map.of("Shipped",
                         ZenBpmMarkerTasks.Ending.BRANCH, "Withdrawn", ZenBpmMarkerTasks.Ending.WORKFLOW), Map.of()));
@@ -152,7 +164,7 @@ final class JobRunning implements AutoCloseable {
                     module,
                     process,
                     taskDefinition) -> Optional.ofNullable(retryBackoffs.get("%s/%s/%s".formatted(module, process,
-                            taskDefinition))));
+                            taskDefinition))), metrics);
     }
 
     /**
@@ -499,6 +511,20 @@ final class JobRunning implements AutoCloseable {
     void runs(final ReceivedJob received) {
         dispatcher.accept(received);
         awaitFreeSlots();
+    }
+
+    /**
+     * What a counter of the adapter id <code>orders</code> counted so far.
+     *
+     * @param meterName The name of the counter, one of {@link org.pbinitiative.zenbpmadapter.observability.ZenBpmMetrics}
+     * @return The count, 0 where nothing was counted
+     */
+    long counted(final String meterName) {
+        final var counter = meters
+                .find(meterName)
+                .tag(ZenBpmMetrics.TAG_ADAPTER, "orders")
+                .functionCounter();
+        return counter == null ? 0 : (long) counter.count();
     }
 
     /**

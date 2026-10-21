@@ -22,6 +22,7 @@ import org.pbinitiative.zenbpmadapter.client.api.JobFailure;
 import org.pbinitiative.zenbpmadapter.client.api.ProcessInstanceRef;
 import org.pbinitiative.zenbpmadapter.model.ZenBpmMarkerTasks;
 import org.pbinitiative.zenbpmadapter.model.ZenBpmModelReader;
+import org.pbinitiative.zenbpmadapter.observability.ZenBpmMetrics;
 
 import io.vanillabp.integration.adapter.spi.workflowend.WorkflowEndedContext;
 import io.vanillabp.integration.adapter.spi.workflowend.WorkflowEndedInvoker;
@@ -80,6 +81,8 @@ final class ZenBpmWorkflowEndedHandler {
 
     private final ZenBpmRetryBackoffResolver retryBackoffs;
 
+    private final ZenBpmMetrics metrics;
+
     // the end markers of each version by its definition key, read once: a version never changes
     private final Map<Long, Map<String, ZenBpmMarkerTasks.Ending>> endingsOfVersions = new ConcurrentHashMap<>();
 
@@ -89,7 +92,8 @@ final class ZenBpmWorkflowEndedHandler {
         final WorkflowEndedInvoker invoker,
         final ZenBpmRestClient rest,
         final String clientId,
-        final ZenBpmRetryBackoffResolver retryBackoffs
+        final ZenBpmRetryBackoffResolver retryBackoffs,
+        final ZenBpmMetrics metrics
     ) {
         this.adapterId = adapterId;
         this.workflowModuleId = workflowModuleId;
@@ -97,6 +101,7 @@ final class ZenBpmWorkflowEndedHandler {
         this.rest = rest;
         this.clientId = clientId;
         this.retryBackoffs = retryBackoffs;
+        this.metrics = metrics;
     }
 
     /**
@@ -279,6 +284,7 @@ final class ZenBpmWorkflowEndedHandler {
                     endEventId, process.bpmnProcessId());
             return false;
         }
+        metrics.jobCompleted(adapterId);
         return true;
     }
 
@@ -317,6 +323,7 @@ final class ZenBpmWorkflowEndedHandler {
                     .withMessage(message)
                     .withRetryBackoff(retryBackoff.orElse(null))
                     .ofTheDelivery(job.getDeliveryToken(), clientId)));
+            metrics.jobFailed(adapterId);
         } catch (final RuntimeException e) {
             if (!ZenBpmErrors.isGoneJob(e)) {
                 throw e;

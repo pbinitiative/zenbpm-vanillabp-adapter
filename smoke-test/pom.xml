@@ -50,6 +50,19 @@
       <artifactId>spring-boot-health</artifactId>
       <scope>test</scope>
     </dependency>
+    <!-- an application which brings Micrometer and Spring Boot's metrics, so the adapter's meters
+         reach the registry Spring Boot builds; the execution without-micrometer below boots an
+         application without either -->
+    <dependency>
+      <groupId>io.micrometer</groupId>
+      <artifactId>micrometer-core</artifactId>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-micrometer-metrics</artifactId>
+      <scope>test</scope>
+    </dependency>
     <!-- a second adapter type, so an application can boot without any ZenBPM adapter id -->
     <dependency>
       <groupId>io.vanillabp</groupId>
@@ -58,4 +71,40 @@
       <scope>test</scope>
     </dependency>
   </dependencies>
+
+  <build>
+    <plugins>
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-surefire-plugin</artifactId>
+        <executions>
+          <execution>
+            <id>default-test</id>
+            <configuration>
+              <excludes>
+                <exclude>**/ZenBpmWithoutMicrometerBootTest.java</exclude>
+              </excludes>
+            </configuration>
+          </execution>
+          <!-- an application whose classpath lacks Micrometer: a class loader which hides it would
+               still let the adapter's own classes load Micrometer's -->
+          <execution>
+            <id>without-micrometer</id>
+            <goals>
+              <goal>test</goal>
+            </goals>
+            <configuration>
+              <includes>
+                <include>**/ZenBpmWithoutMicrometerBootTest.java</include>
+              </includes>
+              <classpathDependencyExcludes>
+                <classpathDependencyExclude>io.micrometer:micrometer-core</classpathDependencyExclude>
+                <classpathDependencyExclude>org.springframework.boot:spring-boot-micrometer-metrics</classpathDependencyExclude>
+              </classpathDependencyExcludes>
+            </configuration>
+          </execution>
+        </executions>
+      </plugin>
+    </plugins>
+  </build>
 </project>

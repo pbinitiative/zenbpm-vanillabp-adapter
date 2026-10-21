@@ -35,7 +35,10 @@ import org.pbinitiative.zenbpmadapter.client.ZenBpmCommandRetry;
 import org.pbinitiative.zenbpmadapter.client.ZenBpmErrors;
 import org.pbinitiative.zenbpmadapter.client.ZenBpmRestClient;
 import org.pbinitiative.zenbpmadapter.client.grpc.Zenbpm.WaitingJob;
+import org.pbinitiative.zenbpmadapter.observability.MicrometerZenBpmMetrics;
+import org.pbinitiative.zenbpmadapter.observability.ZenBpmMetrics;
 
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import io.vanillabp.integration.test.utils.CapturedOutput;
 import io.vanillabp.integration.test.utils.SuppressOutputExtension;
 
@@ -46,7 +49,9 @@ import io.vanillabp.integration.test.utils.SuppressOutputExtension;
  * handler; repeated within the lock where the engine could not be asked. Every extension names its
  * delivery, and the lock is counted on the application's clock: an engine clock behind it is named
  * once and changes nothing. A parked job is extended once by its window, after an extension under
- * way came back, and a window the engine lowered is named once.
+ * way came back, and a window the engine lowered is named once. Every extension the engine granted
+ * is counted as a renewed lock, every renewal which ended while its handler runs as a lost one, the
+ * parking as neither.
  */
 @ExtendWith(SuppressOutputExtension.class)
 class ZenBpmLockRenewalTest {
@@ -65,14 +70,21 @@ class ZenBpmLockRenewalTest {
 
     private ZenBpmLockRenewal lockRenewal;
 
+    private final MicrometerZenBpmMetrics metrics = new MicrometerZenBpmMetrics();
+
+    private final SimpleMeterRegistry meters = new SimpleMeterRegistry();
+
     @BeforeEach
     void startTheEngine() {
+        metrics.bindTo(meters);
+        // as the deployment service registers the adapter id, so its counters exist at zero
+        metrics.registerAdapter("orders", () -> 0, () -> 0, () -> 1);
         engine = FakeEngine.started();
         final var configuration = new ZenBpmAdapterConfiguration();
         configuration.setRestAddress(engine.address());
         rest = new ZenBpmRestClient("orders", configuration);
         timing = Executors.newSingleThreadScheduledExecutor();
-        lockRenewal = new ZenBpmLockRenewal("orders", rest, "shop-1", timing);
+        lockRenewal = new ZenBpmLockRenewal("orders", rest, "shop-1", timing, metrics);
         // the first request of a JVM loads the HTTP client, which takes longer than the locks here
         try {
             rest.ready();
@@ -96,10 +108,14 @@ class ZenBpmLockRenewalTest {
         try (var renewal = lockRenewal.start(job(JOB_TIMEOUT), JOB_TIMEOUT, "ship")) {
             pause(Duration.ofMillis(150));
             final var atFirst = extensions();
+            final var renewedAtFirst = counted(ZenBpmMetrics.LOCK_RENEWED);
             awaitRequests(1);
+            await(() -> counted(ZenBpmMetrics.LOCK_RENEWED) == 1, "the granted extension to be counted");
 
             assertAll(
                     () -> assertEquals(List.of(), atFirst),
+                    () -> assertEquals(0, renewedAtFirst),
+                    () -> assertEquals(0, counted(ZenBpmMetrics.LOCK_LOST)),
                     () -> assertEquals("{\"clientId\":\"shop-1\",\"lockDuration\":\"PT1S\",\"deliveryToken\":7}",
                             extensions()
                                     .getFirst()
@@ -142,7 +158,9 @@ class ZenBpmLockRenewalTest {
                 () -> assertTrue(log.contains(
                         "the lock of job 42 (task 'ship', workflow aggregate 'order-7') is lost while its handler runs"),
                         log),
-                () -> assertTrue(log.contains("a second delivery may run beside this one"), log));
+                () -> assertTrue(log.contains("a second delivery may run beside this one"), log),
+                () -> assertEquals(1, counted(ZenBpmMetrics.LOCK_LOST)),
+                () -> assertEquals(0, counted(ZenBpmMetrics.LOCK_RENEWED)));
     }
 
     @Test
@@ -159,9 +177,13 @@ class ZenBpmLockRenewalTest {
 
         try (var renewal = lockRenewal.start(job(Duration.ofMillis(200)), JOB_TIMEOUT, "ship")) {
             awaitRequests(2);
+            await(() -> counted(ZenBpmMetrics.LOCK_RENEWED) == 1,
+                    "the extension granted the second time to be counted");
         }
 
-        assertEquals(2, calls.get());
+        assertAll(
+                () -> assertEquals(2, calls.get()),
+                () -> assertEquals(0, counted(ZenBpmMetrics.LOCK_LOST), "an extension sent again loses no lock"));
     }
 
     @Test
@@ -176,7 +198,8 @@ class ZenBpmLockRenewalTest {
         final var log = output.getAllOfThisTest();
         assertAll(
                 () -> assertTrue(extensions().size() > 1, extensions()::toString),
-                () -> assertTrue(log.contains("so it lapses at"), log));
+                () -> assertTrue(log.contains("so it lapses at"), log),
+                () -> assertEquals(1, counted(ZenBpmMetrics.LOCK_LOST)));
     }
 
     @Test
@@ -193,7 +216,8 @@ class ZenBpmLockRenewalTest {
                 () -> assertEquals(1, extensions().size()),
                 () -> assertFalse(output
                         .getAllOfThisTest()
-                        .contains("WARN"), output::getAllOfThisTest));
+                        .contains("WARN"), output::getAllOfThisTest),
+                () -> assertEquals(0, counted(ZenBpmMetrics.LOCK_LOST), "the job ended, nothing runs beside it"));
     }
 
     @Test
@@ -205,7 +229,9 @@ class ZenBpmLockRenewalTest {
             awaitLog(output, "could not be renewed while its handler runs");
         }
 
-        assertEquals(1, extensions().size());
+        assertAll(
+                () -> assertEquals(1, extensions().size()),
+                () -> assertEquals(1, counted(ZenBpmMetrics.LOCK_LOST)));
     }
 
     @Test
@@ -225,7 +251,8 @@ class ZenBpmLockRenewalTest {
                 () -> assertEquals(1, extensions().size()),
                 () -> assertFalse(output
                         .getAllOfThisTest()
-                        .contains("is lost"), output::getAllOfThisTest));
+                        .contains("is lost"), output::getAllOfThisTest),
+                () -> assertEquals(0, counted(ZenBpmMetrics.LOCK_LOST), "the handler ended before the answer"));
     }
 
     @Test
@@ -340,11 +367,14 @@ class ZenBpmLockRenewalTest {
             pause(JOB_TIMEOUT.multipliedBy(2));
         }
 
-        assertEquals(List.of("{\"clientId\":\"shop-1\",\"lockDuration\":\"PT3600S\",\"deliveryToken\":7}"),
-                extensions()
-                        .stream()
-                        .map(FakeEngine.Request::body)
-                        .toList());
+        assertAll(
+                () -> assertEquals(
+                        List.of("{\"clientId\":\"shop-1\",\"lockDuration\":\"PT3600S\",\"deliveryToken\":7}"),
+                        extensions()
+                                .stream()
+                                .map(FakeEngine.Request::body)
+                                .toList()),
+                () -> assertEquals(0, counted(ZenBpmMetrics.LOCK_RENEWED), "a parking is no renewal"));
     }
 
     @Test
@@ -406,7 +436,8 @@ class ZenBpmLockRenewalTest {
         };
         engine.answers("POST", EXTEND, granting(Duration.ofHours(1)));
         try {
-            final var renewal = new ZenBpmLockRenewal("orders", rest, "shop-1", heldBack).start(job(Duration.ZERO),
+            final var renewal = new ZenBpmLockRenewal("orders", rest, "shop-1", heldBack, ZenBpmMetrics.NONE).start(
+                    job(Duration.ZERO),
                     JOB_TIMEOUT, "ship");
             renewal.park(Duration.ofHours(1), retryOf(renewal));
             due
@@ -508,6 +539,14 @@ class ZenBpmLockRenewalTest {
                 .stream()
                 .filter(request -> EXTEND.equals(request.path()))
                 .toList();
+    }
+
+    private long counted(final String meterName) {
+        return (long) meters
+                .get(meterName)
+                .tag(ZenBpmMetrics.TAG_ADAPTER, "orders")
+                .functionCounter()
+                .count();
     }
 
     private void awaitRequests(final int count) {

@@ -42,6 +42,11 @@
       <groupId>io.quarkus</groupId>
       <artifactId>quarkus-config-yaml</artifactId>
     </dependency>
+    <!-- the application uses the Micrometer extension, so the adapter publishes its meters -->
+    <dependency>
+      <groupId>io.quarkus</groupId>
+      <artifactId>quarkus-micrometer</artifactId>
+    </dependency>
     <!-- the workflow aggregate is a JPA entity on an in-memory database, so the platform serves
          it with its JDBC phase-two outbox, as it serves an application in production -->
     <dependency>

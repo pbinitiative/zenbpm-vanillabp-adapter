@@ -1609,3 +1609,80 @@ incidents where some are counted; a context adds one read of its instance, and o
 the instance cache does not hold; a read which finds nothing is repeated within the window; under
 the scan, a search which finds no workflow which runs adds the scan's pages.
 `ZenBpmWorkflowViewerTest` pins these numbers.
+
+### 58. The health check stays UP while the job stream is down, however long
+
+Decided by the implementation pipeline in place of the maintainers, as their policy for the
+autonomous run asks.
+
+The entry an adapter id adds to the platform's health check (the readiness check on Quarkus) asks
+the engine's readiness probe over REST and nothing else. A job stream which cannot reach the
+engine, for a wrong `grpc-address`, a TLS mismatch or a blocked gRPC port, leaves it `UP` for as
+long as it lasts; the entry names the stream's state as the detail `jobStream`
+(`down since <instant>, <n> attempt(s)`), so an operator who looks sees it. Turning the entry
+`DOWN` after the stream was down for some bound was rejected. A readiness probe which goes down
+takes every replica out of service, and a configuration error of the gRPC side would take them out
+all at once, without fixing anything, while the work that goes over REST (starts, correlations,
+the probes, the viewer) still succeeds. It would also need a bound, which is either one more key or
+a value which fits nobody. Camunda 8 decides the same way: its health asks for the topology and
+never for its job workers. What an operator alerts on instead are the adapter's meters (decision
+59): `vanillabp.zenbpm.stream.reconnects` rising while `vanillabp.zenbpm.jobs.received` stays flat.
+The README's section "Health" says so, and `ZenBpmHealthTest` checks that an engine which answers
+ready is `UP` while its job stream keeps failing.
+
+### 59. The adapter's own meters: one binder per application, counted where each event happens
+
+Decided by the implementation pipeline in place of the maintainers, as their policy for the
+autonomous run asks.
+
+What the adapter measures on top of the platform's meters is the interface `ZenBpmMetrics` of the
+core, written without a metrics library, with `NONE` for an application without one, and its
+Micrometer implementation `MicrometerZenBpmMetrics`, with Micrometer as an optional dependency of
+the core and of both platform modules, as Camunda 8 does it. There is one binder per application:
+the platform module registers it where Micrometer is there (Spring Boot by the class name
+`io.micrometer.core.instrument.MeterRegistry`, Quarkus by the build step of the Micrometer
+extension on the deployment classpath), and hands it to every deployment service, which registers
+its adapter id. An application's own bean of `ZenBpmMetrics` takes the binder's place: on Spring
+Boot the binder is missing-bean conditional on the interface, and on Quarkus the deployment
+services prefer a bean of any other producer to the binder. A default bean would not do on Quarkus:
+Arc leaves a default bean out of every lookup of a type another bean has, and Micrometer's own
+binders are `MeterBinder`s too, so the registry would never be handed the adapter's binder. Every meter carries the adapter id as the tag `adapter`, so two adapter ids publish
+two sets which differ in that tag only, and an adapter id without clients registers nothing. The
+counts are kept in the binder, one `LongAdder` per meter and adapter id, and a registry is handed a
+function counter which reads it: nothing counted before a registry is bound is lost, and every
+registry the binder is bound to reads the same number. The counters of an adapter id exist from its
+registration on, at zero.
+
+Each counter moves where its event happens, never through a callback a class would have to know
+about:
+
+- `jobs.received` in the dispatcher, for every job the stream hands over, and `jobs.redelivered`
+  among them for a delivery token above 1. At the pinned commit the engine raises the token of a job
+  with every delivery it records, starting at 1 (`RecordJobDeliveries` of
+  `internal/cluster/partition/partition_persistence.go`), so a token above 1 says that the engine
+  handed the job out before, for whatever reason, a lapsed lock, a retry after a failure or a parked
+  task coming back. No memory of the adapter is needed for it, and a restart changes nothing. A
+  token of 0, which a leader issuing no tokens sends, counts as no redelivery.
+- `jobs.queued` in the dispatcher, once per delivery which is still waiting once its arrival looked
+  for a slot. It is a counter, not a gauge of the queue: the queue is a `ConcurrentLinkedDeque`,
+  whose size is no plain number.
+- `jobs.completed` and `jobs.failed` in the handlers, once the engine took the answer: a completion
+  and a BPMN error count as completed, because a BPMN error is an outcome the method chose; a failure
+  with or without retries counts as failed. The start and end markers count alike, because their
+  jobs are jobs of the engine and part of `jobs.received`. A task left open counts as neither, nor
+  does an answer which found the job gone. Its later completion or cancellation through the process
+  service does not count either, and neither does a user task's: the job meters count what the
+  handlers answered, so that they add up against `jobs.received` on the node which received the
+  jobs, as Camunda 8 counts the jobs its handlers took. Phase two runs on whichever node the
+  application calls, outside the handler slots.
+- `lock.renewed` in the lock renewal for every extension the engine granted to a running handler,
+  and `lock.lost` for a renewal which ended while its handler ran, because the engine said the lock
+  is lost or could not be asked before it lapsed; the extension which parks a job is neither.
+- `usertasks.polls` in the poller, once per look, a look the engine did not answer included.
+- `stream.reconnects` is a function counter on `ZenBpmJobStream#reconnects()`, and the gauges
+  `slots.busy` and `slots.free` read the executor's semaphore. These are in memory already, so they
+  are read at every collection: the platform's `CachedGaugeValue` is for a measurement which asks
+  something, and would only make them stale.
+
+The names are a public contract from the first release on. The README's section "Metrics" lists
+them, and `MicrometerZenBpmMetricsTest` fails where that list and the meters differ.

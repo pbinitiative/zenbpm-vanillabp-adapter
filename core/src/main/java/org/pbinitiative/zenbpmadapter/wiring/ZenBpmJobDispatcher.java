@@ -22,6 +22,7 @@ import org.pbinitiative.zenbpmadapter.client.ReceivedJob;
 import org.pbinitiative.zenbpmadapter.client.ZenBpmClientFactory;
 import org.pbinitiative.zenbpmadapter.client.ZenBpmCommandRetry;
 import org.pbinitiative.zenbpmadapter.client.ZenBpmExecutor;
+import org.pbinitiative.zenbpmadapter.observability.ZenBpmMetrics;
 
 import lombok.extern.slf4j.Slf4j;
 
@@ -47,6 +48,11 @@ import lombok.extern.slf4j.Slf4j;
  * <p>
  * Every job runs under a {@link ZenBpmLockRenewal}, from the moment its handler starts until it
  * returns.
+ * <p>
+ * <b>What is counted.</b> Every job the stream hands over, and among them every delivery of a job
+ * the engine had handed out before, which its delivery token says: the engine raises the token of a
+ * job with each delivery, starting at 1. And every job which is still waiting once it arrived and a
+ * slot was looked for, once however long it waits.
  */
 @Slf4j
 public final class ZenBpmJobDispatcher implements Consumer<ReceivedJob> {
@@ -59,7 +65,9 @@ public final class ZenBpmJobDispatcher implements Consumer<ReceivedJob> {
 
     private final ZenBpmLockRenewal lockRenewal;
 
-    private final Deque<ReceivedJob> waiting = new ConcurrentLinkedDeque<>();
+    private final ZenBpmMetrics metrics;
+
+    private final Deque<Waiting> waiting = new ConcurrentLinkedDeque<>();
 
     /**
      * The handlers of the workflow modules whose processing runs, by workflow module id.
@@ -79,27 +87,31 @@ public final class ZenBpmJobDispatcher implements Consumer<ReceivedJob> {
      *
      * @param adapterId The adapter id
      * @param factory The clients of the adapter id
+     * @param metrics What the dispatcher and the renewal of the locks count into
      */
     public ZenBpmJobDispatcher(
         final String adapterId,
-        final ZenBpmClientFactory factory
+        final ZenBpmClientFactory factory,
+        final ZenBpmMetrics metrics
     ) {
         this(adapterId, factory.executor(), factory
                 .instances(), new ZenBpmLockRenewal(adapterId, factory.rest(), factory.clientId(), factory
                         .executor()
-                        .timing()));
+                        .timing(), metrics), metrics);
     }
 
     ZenBpmJobDispatcher(
         final String adapterId,
         final ZenBpmExecutor executor,
         final ZenBpmInstanceCache instances,
-        final ZenBpmLockRenewal lockRenewal
+        final ZenBpmLockRenewal lockRenewal,
+        final ZenBpmMetrics metrics
     ) {
         this.adapterId = adapterId;
         this.executor = executor;
         this.instances = instances;
         this.lockRenewal = lockRenewal;
+        this.metrics = metrics;
         executor.onSlotFreed(this::handOver);
     }
 
@@ -140,24 +152,65 @@ public final class ZenBpmJobDispatcher implements Consumer<ReceivedJob> {
     @Override
     public void accept(final ReceivedJob received) {
         final var job = received.job();
+        metrics.jobReceived(adapterId);
+        if (job.getDeliveryToken() > 1) {
+            metrics.jobRedelivered(adapterId);
+        }
         if (jobTimeoutOf(job.getType()).isEmpty()) {
             log.warn(
                     "ZenBPM[{}]: a job of type '{}' (key {}) arrived, which no workflow module of this application subscribes; it is left to its lock",
                     adapterId, job.getType(), job.getKey());
             return;
         }
-        waiting.addLast(received);
+        final var arrived = new Waiting(received);
+        waiting.addLast(arrived);
         handOver();
+        if (lookedFor(arrived)) {
+            metrics.jobQueued(adapterId);
+        }
+    }
+
+    // whether the delivery waits once its arrival looked for a slot; one another handover took out
+    // of the queue meanwhile is decided by that handover once it knows whether the slot took it
+    private boolean lookedFor(final Waiting arrived) {
+        synchronized (waiting) {
+            arrived.looked = true;
+            return arrived.countOnceUnlessTaken();
+        }
+    }
+
+    // taken out of the queue and marked so in one step, so the arrival of a job never reads a job
+    // as waiting which a slot takes at once, nor as taken once it waits again
+    private Waiting takeTheNext() {
+        synchronized (waiting) {
+            final var next = waiting.pollFirst();
+            if (next != null) {
+                next.taken = true;
+            }
+            return next;
+        }
+    }
+
+    // a job the slot refused waits again, in front; it is counted here where its arrival looked
+    // while it was out of the queue
+    private boolean putBack(final Waiting refused) {
+        synchronized (waiting) {
+            refused.taken = false;
+            waiting.addFirst(refused);
+            return refused.looked && refused.countOnceUnlessTaken();
+        }
     }
 
     // a job tryExecute refused is put back BEFORE the next look for a free slot, so a slot which
     // comes free meanwhile is seen either by that look or by its own call of this method
     private void handOver() {
         while (true) {
-            final var received = waiting.pollFirst();
-            if (received == null) {
+            // out of the queue for good, unless it is put back below
+            final var next = takeTheNext();
+            if (next == null) {
                 return;
             }
+            final var received = next.received;
             final var job = received.job();
             final var jobTimeout = jobTimeoutOf(job.getType());
             if (jobTimeout.isEmpty()) {
@@ -189,7 +242,9 @@ public final class ZenBpmJobDispatcher implements Consumer<ReceivedJob> {
             if (handedOver) {
                 continue;
             }
-            waiting.addFirst(received);
+            if (putBack(next)) {
+                metrics.jobQueued(adapterId);
+            }
             if (executor.getFreeSlots() == 0) {
                 return;
             }
@@ -284,6 +339,36 @@ public final class ZenBpmJobDispatcher implements Consumer<ReceivedJob> {
                         .map(process -> new Served(handler, process))
                         .stream())
                 .findFirst();
+    }
+
+    /**
+     * A job on its way to a slot, and whether it left the queue: handed over, left to its lock, or
+     * taken out to be handed over.
+     */
+    private static final class Waiting {
+
+        private final ReceivedJob received;
+
+        // the three are read and written under the dispatcher's lock of the queue
+
+        private boolean taken;
+
+        private boolean looked;
+
+        private boolean counted;
+
+        private Waiting(final ReceivedJob received) {
+            this.received = received;
+        }
+
+        private boolean countOnceUnlessTaken() {
+            if (taken || counted) {
+                return false;
+            }
+            counted = true;
+            return true;
+        }
+
     }
 
     private record Served(

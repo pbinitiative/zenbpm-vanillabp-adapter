@@ -38,6 +38,7 @@ import org.pbinitiative.zenbpmadapter.ZenBpmInstanceCache;
 import org.pbinitiative.zenbpmadapter.ZenBpmProcessingContext;
 import org.pbinitiative.zenbpmadapter.ZenBpmProcessingContext.WiredProcess;
 import org.pbinitiative.zenbpmadapter.client.FakeEngine;
+import org.pbinitiative.zenbpmadapter.observability.ZenBpmMetrics;
 
 import io.vanillabp.integration.adapter.spi.NameClashAvoidance;
 import io.vanillabp.integration.adapter.spi.workflowtask.DeliveryOfAnUnknownWorkflowException;
@@ -515,7 +516,7 @@ class ZenBpmUserTaskPollerTest {
         startsPolling(Duration.ofHours(1));
         // a cache which keeps nothing, so a second look at the job would read the instance again
         poller = new ZenBpmUserTaskPoller("orders", jobs.factory.rest(), jobs.factory
-                .executor(), new ZenBpmInstanceCache(jobs.factory.rest(), 0), Duration.ofHours(1));
+                .executor(), new ZenBpmInstanceCache(jobs.factory.rest(), 0), Duration.ofHours(1), jobs.metrics);
         poller.register(notifier);
 
         looksTwice();
@@ -556,7 +557,7 @@ class ZenBpmUserTaskPollerTest {
     }
 
     @Test
-    @DisplayName("A look the engine does not answer takes no user task for new or gone, is warned about once per outage, and the next look which is answered says so and tells what it finds")
+    @DisplayName("A look the engine does not answer takes no user task for new or gone, is warned about once per outage, and the next look which is answered says so and tells what it finds; each look is counted as a poll, the failed ones included")
     void aFailedLookIsWarnedAboutOncePerOutage(final CapturedOutput output) {
         jobs.holds(ROOT, "default", null, "order-1", "\"id\": \"order-1\"");
         jobs.engine.answers("GET", "/v1/jobs", 503, "{\"code\": \"UNAVAILABLE\", \"message\": \"no leader\"}");
@@ -573,7 +574,8 @@ class ZenBpmUserTaskPollerTest {
                 () -> assertTrue(output
                         .getOutOfThisTest()
                         .contains("the engine answers the looks at the user tasks again"), output::getOutOfThisTest),
-                () -> assertEquals(List.of("51-created"), deliveryIds()));
+                () -> assertEquals(List.of("51-created"), deliveryIds()),
+                () -> assertEquals(3, jobs.counted(ZenBpmMetrics.USER_TASK_POLLS)));
     }
 
     @Test
@@ -853,7 +855,7 @@ class ZenBpmUserTaskPollerTest {
                         BILLING_TYPE, "check")));
         final var collaborators = TestCollaborators.withInvoker("orders", TestScoping.of(
                 NameClashAvoidance.USE_PREFIX), jobs.invoker);
-        final var billingHandler = new ZenBpmJobHandler("orders", jobs.factory, collaborators, billing, ZenBpmRetryBackoffResolver.NONE);
+        final var billingHandler = new ZenBpmJobHandler("orders", jobs.factory, collaborators, billing, ZenBpmRetryBackoffResolver.NONE, jobs.metrics);
         poller.register(new ZenBpmUserTaskNotifier("orders", jobs.factory, collaborators, billing, billingHandler));
         jobs.invoker.servesUserTasks("approve", "check");
         looks();
@@ -982,7 +984,7 @@ class ZenBpmUserTaskPollerTest {
         final var context = new ZenBpmProcessingContext("billing");
         context.recordWiring(new WiredProcess("Invoice", "billing__Invoice", Set
                 .of("billing__Invoice__bill"), true, false, Map.of(), Map.of(), Map.of()));
-        poller = new ZenBpmUserTaskPoller("orders", jobs.factory);
+        poller = new ZenBpmUserTaskPoller("orders", jobs.factory, jobs.metrics);
         poller.register(new ZenBpmUserTaskNotifier("orders", jobs.factory, TestCollaborators.withInvoker("orders",
                 TestScoping.of(NameClashAvoidance.USE_PREFIX), jobs.invoker), context, jobs.handler));
 
@@ -1003,11 +1005,11 @@ class ZenBpmUserTaskPollerTest {
                     .of(), Map.of(), Map.of(USER_TASK_TYPE, "approve")));
             final var collaborators = TestCollaborators.withInvoker("orders", TestScoping.of(
                     NameClashAvoidance.USE_PREFIX), jobs.invoker);
-            handler = new ZenBpmJobHandler("orders", jobs.factory, collaborators, context, ZenBpmRetryBackoffResolver.NONE);
+            handler = new ZenBpmJobHandler("orders", jobs.factory, collaborators, context, ZenBpmRetryBackoffResolver.NONE, jobs.metrics);
             notifier = new ZenBpmUserTaskNotifier("orders", jobs.factory, collaborators, context, handler);
         }
         poller = new ZenBpmUserTaskPoller("orders", jobs.factory.rest(), jobs.factory.executor(), jobs.factory
-                .instances(), interval);
+                .instances(), interval, jobs.metrics);
         poller.register(notifier);
     }
 
@@ -1020,7 +1022,7 @@ class ZenBpmUserTaskPollerTest {
                         USER_TASK_TYPE, "check")));
         final var collaborators = TestCollaborators.withInvoker("orders", TestScoping.of(
                 NameClashAvoidance.USE_PREFIX), jobs.invoker);
-        final var billingHandler = new ZenBpmJobHandler("orders", jobs.factory, collaborators, billing, ZenBpmRetryBackoffResolver.NONE);
+        final var billingHandler = new ZenBpmJobHandler("orders", jobs.factory, collaborators, billing, ZenBpmRetryBackoffResolver.NONE, jobs.metrics);
         jobs.invoker.servesUserTasks("approve", "check");
         poller.register(new ZenBpmUserTaskNotifier("orders", jobs.factory, collaborators, billing, billingHandler));
     }

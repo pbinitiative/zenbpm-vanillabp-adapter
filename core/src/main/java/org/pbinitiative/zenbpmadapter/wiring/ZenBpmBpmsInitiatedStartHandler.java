@@ -17,6 +17,7 @@ import org.pbinitiative.zenbpmadapter.client.ZenBpmErrors;
 import org.pbinitiative.zenbpmadapter.client.ZenBpmRestClient;
 import org.pbinitiative.zenbpmadapter.client.api.JobFailure;
 import org.pbinitiative.zenbpmadapter.model.ZenBpmMarkerTasks;
+import org.pbinitiative.zenbpmadapter.observability.ZenBpmMetrics;
 
 import io.vanillabp.integration.adapter.spi.AggregateSyncMode;
 import io.vanillabp.integration.adapter.spi.workflowstart.BpmsInitiatedStartContext;
@@ -70,13 +71,16 @@ final class ZenBpmBpmsInitiatedStartHandler {
 
     private final ZenBpmRetryBackoffResolver retryBackoffs;
 
+    private final ZenBpmMetrics metrics;
+
     ZenBpmBpmsInitiatedStartHandler(
         final String adapterId,
         final String workflowModuleId,
         final BpmsInitiatedStartInvoker invoker,
         final ZenBpmRestClient rest,
         final String clientId,
-        final ZenBpmRetryBackoffResolver retryBackoffs
+        final ZenBpmRetryBackoffResolver retryBackoffs,
+        final ZenBpmMetrics metrics
     ) {
         this.adapterId = adapterId;
         this.workflowModuleId = workflowModuleId;
@@ -84,6 +88,7 @@ final class ZenBpmBpmsInitiatedStartHandler {
         this.rest = rest;
         this.clientId = clientId;
         this.retryBackoffs = retryBackoffs;
+        this.metrics = metrics;
     }
 
     /**
@@ -129,6 +134,7 @@ final class ZenBpmBpmsInitiatedStartHandler {
                     .bpmnProcessId());
             return;
         }
+        metrics.jobCompleted(adapterId);
         log.debug("ZenBPM[{}]: workflow aggregate '{}' started at start event '{}' of process '{}' (instance {}), {}",
                 adapterId, result.workflowAggregateId(), start.getStartEventId(), process.bpmnProcessId(), job
                         .getInstanceKey(),
@@ -208,6 +214,7 @@ final class ZenBpmBpmsInitiatedStartHandler {
                     .withMessage(message)
                     .withRetryBackoff(retryBackoff.orElse(null))
                     .ofTheDelivery(job.getDeliveryToken(), clientId)));
+            metrics.jobFailed(adapterId);
         } catch (final RuntimeException e) {
             if (!ZenBpmErrors.isGoneJob(e)) {
                 throw e;

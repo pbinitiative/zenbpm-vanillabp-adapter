@@ -37,6 +37,7 @@ import org.pbinitiative.zenbpmadapter.client.ZenBpmClientFactory;
 import org.pbinitiative.zenbpmadapter.client.ZenBpmClientRegistry;
 import org.pbinitiative.zenbpmadapter.client.grpc.Zenbpm.StreamSubscriptionRequest;
 import org.pbinitiative.zenbpmadapter.model.ZenBpmMarkerTasks;
+import org.pbinitiative.zenbpmadapter.observability.ZenBpmMetrics;
 import org.pbinitiative.zenbpmadapter.wiring.ZenBpmJobHandler;
 import org.pbinitiative.zenbpmadapter.wiring.ZenBpmRetryBackoffResolver;
 
@@ -100,7 +101,7 @@ class ZenBpmDeclaredProcessWorkersTest {
                 TestWiring
                         .claiming("Orders")
                         .servedElsewhere("Notify")
-                        .wiring()), context, ZenBpmRetryBackoffResolver.NONE);
+                        .wiring()), context, ZenBpmRetryBackoffResolver.NONE, ZenBpmMetrics.NONE);
         assertAll(
                 () -> assertEquals(List.of(
                         "shop__Orders__charge",
@@ -180,7 +181,7 @@ class ZenBpmDeclaredProcessWorkersTest {
                 TestWiring
                         .claiming("Orders")
                         .servedElsewhere("Notify")
-                        .wiring()), context, ZenBpmRetryBackoffResolver.NONE);
+                        .wiring()), context, ZenBpmRetryBackoffResolver.NONE, ZenBpmMetrics.NONE);
         assertAll(
                 () -> assertEquals(List.of("charge", "ship", "pack", "vanillabp__started__Orders",
                         "vanillabp__ended__Orders", "vanillabp__ended__OrdersBeforeTheRename"),
