@@ -216,6 +216,32 @@ README's "Metrics" section and decision 59 say it. Build (`TZ=Etc/UTC mvn clean 
 integration tests 25, the rest as above; coverage 100 % on both platforms (0 of 38,341 missed on
 Spring Boot, 0 of 38,257 on Quarkus); `bin/check-deploy-safety.sh` green.
 
+**S11.1.1 done 2026-10-21**, merged to `main` as `eac63e8` (pull request #73: story `46d70a1`,
+review fixes `639abf8`, CodeRabbit fix `4ba2da9`). On `eac63e8` (GitHub keeps run logs for 90
+days, so what they showed is written here as well):
+
+- `Checks`, run
+  [39564947296](https://github.com/pbinitiative/zenbpm-vanillabp-adapter/actions/runs/39564947296):
+  green on both JDKs. `bin/check-engine-copies.sh` (in the JDK 25 job) reported both copies as the
+  engine's files of `bdd795a3...`. On both JDKs `MicrometerZenBpmMetricsTest` ran 6 tests,
+  `ZenBpmJobDispatcherTest` 15, `ZenBpmHealthTest` 12, `ZenBpmMetricsIT` 2,
+  `ZenBpmMetricsBootTest` 3, `ZenBpmWithoutMicrometerBootTest` 1 (in the Surefire execution
+  `without-micrometer`), the Quarkus `ZenBpmWithoutMicrometerTest` 1, `ZenBpmOwnMetricsTest` 1 and
+  `ZenBpmWorkflowLifecycleTest` 23, none skipped (engine test support 12 unit and 5 integration
+  tests, core 1,271 unit and 104 integration tests, Spring Boot 14 unit and 95 integration tests,
+  smoke test 41 + 1, Quarkus runtime 13, Quarkus deployment 53, Quarkus integration tests 25,
+  coverage gate 37). The gate measured 100 % on both platforms: of 38,341 instructions for Spring
+  Boot and 38,257 for Quarkus on JDK 25, of 38,329 and 38,245 on JDK 21.
+- `Publish snapshots`, run
+  [39564947339](https://github.com/pbinitiative/zenbpm-vanillabp-adapter/actions/runs/39564947339):
+  green. The snapshot it published to GitHub Packages, `2.0.0-20261021.075138-69`, holds the
+  batch's new main classes: in the core `ZenBpmMetrics` (with `NONE`) and `MicrometerZenBpmMetrics`
+  with `Counted`, `Counter` and `Read` (265 classes), in the Spring Boot module
+  `ZenBpmClientAutoConfiguration.ZenBpmMetricsConfiguration`, in the Quarkus runtime
+  `ZenBpmMetricsProducer`, and no test class, fake, fixture or BPMN file. Both report pages
+  (`spring-boot-report/index.html`, `quarkus-report/index.html`) answer HTTP 200 and show 0 of
+  38,341 (Spring Boot) and 0 of 38,257 (Quarkus) instructions missed.
+
 ## S11.2.1 Startup-message review
 
 - [ ] **Depends on:** E10.
