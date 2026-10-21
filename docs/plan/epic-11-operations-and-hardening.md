@@ -451,7 +451,7 @@ days, so what they showed is written here as well):
 
 ## S11.3.1 Election ITs
 
-- [ ] **Depends on:** S3.3.1, E7.
+- [x] **Depends on:** S3.3.1, E7.
 
 New module `election-integration-test` (Spring, Docker): `ZenBpmSharedEngineElectionIT` - two ids of
 type `zenbpm` on ONE engine, differing in `name-clash-avoidance` (`use-prefix`
@@ -462,6 +462,129 @@ holds is not claimed by zenbpm; `canLocateWorkflows` true so no `guessing-adapte
 
 **Acceptance criteria**: both ITs green; the `ElectionScopeContractTest` reasoning holds against a
 real engine.
+
+*Fit check, 2026-10-21, decided by the Implementor where it says so.* Checked against `main` at
+`03294bf`, the platform's `ADAPTER-AUTHORS.md` section 4, `ElectionScopeContractTest`,
+`MigrationProcessService` (the start on the first adapter,
+`validateElectionCapabilityAfterDeployment`), `WorkflowLocator` (a start row or a cached hint is
+probed first) and `ExtensionWorkflowElection`, all read from the published snapshot
+`2.0.0-20261020.102546-22` (the sources jar on Maven Central's snapshot repository; the
+superproject's checkout of the platform is older), and the BPMS double of the same snapshot
+(`bpms-double`, `bpms-double-spring-boot`, sources jar). No claim about the engine at the pin was
+needed beyond what the two ITs show against the pinned image. What did not fit, and what was
+decided:
+
+1. **Quarkus** (open question of the brief). Decided by the Implementor: Spring Boot only, as the
+   story names it. The story adds no adapter behaviour, it runs the platform's election end to end;
+   the election is the platform's code, and the adapter's probes are the core's, the same on both
+   platforms. The Quarkus side of the shared-engine setup boots in `ZenBpmOneEngineTwoModesTest`. A
+   Quarkus twin would need two prod-mode applications on one database for the migration, which
+   `quarkus/integration-tests` has no pattern for; it is not cheap, so it is not built.
+2. **The module and the coverage report** (open question). Decided by the Implementor: everything of
+   `election-integration-test` lives in `src/test`, like the Spring ITs of `spring-boot`. The jar
+   holds only the licence files every jar of the repository carries, so it is never empty, and
+   install and deploy are skipped (`bin/check-deploy-safety.sh` green). The module is a dependency
+   of `test-coverage-report/spring-boot`, so its execution data feeds the Spring Boot report and the
+   gate's list of deliberate exceptions still names only `engine-test-support`. Without production
+   sources the module needs no rule in `ProductionModules`. The ITs run in `checks.yaml` with `mvn
+   install` (failsafe, `@Testcontainers(disabledWithoutDocker = true)`, as every engine IT).
+3. **Where the double comes from.** `io.vanillabp:bpms-double-spring-boot` is now managed in the
+   root POM's `dependencyManagement` with the platform's version property, like every other
+   `io.vanillabp` artifact; `smoke-test` drops its own version. The build resolved build `-22` from
+   Maven Central's snapshot repository.
+4. **What the double answers** (open question). Read from its code: without a hook it knows no task
+   and no workflow (`UNKNOWN_TO_BPMS`), and `canLocateWorkflows` is `true` unless a
+   `DummyTaskAwarenessSource` says otherwise. The test steers it with `TheDouble`, a hook which
+   holds the workflows a test names and writes down every push of a changed aggregate. So the
+   absence of the `guessing-adapters` message depends on both adapters; decided by the Implementor
+   to add what zenbpm contributes: a third test makes the double guess, and the platform's refusal
+   names `[double]` alone and counts two adapters (`[zenbpm, double]`). The check runs in this
+   setup, and the adapter is not among the guessing ones.
+5. **A start marker gives every workflow a hint.** The adapter writes a start marker into every
+   model it deploys (decision 26), and its delivery writes the row which names the adapter id. So a
+   workflow started at the engine on a deployed model reaches the old id, gets that row, and the
+   election probes the old id first and never asks the new one. That is right, and it is no gap. To
+   run the walk without a hint, which `ElectionScopeContractTest` describes, the test starts a
+   workflow on a plain copy of the model it deploys itself under the process id of the old id, as
+   another client of the engine would; the platform's `WorkflowElection` then asks the new id first,
+   which answers `UNKNOWN_TO_BPMS`, and finds the workflow at the old id.
+6. **"Found and completed by the old id".** A task operation names its task, and phase one routes it
+   by the record of the delivery (platform decision 30), so the completion of the old user task is
+   not where the probes decide. The IT shows the end to end with the delivery log: every delivery of
+   the old workflow, the service task which became due only after the migration booted included,
+   names `zenbpm-old`, and the instance ends under `Shipping`. The probes are asked directly for the
+   rest: the task probe (user tasks, both ids, both directions) and the workflow probe, with the
+   aggregate id and with the key of the other id's instance, which the shared engine answers for
+   both (decision 25).
+7. **Contradictions**: none found between `ADAPTER-AUTHORS.md`, the double's README and the code. No
+   GAPS row is cited or added, and no decision (61 stays free); the README names the module and what
+   the ITs show.
+
+**Acceptance evidence, 2026-10-21.**
+
+- [x] Both ITs green against the pinned image, in `election-integration-test`:
+  `ZenBpmSharedEngineElectionIT` (5 tests) and `ZenBpmNextToTheDoubleIT` (3 tests).
+  - The shared engine: an application with `zenbpm-old` alone (`none`) starts two shipments and
+    closes; the application of the migration (`zenbpm-new` under `use-prefix` first, `zenbpm-old`
+    second) boots on the same database. The old workflow is completed through the old id (its
+    user task by the application, its service task by the old id, every delivery naming
+    `zenbpm-old`, the instance ending under `Shipping`). A new one starts under the new id
+    (`election-it__Shipping`, its start row and every delivery naming `zenbpm-new`). The task probe
+    of the wrong id answers `UNKNOWN_TO_BPMS` for the user task of the other id, both ways, and
+    the right id `ACTIVE`; so does the workflow probe, by the aggregate and by the other id's key.
+    The platform's `WorkflowElection` finds a workflow of the old id it holds no row of past the
+    new id.
+  - Next to the double: a workflow the double holds is not claimed (the adapter's probe answers
+    `UNKNOWN_TO_BPMS`, the election answers `double`, the push of the changed aggregate reaches
+    the double), a workflow the application starts runs at the engine; the application boots
+    without a `guessing-adapters` message, `canLocateWorkflows` is `true`, and where the double
+    guesses the refusal names `[double]` alone for both processes, served by `[zenbpm, double]`.
+- [x] The reasoning of `ElectionScopeContractTest` holds against a real engine: on one engine every
+  key answers for both ids, and each id answers for its own scope only, so the walk reaches the
+  holder (the election test above), and an id which claimed more would win it (the mutants below).
+  E11's clause "the election ITs are green" is met by this story; E11 is not done yet.
+- Mutants, each installed into the core and run against both ITs, all killed: the scope check of
+  the task probe off (killed by the task-probe test); the search of the workflow probe without the
+  process id (the workflow-probe and the election tests); the key of a workflow taken without its
+  process (the workflow-probe test); `canLocateWorkflows` answering `false` (both double tests which
+  boot, and the shared-engine class, whose start is refused); the search answering `ACTIVE` where
+  it found nothing (the double test, the workflow-probe and the election tests). 5 of 5. The
+  completion of the old workflow survives the first one on its own, as fit-check point 6 says: the
+  engine completes a job by its key for either id.
+- Clean build (`TZ=Etc/UTC mvn -U clean install` on OpenJDK 25.0.2, Docker ITs included, none
+  skipped): engine test support 12 + 5, core 1,275 + 104, Spring Boot 14 + 95, smoke test 42 + 1,
+  election integration test 0 + 8, Quarkus runtime 13, deployment 54, integration tests 25, gate 37;
+  coverage 100 % on both platforms (0 of 38,473 instructions missed on Spring Boot, 0 of 38,395 on
+  Quarkus); `bin/check-deploy-safety.sh` green (13 files deployed by the green build, none of the
+  new module, and nothing by the red gate).
+
+**Answers to two reviews of e11-s11.3.1, 2026-10-21** (one by Claude, approve: 2 Nits; one by
+Copilot, approve: no finding). Both claims were checked in the code of the branch; both are valid
+and fixed. No decision and no gap were needed.
+
+- **The IT's Javadoc named a test class of the platform's repository** (Claude 1, Nit). A rename
+  there would leave the name wrong and nothing here would notice, which the repository's rule on
+  what code may point at forbids. The name is gone; the sentence keeps the reasoning in its own
+  words. The plan keeps the name.
+- **"Every key of the engine answers for both ids" was backed by no assertion** (Claude 2, Nit).
+  The workflow probe hands whatever a key does not lead to (a `404`, a key of another partition, a
+  failure) on to the search by business key, so the wrong id's `UNKNOWN_TO_BPMS` by the other id's
+  key would also come from a key which leads nowhere, and the right id's `ACTIVE` may come from the
+  search. `ZenBpmSharedEngineElectionIT#aWorkflowProbeOfTheWrongIdAnswersUnknown` now first reads
+  both keys through the test's own client (`ZenBpmRestClient#instance`): the old key is the
+  running instance of `Shipping`, the new key the running instance of `election-it__Shipping`.
+  Mutant: the old key moved off its instance (`+ 1,000,000`) fails the test at that read (the
+  engine answers `502 partition not found`). Read from the code, the probes alone would not have
+  noticed it: both ids fall through to the search, which answers as before. The unmutated class is
+  green (5 tests). The task probe needs no such read: it answers by the job's key alone, without a
+  search, so the right id's `ACTIVE` already shows that the key resolves.
+
+Build after the fixes (`TZ=Etc/UTC mvn clean install` on OpenJDK 25.0.2, Docker ITs included,
+none skipped, 17:32 min): engine test support 12 + 5, core 1,275 + 104, Spring Boot 14 + 95, smoke
+test 42 + 1, election integration test 0 + 8, Quarkus runtime 13, deployment 54, integration tests
+25, gate 37; coverage 100 % on both platforms (0 of 38,473 instructions missed on Spring Boot, 0 of
+38,395 on Quarkus); `bin/check-deploy-safety.sh` green (13 files deployed by the green build,
+none of the new module, and nothing by the red gate).
 
 ## S11.4.1 Native image
 

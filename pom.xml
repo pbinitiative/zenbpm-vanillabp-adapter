@@ -46,6 +46,7 @@
     <module>core</module>
     <module>spring-boot</module>
     <module>smoke-test</module>
+    <module>election-integration-test</module>
     <module>quarkus/runtime</module>
     <module>quarkus/deployment</module>
     <module>quarkus/integration-tests</module>
@@ -173,6 +174,11 @@
       <dependency>
         <groupId>io.vanillabp</groupId>
         <artifactId>test-utils</artifactId>
+        <version>${adapter-platform.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>io.vanillabp</groupId>
+        <artifactId>bpms-double-spring-boot</artifactId>
         <version>${adapter-platform.version}</version>
       </dependency>
       <dependency>

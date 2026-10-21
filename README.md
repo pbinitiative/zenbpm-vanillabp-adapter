@@ -29,6 +29,13 @@ Two adapter ids on one `rest-address` boot only where their `name-clash-avoidanc
 level differs, the setup of a migration from one mode to the other; with the same mode they end the
 start, naming the keys which tell them apart. The address is compared as configured, so two
 addresses of one engine (an alias, a proxy, two nodes of one cluster) are not recognised as one.
+`election-integration-test` runs that migration against the pinned engine on Spring Boot: every key
+of the engine answers for both ids, and each id still answers the platform's probes only for the
+workflows and tasks of its own mode, so a workflow the old id started is completed through it, a
+new workflow starts under the new id, and the platform's election walks past the new id to a
+workflow of the old one it holds no row of. Next to the platform's BPMS double as a second BPMS,
+the adapter does not claim the double's workflows, and it says that it asks the engine, so the
+platform's refusal of an adapter which guesses next to another one does not apply to it.
 The adapter reads the BPMN files of a workflow module, also for an adapter id without an engine, and
 refuses a file holding an executable process and any other process, because the engine would read
 them as one, and a file which uses what ZenBPM cannot run or would run differently from the model,
@@ -398,6 +405,7 @@ What is built next, and in which order, is the implementation plan in [`docs/`](
 | `core`                               | `zenbpm-vanillabp-adapter`                    | the platform-neutral adapter: deployment, task delivery, REST and gRPC client |
 | `spring-boot`                        | `zenbpm-vanillabp-adapter-spring-boot`        | Spring Boot auto-configuration                                                |
 | `smoke-test`                         | (not published)                               | discovery, health and startup validation on Spring Boot without an engine     |
+| `election-integration-test`          | (not published)                               | the BPMS election on Spring Boot: two adapter ids on one engine, the double   |
 | `quarkus/runtime`                    | `zenbpm-vanillabp-adapter-quarkus`            | Quarkus extension, runtime part                                               |
 | `quarkus/deployment`                 | `zenbpm-vanillabp-adapter-quarkus-deployment` | Quarkus extension, build-time part                                            |
 | `quarkus/integration-tests`          | (not published)                               | end-to-end tests on a booted Quarkus application                              |
