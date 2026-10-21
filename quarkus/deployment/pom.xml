@@ -12,10 +12,28 @@
   <name>VanillaBP adapter for ZenBPM - Quarkus extension - Deployment</name>
   <description>Quarkus extension deployment of the VanillaBP adapter for ZenBPM</description>
 
+  <dependencyManagement>
+    <dependencies>
+      <!-- the Netty a Quarkus application runs, see netty.version.quarkus in the root POM -->
+      <dependency>
+        <groupId>io.netty</groupId>
+        <artifactId>netty-bom</artifactId>
+        <version>${netty.version.quarkus}</version>
+        <type>pom</type>
+        <scope>import</scope>
+      </dependency>
+    </dependencies>
+  </dependencyManagement>
+
   <dependencies>
     <dependency>
       <groupId>io.quarkus</groupId>
       <artifactId>quarkus-arc-deployment</artifactId>
+    </dependency>
+    <!-- the deployment part of the Netty extension the runtime part depends on -->
+    <dependency>
+      <groupId>io.quarkus</groupId>
+      <artifactId>quarkus-netty-deployment</artifactId>
     </dependency>
     <dependency>
       <groupId>io.vanillabp</groupId>
@@ -76,6 +94,9 @@
           <!-- the log manager Quarkus logs through, so a test reads the records of a boot -->
           <systemPropertyVariables>
             <java.util.logging.manager>org.jboss.logmanager.LogManager</java.util.logging.manager>
+            <!-- the Netty pin and the BOM it has to follow, read by QuarkusNettyTest -->
+            <netty.version.quarkus>${netty.version.quarkus}</netty.version.quarkus>
+            <quarkus.bom>${settings.localRepository}/io/quarkus/quarkus-bom/${quarkus.version}/quarkus-bom-${quarkus.version}.pom</quarkus.bom>
           </systemPropertyVariables>
         </configuration>
       </plugin>

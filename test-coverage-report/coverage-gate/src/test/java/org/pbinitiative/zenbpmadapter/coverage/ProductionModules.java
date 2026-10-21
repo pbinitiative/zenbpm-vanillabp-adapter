@@ -134,6 +134,20 @@ final class ProductionModules {
                         quarkus.pom());
     }
 
+    /**
+     * The artifact ids of every module of the repository which has production sources, wherever
+     * it lives, so that a list of exceptions can be checked for an entry which names no such module.
+     *
+     * @param repositoryRoot The repository's root directory
+     * @return The artifact ids, in the order of the modules' directories
+     */
+    static List<String> artifactIdsWithProductionSources(final Path repositoryRoot) {
+        return modulesWithProductionSources(repositoryRoot)
+                .stream()
+                .map(module -> artifactIdOf(module.resolve("pom.xml")))
+                .toList();
+    }
+
     private static List<Path> modulesWithProductionSources(final Path repositoryRoot) {
         final var productionSources = Path.of("src", "main", "java");
         final var modules = new ArrayList<Path>();

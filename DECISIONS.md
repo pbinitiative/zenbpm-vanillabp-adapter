@@ -1748,3 +1748,41 @@ not even through the parser's message where they cannot be read, which would quo
 stopped at.
 
 The README's section "Boot behavior" lists every finding with the test which holds it.
+
+### 61. On Quarkus the job stream runs on grpc-netty over Quarkus' Netty, not on grpc-netty-shaded
+
+Decided by the implementation pipeline in place of the maintainers, as their policy for the
+autonomous run asks.
+
+The core builds the job stream's channel with `Grpc.newChannelBuilder`, which takes whichever
+transport the classpath offers, and depends on `grpc-netty-shaded`, which brings a Netty of its
+own. On Spring Boot that stays so: the shaded Netty cannot clash with the Netty of the application.
+
+The Quarkus extension excludes `grpc-netty-shaded` and depends on `grpc-netty` and Quarkus' Netty
+extension (`quarkus-netty`) instead. The shaded copy does not build into a native image of a Quarkus
+application, and nothing Quarkus provides reaches it: Quarkus' native-image substitutions for Netty
+name the classes of `io.netty`, not their shaded copies. The native build of
+`quarkus/native-image-tests` proved it. With the shaded transport the image build first failed on
+classes of the shaded Netty which load Jetty's NPN and Conscrypt, neither of which is on the
+classpath, and which Quarkus answers for the unshaded Netty with substitutions; the next failure was
+a buffer allocator of the shaded Netty in the image heap. Writing those substitutions again for the
+shaded package names would copy a large part of Quarkus' Netty extension into this adapter and
+follow every Netty release by hand. Quarkus documents the same limit for its own xDS gRPC
+integration, which does not support native executables "due to the issues with shaded grpc-netty
+library", and the Quarkiverse extensions for Google Cloud exclude the shaded transport for
+`grpc-netty` the same way. Camunda 8's
+Quarkus extension depends on `quarkus-netty` for the same reason.
+
+A Quarkus application therefore runs the job stream on the Netty of its Quarkus platform, the one
+its other extensions use. Netty is pinned to the version the Quarkus BOM manages in every module
+under `quarkus/` (`netty.version.quarkus` in the root POM), because the root POM imports the Spring
+Boot BOM first, which lifts Netty to its own, newer major version, while Quarkus' substitutions are
+written against exactly the Quarkus version. Renovate leaves Netty alone; it moves with
+`quarkus.version`.
+
+What the native image needs on top of that is registered by `ZenBpmNativeImageProcessor`, each
+registration with the failure which named it: the gRPC providers the channel finds through the
+service loader, the run-time initialization of gRPC's two buffer-allocator holders, the records of
+the REST client for Jackson, the classes generated from the proto, and the platform's version
+descriptor. The README's section "Native image" says what an application needs and how the native
+build is run.

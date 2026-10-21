@@ -91,6 +91,44 @@ class ProductionModulesTest {
     }
 
     @Test
+    @DisplayName("A module under quarkus/ which no report reads fails until it is a named exception")
+    void aQuarkusModuleOutsideTheReportNeedsADecision() throws IOException {
+        module("quarkus/native-image-tests", "zenbpm-vanillabp-adapter-quarkus-native-image-tests", true);
+        final var springBoot = report("spring-boot");
+        final var quarkus = report("quarkus");
+
+        assertEquals(
+                List
+                        .of(
+                                "zenbpm-vanillabp-adapter-quarkus-native-image-tests (in 'quarkus/native-image-tests'): "
+                                        + "not read by the Quarkus report"),
+                ProductionModules.missingFromTheReportOfTheirPlatform(root, springBoot, quarkus, Set.of()));
+        assertEquals(
+                List.of(),
+                ProductionModules
+                        .missingFromTheReportOfTheirPlatform(
+                                root,
+                                springBoot,
+                                quarkus,
+                                Set.of("zenbpm-vanillabp-adapter-quarkus-native-image-tests")));
+    }
+
+    @Test
+    @DisplayName("The modules with production sources are named by their artifact ids, wherever they live")
+    void theModulesWithProductionSourcesAreNamed() throws IOException {
+        module("engine-test-support", "zenbpm-vanillabp-adapter-engine-test-support", true);
+        module("quarkus/native-image-tests", "zenbpm-vanillabp-adapter-quarkus-native-image-tests", true);
+        module("smoke-test", "zenbpm-vanillabp-adapter-smoke-test", false);
+
+        assertEquals(
+                List
+                        .of(
+                                "zenbpm-vanillabp-adapter-engine-test-support",
+                                "zenbpm-vanillabp-adapter-quarkus-native-image-tests"),
+                ProductionModules.artifactIdsWithProductionSources(root));
+    }
+
+    @Test
     @DisplayName("Modules without production sources and anything under target are not asked for")
     void testOnlyModulesAndBuildOutputAreNotAskedFor() throws IOException {
         module("smoke-test", "zenbpm-vanillabp-adapter-smoke-test", false);

@@ -1,0 +1,77 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" id="zenbpm-native"
+    xmlns:zenbpm="http://zenbpm.pbinitiative.org/1.0" targetNamespace="http://bpmn.io/schema/bpmn"
+    xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI"
+    xmlns:dc="http://www.omg.org/spec/DD/20100524/DC"
+    xmlns:di="http://www.omg.org/spec/DD/20100524/DI">
+  <bpmn:message id="Message_GoAhead" name="goAhead" />
+  <bpmn:process id="Native" isExecutable="true">
+    <bpmn:startEvent id="Started">
+      <bpmn:outgoing>Flow_ToServe</bpmn:outgoing>
+    </bpmn:startEvent>
+    <bpmn:serviceTask id="Serve" name="Serve the aggregate">
+      <bpmn:incoming>Flow_ToServe</bpmn:incoming>
+      <bpmn:outgoing>Flow_ToAwaitGoAhead</bpmn:outgoing>
+      <bpmn:extensionElements>
+        <zenbpm:taskDefinition type="serve" />
+      </bpmn:extensionElements>
+    </bpmn:serviceTask>
+    <bpmn:receiveTask id="AwaitGoAhead" name="Await the go-ahead" messageRef="Message_GoAhead">
+      <bpmn:incoming>Flow_ToAwaitGoAhead</bpmn:incoming>
+      <bpmn:outgoing>Flow_ToFinish</bpmn:outgoing>
+    </bpmn:receiveTask>
+    <bpmn:serviceTask id="Finish" name="Finish the aggregate">
+      <bpmn:incoming>Flow_ToFinish</bpmn:incoming>
+      <bpmn:outgoing>Flow_ToFinished</bpmn:outgoing>
+      <bpmn:extensionElements>
+        <zenbpm:taskDefinition type="finish" />
+      </bpmn:extensionElements>
+    </bpmn:serviceTask>
+    <bpmn:endEvent id="Finished">
+      <bpmn:incoming>Flow_ToFinished</bpmn:incoming>
+    </bpmn:endEvent>
+    <bpmn:sequenceFlow id="Flow_ToServe" sourceRef="Started" targetRef="Serve" />
+    <bpmn:sequenceFlow id="Flow_ToAwaitGoAhead" sourceRef="Serve" targetRef="AwaitGoAhead" />
+    <bpmn:sequenceFlow id="Flow_ToFinish" sourceRef="AwaitGoAhead" targetRef="Finish" />
+    <bpmn:sequenceFlow id="Flow_ToFinished" sourceRef="Finish" targetRef="Finished" />
+  </bpmn:process>
+  <bpmndi:BPMNDiagram id="BPMNDiagram_1">
+    <bpmndi:BPMNPlane id="BPMNPlane_1" bpmnElement="Native">
+      <bpmndi:BPMNShape id="Started_di" bpmnElement="Started">
+        <dc:Bounds x="160" y="80" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Serve_di" bpmnElement="Serve">
+        <dc:Bounds x="256" y="80" width="100" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="AwaitGoAhead_di" bpmnElement="AwaitGoAhead">
+        <dc:Bounds x="416" y="80" width="100" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Finish_di" bpmnElement="Finish">
+        <dc:Bounds x="576" y="80" width="100" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Finished_di" bpmnElement="Finished">
+        <dc:Bounds x="736" y="80" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNEdge id="Flow_ToServe_di" bpmnElement="Flow_ToServe">
+        <di:waypoint x="196" y="98" />
+        <di:waypoint x="226" y="98" />
+        <di:waypoint x="226" y="120" />
+        <di:waypoint x="256" y="120" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_ToAwaitGoAhead_di" bpmnElement="Flow_ToAwaitGoAhead">
+        <di:waypoint x="356" y="120" />
+        <di:waypoint x="416" y="120" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_ToFinish_di" bpmnElement="Flow_ToFinish">
+        <di:waypoint x="516" y="120" />
+        <di:waypoint x="576" y="120" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_ToFinished_di" bpmnElement="Flow_ToFinished">
+        <di:waypoint x="676" y="120" />
+        <di:waypoint x="706" y="120" />
+        <di:waypoint x="706" y="98" />
+        <di:waypoint x="736" y="98" />
+      </bpmndi:BPMNEdge>
+    </bpmndi:BPMNPlane>
+  </bpmndi:BPMNDiagram>
+</bpmn:definitions>

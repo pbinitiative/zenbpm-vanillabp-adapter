@@ -72,7 +72,7 @@ class ZenBpmUnsupportedConstructsTest {
     }
 
     @Test
-    @DisplayName("What ZenBPM runs as modelled passes: an expression at a gateway, a default flow without one, a literal timer, a message throw event, a receive task waiting for a message, flags spelt as Go reads them, a blank condition, an unknown element without flows, an event definition on a task, which the engine never reads, a decision named with the id of its DMN definitions, a decision id the engine does not split")
+    @DisplayName("What ZenBPM runs as modelled passes: an expression at a gateway, a default flow without one, a literal timer, a message throw event, a receive task waiting for a message, flags spelt as Go reads them, a blank condition, an unknown element without flows, an event definition on a task, which the engine never reads, a decision named with the id of its DMN definitions, a decision id the engine does not split, a non-interrupting message start event of an event sub-process")
     void whatZenBpmRunsPasses() {
         assertDoesNotThrow(() -> ZenBpmUnsupportedConstructs.check("shop",
                 model("""
@@ -124,6 +124,11 @@ class ZenBpmUnsupportedConstructsTest {
                             <zenbpm:in businessKey="=orderId" />
                           </bpmn:extensionElements>
                         </bpmn:callActivity>
+                        <bpmn:subProcess id="OnReminder" triggeredByEvent="true">
+                          <bpmn:startEvent id="Reminded" isInterrupting="false">
+                            <bpmn:messageEventDefinition messageRef="Message_Paid" />
+                          </bpmn:startEvent>
+                        </bpmn:subProcess>
                         <bpmn:serviceTask id="NotifyAll">
                           <bpmn:multiInstanceLoopCharacteristics isSequential="1">
                             <bpmn:extensionElements>

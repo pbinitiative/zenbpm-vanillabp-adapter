@@ -50,6 +50,7 @@
     <module>quarkus/runtime</module>
     <module>quarkus/deployment</module>
     <module>quarkus/integration-tests</module>
+    <module>quarkus/native-image-tests</module>
     <!-- last: its gate judges what every module above produced -->
     <module>test-coverage-report</module>
   </modules>
@@ -105,6 +106,14 @@
          stand BEFORE the BOM imports below, because the first declaration wins. -->
     <grpc.version>1.81.0</grpc.version>
     <protobuf.version>4.35.0</protobuf.version>
+    <!-- The Netty the Quarkus BOM above manages, which is the one a Quarkus application runs the
+         adapter's job stream on: on Quarkus the job stream uses grpc-netty over Quarkus' own Netty
+         extension, whose native-image substitutions are written against exactly this Netty (see
+         decision 61 in the repository's DECISIONS.md). The Spring Boot BOM, imported first, lifts
+         Netty to its own version for every module, which is right for Spring Boot and wrong for a
+         module which has to see what a Quarkus application sees, so each Quarkus module imports
+         the Netty BOM in this version. It moves with quarkus.version, never on its own. -->
+    <netty.version.quarkus>4.1.138.Final</netty.version.quarkus>
     <testcontainers.version>2.0.5</testcontainers.version>
     <!-- The ZenBPM engine this adapter is written and tested against, see decision 15 in the
          repository's DECISIONS.md: a commit of the engine's main and the digest of the image

@@ -53,7 +53,7 @@ zenbpm-vanillabp-adapter/
   quarkus/runtime/                producers, overlay @ConfigMapping, quarkus-extension.yaml, startup observer
   quarkus/deployment/             build steps, build-time config root, extension tests (no Docker)
   quarkus/integration-tests/      QuarkusProdModeTest against the engine container, introspection endpoints
-  quarkus/native-image-tests/     later (E11); a native build against the engine container
+  quarkus/native-image-tests/     an application built as a native image, run against the engine container
   election-integration-test/      two adapter ids on one engine, and zenbpm next to the BPMS double
   test-coverage-report/           spring-boot, quarkus, coverage-gate (85 floor, 90 rule)
   .github/workflows/              checks.yaml (PR + main: Spotless, build, unit and Docker tests, report upload)
@@ -69,7 +69,9 @@ zenbpm-vanillabp-adapter/
 `core` depends on `io.vanillabp:vanillabp-adapter-spi`, `io.vanillabp:spi-for-java`, Jackson
 (`jackson-databind`, both platforms manage it), `io.grpc:grpc-netty-shaded`, `grpc-protobuf`,
 `grpc-stub`, `protobuf-java` (versions from the Quarkus BOM, which is the stricter of the two for
-native images), and `org.slf4j:slf4j-api`. No Spring, no Quarkus, no Camunda artifact.
+native images), and `org.slf4j:slf4j-api`. No Spring, no Quarkus, no Camunda artifact. The Quarkus
+extension replaces `grpc-netty-shaded` by `grpc-netty` on Quarkus' Netty extension, because the
+shaded Netty does not build into a native image (decision 61).
 
 ## 2. The engine client (`core`, package `org.pbinitiative.zenbpmadapter.client`)
 
