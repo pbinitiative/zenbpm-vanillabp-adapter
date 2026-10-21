@@ -53,10 +53,10 @@ import lombok.extern.slf4j.Slf4j;
  * hands out are the engine's definition keys; the core puts them into the namespace of the adapter
  * id. See decision 57 in the repository's DECISIONS.md.
  * <p>
- * <b>Which workflow.</b> The aggregate id is the workflow's business key (decision 25), so the
- * workflow is found by searching the instances of the process under that key: one which runs,
- * else the one created last, so an aggregate whose first workflow ended and whose second runs shows
- * the second. A workflow the engine started by a timer or a message has no business key; under
+ * <b>Which workflow.</b> The aggregate id is the workflow's business key, see decision 25 in the
+ * repository's DECISIONS.md, so the workflow is found by searching the instances of the process
+ * under that key: one which runs, else the one created last, so an aggregate whose first workflow
+ * ended and whose second runs shows the second. A workflow the engine started by a timer or a message has no business key; under
  * <code>message-start-lookup: scan</code> one a message started is found by its id variable among
  * the instances which run, as the probes find it, and otherwise it is reported as unknown. A node of
  * the engine which lags behind may not find a workflow the core's probe found a moment before, so

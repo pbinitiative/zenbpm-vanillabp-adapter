@@ -589,6 +589,15 @@ Quarkus runtime 13, deployment 52, integration tests 23, gate 37; coverage 100 %
 (0 of 37,699 instructions missed on Spring Boot, 0 of 37,569 on Quarkus);
 `bin/check-deploy-safety.sh` green.
 
+**CodeRabbit on pull request #71** (one actionable comment, valid): the class javadoc of
+`ZenBpmWorkflowViewer` cited "(decision 25)" instead of the greppable form the repository's
+`AGENTS.md` asks for; it now reads "see decision 25 in the repository's DECISIONS.md", the only
+such citation in the batch's Java files. Its pre-merge "docstring coverage 41.88 %" warning is
+generic (the repository documents classes and non-private methods, not every test and private
+method) and was not acted on. Clean build of the fix (`TZ=Etc/UTC mvn clean install`): the same
+counts as above, none skipped, coverage 100 % on both platforms (0 of 37,699 and 0 of 37,569
+instructions missed); `bin/check-deploy-safety.sh` green.
+
 ## F10.4 Quarkus twins
 
 ### S10.4.1 Versions and viewer on Quarkus
