@@ -133,7 +133,9 @@ class CoverageGateTest {
 
         assertTrue(stale.isEmpty(),
                 () -> """
-                        The gate's deliberate exceptions name %s, which is no module of this repository with                 production sources, or has no reason. Remove an exception whose module is gone, and give                 every other one the reason why its code belongs to no report."""
+                        The gate's deliberate exceptions name %s, which is no module of this repository \
+                        with production sources, or has no reason. Remove an exception whose module is \
+                        gone, and give every other one the reason why its code belongs to no report."""
                         .formatted(stale));
     }
 

@@ -680,7 +680,9 @@ Quarkus 3.40 picks), as no GraalVM is installed here. What did not fit, and what
    four rather than in the native module only, because the extension now brings Netty into every
    Quarkus application, and its tests should run the Netty such an application runs. Renovate
    leaves `io.netty` alone. `QuarkusNettyTest` (in `quarkus/deployment`) fails when the classpath's
-   Netty is not the pinned one, or the pin is not the Quarkus BOM's.
+   Netty is not the pinned one, or the pin is not the Quarkus BOM's; `QuarkusNettyPinTest` (in the
+   coverage gate) fails when a POM under `quarkus/` lacks the import, which a test on one module's
+   classpath cannot see for the others.
 4. **What is registered** (open question 4). Only what a native run proved necessary, each with
    the failure that named it, and each pinned by `ZenBpmNativeImageProcessorTest`:
    - the gRPC providers (`ManagedChannelProvider`, `NameResolverProvider`, `LoadBalancerProvider`,
@@ -752,7 +754,9 @@ Quarkus 3.40 picks), as no GraalVM is installed here. What did not fit, and what
   the binary started in 0.077 s, deployed `Native.bpmn` as `zenbpm-native__Native`, subscribed both
   job types, started a workflow through the phase-two outbox, served `serve`, correlated `goAhead`,
   served `finish`, printed "VanillaBP ran the workflow of aggregate '...' on ZenBPM to its end
-  (status 'finished')", exited with 0 and logged no warning. The first call with `-DskipTests`
+  (status 'finished')", exited with 0 and logged no warning. (This run predates the review fixes:
+  since then the binary serves the end marker too, and the test asks the engine whether the
+  workflow completed; see the answers to the two reviews under S11.5.1.) The first call with `-DskipTests`
   instead still ran the core's 104 integration tests (failsafe 3.6.0 on Maven 3.9.12), so the README
   names `-Dmaven.test.skip=true`. A build with a local GraalVM
   (`-Dquarkus.native.container-build=false`) was not run here, as none is installed; the nightly
@@ -820,8 +824,9 @@ after S11.4.1 (`2192e43`): the two reports of its clean build, `CoverageGateTest
    and low on Quarkus, and no Quarkus twin is missing.
 2. **One branch differed.** By branches, the only metric where the core differed, 196 classes
    are equal and one is not: `ZenBpmUnsupportedConstructs.Findings`, 3 of 160 branches missed on
-   Spring Boot and 4 on Quarkus. The branch is line 539, a non-interrupting start event of an event
-   sub-process which is no error start: only a model of the Spring Boot ITs held one. It is
+   Spring Boot and 4 on Quarkus. The branch is in `Findings#checkSubProcess`: a non-interrupting
+   start event of an event sub-process which is no error start; only a model of the Spring Boot ITs
+   held one. It is
    platform-neutral model checking, so decided by the Implementor: a core unit test rather than a
    Quarkus twin. `ZenBpmUnsupportedConstructsTest#whatZenBpmRunsPasses` now holds a
    non-interrupting message start event of an event sub-process; the core's tests count in both
@@ -861,3 +866,58 @@ after S11.4.1 (`2192e43`): the two reports of its clean build, `CoverageGateTest
   tests 25, native-image tests 0 (the IT runs only with `-Dnative`), gate 40 (three new tests);
   coverage as above; `bin/check-deploy-safety.sh` green (13 files deployed by the green build, nothing by the red
   gate).
+
+**Answers to two reviews of e11-s11.4.1-s11.5.1, 2026-10-22** (one by Claude, approve with minor
+fixes: 3 Minor, 1 Nit; one by Copilot, approve: 1 Minor). Every claim was checked in the code of the
+branch, by the reviewers' probes and by a test of my own. Claude's second finding and Copilot's
+only one are the same gap, so four distinct findings remain; all four were valid and are fixed. No
+decision and no GAPS row was needed.
+
+- **The native run proved the handlers, not the end of the workflow** (Claude 2, Copilot 1,
+  Minor). The binary exited with 0 once its aggregate read `finished`, a status the handler of the
+  last task writes before the adapter completes that task's job, and the test checked only the exit
+  code and the printed line. Copilot showed the false success with a proxy which refused the
+  completion of `Finish`: exit 0, the line printed, and the instance still `active` at the engine.
+  The workflow also had no `@WorkflowEnded` method, so the end of a workflow (decision 26) never ran
+  in the binary. Now `NativeImageWorkflow#ended` writes the status `ended` through the end marker,
+  the main waits for it, and `ZenBpmNativeImageIT` reads the aggregate id from the line the binary
+  prints and asks the engine for the instance of that business key: the run counts only when it
+  reads `completed`. Native mutant: the end handler commits `ended` in a transaction of its own and
+  then throws, so the binary exits with 0 and prints its line while the job is never completed;
+  killed (the engine showed the instance `active` with one incident). The README sentence says what
+  the test holds.
+- **The Netty pin was held in one module only** (Claude 3, Minor). `QuarkusNettyTest` reads the
+  Netty of the classpath of `quarkus/deployment`, so the import of the Netty BOM could go from the
+  other three modules under `quarkus/` unnoticed, and in the native module a wrong Netty shows only
+  in a native build. `QuarkusNettyPinTest` in the coverage gate reads every POM under `quarkus/` and
+  fails on one whose dependency management does not import `io.netty:netty-bom` in
+  `${netty.version.quarkus}`. Mutant: the import removed from `quarkus/native-image-tests`; killed,
+  the message names the POM. README and fit-check point 3 name the test.
+- **The gate's new message had two runs of 17 spaces in a sentence** (Claude 1, Minor). The text
+  block of `CoverageGateTest#everyExceptionNamesAModuleWithProductionSources` was one source line;
+  it is split into lines continued with `\`, as the other messages of the gate are.
+- **The S11.5.1 fit check named line 539** (Claude 4, Nit); the condition is on lines 537-538. The
+  note names the method `Findings#checkSubProcess` now, which does not drift.
+- **Not findings of this batch:** each reviewer's first full build was red once in a module the
+  batch does not touch, while both reviewer builds shared the machine: Claude's in
+  `ZenBpmInboundIdempotencyIT#longHandlersKeepTheirLock` (a lock of `PT2S` lapsed under the load),
+  Copilot's in `ZenBpmJobStreamTest#aConnectionNobodyAnswersIsNoReturn` ("Address already in use",
+  a known flake). Both passed on their reruns and in every build below.
+
+Builds after the fixes (OpenJDK 25.0.2, Docker ITs, none skipped):
+
+- `TZ=Etc/UTC mvn clean install`, 17:39 min, green: engine test support 12 + 5, core 1,275 + 104,
+  Spring Boot 14 + 95, smoke test 42 + 1, election integration test 8, Quarkus runtime 13,
+  deployment 60, integration tests 25, native-image tests 0 (the IT runs only with `-Dnative`),
+  gate 41 (40 before: `QuarkusNettyPinTest` is new); coverage 100 % on both platforms (0 of 38,473
+  instructions missed on Spring Boot, 0 of 38,470 on Quarkus).
+- `mvn -pl quarkus/native-image-tests -Dnative verify`, green: the image was built in the
+  container of `quay.io/quarkus/ubi9-quarkus-mandrel-builder-image:jdk-25` in 1 min 47 s, peak RSS
+  5.92 GB; `ZenBpmNativeImageIT` passed (1 test): the binary served both tasks and the end marker,
+  printed "... to its end (status 'ended')", exited with 0, and the engine showed the instance
+  `completed`.
+- `bin/check-deploy-safety.sh`: the first run was red in its green build, in an integration test
+  of `spring-boot` (the script removes its logs, and the reports with them, so which one is not
+  known; the module is untouched by the batch, and its 95 ITs had just passed in the build above);
+  the second run was green: 13 files deployed by the green build, none of the new module, nothing
+  by the red gate.

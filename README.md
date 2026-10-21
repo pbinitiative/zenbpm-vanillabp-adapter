@@ -657,15 +657,16 @@ An application on Quarkus can be built as a native image with the adapter; it ne
 own for that. `quarkus/native-image-tests` proves it: a small application with one workflow is built
 as a native executable and started against the pinned engine. The binary deploys its workflow
 module, starts a workflow through the platform's two-phase start, serves the job of a first task,
-correlates the message the workflow then waits for, serves the job of a second task and exits with
-0 only when the workflow reached its end (`ZenBpmNativeImageIT`). It has no Micrometer: the meters
-of the section above are tested in the JVM only.
+correlates the message the workflow then waits for, serves the job of a second task and reports the
+end of the workflow to the application's `@WorkflowEnded` method. The test accepts the run only
+when the binary exits with 0 and the engine shows the workflow completed (`ZenBpmNativeImageIT`).
+It has no Micrometer: the meters of the section above are tested in the JVM only.
 
 On Quarkus the job stream runs on `grpc-netty` over Quarkus' Netty extension, which the extension
 brings, and not on the `grpc-netty-shaded` of the core: the shaded Netty does not build into a
 native image (decision 61 in [`DECISIONS.md`](./DECISIONS.md)). The Quarkus modules of this
 repository pin Netty to the version the Quarkus platform manages, the one an application runs
-(`QuarkusNettyTest`). What the extension registers for the native image, each item named by a
+(`QuarkusNettyTest` holds the version, `QuarkusNettyPinTest` the pin in each of them). What the extension registers for the native image, each item named by a
 native build which failed without it (`ZenBpmNativeImageProcessorTest` holds every one):
 
 - the gRPC providers the job stream's channel finds through the service loader: the transport, the

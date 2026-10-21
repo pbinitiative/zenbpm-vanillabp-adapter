@@ -6,6 +6,7 @@ package org.pbinitiative.zenbpmadapter.quarkus.nativeimage;
 
 import io.vanillabp.spi.process.ProcessService;
 import io.vanillabp.spi.service.BpmnProcess;
+import io.vanillabp.spi.service.WorkflowEnded;
 import io.vanillabp.spi.service.WorkflowService;
 import io.vanillabp.spi.service.WorkflowTask;
 import jakarta.enterprise.context.ApplicationScoped;
@@ -13,9 +14,10 @@ import jakarta.inject.Inject;
 
 /**
  * The workflow of the native-image application, the process <code>Native</code>: a task, a message
- * the workflow waits for, and a second task. Each step reaches the engine on another way out of
- * the binary: the deployment and the start over REST, the jobs of both tasks over the gRPC job
- * stream and back over REST, the message over REST.
+ * the workflow waits for, a second task, and the end of the workflow reported to the application.
+ * Each step reaches the engine on another way out of the binary: the deployment and the start over
+ * REST, the jobs of both tasks and of the marker in front of the end event over the gRPC job stream
+ * and back over REST, the message over REST.
  */
 @ApplicationScoped
 @WorkflowService(workflowAggregateClass = NativeImageAggregate.class,
@@ -31,6 +33,12 @@ public class NativeImageWorkflow {
      * The status the second task writes, after the message reached the workflow.
      */
     public static final String FINISHED = "finished";
+
+    /**
+     * The status the end of the workflow writes, through the marker the adapter puts in front of
+     * the end event.
+     */
+    public static final String ENDED = "ended";
 
     @Inject
     ProcessService<NativeImageAggregate> processService;
@@ -77,6 +85,16 @@ public class NativeImageWorkflow {
     @WorkflowTask(taskDefinition = "finish")
     public void finish(final NativeImageAggregate aggregate) {
         aggregate.setStatus(FINISHED);
+    }
+
+    /**
+     * The end of the workflow, which reaches the binary as the job of the end marker.
+     *
+     * @param aggregate The workflow aggregate
+     */
+    @WorkflowEnded
+    public void ended(final NativeImageAggregate aggregate) {
+        aggregate.setStatus(ENDED);
     }
 
 }
