@@ -23,6 +23,11 @@
       "description": "gRPC and protobuf are pinned to the OLDER of the versions the two platform BOMs manage, so the adapter uses nothing either platform lacks; protobuf in particular refuses a runtime older than the code generated against it. They are raised by hand when a platform BOM moves.",
       "matchPackageNames": ["io.grpc{/,}**", "com.google.protobuf{/,}**"],
       "enabled": false
+    },
+    {
+      "description": "Netty is pinned in the Quarkus modules to the version the Quarkus BOM manages, because Quarkus' Netty substitutions are written against exactly it. It moves with the Quarkus version, never on its own.",
+      "matchPackageNames": ["io.netty{/,}**"],
+      "enabled": false
     }
   ]
 }

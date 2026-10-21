@@ -393,7 +393,8 @@ workflow is not served. The engine keeps no state of an element, so none is repo
 
 What an operator sees is in the sections [Health](#health) and [Metrics](#metrics): an entry of the
 platform's health check per adapter id, which names the state of the job stream, and, where the
-application brings Micrometer, eleven meters per adapter id tagged with it.
+application brings Micrometer, eleven meters per adapter id tagged with it. An application on
+Quarkus can be built as a native image, see [Native image](#native-image).
 
 What is built next, and in which order, is the implementation plan in [`docs/`](docs/README.md).
 
@@ -409,6 +410,7 @@ What is built next, and in which order, is the implementation plan in [`docs/`](
 | `quarkus/runtime`                    | `zenbpm-vanillabp-adapter-quarkus`            | Quarkus extension, runtime part                                               |
 | `quarkus/deployment`                 | `zenbpm-vanillabp-adapter-quarkus-deployment` | Quarkus extension, build-time part                                            |
 | `quarkus/integration-tests`          | (not published)                               | end-to-end tests on a booted Quarkus application                              |
+| `quarkus/native-image-tests`         | (not published)                               | an application built as a native image, run against the pinned engine         |
 | `test-coverage-report/spring-boot`   | (not published)                               | aggregated coverage of the core and the Spring Boot modules                   |
 | `test-coverage-report/quarkus`       | (not published)                               | aggregated coverage of the core and the Quarkus modules                       |
 | `test-coverage-report/coverage-gate` | (not published)                               | breaks the build below the coverage threshold, last module of the reactor     |
@@ -648,6 +650,50 @@ that they add up against `jobs.received`. The extension which parks a task is no
 the reconnects counter reads the job stream, values already in memory, so reading a meter never
 asks the engine anything. `MicrometerZenBpmMetricsTest` fails when this table and the meters the
 adapter registers differ in a name, a kind or a tag.
+
+## Native image
+
+An application on Quarkus can be built as a native image with the adapter; it needs nothing of its
+own for that. `quarkus/native-image-tests` proves it: a small application with one workflow is built
+as a native executable and started against the pinned engine. The binary deploys its workflow
+module, starts a workflow through the platform's two-phase start, serves the job of a first task,
+correlates the message the workflow then waits for, serves the job of a second task and exits with
+0 only when the workflow reached its end (`ZenBpmNativeImageIT`). It has no Micrometer: the meters
+of the section above are tested in the JVM only.
+
+On Quarkus the job stream runs on `grpc-netty` over Quarkus' Netty extension, which the extension
+brings, and not on the `grpc-netty-shaded` of the core: the shaded Netty does not build into a
+native image (decision 61 in [`DECISIONS.md`](./DECISIONS.md)). The Quarkus modules of this
+repository pin Netty to the version the Quarkus platform manages, the one an application runs
+(`QuarkusNettyTest`). What the extension registers for the native image, each item named by a
+native build which failed without it (`ZenBpmNativeImageProcessorTest` holds every one):
+
+- the gRPC providers the job stream's channel finds through the service loader: the transport, the
+  name resolver and the load balancer;
+- the run-time initialization of the two classes of `grpc-netty` which hold a Netty buffer
+  allocator;
+- the records the REST client reads the engine's JSON into, and every class generated from the
+  engine's proto, for reflection;
+- the platform's version descriptor, so that the check whether the adapter fits the platform
+  integration can read the platform's version.
+
+The adapter's own version descriptor and the workflow modules' BPMN files are registered by the
+platform's extension. The native build runs in its own profile, because it takes minutes; every
+build of the repository compiles the module and builds its application in JVM mode. It takes two
+Maven calls, the first installing what the application needs, the second building the image and
+running the binary against the engine:
+
+```bash
+mvn -Dmaven.test.skip=true -pl quarkus/deployment,quarkus/native-image-tests -am install
+mvn -pl quarkus/native-image-tests -Dnative verify
+```
+
+Without an installed GraalVM the image is built in a container of
+`quay.io/quarkus/ubi9-quarkus-mandrel-builder-image:jdk-25`, the builder Quarkus picks; with one,
+`-Dquarkus.native.container-build=false` builds it locally. The integration test needs Docker for
+the engine either way. On a laptop with 14 cores the image took about two minutes and 6 GB of
+memory at its peak. What the binary printed is in
+`quarkus/native-image-tests/target/native-image-application.log`, the place to read when it fails.
 
 ## Building
 

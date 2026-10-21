@@ -12,6 +12,19 @@
   <name>VanillaBP adapter for ZenBPM - Quarkus extension - Runtime</name>
   <description>Quarkus extension runtime of the VanillaBP adapter for ZenBPM</description>
 
+  <dependencyManagement>
+    <dependencies>
+      <!-- the Netty a Quarkus application runs, see netty.version.quarkus in the root POM -->
+      <dependency>
+        <groupId>io.netty</groupId>
+        <artifactId>netty-bom</artifactId>
+        <version>${netty.version.quarkus}</version>
+        <type>pom</type>
+        <scope>import</scope>
+      </dependency>
+    </dependencies>
+  </dependencyManagement>
+
   <dependencies>
     <dependency>
       <groupId>io.quarkus</groupId>
@@ -21,6 +34,26 @@
       <groupId>org.pbinitiative.zenbpm</groupId>
       <artifactId>zenbpm-vanillabp-adapter</artifactId>
       <version>${project.version}</version>
+      <!-- the core's job stream runs on whichever gRPC transport the classpath offers. The shaded
+           one carries a Netty of its own, which no Quarkus substitution reaches and which does
+           not build into a native image, so on Quarkus it is replaced by grpc-netty on Quarkus'
+           Netty extension below (decision 61 in the repository's DECISIONS.md) -->
+      <exclusions>
+        <exclusion>
+          <groupId>io.grpc</groupId>
+          <artifactId>grpc-netty-shaded</artifactId>
+        </exclusion>
+      </exclusions>
+    </dependency>
+    <dependency>
+      <groupId>io.grpc</groupId>
+      <artifactId>grpc-netty</artifactId>
+    </dependency>
+    <!-- Netty in a native image needs substitutions and run-time initializations, which Quarkus'
+         Netty extension provides for the Netty version the Quarkus platform manages -->
+    <dependency>
+      <groupId>io.quarkus</groupId>
+      <artifactId>quarkus-netty</artifactId>
     </dependency>
     <dependency>
       <groupId>io.vanillabp</groupId>

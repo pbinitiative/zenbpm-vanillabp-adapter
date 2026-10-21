@@ -19,6 +19,19 @@
     <maven.javadoc.skip>true</maven.javadoc.skip>
   </properties>
 
+  <dependencyManagement>
+    <dependencies>
+      <!-- the Netty a Quarkus application runs, see netty.version.quarkus in the root POM -->
+      <dependency>
+        <groupId>io.netty</groupId>
+        <artifactId>netty-bom</artifactId>
+        <version>${netty.version.quarkus}</version>
+        <type>pom</type>
+        <scope>import</scope>
+      </dependency>
+    </dependencies>
+  </dependencyManagement>
+
   <dependencies>
     <dependency>
       <groupId>io.vanillabp</groupId>

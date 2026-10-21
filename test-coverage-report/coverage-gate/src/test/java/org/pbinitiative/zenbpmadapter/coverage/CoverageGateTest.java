@@ -9,7 +9,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.nio.file.Path;
 import java.util.List;
-import java.util.Set;
+import java.util.Map;
 
 import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.DisplayName;
@@ -68,22 +68,28 @@ class CoverageGateTest {
                     ROOT.resolve("test-coverage-report/quarkus/pom.xml"));
 
     /**
-     * Modules whose execution data or production code belongs to no coverage report. Each
-     * entry is a decision - a module missing here and missing from the aggregate of its
-     * platform is the defect this test exists for.
-     * <p>
-     * {@code engine-test-support} starts the engine for the integration tests. Its classes
-     * live in {@code src/main/java} only because a test classpath cannot read another
-     * module's test classes; no application runs them, on either platform.
+     * Modules whose execution data or production code belongs to no coverage report, by artifact
+     * id, each with the reason. Each entry is a decision - a module missing here and missing from
+     * the aggregate of its platform is the defect this test exists for.
      */
-    private static final Set<String> DELIBERATELY_NOT_AGGREGATED = Set
-            .of("zenbpm-vanillabp-adapter-engine-test-support");
+    private static final Map<String, String> DELIBERATELY_NOT_AGGREGATED = Map
+            .of(
+                    "zenbpm-vanillabp-adapter-engine-test-support",
+                    """
+                            it starts the engine for the integration tests; its classes live in src/main/java \
+                            only because a test classpath cannot read another module's test classes, and no \
+                            application runs them, on either platform""",
+                    "zenbpm-vanillabp-adapter-quarkus-native-image-tests",
+                    """
+                            its application runs as a native binary, which no Java agent instruments, so it \
+                            writes no execution data; what the binary runs of the adapter is the code the \
+                            Quarkus report measures in the JVM""");
 
     @Test
     @DisplayName("Every module producing coverage data is read by an aggregated report")
     void everyModuleProducingCoverageDataIsAggregated() {
         final var missing = CoverageGate
-                .modulesMissingFromAggregates(ROOT, AGGREGATE_POMS, DELIBERATELY_NOT_AGGREGATED);
+                .modulesMissingFromAggregates(ROOT, AGGREGATE_POMS, DELIBERATELY_NOT_AGGREGATED.keySet());
 
         assertTrue(missing.isEmpty(), () -> CoverageGate.describeMissingModules(missing, AGGREGATE_POMS));
     }
@@ -100,7 +106,7 @@ class CoverageGateTest {
         final var quarkus = new ProductionModules.Report("Quarkus", AGGREGATE_POMS.get(1));
 
         final var missing = ProductionModules
-                .missingFromTheReportOfTheirPlatform(ROOT, springBoot, quarkus, DELIBERATELY_NOT_AGGREGATED);
+                .missingFromTheReportOfTheirPlatform(ROOT, springBoot, quarkus, DELIBERATELY_NOT_AGGREGATED.keySet());
 
         assertTrue(missing.isEmpty(), () -> ProductionModules.describe(missing, springBoot, quarkus));
     }

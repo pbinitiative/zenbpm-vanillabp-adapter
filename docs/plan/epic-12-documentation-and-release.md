@@ -75,6 +75,14 @@ report, and a start sent again after its answer was lost; and how long the row l
 pages exist. GAPS 30 (start messages of one name at the same moment lose starts, decision 47)
 belongs on the same page: an application on several nodes may lose such a start unseen.
 
+*Note from S11.4.1, 2026-10-21.* The wiki gets a page `Native images`, which takes its content
+from the README's section "Native image" (written by S11.4.1, because no batch before this story
+writes the wiki): that an application needs nothing of its own, that on Quarkus the job stream
+runs on `grpc-netty` over Quarkus' Netty extension and Netty in the version of the Quarkus platform
+(decision 61), what the extension registers, how the native build of `quarkus/native-image-tests`
+is run, and that the meters are tested in the JVM only. Each claim keeps the test the README names
+for it (`ZenBpmNativeImageIT`, `ZenBpmNativeImageProcessorTest`, `QuarkusNettyTest`).
+
 **Acceptance criteria**: every claim names its test; a reviewer following the wiki alone boots an
 application against a fresh engine container.
 
