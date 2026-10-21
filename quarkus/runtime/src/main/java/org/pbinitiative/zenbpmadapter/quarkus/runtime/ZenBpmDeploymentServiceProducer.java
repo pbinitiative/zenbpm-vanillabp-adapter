@@ -71,7 +71,8 @@ public class ZenBpmDeploymentServiceProducer {
      * @param bpmsInitiatedStartInvoker What is called when the engine starts a workflow on its own
      * @param startupReport Where a finding of the adapter goes while the application starts
      * @param metrics Where the adapter's own numbers go, unresolvable where the application does not
-     *            use the Micrometer extension
+     *            use the Micrometer extension; an application's own one beside the adapter's binder
+     *            is preferred
      * @return One deployment service per configured adapter id of this type
      */
     @Produces
@@ -112,10 +113,26 @@ public class ZenBpmDeploymentServiceProducer {
                     // the block both platform integrations write at the end of a start
                     deploymentService.setStartupReport(startupReport);
                     // the adapter's own meters, where the application uses the Micrometer extension
-                    deploymentService.setMetrics(metrics.isResolvable() ? metrics.get() : ZenBpmMetrics.NONE);
+                    deploymentService.setMetrics(measuredInto(metrics));
                     return asListElement(deploymentService);
                 })
                 .toList();
+    }
+
+    // an application which brings its own measurement next to the adapter's binder gets its own
+    // one measured into; the binder is the bean of its producer
+    private static ZenBpmMetrics measuredInto(final Instance<ZenBpmMetrics> metrics) {
+        if (metrics.isResolvable()) {
+            return metrics.get();
+        }
+        return metrics
+                .handlesStream()
+                .filter(handle -> !ZenBpmMetricsProducer.class.equals(handle
+                        .getBean()
+                        .getBeanClass()))
+                .findFirst()
+                .<ZenBpmMetrics>map(Instance.Handle::get)
+                .orElse(ZenBpmMetrics.NONE);
     }
 
     // the platform's list holds Object for both type parameters, see the class comment

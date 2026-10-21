@@ -199,6 +199,23 @@ none skipped): engine test support 12 + 5, core 1,271 + 104, Spring Boot 14 + 95
 100 % on both platforms (0 of 38,341 instructions missed on Spring Boot, 0 of 38,235 on Quarkus);
 `bin/check-deploy-safety.sh` green (13 files deployed by the green build, nothing by the red gate).
 
+**Answer to CodeRabbit on pull request #73, 2026-10-21.** One comment, valid. The Spring Boot
+binder was `@ConditionalOnMissingBean` on its own class, so an application's own `ZenBpmMetrics`
+bean stood next to it, and the registrar's `getIfAvailable` threw `NoUniqueBeanDefinitionException`
+at the boot. On Quarkus the same two beans made the `Instance` of the deployment-service producer
+unresolvable, so the deployment services silently measured into `NONE`. The binder is now
+conditional on the interface on Spring Boot. On Quarkus the deployment-service producer prefers a
+bean of any other producer to the binder. A `@DefaultBean` was tried first and broke
+`ZenBpmWorkflowLifecycleTest#theMetersOfTheAdapterIdMoveWithTheWork`: Arc leaves a default bean
+out of every lookup of a type another bean has, and the Micrometer extension's own binders are
+`MeterBinder`s, so the registry was never handed the adapter's binder. Tests:
+`ZenBpmMetricsBootTest#anApplicationsOwnMetricsReplaceTheBinder` (with the old condition it fails
+with exactly that exception) and the new prod-mode `ZenBpmOwnMetricsTest`. Mutants: the old
+condition, the preference answering `NONE`, the preference picking the binder: all killed. The
+README's "Metrics" section and decision 59 say it. Build (`TZ=Etc/UTC mvn clean install`, Docker ITs, none skipped): smoke test 41 + 1, Quarkus
+integration tests 25, the rest as above; coverage 100 % on both platforms (0 of 38,341 missed on
+Spring Boot, 0 of 38,257 on Quarkus); `bin/check-deploy-safety.sh` green.
+
 ## S11.2.1 Startup-message review
 
 - [ ] **Depends on:** E10.

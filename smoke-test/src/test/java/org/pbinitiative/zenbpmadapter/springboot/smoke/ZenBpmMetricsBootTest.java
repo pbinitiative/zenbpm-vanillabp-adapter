@@ -30,6 +30,7 @@ import org.springframework.boot.WebApplicationType;
 import org.springframework.boot.builder.SpringApplicationBuilder;
 import org.springframework.boot.test.context.FilteredClassLoader;
 import org.springframework.context.ConfigurableApplicationContext;
+import org.springframework.context.support.GenericApplicationContext;
 import org.springframework.core.io.DefaultResourceLoader;
 import org.springframework.util.ClassUtils;
 
@@ -112,6 +113,26 @@ class ZenBpmMetricsBootTest {
                     () -> assertSame(ZenBpmMetrics.NONE, deploymentServiceOf(context, "zenbpm-new").getMetrics()),
                     () -> assertSame(ZenBpmMetrics.NONE, deploymentServiceOf(context, "zenbpm-old").getMetrics()),
                     () -> assertTrue(StartupBlock.isWritten(log), log));
+        }
+    }
+
+    @Test
+    @DisplayName("An application which brings its own ZenBpmMetrics gets every deployment service measuring into it, and the adapter adds no meter binder beside it")
+    void anApplicationsOwnMetricsReplaceTheBinder() {
+        final var own = new ZenBpmMetrics() {
+        };
+        final var application = new SpringApplicationBuilder(SmokeTestApplication.class)
+                .web(WebApplicationType.NONE)
+                .initializers(context -> ((GenericApplicationContext) context).registerBean("ownMetrics",
+                        ZenBpmMetrics.class, () -> own));
+        try (var context = application.run(Stream
+                .of(TWO_ADAPTER_IDS)
+                .map("--%s"::formatted)
+                .toArray(String[]::new))) {
+            assertAll(
+                    () -> assertEquals(0, context.getBeanNamesForType(MicrometerZenBpmMetrics.class).length),
+                    () -> assertSame(own, deploymentServiceOf(context, "zenbpm-new").getMetrics()),
+                    () -> assertSame(own, deploymentServiceOf(context, "zenbpm-old").getMetrics()));
         }
     }
 

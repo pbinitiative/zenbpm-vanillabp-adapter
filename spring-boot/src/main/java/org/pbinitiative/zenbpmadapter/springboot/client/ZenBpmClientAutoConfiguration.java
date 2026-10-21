@@ -9,6 +9,7 @@ import org.pbinitiative.zenbpmadapter.ZenBpmAdapter;
 import org.pbinitiative.zenbpmadapter.client.ZenBpmClientRegistry;
 import org.pbinitiative.zenbpmadapter.client.ZenBpmStartupValidation;
 import org.pbinitiative.zenbpmadapter.observability.MicrometerZenBpmMetrics;
+import org.pbinitiative.zenbpmadapter.observability.ZenBpmMetrics;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.boot.autoconfigure.AutoConfiguration;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnClass;
@@ -100,12 +101,13 @@ public class ZenBpmClientAutoConfiguration {
 
         /**
          * Publishes the adapter's meter binder, which every deployment service of the adapter
-         * measures into.
+         * measures into. An application which brings its own {@link ZenBpmMetrics} gets that one
+         * measured into instead: there is only ever one, which the deployment services ask for.
          *
          * @return The meter binder of this adapter's own numbers
          */
         @Bean
-        @ConditionalOnMissingBean
+        @ConditionalOnMissingBean(ZenBpmMetrics.class)
         public MicrometerZenBpmMetrics zenBpmMetrics() {
             return new MicrometerZenBpmMetrics();
         }

@@ -1,0 +1,14 @@
+quarkus:
+  datasource:
+    db-kind: h2
+    jdbc:
+      url: jdbc:h2:mem:own-metrics
+  hibernate-orm:
+    schema-management:
+      strategy: update
+vanillabp:
+  outbox:
+    housekeeping:
+      zone: UTC
+  prioritized-adapters:
+    - zenbpm

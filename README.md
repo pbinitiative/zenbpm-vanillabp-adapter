@@ -535,7 +535,9 @@ on top of those the platform publishes for every BPMS. On Spring Boot the adapte
 where the application uses the Micrometer extension. The adapter does not bring Micrometer, and
 an application without it boots unchanged and publishes none of them. Every meter carries the tag
 `adapter` with the adapter id, so two adapter ids publish two sets which differ in that tag only.
-An adapter id without clients publishes none: nothing could ever move them.
+An adapter id without clients publishes none: nothing could ever move them. An application which
+brings its own bean of the core's `ZenBpmMetrics` gets that one measured into instead of the
+adapter's binder, on both platforms.
 
 |                Meter                 |  Kind   |   Tags    |                                              What it says                                               |
 |--------------------------------------|---------|-----------|---------------------------------------------------------------------------------------------------------|

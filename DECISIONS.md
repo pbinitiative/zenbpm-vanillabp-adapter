@@ -1642,7 +1642,11 @@ the core and of both platform modules, as Camunda 8 does it. There is one binder
 the platform module registers it where Micrometer is there (Spring Boot by the class name
 `io.micrometer.core.instrument.MeterRegistry`, Quarkus by the build step of the Micrometer
 extension on the deployment classpath), and hands it to every deployment service, which registers
-its adapter id. Every meter carries the adapter id as the tag `adapter`, so two adapter ids publish
+its adapter id. An application's own bean of `ZenBpmMetrics` takes the binder's place: on Spring
+Boot the binder is missing-bean conditional on the interface, and on Quarkus the deployment
+services prefer a bean of any other producer to the binder. A default bean would not do on Quarkus:
+Arc leaves a default bean out of every lookup of a type another bean has, and Micrometer's own
+binders are `MeterBinder`s too, so the registry would never be handed the adapter's binder. Every meter carries the adapter id as the tag `adapter`, so two adapter ids publish
 two sets which differ in that tag only, and an adapter id without clients registers nothing. The
 counts are kept in the binder, one `LongAdder` per meter and adapter id, and a registry is handed a
 function counter which reads it: nothing counted before a registry is bound is lost, and every
