@@ -558,6 +558,34 @@ decided:
   Quarkus); `bin/check-deploy-safety.sh` green (13 files deployed by the green build, none of the
   new module, and nothing by the red gate).
 
+**Answers to two reviews of e11-s11.3.1, 2026-10-21** (one by Claude, approve: 2 Nits; one by
+Copilot, approve: no finding). Both claims were checked in the code of the branch; both are valid
+and fixed. No decision and no gap were needed.
+
+- **The IT's Javadoc named a test class of the platform's repository** (Claude 1, Nit). A rename
+  there would leave the name wrong and nothing here would notice, which the repository's rule on
+  what code may point at forbids. The name is gone; the sentence keeps the reasoning in its own
+  words. The plan keeps the name.
+- **"Every key of the engine answers for both ids" was backed by no assertion** (Claude 2, Nit).
+  The workflow probe hands whatever a key does not lead to (a `404`, a key of another partition, a
+  failure) on to the search by business key, so the wrong id's `UNKNOWN_TO_BPMS` by the other id's
+  key would also come from a key which leads nowhere, and the right id's `ACTIVE` may come from the
+  search. `ZenBpmSharedEngineElectionIT#aWorkflowProbeOfTheWrongIdAnswersUnknown` now first reads
+  both keys through the test's own client (`ZenBpmRestClient#instance`): the old key is the
+  running instance of `Shipping`, the new key the running instance of `election-it__Shipping`.
+  Mutant: the old key moved off its instance (`+ 1,000,000`) fails the test at that read (the
+  engine answers `502 partition not found`). Read from the code, the probes alone would not have
+  noticed it: both ids fall through to the search, which answers as before. The unmutated class is
+  green (5 tests). The task probe needs no such read: it answers by the job's key alone, without a
+  search, so the right id's `ACTIVE` already shows that the key resolves.
+
+Build after the fixes (`TZ=Etc/UTC mvn clean install` on OpenJDK 25.0.2, Docker ITs included,
+none skipped, 17:32 min): engine test support 12 + 5, core 1,275 + 104, Spring Boot 14 + 95, smoke
+test 42 + 1, election integration test 0 + 8, Quarkus runtime 13, deployment 54, integration tests
+25, gate 37; coverage 100 % on both platforms (0 of 38,473 instructions missed on Spring Boot, 0 of
+38,395 on Quarkus); `bin/check-deploy-safety.sh` green (13 files deployed by the green build,
+none of the new module, and nothing by the red gate).
+
 ## S11.4.1 Native image
 
 - [ ] **Depends on:** E9.

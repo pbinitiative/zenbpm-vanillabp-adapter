@@ -67,10 +67,9 @@ import io.vanillabp.spi.process.ProcessService;
  * one second. On one engine every key answers for both ids, so the only thing which keeps a probe
  * from claiming the workflow of the other id is the scope it is asked about: under
  * <code>none</code> the engine holds the process <code>Shipping</code>, under
- * <code>use-prefix</code> <code>election-it__Shipping</code>. That is the reasoning of the
- * platform's <code>ElectionScopeContractTest</code>: an adapter answers the awareness probes only
- * for the workflows and tasks of its own scope, so the walk of the election reaches the adapter
- * which holds the workflow.
+ * <code>use-prefix</code> <code>election-it__Shipping</code>. An adapter answers the awareness
+ * probes only for the workflows and tasks of its own scope, so the walk of the election reaches the
+ * adapter which holds the workflow.
  */
 @ExtendWith(SuppressOutputExtension.class)
 @Testcontainers(disabledWithoutDocker = true)
@@ -256,7 +255,11 @@ class ZenBpmSharedEngineElectionIT {
                 .orElseThrow()
                 .key());
 
+        // the probe leaves whatever a key does not lead to to the search, so an UNKNOWN_TO_BPMS by
+        // the key of the other id shows the scope at work only where the engine resolves that key
         assertAll(
+                () -> assertEquals(Optional.of("Shipping"), runningProcessOf(oldKey)),
+                () -> assertEquals(Optional.of("election-it__Shipping"), runningProcessOf(newKey)),
                 () -> assertEquals(WorkflowAwareness.UNKNOWN_TO_BPMS, probesOf(NEW_ID).awarenessOfWorkflow(SHIPPING,
                         SHIPMENTS, PROBED_UNDER_THE_OLD_ID)),
                 () -> assertEquals(WorkflowAwareness.UNKNOWN_TO_BPMS, probesOf(NEW_ID).awarenessOfWorkflow(SHIPPING,
@@ -411,6 +414,13 @@ class ZenBpmSharedEngineElectionIT {
                 .items()
                 .stream()
                 .findFirst();
+    }
+
+    private static Optional<String> runningProcessOf(final String instanceKey) {
+        return engine
+                .instance(Long.parseLong(instanceKey))
+                .filter(instance -> instance.state() == ProcessInstanceRef.State.ACTIVE)
+                .map(ProcessInstanceRef::bpmnProcessId);
     }
 
     private static <T> T eventually(final Supplier<Optional<T>> read) {
