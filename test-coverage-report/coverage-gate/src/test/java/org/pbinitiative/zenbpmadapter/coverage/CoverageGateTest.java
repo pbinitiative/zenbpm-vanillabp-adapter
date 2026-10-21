@@ -111,6 +111,32 @@ class CoverageGateTest {
         assertTrue(missing.isEmpty(), () -> ProductionModules.describe(missing, springBoot, quarkus));
     }
 
+    /**
+     * An exception which names no module, or a module without production sources, would pass every
+     * check above while hiding nothing; left behind by a renamed or removed module, it would excuse
+     * the next module which takes the name. And an exception without its reason is no decision.
+     */
+    @Test
+    @DisplayName("Every deliberate exception names a module with production sources, and its reason")
+    void everyExceptionNamesAModuleWithProductionSources() {
+        final var modules = ProductionModules.artifactIdsWithProductionSources(ROOT);
+
+        final var stale = DELIBERATELY_NOT_AGGREGATED
+                .entrySet()
+                .stream()
+                .filter(exception -> !modules.contains(exception.getKey()) || exception
+                        .getValue()
+                        .isBlank())
+                .map(Map.Entry::getKey)
+                .sorted()
+                .toList();
+
+        assertTrue(stale.isEmpty(),
+                () -> """
+                        The gate's deliberate exceptions name %s, which is no module of this repository with                 production sources, or has no reason. Remove an exception whose module is gone, and give                 every other one the reason why its code belongs to no report."""
+                        .formatted(stale));
+    }
+
     @Test
     @DisplayName("The Spring Boot report is above the coverage threshold")
     void theSpringBootReportIsAboveTheThreshold() {

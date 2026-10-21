@@ -825,7 +825,11 @@ module producing a `jacoco.exec` has to be read by a report. And every module wi
 sources has to be read by the report of its platform, decided by where it lives (the core by both,
 `spring-boot` and `smoke-test` by Spring Boot, `quarkus/` by Quarkus), because a module without
 tests writes no `jacoco.exec`, and left out of its report it would empty that report instead of
-failing it. All of these are `CoverageGateTest`; the failure paths of the last one are held by
+failing it. Two modules are deliberate exceptions, each named in the gate with its reason:
+`engine-test-support`, which starts the engine for the integration tests and which no application
+runs, and `quarkus/native-image-tests`, whose application runs as a native binary, which no Java
+agent measures. An exception which names no module with production sources, or gives no reason,
+fails the gate too. All of these are `CoverageGateTest`; the failure paths of the last one are held by
 `ProductionModulesTest`. The conventions every test class of this repository follows are checked by
 `TestClassConventionsTest`, what the published POMs hand an application by `PublishedPomsTest`, and
 that every published jar and sources jar carries `LICENSE`, `LICENSE-APACHE-2.0` and `NOTICE` by

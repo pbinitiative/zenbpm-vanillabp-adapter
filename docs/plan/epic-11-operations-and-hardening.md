@@ -797,7 +797,7 @@ the engine version it met; the native job runs the lifecycle flow.
 
 ## S11.5.1 Coverage at the rule
 
-- [ ] **Depends on:** S11.4.1.
+- [x] **Depends on:** S11.4.1.
 
 Compare `jacoco.csv` of both reports class by class; every core class high on Spring and low on
 Quarkus names a feature the Quarkus twin never runs - add the twin, never the execution data. Fill the
@@ -806,3 +806,58 @@ is never edited to pass.
 
 **Acceptance criteria**: both badges read above 90; the gate's exception list names only
 `engine-test-support` and the native module with a reason.
+
+*Fit check, 2026-10-21, decided by the Implementor where it says so.* Checked against the branch
+after S11.4.1 (`2192e43`): the two reports of its clean build, `CoverageGateTest`,
+`ProductionModules` and `ProductionModulesTest`. What did not fit, and what was decided:
+
+1. **Nothing to fill on the gate's metric.** The gate and the badges read instructions, and both
+   reports stood at 100 % before this story: Spring Boot 0 of 38,473 instructions missed in 214
+   classes (core 197, `spring-boot` 13, `smoke-test` 4), Quarkus 0 of 38,470 in 206 classes (core
+   197, `quarkus` 7, `quarkus-deployment` 2). The class-by-class comparison of the two
+   `jacoco.csv` covers the 197 core classes both reports read: the same classes, and in every one
+   the same instructions, lines and methods, all covered. So no core class is high on Spring Boot
+   and low on Quarkus, and no Quarkus twin is missing.
+2. **One branch differed.** By branches, the only metric where the core differed, 196 classes
+   are equal and one is not: `ZenBpmUnsupportedConstructs.Findings`, 3 of 160 branches missed on
+   Spring Boot and 4 on Quarkus. The branch is line 539, a non-interrupting start event of an event
+   sub-process which is no error start: only a model of the Spring Boot ITs held one. It is
+   platform-neutral model checking, so decided by the Implementor: a core unit test rather than a
+   Quarkus twin. `ZenBpmUnsupportedConstructsTest#whatZenBpmRunsPasses` now holds a
+   non-interrupting message start event of an event sub-process; the core's tests count in both
+   reports. The mutant which refuses every non-interrupting start event (`&&` to `||`) was killed.
+3. **The remaining missed branches** (30 of the core's 2,609 on both platforms, in 16 classes, among
+   them `ZenBpmMarkerTasks` 6, `ZenBpmModelReader.ProcessReading` 3, `ZenBpmJobDispatcher` 3,
+   `ZenBpmExecutor` 3) are left as they are, decided by the Implementor: branches are not the
+   metric of the rule or the gate, every instruction behind them is covered, and they are the same
+   on both platforms, so they name no missing twin.
+4. **The exception list.** S11.4.1 turned it into a map from artifact id to reason in
+   `CoverageGateTest`, and it names `engine-test-support` and `quarkus/native-image-tests`. This
+   story pins it: `CoverageGateTest#everyExceptionNamesAModuleWithProductionSources` fails on an
+   exception which names no module of the repository with production sources (one left behind by a
+   renamed module would excuse the next one taking its name) or has a blank reason, through the new
+   `ProductionModules#artifactIdsWithProductionSources`. `ProductionModulesTest` gets the native
+   module's case (a module under `quarkus/` no report reads is named "not read by the Quarkus
+   report" until it is an exception) and a case for the new method. `ProductionModules` itself holds
+   no list. The README's section "Test coverage" names both exceptions with their reasons.
+5. **The gate stays at 85 and `coverage.rule` at 90**; neither property is touched. The badges are
+   read after the merge, in the evidence step.
+
+**Acceptance evidence, 2026-10-21.**
+
+- [x] Both reports above the rule (the badges are read after the merge): Spring Boot 100 % (0 of
+  38,473 instructions missed), Quarkus 100 % (0 of 38,470). The core's branches are now the same on
+  both platforms, 30 of 2,609 missed each (`Findings` 3 on both).
+- [x] The gate's exception list names only `engine-test-support` and `quarkus/native-image-tests`,
+  each with its reason, and `CoverageGateTest#everyExceptionNamesAModuleWithProductionSources`
+  holds it to modules with production sources and a reason.
+- Mutants, all killed: the check of a non-interrupting start event with `||` for `&&`
+  (`whatZenBpmRunsPasses`); a stale exception and a blank reason
+  (`everyExceptionNamesAModuleWithProductionSources`); the native module dropped from the exceptions
+  (`everyProductionModuleIsReadByTheReportOfItsPlatform`). 4 of 4.
+- Clean build (`TZ=Etc/UTC mvn clean install` on OpenJDK 25.0.2, Docker ITs included, none
+  skipped, 17:45 min): engine test support 12 + 5, core 1,275 + 104, Spring Boot 14 + 95, smoke
+  test 42 + 1, election integration test 0 + 8, Quarkus runtime 13, deployment 60, integration
+  tests 25, native-image tests 0 (the IT runs only with `-Dnative`), gate 40 (three new tests);
+  coverage as above; `bin/check-deploy-safety.sh` green (13 files deployed by the green build, nothing by the red
+  gate).
