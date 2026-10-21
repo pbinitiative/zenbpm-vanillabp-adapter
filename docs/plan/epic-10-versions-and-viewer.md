@@ -357,7 +357,7 @@ what they showed is written here as well):
 
 ### S10.3.1 `ZenBpmWorkflowViewer`
 
-- [ ] **Depends on:** S10.1.1.
+- [x] **Depends on:** S10.1.1.
 
 **Instructions**
 
@@ -389,14 +389,285 @@ refusal of the skeleton (the validation message of an id without clients, otherw
 later story"), because the SPI's defaults would call the API one the BPMS cannot serve. This story
 replaces the three overrides and removes their rows from `ZenBpmProcessServiceTest#calls`.
 
+*Fit check, 2026-10-20, decided by the Implementor where it says so.* Checked against `main`
+(`06ca83f`), `ADAPTER-AUTHORS.md` (the viewer row of its table, section 3 on the viewer methods,
+section 4 on the read which waits and 4.1 on the workflow id), the platform as the adapter resolves
+it (`2.0.0-20261015.045823-21`: `WorkflowViewer`, `WorkflowLocator#locate`, `ProcessDefinitionIds`,
+the SPI's `ProcessDefinition`, `WorkflowHistory`, `WorkflowElementHistory`, `WorkflowElementType`),
+the Camunda 8 template (`Camunda8WorkflowViewer`, `Camunda8ViewerApiIT`), and the engine at the pin
+`bdd795a3` (read with `git archive` of the pin: `GetHistory` of `internal/rest/server.go`,
+`FindFlowElementInstances` of `internal/sql/queries/flow_element_instance.sql`,
+`FindProcessInstancesPage` of `internal/sql/queries/process_instance.sql` with the default process
+types of `GetProcessInstances` in `internal/cluster/server/server.go`, `createCallActivity`,
+`createSubProcess` and `resolveCalledProcessDefinition` of `pkg/bpmn/sub_process.go`,
+`ResolveVersion` of `pkg/bpmn/model/extensions/io_mapping.go`, the `GetType` methods of
+`pkg/bpmn/model/bpmn20`, the `Incident` and `ProcessInstancesSimple` schemas of `openapi/api.yaml`),
+then probed with a scratch model against the pinned image and pinned by the contract tests below.
+What did not fit, and what was decided:
+
+1. **Which instance the viewer shows** (open question 1 of the brief). The core's `WorkflowViewer`
+   hands the viewer methods the aggregate id only; the workflow id it reads from the start row goes
+   to the probe of the same read (`awarenessOfWorkflow` with its fourth argument), not to the viewer
+   method. So the viewer searches by business key, as the probes do, under the scoped id of the
+   process, every page, with `createdFrom` at the epoch so the engine searches its index (decision
+   56). Several workflows of one aggregate: one which runs (active or failed), else the one created
+   last, by creation time and then key (Camunda 8 takes the first item of an unordered search). A
+   workflow without a business key (timer or message start, or started past VanillaBP without one)
+   is answered as unknown; GAPS 1's row says so. Decided by the Implementor, as the brief
+   recommends; keeping the key the core hands the probe for the next viewer call was rejected,
+   because it ties the adapter to the order the core calls in.
+2. **A lagging node** (open question 5). The core waits for a workflow only inside its election; a
+   viewer method's answer is final. So where the search finds nothing, it is repeated every 250 ms
+   until `workflow-visibility-timeout` passed, the window the probes report (decided by the
+   Implementor). A search the engine does not answer throws, naming the property keys, because an
+   empty answer would read as "unknown". The history reads after the workflow was found cost the
+   elements (`elementsHistory = null`, as the SPI documents for a BPMS without history) with a WARN
+   once until a read succeeds again, and a model which cannot be read costs the definitions of the
+   call activities, as the plan has it.
+3. **`historyContext`** (open question 2): the key of the instance a call activity started, as a
+   decimal string. Served only where that instance is of the process type `callActivity` and its
+   parents, read through the instance cache, lead to the workflow found; another workflow's context,
+   a sub-process instance, an unknown key and a key of a partition the engine does not have are
+   answered as unknown, the first two with a WARN.
+4. **The definitions of called processes** (open question 3). The engine at the pin binds a call
+   activity to the latest version, to a version (`version`), or to the version carrying a tag
+   (`bindingType="versionTag"`, falling back to `v<number>`), and refuses to deploy a model with
+   some combinations (corrected after the reviews: the plan said "once the call activity is
+   reached"; see the answers below). `ZenBpmModelReader` now reads that binding into
+   `ZenBpmBpmnModel.CallActivity#calledVersion` the way `ResolveVersion` does, and the viewer answers
+   the definition the engine would start now, from one list of versions per process called (decided
+   by the Implementor: Camunda 8 answers the version the application deployed, which is not what
+   ZenBPM starts). The called id is the scoped one the held model names; the plain id comes from
+   the core's scoping. Call activities which start the same definition share its entry.
+5. **What the history holds** (open question 4). Probed at the pin: the history of an instance
+   holds only its own level. An embedded sub-process keeps its elements in a child instance of type
+   `subprocess`; a multi-instance element has one entry where it stands (the type of the element)
+   and a body of type `multiInstance` with one entry per iteration; an instance a call activity
+   started is linked to its parent instance only, not to the call activity's entry. So the viewer
+   merges the workflow's sub-process instances and bodies into one history, ordered by creation time
+   and key, reports the entry where a multi-instance element stands as `MULTI_INSTANCE` (Camunda 8's
+   body) and the iterations with their own type, and gives each call activity entry the first
+   instance of its called process with a larger key which no earlier entry took (the engine creates
+   it right after the entry, in the same partition). Markers: the XML is served as the engine holds
+   it (markers and their DI included), and the marker entries and their flows are left out of the
+   history, because Camunda 8's listeners never show in its history (decided by the Implementor as
+   the brief recommends). An entry the engine repeats at a page boundary is taken once.
+6. **What the engine does not keep** (new GAPS 33): no state of an element (a terminated element has
+   a `completedAt` like a completed one), no end of an instance, and no link from a call activity to
+   the instance it started. `isCanceled` is always `false`; the end of an ended workflow is the latest
+   end of its own entries. Errors: the engine keeps incidents with the key of the entry they
+   happened at, so an element carries the message of its unresolved incident; the incidents are read
+   only where a list of instances counts some (`incidentCount`, now read into `ProcessInstanceRef`),
+   or for an instance read by its key which runs. New client method
+   `ZenBpmRestClient#incidentsOf`.
+7. **Request count** (open question 6, decision 14): pinned in `ZenBpmWorkflowViewerTest`, see
+   decision 57 (new): the definitions cost one search, the model once (through the held models of
+   decision 56) and one list per process called; the history costs the search, the model, and per
+   instance of the workflow's own level its history pages, one read of its children where an entry
+   of it starts one, and its incidents where counted.
+8. **`getBpmnXml`**: `ZenBpmClientFactory#heldBpmnOf`, which serves what this start deployed without
+   a request and keeps what it read (decision 56); `null` for an id which is no key or a `404`; any
+   other failure throws (decided by the Implementor: Camunda 8 answers `null` with an INFO, which the
+   core reports as "the definition was deleted").
+9. **The skeleton's refusal**: the three overrides of `ZenBpmProcessService` now serve the viewer;
+   an adapter id without clients still answers with the message of its validation;
+   `notBuiltYet` is gone with its rows in `ZenBpmProcessServiceTest`, and nothing says "later story"
+   any more.
+10. **Quarkus** (open question 7): the viewer lives in `core` and the platform calls it through the
+    process service, so the build-time wiring needs nothing; S10.4.1 proves it in prod mode.
+
+Decision 57 (new) records the viewer; GAPS 33 is new and GAPS 1's row names the viewer. The
+README says what the viewer answers.
+
 **Acceptance criteria**
 
-- [ ] The native definition id is the `processDefinitionKey`; the core namespaces it.
+- [x] The native definition id is the `processDefinitionKey`; the core namespaces it.
+  `ZenBpmViewerApiIT` against the pinned image (Spring Boot, `use-prefix`): the workflow
+  `Shipping` (a task, an embedded sub-process, a call activity of `Packing` on the same aggregate, a
+  multi-instance task of two iterations, an end marker) is reported with the definitions
+  `zenbpm#<key of deploy-it__Shipping>` (`Shipping`, version 1) and `zenbpm#<key of
+  deploy-it__Packing>` used by `CallPacking`; the BPMN of both is the model the engine holds, the
+  marker `vanillabp__ended__Shipped` included; the history lists the 18 elements in the order
+  entered, the sub-process's own elements and `Label` as `MULTI_INSTANCE` and twice as
+  `SERVICE_TASK` included, no marker, every element drawn in the BPMN; `CallPacking` names the
+  called instance, whose history (5 elements) and definitions resolve through it. A task whose
+  handler throws carries the engine's message and its workflow has no end; another workflow's
+  context and a context which is no key are not served; `zenbpm#1` is an unknown definition.
+  `ZenBpmWorkflowViewerTest` (35) holds the choice of the workflow, the wait, the bindings, the
+  merge, the matching of called instances by key, incidents, contexts, failures and the request
+  counts; `ZenBpmRestClientContractIT` (3 new cases) the engine's facts the viewer relies on;
+  `ZenBpmModelReaderTest` (13 new cases) the bindings of a call activity as the engine reads them.
+  Clean build of the story's commit (`TZ=Etc/UTC mvn clean install` on OpenJDK 25.0.2, Docker ITs
+  included, none skipped): engine test support 12 + 5, core 1,253 + 103, Spring Boot 14 + 93, smoke
+  test 38, Quarkus runtime 13, deployment 52, integration tests 20, gate 37; coverage 100 % on both
+  platforms (0 of 37,445 instructions missed on Spring Boot, 0 of 37,315 on Quarkus);
+  `bin/check-deploy-safety.sh` green. Mutants: 22 written, 22 killed: the markers left out, a
+  context of another process type, a context not below the workflow, a running workflow first,
+  the instances of sub-processes and bodies passed over, the wait for a workflow, the lower bound
+  of the search, `MULTI_INSTANCE`, an instance with a smaller key taken, an instance of another
+  process taken, an instance taken twice, the incidents read where none are counted, the incidents
+  of an ended instance read by key, the end of a running workflow, an entry met twice, the WARN
+  reset after a history read, the WARN reset after a model read (it survived first: the test's
+  last failure came from a fresh process service; it now fails twice on the same one), a refused
+  binding read as the latest, the `v<number>` fallback, a `404` for the BPMN, a call activity
+  without a process taking an instance, and a terminated workflow taken as running.
+
+**Answers to two reviews of e10-f10.3-f10.4, 2026-10-21** (one by Claude, changes requested
+with nothing blocking: 1 Major, 3 Minor, 3 Nits; one by Copilot, changes requested: 2 Major). Every
+claim was checked in the code of the branch, in the platform as the adapter resolves it and, for
+the engine, at the pin `bdd795a3`. The event sub-process was raised by both, so eight distinct
+findings remain; all eight were valid and are fixed. Decision 57, new on this branch, was extended
+in place before the merge; no new decision was needed.
+
+- **The elements of an event sub-process were missing from the history** (Claude 1, Copilot 1,
+  Major). At the pin an event sub-process runs in a child instance of the process type `subprocess`
+  which "does not own that token's flow-element history" (`buildEventSubprocessInstance` of
+  `pkg/bpmn/event_subprocess_subscription_handler.go`), so nothing in the history of the instance
+  it stands in starts a child, and the viewer never listed the children. Both reviewers reproduced
+  it on the pinned image. The model reader now records which start event opens which event
+  sub-process (`ZenBpmBpmnModel#eventSubProcessStarts`); the viewer lists the children of every
+  instance whose model has one, merges the child's elements, and reports the child as an
+  `EVENT_SUB_PROCESS` element, from the child's creation to the latest end of its entries, as
+  Camunda 8 does. The end of an ended workflow is now the latest end of all its elements, because
+  an interrupting event sub-process ends the workflow after its own last element. Tests:
+  `ZenBpmWorkflowViewerTest#anEventSubProcessIsReportedWithItsElements`,
+  `#aRunningEventSubProcessHasNoEnd`,
+  `ZenBpmModelReaderTest#theStartEventsOfEventSubProcessesNameTheirEventSubProcess`, and against
+  the pinned image `ZenBpmRestClientContractIT#anEventSubProcessWritesNoEntryWhereItStands`, whose
+  answers the unit fixtures copy. `ZenBpmViewerApiIT` was not extended: an event
+  sub-process in its `Shipping` would have to fire within the few milliseconds the workflow runs.
+  Decision 57, GAPS 33 and the README say it.
+- **A history context not visible yet was refused at once** (Copilot 2, Major). The search for the
+  workflow waited out `workflow-visibility-timeout`; the read of the context's instance and of its
+  parents did not, and the core does not repeat a viewer read (GAPS 20: a follower answers
+  `404` for an instance the node of the parent history showed). Every read which finds nothing is
+  now repeated within one deadline for the whole read; a walk which meets a root other than the
+  workflow is still refused at once. Test
+  `ZenBpmWorkflowViewerTest#aContextNotVisibleYetIsReadAgain` (a `404` for the context and for a
+  parent, each answered on the second read; the context of another workflow read once).
+- **A failed list of versions escaped unwrapped** (Claude 2, Minor). It now costs the definitions
+  of the call activities with the viewer's WARN, as a model which cannot be read does, and the WARN
+  state is reset only after the lists were read. Test
+  `ZenBpmWorkflowViewerTest#aListOfVersionsTheEngineDoesNotAnswerCostsTheCalledDefinitions`.
+- **The viewer ignored `message-start-lookup: scan`** (Claude 3, Minor). The brief recommended the
+  probes' lookup as far as it works without a hint, and the scan needs none. Where the search finds
+  no workflow which runs and the process is scanned, the viewer takes the running root instance the
+  probes' scan finds by the id variable the aggregate's persistence names
+  (`ZenBpmMessageStartScan#processesToScan` gained an overload by workflow module). Test
+  `ZenBpmWorkflowViewerTest#underScanAWorkflowAMessageStartedIsFound` (the scanned workflow beats an
+  ended keyed one; without an id variable the ended one is shown; an instance of a sub-process the
+  scan finds is not taken; a keyed workflow which runs costs no scan). GAPS 1, decision 57 and the
+  README name what stays unknown (timer starts, message starts under `start-row` or ended), now
+  answered after the visibility window.
+- **A refused binding was said to fail "once the call activity is reached"** (Claude 4, Minor).
+  `validateCallActivityVersions` of `pkg/bpmn/model/bpmn20/helper.go` runs `ResolveVersion` while
+  the model is parsed, so the engine refuses the deployment (Claude probed `400`). Decision 57, the
+  javadoc of `CallActivity#calledVersion`, the reader's comments, the test's display name and
+  fit-check item 4 say so now.
+- **`version=" 1 "` read as refused** (Claude 5, Nit). Go parses the number without the whitespace
+  around it; the reader strips it now. Test: a new case of
+  `ZenBpmModelReaderTest#aCallActivityStartsTheVersionTheEngineResolves`.
+- **Two comments stood above the wrong method** (Claude 6, Nit): moved back in `ZenBpmModelReader`
+  and `ZenBpmWorkflowLifecycleTest`.
+- **`+` concatenation in `ZenBpmWorkflowViewerTest`** (Claude 7, Nit): `String#formatted` now.
+
+Not a finding: Claude's first build failed once in
+`ZenBpmMessageIT#aPublicationNothingEverWaitsForIsBlockedOnceTheWindowRanOut`, outside the batch,
+while two builds and a probe engine shared the machine; it was green in the rerun, in Copilot's
+build and in the builds below.
+
+Mutants of the new guards: 13 written, 13 killed: the children listed for an event sub-process, the
+`EVENT_SUB_PROCESS` element, its end only once ended, the workflow's end over every element, the
+WARN reset after the lists, no scan where a keyed workflow runs, no scan without an id variable (it
+survived first: the answer was the same, so the test now also counts the scan's requests), no
+sub-process instance taken from the scan, the scan at all, the context and the parent read again,
+the version stripped, and only event sub-processes' start events recorded. Clean build of the
+review-fix commit (`TZ=Etc/UTC mvn clean install` on OpenJDK 25.0.2, Docker ITs included, none
+skipped): engine test support 12 + 5, core 1,260 + 104 (`ZenBpmWorkflowViewerTest` 40,
+`ZenBpmModelReaderTest` 37, `ZenBpmRestClientContractIT` 32), Spring Boot 14 + 93, smoke test 38,
+Quarkus runtime 13, deployment 52, integration tests 23, gate 37; coverage 100 % on both platforms
+(0 of 37,699 instructions missed on Spring Boot, 0 of 37,569 on Quarkus);
+`bin/check-deploy-safety.sh` green.
+
+**CodeRabbit on pull request #71** (one actionable comment, valid): the class javadoc of
+`ZenBpmWorkflowViewer` cited "(decision 25)" instead of the greppable form the repository's
+`AGENTS.md` asks for; it now reads "see decision 25 in the repository's DECISIONS.md", the only
+such citation in the batch's Java files. Its pre-merge "docstring coverage 41.88 %" warning is
+generic (the repository documents classes and non-private methods, not every test and private
+method) and was not acted on. Clean build of the fix (`TZ=Etc/UTC mvn clean install`): the same
+counts as above, none skipped, coverage 100 % on both platforms (0 of 37,699 and 0 of 37,569
+instructions missed); `bin/check-deploy-safety.sh` green.
 
 ## F10.4 Quarkus twins
 
 ### S10.4.1 Versions and viewer on Quarkus
 
-- [ ] **Depends on:** S10.3.1.
+- [x] **Depends on:** S10.3.1.
 
 `ZenBpmWorkflowLifecycleTest#theViewerServesDefinitionXmlAndHistory`, `#aVersionedMethodRoutes`.
+
+*Fit check, 2026-10-20, decided by the Implementor where it says so.* Checked against the branch
+after S10.3.1, the Quarkus integration tests as they are (`ZenBpmWorkflowLifecycleTest`, one booted
+application per class against one engine), and the fit checks of S10.1.1 (item 6), S10.2.1 (item
+8) and S10.3.1 (item 10), which left their Quarkus twins to this story. What did not fit, and what
+was decided:
+
+1. **One boot, but versions need a history.** A prod-mode test boots its application once per
+   class, and the application deploys while it starts, so the older version a version test needs
+   has to be at the engine before that boot. Decided by the Implementor: the test's static
+   initializer, which already starts the engine before the application's runtime properties are
+   read, deploys version 1 of the processes `Sorting` and `Storing` over the engine's REST API,
+   under the prefixed ids and job types the adapter gives them, and starts a workflow on version 1
+   of `Storing`, as an earlier version of the application would have. The application then deploys
+   version 2 of each from its own files. No second application or class is needed.
+2. **`#aVersionedMethodRoutes`** routes by version **tags**, because E10's "Done when" names
+   `@WorkflowTask(version = "tag")`: version 1 carries the tag `old-belt`, the application's version
+   2 the tag `new-belt`, and `E2eSortingWorkflow` serves the task `sort` with one method per tag. A
+   workflow the application starts runs on version 2 and is served by the method of `new-belt`; a
+   workflow the test starts on version 1 over the engine's REST API, for an aggregate the
+   application kept, by the method of `old-belt`.
+3. **The twin of `ZenBpmOldProcessVersionsIT`** is `#theBootNamesAnOlderVersionItsWorkflowAndWhatItMisses`:
+   the application's log names version 1 of `Storing`, the workflow still running on it, its task
+   `weigh` which no method serves, and that such a workflow's end is not reported to a
+   `@WorkflowEnded` method, with the platform's published phrases. The part of the Spring Boot test
+   which boots again with `outfaded-versions` is not repeated: it is the platform's switch, not this
+   adapter's, and a second boot would need a second class with an engine of its own.
+4. **`#theViewerServesDefinitionXmlAndHistory`**: the process `Dispatching`, a copy of the Spring
+   Boot viewer fixture, under the endpoints `introspect/viewer/...` of `E2eViewerIntrospection`.
+   Nothing in the Quarkus build-time wiring had to change for the viewer or the versions (open
+   question 7 of the brief): the prod-mode tests pass against the extension as it was.
+
+**Acceptance criteria**
+
+- [x] The versions and the viewer work on a booted Quarkus application as on Spring Boot.
+  `ZenBpmWorkflowLifecycleTest` against the pinned image, three new cases:
+  `#theViewerServesDefinitionXmlAndHistory` (the definitions of `Dispatching` and of `Boxing`, used
+  by `CallBoxing`, both namespaced `zenbpm#`; the BPMN of both as the engine holds it, the end marker
+  included; the 18 elements of the history in the order entered, `Label` as `MULTI_INSTANCE` and twice
+  as `SERVICE_TASK`; the history and the definitions of the called instance through its context; a
+  context which is no key answered as not found), `#aVersionedMethodRoutes` (version 2, the
+  application's, served by the method of `new-belt`, version 1 by that of `old-belt`) and
+  `#theBootNamesAnOlderVersionItsWorkflowAndWhatItMisses`. Sensitivity checked: with the two tags
+  of the methods swapped and no workflow started on version 1 of `Storing`, both version cases
+  fail. No new guard in production code, so no mutant of one. Clean build of the story's commit
+  (`TZ=Etc/UTC mvn clean install` on OpenJDK 25.0.2, Docker ITs included, none skipped): engine
+  test support 12 + 5, core 1,253 + 103, Spring Boot 14 + 93, smoke test 38, Quarkus runtime 13,
+  deployment 52, integration tests 23 (`ZenBpmWorkflowLifecycleTest` 22), gate 37; coverage 100 %
+  on both platforms (0 of 37,445 instructions missed on Spring Boot, 0 of 37,315 on Quarkus);
+  `bin/check-deploy-safety.sh` green. The first build of the story failed in the gate's
+  `MethodOrderTest`: the new cases stood below the first helper of the class; they were moved.
+
+**E10 "Done when", checked 2026-10-20 at the end of the epic.** Met on both platforms:
+
+- *`@WorkflowTask(version = "tag")` routes:* Spring Boot `ZenBpmProcessVersionIT#aTagResolves`,
+  Quarkus `ZenBpmWorkflowLifecycleTest#aVersionedMethodRoutes` (tags `old-belt` and `new-belt`).
+- *The boot names old versions with running workflows and what they miss:* Spring Boot
+  `ZenBpmOldProcessVersionsIT`, Quarkus
+  `ZenBpmWorkflowLifecycleTest#theBootNamesAnOlderVersionItsWorkflowAndWhatItMisses`.
+- *A viewer shows definitions, XML and history including a call activity:* Spring Boot
+  `ZenBpmViewerApiIT`, Quarkus `ZenBpmWorkflowLifecycleTest#theViewerServesDefinitionXmlAndHistory`.
+
+What E10 leaves to the engine (GAPS 1, 32 and 33): a business key for a workflow the engine starts
+(E13.4), a tag several versions may carry, and a state on an entry of the history, an end on an
+instance and the element instance which started a child; all out of the pipeline's scope. The
+adapter's answers above hold until then.

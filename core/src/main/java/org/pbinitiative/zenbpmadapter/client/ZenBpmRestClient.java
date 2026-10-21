@@ -41,6 +41,7 @@ import org.pbinitiative.zenbpmadapter.client.api.DefinitionStatistics;
 import org.pbinitiative.zenbpmadapter.client.api.DeployedResource;
 import org.pbinitiative.zenbpmadapter.client.api.EngineStatus;
 import org.pbinitiative.zenbpmadapter.client.api.HistoryEntry;
+import org.pbinitiative.zenbpmadapter.client.api.IncidentRef;
 import org.pbinitiative.zenbpmadapter.client.api.InstanceFilter;
 import org.pbinitiative.zenbpmadapter.client.api.JobFailure;
 import org.pbinitiative.zenbpmadapter.client.api.JobFilter;
@@ -474,6 +475,18 @@ public class ZenBpmRestClient implements AutoCloseable {
     }
 
     /**
+     * The incidents of one process instance which nobody resolved yet (<code>GET
+     * /v1/process-instances/{key}/incidents?state=unresolved</code>), read page by page to the end.
+     * The incidents of its child instances are not among them.
+     *
+     * @param key The key of the instance
+     * @return The incidents, in the order the engine lists them
+     */
+    public List<IncidentRef> incidentsOf(final long key) {
+        return everyPage(page -> incidentsPage(key, page));
+    }
+
+    /**
      * One job (<code>GET /v1/jobs/{key}</code>).
      *
      * @param key The job key
@@ -728,6 +741,25 @@ public class ZenBpmRestClient implements AutoCloseable {
         });
     }
 
+    private Page<IncidentRef> incidentsPage(
+        final long key,
+        final int page
+    ) {
+        final var query = new LinkedHashMap<String, Object>();
+        query.put("state", "unresolved");
+        query.put("page", page);
+        query.put("size", PAGE_SIZE);
+        final var call = new Call(GET, "/v1/process-instances/%d/incidents".formatted(key), query);
+        return call.decoded(call.send(SUCCESS), ZenBpmWire.IncidentPage.class, read -> {
+            final var incidents = read
+                    .items()
+                    .stream()
+                    .map(ZenBpmRestClient::incidentRef)
+                    .toList();
+            return new Page<>(incidents, read.totalCount(), isLastPage(page, incidents.size(), read.totalCount()));
+        });
+    }
+
     private Page<ProcessInstanceRef> childrenPage(
         final long key,
         final int page
@@ -852,6 +884,11 @@ public class ZenBpmRestClient implements AutoCloseable {
                 .inputVariables()));
     }
 
+    private static IncidentRef incidentRef(final ZenBpmWire.Incident incident) {
+        return new IncidentRef(incident.key(), incident.elementInstanceKey(), incident.elementId(), incident
+                .processInstanceKey(), incident.message(), Instant.parse(incident.createdAt()));
+    }
+
     private static ProcessInstanceRef processInstanceRef(final ZenBpmWire.ProcessInstance instance) {
         final var key = instance.key();
         final var definitionKey = instance.processDefinitionKey();
@@ -864,7 +901,8 @@ public class ZenBpmRestClient implements AutoCloseable {
         final var parentKey = instance.parentProcessInstanceKey();
         final var processType = processType(instance.processType());
         final var createdAt = Instant.parse(instance.createdAt());
-        return new ProcessInstanceRef(key, definitionKey, bpmnProcessId, version, versionTag, businessKey, state, variables, parentKey, processType, createdAt);
+        final var incidentCount = instance.incidentCount();
+        return new ProcessInstanceRef(key, definitionKey, bpmnProcessId, version, versionTag, businessKey, state, variables, parentKey, processType, createdAt, incidentCount);
     }
 
     private static ProcessInstanceRef.State instanceState(final String state) {

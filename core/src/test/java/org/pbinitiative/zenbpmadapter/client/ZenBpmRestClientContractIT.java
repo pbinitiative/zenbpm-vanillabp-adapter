@@ -19,7 +19,12 @@ import static org.pbinitiative.zenbpmadapter.client.ContractFixtures.start;
 import static org.pbinitiative.zenbpmadapter.client.ContractFixtures.uniqueBusinessKey;
 import static org.pbinitiative.zenbpmadapter.client.ContractFixtures.waitingJobOf;
 
+import java.io.IOException;
 import java.math.BigInteger;
+import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.time.Instant;
@@ -46,6 +51,7 @@ import org.pbinitiative.zenbpmadapter.client.api.CreateInstanceRequest;
 import org.pbinitiative.zenbpmadapter.client.api.DeployedResource;
 import org.pbinitiative.zenbpmadapter.client.api.HistoryEntry;
 import org.pbinitiative.zenbpmadapter.client.api.InstanceFilter;
+import org.pbinitiative.zenbpmadapter.client.api.JobFailure;
 import org.pbinitiative.zenbpmadapter.client.api.JobFilter;
 import org.pbinitiative.zenbpmadapter.client.api.JobRef;
 import org.pbinitiative.zenbpmadapter.client.api.Page;
@@ -107,6 +113,9 @@ class ZenBpmRestClientContractIT {
         client.deployBpmn(fixture("contract-iterations.bpmn"));
         client.deployBpmn(fixture("contract-multi-instance.bpmn"));
         client.deployBpmn(fixture("contract-multi-instance-call.bpmn"));
+        client.deployBpmn(fixture("contract-viewed-called.bpmn"));
+        client.deployBpmn(fixture("contract-viewed.bpmn"));
+        client.deployBpmn(fixture("contract-escalated.bpmn"));
         decision = client.deployDmn(fixture("contract-decision.dmn"));
     }
 
@@ -768,6 +777,172 @@ class ZenBpmRestClientContractIT {
     }
 
     @Test
+    @DisplayName("The history of an instance holds the elements of its own level: an embedded sub-process keeps its elements in a child instance, a multi-instance element has one entry where it stands and one per iteration in its body, and the instance a call activity started has a key above the entry of the call activity")
+    void theHistoryOfAnInstanceHoldsItsOwnLevel() {
+        final var started = client.createInstance(CreateInstanceRequest
+                .latestVersionOf("contract-viewed")
+                .withBusinessKey(uniqueBusinessKey()));
+        completeEveryJobOf("contract-viewed-wrap", 1);
+        completeEveryJobOf("contract-viewed-called", 3);
+        eventually(() -> client
+                .instance(started.key())
+                .filter(instance -> instance.state() == ProcessInstanceRef.State.COMPLETED));
+
+        final var root = everyEntryOf(started.key());
+        final var children = client.children(started.key());
+        final var subProcess = only(children, ProcessInstanceRef.ProcessType.SUBPROCESS);
+        final var called = only(children, ProcessInstanceRef.ProcessType.CALL_ACTIVITY);
+        final var body = only(children, ProcessInstanceRef.ProcessType.MULTI_INSTANCE);
+        final var iterations = everyEntryOf(body.key())
+                .stream()
+                .sorted(Comparator.comparingLong(HistoryEntry::key))
+                .toList();
+        final var calledByIterations = client
+                .children(body.key())
+                .stream()
+                .sorted(Comparator.comparingLong(ProcessInstanceRef::key))
+                .toList();
+
+        assertAll(
+                () -> assertEquals(List.of("Start", "Flow_ToWrap", "Wrapping", "Flow_ToCall", "Call", "Flow_ToCallEach",
+                        "CallEach", "Flow_ToEnd", "End"),
+                        root
+                                .stream()
+                                .map(HistoryEntry::elementId)
+                                .toList()),
+                () -> assertEquals("SUB_PROCESS", entryOf(root, "Wrapping").elementType()),
+                () -> assertEquals("CALL_ACTIVITY", entryOf(root, "CallEach").elementType()),
+                () -> assertEquals(List.of("WrappingStarted", "Flow_ToWrapWork", "Wrap", "Flow_ToWrapped", "Wrapped"),
+                        everyEntryOf(subProcess.key())
+                                .stream()
+                                .map(HistoryEntry::elementId)
+                                .toList()),
+                () -> assertEquals(started.definitionKey(), subProcess.definitionKey()),
+                () -> assertEquals("contract-viewed-called", called.bpmnProcessId()),
+                () -> assertTrue(called.key() > entryOf(root, "Call").key(), () -> "%s %s".formatted(called, root)),
+                () -> assertEquals(List.of("CALL_ACTIVITY", "CALL_ACTIVITY"), iterations
+                        .stream()
+                        .map(HistoryEntry::elementType)
+                        .toList()),
+                () -> assertEquals(2, calledByIterations.size(), calledByIterations::toString),
+                // each iteration's instance has a key above its own entry and below the next one's
+                () -> assertTrue(calledByIterations
+                        .getFirst()
+                        .key() > iterations
+                                .getFirst()
+                                .key(),
+                        () -> "%s %s".formatted(calledByIterations, iterations)),
+                () -> assertTrue(calledByIterations
+                        .getLast()
+                        .key() > iterations
+                                .getLast()
+                                .key(),
+                        () -> "%s %s".formatted(calledByIterations, iterations)),
+                () -> assertTrue(root
+                        .stream()
+                        .allMatch(entry -> entry.completedAt() != null), root::toString));
+    }
+
+    @Test
+    @DisplayName("An event sub-process writes no entry into the history of the instance it stands in: it runs in a child instance of the process type subprocess, whose history starts at the start event of the event sub-process")
+    void anEventSubProcessWritesNoEntryWhereItStands() {
+        final var started = client.createInstance(CreateInstanceRequest
+                .latestVersionOf("contract-escalated")
+                .withBusinessKey(uniqueBusinessKey()));
+        completeEveryJobOf("contract-escalated-escalate", 1);
+        completeEveryJobOf("contract-escalated-wait", 1);
+        eventually(() -> client
+                .instance(started.key())
+                .filter(instance -> instance.state() == ProcessInstanceRef.State.COMPLETED));
+
+        final var root = everyEntryOf(started.key());
+        final var eventSubProcess = only(client.children(started.key()), ProcessInstanceRef.ProcessType.SUBPROCESS);
+
+        assertAll(
+                () -> assertEquals(List.of("Start", "Flow_ToWait", "Wait", "Flow_ToEnd", "End"), root
+                        .stream()
+                        .sorted(Comparator.comparingLong(HistoryEntry::key))
+                        .map(HistoryEntry::elementId)
+                        .toList()),
+                () -> assertEquals(started.key(), eventSubProcess.parentKey()),
+                () -> assertEquals(List.of("Escalated", "Flow_ToEscalate", "Escalate", "Flow_ToEscalationEnd",
+                        "EscalationEnd"),
+                        everyEntryOf(eventSubProcess.key())
+                                .stream()
+                                .sorted(Comparator.comparingLong(HistoryEntry::key))
+                                .map(HistoryEntry::elementId)
+                                .toList()),
+                () -> assertEquals("START_EVENT", entryOf(everyEntryOf(eventSubProcess.key()), "Escalated")
+                        .elementType()));
+    }
+
+    @Test
+    @DisplayName("An incident nobody resolved names the entry of the history it happened at, leaves its instance active, and is counted by a list of instances but not by the answer for the instance by its key")
+    void anUnresolvedIncidentNamesTheEntryOfItsElement() {
+        final var started = start(client, uniqueBusinessKey());
+        final var job = waitingJobOf(client, started);
+
+        client.failJob(job.key(), JobFailure
+                .withMessage("the parcel is too heavy")
+                .withRetries(0));
+        final var incidents = eventually(() -> Optional
+                .of(client.incidentsOf(started.key()))
+                .filter(read -> !read.isEmpty()));
+        final var work = entryOf(everyEntryOf(started.key()), "Task_Work");
+        final var listed = client
+                .instances(InstanceFilter
+                        .anyInstance()
+                        .withBusinessKey(started.businessKey()))
+                .items()
+                .getFirst();
+        final var byKey = client
+                .instance(started.key())
+                .orElseThrow();
+
+        assertAll(
+                () -> assertEquals(1, incidents.size(), incidents::toString),
+                () -> assertEquals(work.key(), incidents
+                        .getFirst()
+                        .elementInstanceKey()),
+                () -> assertEquals("Task_Work", incidents
+                        .getFirst()
+                        .elementId()),
+                () -> assertTrue(incidents
+                        .getFirst()
+                        .message()
+                        .contains("the parcel is too heavy"),
+                        () -> incidents
+                                .getFirst()
+                                .message()),
+                () -> assertNull(work.completedAt()),
+                () -> assertEquals(ProcessInstanceRef.State.ACTIVE, listed.state()),
+                () -> assertEquals(1, listed.incidentCount()),
+                () -> assertNull(byKey.incidentCount()));
+    }
+
+    @Test
+    @DisplayName("An element the cancellation of its instance terminated ends in the history as a completed one does: the history keeps no state of an element")
+    void aTerminatedElementEndsAsACompletedOneDoes() throws IOException, InterruptedException {
+        final var started = start(client, uniqueBusinessKey());
+        waitingJobOf(client, started);
+
+        try (var http = HttpClient.newHttpClient()) {
+            final var cancelled = http.send(HttpRequest
+                    .newBuilder(URI.create("%s/v1/process-instances/%d/cancel".formatted(ENGINE.restAddress(), started
+                            .key())))
+                    .POST(HttpRequest.BodyPublishers.noBody())
+                    .build(), HttpResponse.BodyHandlers.ofString());
+            assertEquals(204, cancelled.statusCode(), cancelled::body);
+        }
+        eventually(() -> client
+                .instance(started.key())
+                .filter(instance -> instance.state() == ProcessInstanceRef.State.TERMINATED));
+
+        final var work = entryOf(everyEntryOf(started.key()), "Task_Work");
+        assertNotNull(work.completedAt(), work::toString);
+    }
+
+    @Test
     @DisplayName("The child a call activity started is found with its parent")
     void theChildOfACallActivityIsFound() {
         final var parent = client.createInstance(CreateInstanceRequest.latestVersionOf("contract-parent"));
@@ -940,6 +1115,59 @@ class ZenBpmRestClientContractIT {
                 return response.getJob();
             }
         }
+    }
+
+    private static void completeEveryJobOf(
+        final String jobType,
+        final int count
+    ) {
+        var completed = 0;
+        while (completed < count) {
+            final var job = eventually(() -> client
+                    .jobs(JobFilter
+                            .anyJob()
+                            .withJobType(jobType)
+                            .withState(JobRef.State.ACTIVE))
+                    .items()
+                    .stream()
+                    .findFirst());
+            client.completeJob(job.key(), null);
+            ++completed;
+        }
+    }
+
+    private static List<HistoryEntry> everyEntryOf(final long instanceKey) {
+        final var entries = new ArrayList<HistoryEntry>();
+        for (var page = 1;; ++page) {
+            final var read = client.history(instanceKey, page);
+            entries.addAll(read.items());
+            if (read.last()) {
+                return entries;
+            }
+        }
+    }
+
+    private static HistoryEntry entryOf(
+        final List<HistoryEntry> entries,
+        final String elementId
+    ) {
+        return entries
+                .stream()
+                .filter(entry -> elementId.equals(entry.elementId()))
+                .findFirst()
+                .orElseThrow(() -> new AssertionError("no %s in %s".formatted(elementId, entries)));
+    }
+
+    private static ProcessInstanceRef only(
+        final List<ProcessInstanceRef> instances,
+        final ProcessInstanceRef.ProcessType processType
+    ) {
+        final var ofTheType = instances
+                .stream()
+                .filter(instance -> instance.processType() == processType)
+                .toList();
+        assertEquals(1, ofTheType.size(), instances::toString);
+        return ofTheType.getFirst();
     }
 
     private static List<ProcessInstanceRef> inTheOrderCreated(final List<ProcessInstanceRef> instances) {

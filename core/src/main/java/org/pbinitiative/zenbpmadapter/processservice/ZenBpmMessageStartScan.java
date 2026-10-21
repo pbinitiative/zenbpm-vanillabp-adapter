@@ -86,6 +86,21 @@ final class ZenBpmMessageStartScan {
         final WorkflowScope scope,
         final Set<String> scopedIds
     ) {
+        return processesToScan(scope.workflowModuleId(), scopedIds);
+    }
+
+    /**
+     * The processes of a workflow module a lookup reads, as {@link #processesToScan(WorkflowScope,
+     * Set)} names them, for a caller which knows no scope, like the viewer.
+     *
+     * @param workflowModuleId The workflow module
+     * @param scopedIds The ids, as the engine knows them, of the processes asked about
+     * @return The ids to read, empty where nothing is read
+     */
+    Set<String> processesToScan(
+        final String workflowModuleId,
+        final Set<String> scopedIds
+    ) {
         if (factory
                 .configuration()
                 .getMessageStartLookup() != MessageStartLookup.SCAN) {
@@ -93,7 +108,7 @@ final class ZenBpmMessageStartScan {
         }
         final var startedByMessage = factory
                 .deployedProcesses()
-                .messagesOf(scope.workflowModuleId())
+                .messagesOf(workflowModuleId)
                 .map(ModuleMessages::startedByMessage)
                 .orElse(Set.of());
         final var toScan = new LinkedHashSet<String>(scopedIds);

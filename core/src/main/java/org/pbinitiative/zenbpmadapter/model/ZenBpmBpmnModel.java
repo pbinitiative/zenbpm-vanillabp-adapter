@@ -70,6 +70,8 @@ import io.vanillabp.spi.service.BpmsStartTrigger;
  * @param enclosingMultiInstances For every element inside a multi-instance sub-process, the ids of
  *            the multi-instance sub-processes around it, the outermost first; an element inside
  *            none is not in the map
+ * @param eventSubProcessStarts For every start event of an event sub-process, wherever it is in
+ *            the process, the id of the event sub-process it starts
  */
 public record ZenBpmBpmnModel(
     String filename,
@@ -89,7 +91,8 @@ public record ZenBpmBpmnModel(
     List<ModelExpression> expressions,
     List<MessageReference> messageStarts,
     List<MessageReference> messageCatches,
-    Map<String, List<String>> enclosingMultiInstances
+    Map<String, List<String>> enclosingMultiInstances,
+    Map<String, String> eventSubProcessStarts
 ) {
 
     /**
@@ -110,6 +113,7 @@ public record ZenBpmBpmnModel(
         messageStarts = List.copyOf(messageStarts);
         messageCatches = List.copyOf(messageCatches);
         enclosingMultiInstances = Collections.unmodifiableMap(new LinkedHashMap<>(enclosingMultiInstances));
+        eventSubProcessStarts = Collections.unmodifiableMap(new LinkedHashMap<>(eventSubProcessStarts));
     }
 
     /**
@@ -207,13 +211,62 @@ public record ZenBpmBpmnModel(
      * An element which starts an instance of another process.
      *
      * @param elementId The id of the call activity
-     * @param calledProcessId The id of the called process as the modeller wrote it, without any
-     *            prefix, <code>null</code> where it names none
+     * @param calledProcessId The id of the called process as the file names it: as the modeller
+     *            wrote it in a file of the application, with the prefix of the deployment in a model
+     *            the engine holds; <code>null</code> where it names none
+     * @param calledVersion Which version of the called process the engine starts, <code>null</code>
+     *            where what the call activity names makes the engine refuse to deploy the model, so
+     *            only a file the engine never held can carry it
      */
     public record CallActivity(
         String elementId,
-        String calledProcessId
+        String calledProcessId,
+        CalledVersion calledVersion
     ) {
+
+        /**
+         * A call activity which starts the latest version of the called process.
+         *
+         * @param elementId The id of the call activity
+         * @param calledProcessId The id of the called process, <code>null</code> where it names none
+         */
+        public CallActivity(
+            final String elementId,
+            final String calledProcessId
+        ) {
+            this(elementId, calledProcessId, CalledVersion.LATEST);
+        }
+
+    }
+
+    /**
+     * Which version of its process a call activity starts, as the engine reads the
+     * <code>calledElement</code>: the latest, a version by its number, or the version which carries
+     * a tag. Where no version carries the tag and the tag reads <code>v</code> and a number, the
+     * engine starts the version of that number.
+     *
+     * @param version The number of the version, <code>null</code> where the call activity names none
+     * @param versionTag The tag of the version, <code>null</code> where the call activity names none
+     */
+    public record CalledVersion(
+        Integer version,
+        String versionTag
+    ) {
+
+        /**
+         * The latest version, which the engine starts where the call activity names no version.
+         */
+        public static final CalledVersion LATEST = new CalledVersion(null, null);
+
+        /**
+         * Whether the latest version is started.
+         *
+         * @return <code>true</code> where the call activity names neither a version nor a tag
+         */
+        public boolean isLatest() {
+            return (version == null) && (versionTag == null);
+        }
+
     }
 
 }

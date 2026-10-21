@@ -1,0 +1,92 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" xmlns:zenbpm="http://zenbpm.pbinitiative.org/1.0" id="Definitions_ContractEscalated" targetNamespace="http://bpmn.io/schema/bpmn"
+    xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI"
+    xmlns:dc="http://www.omg.org/spec/DD/20100524/DC"
+    xmlns:di="http://www.omg.org/spec/DD/20100524/DI">
+  <bpmn:process id="contract-escalated" isExecutable="true">
+    <bpmn:startEvent id="Start">
+      <bpmn:outgoing>Flow_ToWait</bpmn:outgoing>
+    </bpmn:startEvent>
+    <bpmn:serviceTask id="Wait">
+      <bpmn:extensionElements>
+        <zenbpm:taskDefinition type="contract-escalated-wait" />
+      </bpmn:extensionElements>
+      <bpmn:incoming>Flow_ToWait</bpmn:incoming>
+      <bpmn:outgoing>Flow_ToEnd</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:endEvent id="End">
+      <bpmn:incoming>Flow_ToEnd</bpmn:incoming>
+    </bpmn:endEvent>
+    <bpmn:sequenceFlow id="Flow_ToWait" sourceRef="Start" targetRef="Wait" />
+    <bpmn:sequenceFlow id="Flow_ToEnd" sourceRef="Wait" targetRef="End" />
+    <bpmn:subProcess id="Escalation" triggeredByEvent="true">
+      <bpmn:startEvent id="Escalated" isInterrupting="false">
+        <bpmn:outgoing>Flow_ToEscalate</bpmn:outgoing>
+        <bpmn:timerEventDefinition>
+          <bpmn:timeDuration>PT1S</bpmn:timeDuration>
+        </bpmn:timerEventDefinition>
+      </bpmn:startEvent>
+      <bpmn:serviceTask id="Escalate">
+        <bpmn:extensionElements>
+          <zenbpm:taskDefinition type="contract-escalated-escalate" />
+        </bpmn:extensionElements>
+        <bpmn:incoming>Flow_ToEscalate</bpmn:incoming>
+        <bpmn:outgoing>Flow_ToEscalationEnd</bpmn:outgoing>
+      </bpmn:serviceTask>
+      <bpmn:endEvent id="EscalationEnd">
+        <bpmn:incoming>Flow_ToEscalationEnd</bpmn:incoming>
+      </bpmn:endEvent>
+      <bpmn:sequenceFlow id="Flow_ToEscalate" sourceRef="Escalated" targetRef="Escalate" />
+      <bpmn:sequenceFlow id="Flow_ToEscalationEnd" sourceRef="Escalate" targetRef="EscalationEnd" />
+    </bpmn:subProcess>
+  </bpmn:process>
+  <bpmndi:BPMNDiagram id="BPMNDiagram_1">
+    <bpmndi:BPMNPlane id="BPMNPlane_1" bpmnElement="contract-escalated">
+      <bpmndi:BPMNShape id="Start_di" bpmnElement="Start">
+        <dc:Bounds x="160" y="80" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Wait_di" bpmnElement="Wait">
+        <dc:Bounds x="256" y="80" width="100" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="End_di" bpmnElement="End">
+        <dc:Bounds x="416" y="80" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Escalation_di" bpmnElement="Escalation" isExpanded="true">
+        <dc:Bounds x="160" y="210" width="352" height="140" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Escalated_di" bpmnElement="Escalated">
+        <dc:Bounds x="190" y="240" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Escalate_di" bpmnElement="Escalate">
+        <dc:Bounds x="286" y="240" width="100" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="EscalationEnd_di" bpmnElement="EscalationEnd">
+        <dc:Bounds x="446" y="240" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNEdge id="Flow_ToEscalate_di" bpmnElement="Flow_ToEscalate">
+        <di:waypoint x="226" y="258" />
+        <di:waypoint x="256" y="258" />
+        <di:waypoint x="256" y="280" />
+        <di:waypoint x="286" y="280" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_ToEscalationEnd_di" bpmnElement="Flow_ToEscalationEnd">
+        <di:waypoint x="386" y="280" />
+        <di:waypoint x="416" y="280" />
+        <di:waypoint x="416" y="258" />
+        <di:waypoint x="446" y="258" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_ToWait_di" bpmnElement="Flow_ToWait">
+        <di:waypoint x="196" y="98" />
+        <di:waypoint x="226" y="98" />
+        <di:waypoint x="226" y="120" />
+        <di:waypoint x="256" y="120" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_ToEnd_di" bpmnElement="Flow_ToEnd">
+        <di:waypoint x="356" y="120" />
+        <di:waypoint x="386" y="120" />
+        <di:waypoint x="386" y="98" />
+        <di:waypoint x="416" y="98" />
+      </bpmndi:BPMNEdge>
+    </bpmndi:BPMNPlane>
+  </bpmndi:BPMNDiagram>
+</bpmn:definitions>

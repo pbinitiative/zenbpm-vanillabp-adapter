@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL"
+    xmlns:zenbpm="http://zenbpm.pbinitiative.org/1.0" id="packing" targetNamespace="http://bpmn.io/schema/bpmn"
+    xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI"
+    xmlns:dc="http://www.omg.org/spec/DD/20100524/DC"
+    xmlns:di="http://www.omg.org/spec/DD/20100524/DI">
+  <bpmn:process id="Packing" isExecutable="true">
+    <bpmn:startEvent id="PackingStarted">
+      <bpmn:outgoing>Flow_ToPack</bpmn:outgoing>
+    </bpmn:startEvent>
+    <bpmn:serviceTask id="Pack" name="Pack">
+      <bpmn:extensionElements>
+        <zenbpm:taskDefinition type="pack" />
+      </bpmn:extensionElements>
+      <bpmn:incoming>Flow_ToPack</bpmn:incoming>
+      <bpmn:outgoing>Flow_ToPacked</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:endEvent id="Packed">
+      <bpmn:incoming>Flow_ToPacked</bpmn:incoming>
+    </bpmn:endEvent>
+    <bpmn:sequenceFlow id="Flow_ToPack" sourceRef="PackingStarted" targetRef="Pack" />
+    <bpmn:sequenceFlow id="Flow_ToPacked" sourceRef="Pack" targetRef="Packed" />
+  </bpmn:process>
+  <bpmndi:BPMNDiagram id="BPMNDiagram_1">
+    <bpmndi:BPMNPlane id="BPMNPlane_1" bpmnElement="Packing">
+      <bpmndi:BPMNShape id="PackingStarted_di" bpmnElement="PackingStarted">
+        <dc:Bounds x="160" y="80" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Pack_di" bpmnElement="Pack">
+        <dc:Bounds x="256" y="80" width="100" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Packed_di" bpmnElement="Packed">
+        <dc:Bounds x="416" y="80" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNEdge id="Flow_ToPack_di" bpmnElement="Flow_ToPack">
+        <di:waypoint x="196" y="98" />
+        <di:waypoint x="226" y="98" />
+        <di:waypoint x="226" y="120" />
+        <di:waypoint x="256" y="120" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_ToPacked_di" bpmnElement="Flow_ToPacked">
+        <di:waypoint x="356" y="120" />
+        <di:waypoint x="386" y="120" />
+        <di:waypoint x="386" y="98" />
+        <di:waypoint x="416" y="98" />
+      </bpmndi:BPMNEdge>
+    </bpmndi:BPMNPlane>
+  </bpmndi:BPMNDiagram>
+</bpmn:definitions>

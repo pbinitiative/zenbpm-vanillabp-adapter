@@ -62,8 +62,8 @@ import io.vanillabp.integration.test.utils.SuppressOutputExtension;
 
 /**
  * The process service of this version of the adapter: it says who it is, starts a workflow, serves
- * every other operation the core requires of an adapter, and refuses every other call with words
- * which say why, instead of pretending to have done the work. The engine is a fake which answers
+ * every other operation the core requires of an adapter, and refuses a call of an adapter id without
+ * clients with the message of its validation, instead of pretending to have done the work. The engine is a fake which answers
  * what each test tells it to and writes down what it was asked.
  */
 @ExtendWith(SuppressOutputExtension.class)
@@ -172,7 +172,7 @@ class ZenBpmProcessServiceTest {
     }
 
     @Test
-    @DisplayName("Every handler and viewer method refuses with the message of the validation where the adapter id has no clients, a start, a start by a message, the handlers of a task and of a user task, a correlation and a push included")
+    @DisplayName("Every handler and every method of the viewer refuses with the message of the validation where the adapter id has no clients, a start, a start by a message, the handlers of a task and of a user task, a correlation and a push included")
     void anAdapterIdWithoutClientsRefusesWithItsValidationMessage() {
         final var processService = startingProcessService(unconfigured("orders"), (
             module,
@@ -216,7 +216,7 @@ class ZenBpmProcessServiceTest {
                 () -> userTaskCancellation.phaseOne(taskRequest()), () -> userTaskCancellation.phaseTwo(startRequest(
                         new ArrayList<>())),
                 () -> correlation.phaseOne(taskRequest()), () -> correlation.phaseTwo(correlationRequest(null))),
-                notBuiltYet(processService));
+                viewerCalls(processService));
 
         assertAll(calls.map(call -> () -> assertEquals(NOT_CONFIGURED, assertThrows(IllegalStateException.class,
                 call::run).getMessage())));
@@ -224,26 +224,16 @@ class ZenBpmProcessServiceTest {
     }
 
     @Test
-    @DisplayName("Every handler is built, and the viewer methods of a configured adapter id say that they are not built yet, and what they were asked to do")
-    void aConfiguredAdapterIdSaysThatTheCallIsNotBuiltYet() {
+    @DisplayName("Every operation the core requires of an adapter has its handler, and a push of a changed aggregate as well")
+    void everyHandlerIsBuilt() {
         try (var factory = configured("http://localhost:8080")) {
             final var processService = startingProcessService(factory, (
                 module,
                 process) -> null);
 
-            final var messages = notBuiltYet(processService)
-                    .map(call -> assertThrows(UnsupportedOperationException.class, call::run).getMessage())
-                    .toList();
-
-            assertAll(
-                    () -> assertEquals(BUILT, processService
-                            .phaseOperations()
-                            .keySet()),
-                    () -> assertEquals(List.of(
-                            "ZenBPM adapter 'orders': listing the process definitions of workflow 'Order' of workflow module 'shop' is implemented in a later story",
-                            "ZenBPM adapter 'orders': reading the BPMN XML of process definition 'definition-1' of workflow module 'shop' is implemented in a later story",
-                            "ZenBPM adapter 'orders': reading the history of workflow 'Order' of workflow module 'shop' is implemented in a later story"),
-                            messages));
+            assertEquals(BUILT, processService
+                    .phaseOperations()
+                    .keySet());
         }
     }
 
@@ -738,8 +728,8 @@ class ZenBpmProcessServiceTest {
                         ValueDirection.FROM_BPMS)));
     }
 
-    // both phases of every handler which is not built yet, then the three viewer methods
-    private static Stream<Runnable> notBuiltYet(final ZenBpmProcessService<Object> processService) {
+    // the three methods of the viewer/history API
+    private static Stream<Runnable> viewerCalls(final ZenBpmProcessService<Object> processService) {
         return Stream.of(
                 () -> processService.getProcessDefinitions("shop", "Order", null, "order-1", null),
                 () -> processService.getBpmnXml("shop", "Order", "definition-1"),
