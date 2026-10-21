@@ -551,8 +551,10 @@ An adapter id without clients publishes none: nothing could ever move them.
 | `vanillabp.zenbpm.slots.busy`        | gauge   | `adapter` | handler slots taken right now                                                                           |
 | `vanillabp.zenbpm.slots.free`        | gauge   | `adapter` | handler slots free right now                                                                            |
 
-A task left open for its asynchronous completion counts as neither completed nor failed, and the
-extension which parks it is no renewal. The two gauges read the semaphore of the handler slots and
+A task left open for its asynchronous completion counts as neither completed nor failed, neither
+when its handler returns nor when the application completes or cancels it later through the process
+service, and a user task does not count either: the job meters count what the handlers answered, so
+that they add up against `jobs.received`. The extension which parks a task is no renewal. The two gauges read the semaphore of the handler slots and
 the reconnects counter reads the job stream, values already in memory, so reading a meter never
 asks the engine anything. `MicrometerZenBpmMetricsTest` fails when this table and the meters the
 adapter registers differ in a name, a kind or a tag.

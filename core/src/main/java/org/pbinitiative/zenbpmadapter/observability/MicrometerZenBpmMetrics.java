@@ -111,6 +111,11 @@ public class MicrometerZenBpmMetrics implements ZenBpmMetrics, MeterBinder {
         final IntSupplier busySlots,
         final IntSupplier freeSlots
     ) {
+        // a registry ignores a meter registered twice, and holds the values a gauge reads only
+        // weakly, so the binder keeps what the registries read
+        if (adapters.containsKey(adapterId)) {
+            return;
+        }
         final var read = new Read(streamReconnects, busySlots, freeSlots);
         adapters.put(adapterId, read);
         for (final var counted : Counted.values()) {

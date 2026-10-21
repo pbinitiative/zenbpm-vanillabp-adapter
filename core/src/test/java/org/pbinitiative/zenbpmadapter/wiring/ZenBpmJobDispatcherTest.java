@@ -359,6 +359,42 @@ class ZenBpmJobDispatcherTest {
                 () -> assertEquals(0, jobs.counted(ZenBpmMetrics.JOBS_QUEUED), "every job found the slot free"));
     }
 
+    @Test
+    @DisplayName("A job another arrival takes out of the queue while its own arrival looks for a slot, and which the slot refuses there, is counted once as queued by that arrival")
+    void aJobTakenByAnotherArrivalAndRefusedIsCountedThere() {
+        assertEquals(3, queuedWhileTwoArrivalsRace(false), "all three jobs waited for the slot");
+    }
+
+    @Test
+    @DisplayName("A job another arrival takes out of the queue while its own arrival looks for a slot, and which the slot takes there, is not counted as queued")
+    void aJobTakenByAnotherArrivalAndStartedIsNotCounted() {
+        assertEquals(2, queuedWhileTwoArrivalsRace(true), "the second job got the slot at once");
+    }
+
+    // job 41 waits; while the arrival of job 42 offers 41 the slot again, job 43 arrives on a
+    // second thread, whose look takes 42 out of the queue and holds the third offer until the
+    // arrival of 42 looked at it
+    private long queuedWhileTwoArrivalsRace(final boolean theThirdOfferTakesTheJob) {
+        final var executor = new RacedOffers(theThirdOfferTakesTheJob);
+        final var dispatcher = new ZenBpmJobDispatcher("orders", executor, jobs.factory
+                .instances(), new ZenBpmLockRenewal("orders", jobs.factory.rest(), "shop-1", executor
+                        .timing(), jobs.metrics), jobs.metrics);
+        dispatcher.register(jobs.handler);
+        executor.secondArrival = () -> dispatcher.accept(job(43));
+        try {
+            dispatcher.accept(job(41));
+            dispatcher.accept(job(42));
+            executor.firstArrivalLooked.countDown();
+            JobRunning.await(() -> !executor.secondThread.isAlive(), "the arrival of job 43 to end");
+        } finally {
+            executor.firstArrivalLooked.countDown();
+            executor.slotHolder.countDown();
+            executor.shutdownNow();
+        }
+        assertEquals(3, jobs.counted(ZenBpmMetrics.JOBS_RECEIVED));
+        return jobs.counted(ZenBpmMetrics.JOBS_QUEUED);
+    }
+
     private static ReceivedJob job(final long key) {
         return job(INSTANCE, key);
     }
@@ -390,6 +426,52 @@ class ZenBpmJobDispatcherTest {
                 return false;
             }
             return super.tryExecute(handler);
+        }
+
+    }
+
+    /**
+     * One slot, taken from the start, and offers whose order the test forces: the second offer
+     * starts a second arrival and waits until it offers a job the slot, the third offer waits until
+     * the first arrival looked, and only the third may take its job.
+     */
+    private static final class RacedOffers extends ZenBpmExecutor {
+
+        private final AtomicInteger offers = new AtomicInteger();
+
+        private final CountDownLatch slotHolder = new CountDownLatch(1);
+
+        private final CountDownLatch secondArrivalOffers = new CountDownLatch(1);
+
+        private final CountDownLatch firstArrivalLooked = new CountDownLatch(1);
+
+        private final boolean theThirdOfferTakesTheJob;
+
+        private Runnable secondArrival;
+
+        private Thread secondThread;
+
+        private RacedOffers(final boolean theThirdOfferTakesTheJob) {
+            super("orders", 1, Executors.newSingleThreadExecutor());
+            this.theThirdOfferTakesTheJob = theThirdOfferTakesTheJob;
+            assertTrue(super.tryExecute(() -> awaitQuietly(slotHolder)), "the only slot is taken");
+        }
+
+        @Override
+        public boolean tryExecute(final Runnable handler) {
+            final var offer = offers.incrementAndGet();
+            if (offer == 2) {
+                secondThread = Thread
+                        .ofPlatform()
+                        .name("second-arrival")
+                        .start(secondArrival);
+                awaitQuietly(secondArrivalOffers);
+            } else if (offer == 3) {
+                secondArrivalOffers.countDown();
+                awaitQuietly(firstArrivalLooked);
+                return theThirdOfferTakesTheJob;
+            }
+            return false;
         }
 
     }

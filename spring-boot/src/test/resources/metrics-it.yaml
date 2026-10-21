@@ -11,6 +11,7 @@ vanillabp:
       resources-location: classpath*:metrics-it
       worker-threads: 1
       retry-backoff: PT1S
+      async-task-lock-renewal: PT1H
   outbox:
     housekeeping:
       zone: UTC

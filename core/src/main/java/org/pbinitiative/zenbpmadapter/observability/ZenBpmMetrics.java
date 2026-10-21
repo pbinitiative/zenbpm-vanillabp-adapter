@@ -48,8 +48,11 @@ public interface ZenBpmMetrics {
     /**
      * Counter of the jobs a handler answered with a completion: its method returned, or threw a
      * BPMN error, which is an outcome the method chose, or the start or the end of a workflow was
-     * reported. A task left open for its asynchronous completion is not counted here, nor is a job
-     * which was gone when it was to be completed.
+     * reported. A task left open for its asynchronous completion is not counted here, neither when
+     * its handler returns nor when the application completes or cancels it later through the process
+     * service, and neither is a user task: the job meters count what the handlers answered, so that
+     * they add up against {@link #JOBS_RECEIVED}. Nor is a job counted which was gone when it was to
+     * be completed.
      */
     String JOBS_COMPLETED = "vanillabp.zenbpm.jobs.completed";
 
@@ -117,8 +120,9 @@ public interface ZenBpmMetrics {
 
     /**
      * Registers what is read of an adapter id rather than counted: the reconnects of its job stream
-     * and its handler slots. Called once per adapter id with clients. The values are read where they
-     * are kept, in memory, so reading a meter never asks the engine anything.
+     * and its handler slots. Called once per adapter id with clients; a second call for the same
+     * adapter id changes nothing, and the values of the first are read. The values are read where
+     * they are kept, in memory, so reading a meter never asks the engine anything.
      *
      * @param adapterId The adapter id
      * @param streamReconnects How often the job stream opened its call again

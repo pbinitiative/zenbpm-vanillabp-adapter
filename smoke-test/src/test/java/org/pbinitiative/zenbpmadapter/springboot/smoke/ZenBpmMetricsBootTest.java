@@ -33,9 +33,7 @@ import org.springframework.context.ConfigurableApplicationContext;
 import org.springframework.core.io.DefaultResourceLoader;
 import org.springframework.util.ClassUtils;
 
-import io.micrometer.core.instrument.Meter;
 import io.micrometer.core.instrument.MeterRegistry;
-import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import io.vanillabp.integration.test.utils.CapturedOutput;
 import io.vanillabp.integration.test.utils.SuppressOutputExtension;
 
@@ -54,16 +52,21 @@ class ZenBpmMetricsBootTest {
     };
 
     @Test
-    @DisplayName("With Micrometer, every deployment service measures into the adapter's meter binder, and each of two adapter ids publishes the eleven meters under its own tag")
+    @DisplayName("With Micrometer, every deployment service measures into the adapter's meter binder, which Spring Boot applies to its registry, and each of two adapter ids publishes the eleven meters there under its own tag")
     void withMicrometerEachAdapterIdPublishesItsMeters() {
         try (var context = run(null, TWO_ADAPTER_IDS)) {
             final var metrics = context.getBean(MicrometerZenBpmMetrics.class);
-            final var registry = new SimpleMeterRegistry();
-            metrics.bindTo(registry);
+            // the registry Spring Boot's metrics build, which apply every meter binder bean to it
+            final var registry = context.getBean(MeterRegistry.class);
 
             final var meterNamesByAdapterId = new TreeMap<String, List<String>>();
             registry
                     .getMeters()
+                    .stream()
+                    .filter(meter -> meter
+                            .getId()
+                            .getName()
+                            .startsWith("vanillabp.zenbpm."))
                     .forEach(meter -> meterNamesByAdapterId
                             .computeIfAbsent(meter
                                     .getId()
@@ -83,15 +86,7 @@ class ZenBpmMetricsBootTest {
                             "zenbpm-old"), "the two sets differ in the tag only"),
                     () -> assertEquals(11, meterNamesByAdapterId
                             .get("zenbpm-new")
-                            .size(), meterNamesByAdapterId::toString),
-                    () -> assertTrue(registry
-                            .getMeters()
-                            .stream()
-                            .map(Meter::getId)
-                            .allMatch(id -> id
-                                    .getName()
-                                    .startsWith("vanillabp.zenbpm.")),
-                            "the binder publishes the adapter's meters only"));
+                            .size(), meterNamesByAdapterId::toString));
         }
     }
 
@@ -103,7 +98,9 @@ class ZenBpmMetricsBootTest {
             withMicrometer = whatTheAdapterRegistered(context);
         }
 
-        try (var context = run(new FilteredClassLoader(MeterRegistry.class), TWO_ADAPTER_IDS)) {
+        // hides Micrometer from the conditions only: ZenBpmWithoutMicrometerBootTest boots on a
+        // classpath which lacks it
+        try (var context = run(new FilteredClassLoader("io.micrometer."), TWO_ADAPTER_IDS)) {
             final var withoutMicrometer = whatTheAdapterRegistered(context);
             final var log = output.getAllOfThisTest();
 

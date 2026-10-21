@@ -137,6 +137,68 @@ auto-configuration, `Camunda8MetricsProducer` and `Camunda8IntegrationProcessor`
   100 % on both platforms (0 of 38,268 instructions missed on Spring Boot, 0 of 38,162 on Quarkus);
   `bin/check-deploy-safety.sh` green (13 files deployed by the green build, nothing by the red gate).
 
+**Answers to two reviews of e11-s11.1.1, 2026-10-21** (one by Claude, ready after the Minors are
+weighed: 3 Minor, 2 Nits; one by Copilot, changes requested: 1 Minor). Every claim was checked in
+the code of the branch, by the reviewers' probes and by a test of my own. Claude's fifth finding
+and Copilot's only one are the same race, so five distinct findings remain; all five were valid
+and are fixed. Decision 59, new on this branch, was extended in place before the merge; no new
+decision was needed.
+
+- **`jobs.queued` missed a job another handover held out of the queue** (Copilot 1, Claude 5,
+  Minor). `accept` read the job's `settled` flag once, after its own handover, while a handover on
+  a handler thread (`onSlotFreed`) could have taken the job out and not yet heard the slot refuse
+  it. That handover put the job back without counting it, and nothing counted it later. Copilot
+  showed it with latches on the unmodified dispatcher: three jobs waiting, two counted. Claude also
+  named the reverse window, between `pollFirst` and the flag. Taking a job out of the queue and
+  marking it taken is now one step under the queue's lock, and so is putting it back. The arrival
+  counts a job which is still in the queue. A job which another handover holds while its arrival
+  looks is decided by that handover: it is counted once where the slot refuses it, and not at all
+  where the slot takes it. Tests with a forced interleaving:
+  `ZenBpmJobDispatcherTest#aJobTakenByAnotherArrivalAndRefusedIsCountedThere` (3 counted; it
+  fails on `46d70a1`) and `#aJobTakenByAnotherArrivalAndStartedIsNotCounted` (2 counted).
+- **The Spring Boot boot without Micrometer could not catch an adapter class which loads a
+  Micrometer type** (Claude 1, Minor). A `FilteredClassLoader` hides Micrometer from the
+  conditions only, so the application class loader still loaded Micrometer for the adapter's own
+  classes. Claude's mutant, a registrar which asks for `MicrometerZenBpmMetrics`, survived, and
+  that class fails to load without Micrometer. `smoke-test` now runs
+  `ZenBpmWithoutMicrometerBootTest` in a Surefire execution of its own (`without-micrometer`),
+  with `micrometer-core` and Spring Boot's metrics left off the classpath. The test asserts that
+  the classpath really lacks Micrometer. `ZenBpmMetricsBootTest`'s comparison of the two boots
+  keeps its filtered class loader, which now hides `io.micrometer.`.
+- **No Spring Boot test showed that Spring Boot applies the binder to its own registry** (Claude 2,
+  Minor). Both Spring Boot tests bound the binder to a registry of their own, as Camunda 8's
+  `Camunda8WorkerThreadsIT` does. `smoke-test` now has Spring Boot's
+  `spring-boot-micrometer-metrics` as a test dependency, and
+  `ZenBpmMetricsBootTest#withMicrometerEachAdapterIdPublishesItsMeters` reads the context's own
+  `MeterRegistry`.
+- **A task completed later through the process service was not counted, and nothing said so**
+  (Claude 3, Minor). The behaviour stays as it is: `jobs.completed` counts what the handlers
+  answered. Camunda 8 counts the jobs its handlers took. Phase two runs on whichever node the
+  application calls, outside the handler slots. A user task never comes through the job stream, so
+  counting it would make `completed` exceed `received`. `ZenBpmMetrics#JOBS_COMPLETED`, the README's
+  "Metrics" and decision 59 now say so, and the new workflow `Labelling` of `ZenBpmMetricsIT` pins
+  it against the pinned image: `#aTaskCompletedThroughTheProcessServiceIsNotCountedAsCompleted`.
+  Its start marker counts as completed and its task left open does not, neither while it is open
+  nor once the application completed it. After the completion only the jobs which came after it
+  count, the end marker's. `#theMetersFollowTheJobs` now compares against a snapshot taken at its
+  start, because the binder counts from the start of the application on.
+- **A second registration of an adapter id left gauges reading `NaN`** (Claude 4, Nit). Micrometer
+  ignores a meter registered twice and holds a gauge's state weakly, while the binder kept only the
+  second suppliers. No production path registers twice. `MicrometerZenBpmMetrics#registerAdapter`
+  now keeps the first registration, and the javadoc of `ZenBpmMetrics#registerAdapter` says so.
+  Test: `MicrometerZenBpmMetricsTest#aSecondRegistrationOfAnAdapterIdChangesNothing`.
+
+Mutants of the fixes, each killed by a failing test: in the dispatcher, the put-back never
+counting, `taken` ignored, `counted` ignored, `looked` ignored, `taken` never set, `taken` never
+cleared (6); the first registration's guard removed (1); phase two counting a completion, through
+a static hook (1, `ZenBpmMetricsIT`); the binder without `implements MeterBinder` (1, the old test
+binding by hand passed it); Claude's registrar mutant (1, killed by the new execution only).
+Build after the fixes (`TZ=Etc/UTC mvn clean install` on OpenJDK 25.0.2, Docker ITs included,
+none skipped): engine test support 12 + 5, core 1,271 + 104, Spring Boot 14 + 95, smoke test 40 + 1
+(`without-micrometer`), Quarkus runtime 13, deployment 53, integration tests 24, gate 37; coverage
+100 % on both platforms (0 of 38,341 instructions missed on Spring Boot, 0 of 38,235 on Quarkus);
+`bin/check-deploy-safety.sh` green (13 files deployed by the green build, nothing by the red gate).
+
 ## S11.2.1 Startup-message review
 
 - [ ] **Depends on:** E10.

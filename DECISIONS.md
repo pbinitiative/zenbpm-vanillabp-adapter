@@ -1666,7 +1666,11 @@ about:
   and a BPMN error count as completed, because a BPMN error is an outcome the method chose; a failure
   with or without retries counts as failed. The start and end markers count alike, because their
   jobs are jobs of the engine and part of `jobs.received`. A task left open counts as neither, nor
-  does an answer which found the job gone.
+  does an answer which found the job gone. Its later completion or cancellation through the process
+  service does not count either, and neither does a user task's: the job meters count what the
+  handlers answered, so that they add up against `jobs.received` on the node which received the
+  jobs, as Camunda 8 counts the jobs its handlers took. Phase two runs on whichever node the
+  application calls, outside the handler slots.
 - `lock.renewed` in the lock renewal for every extension the engine granted to a running handler,
   and `lock.lost` for a renewal which ended while its handler ran, because the engine said the lock
   is lost or could not be asked before it lapsed; the extension which parks a job is neither.

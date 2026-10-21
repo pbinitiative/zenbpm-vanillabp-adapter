@@ -10,6 +10,9 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.time.Duration;
 import java.time.Instant;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.locks.LockSupport;
@@ -27,6 +30,8 @@ import org.pbinitiative.zenbpmadapter.observability.MicrometerZenBpmMetrics;
 import org.pbinitiative.zenbpmadapter.observability.ZenBpmMetrics;
 import org.pbinitiative.zenbpmadapter.springboot.it.metrics.Crate;
 import org.pbinitiative.zenbpmadapter.springboot.it.metrics.MetricsItApplication;
+import org.pbinitiative.zenbpmadapter.springboot.it.metrics.Pallet;
+import org.pbinitiative.zenbpmadapter.springboot.it.metrics.PalletWorkflow;
 import org.pbinitiative.zenbpmadapter.test.EngineUnderTest;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -70,6 +75,9 @@ class ZenBpmMetricsIT {
     private ProcessService<Crate> processService;
 
     @Autowired
+    private ProcessService<Pallet> palletService;
+
+    @Autowired
     private TransactionTemplate transactionTemplate;
 
     @Autowired
@@ -83,6 +91,8 @@ class ZenBpmMetricsIT {
     void theMetersFollowTheJobs() {
         final var registry = new SimpleMeterRegistry();
         metrics.bindTo(registry);
+        // the binder counts from the start of the application on, the other test's jobs included
+        final var before = new Counts(registry);
         final var crateId = "crate-%s".formatted(UUID.randomUUID());
 
         transactionTemplate.executeWithoutResult(status -> processService.startWorkflow(new Crate(crateId)));
@@ -101,27 +111,70 @@ class ZenBpmMetricsIT {
                 .instance(instance)
                 .filter(read -> read.state() != ProcessInstanceRef.State.ACTIVE), "the workflow to end");
         // the job of the end marker in front of the end event is completed after the workflow ended
-        eventually(() -> (counted(registry, ZenBpmMetrics.JOBS_COMPLETED) == 3) && (gauged(registry,
+        eventually(() -> (before.since(ZenBpmMetrics.JOBS_COMPLETED) == 3) && (gauged(registry,
                 ZenBpmMetrics.SLOTS_BUSY) == 0), "the last completion to be counted and the slot to be free: %s"
                         .formatted(registry.getMetersAsString()));
 
         assertAll(
                 () -> assertEquals(ProcessInstanceRef.State.COMPLETED, ended.state()),
                 // the first and the second weighing, the sealing and the end marker
-                () -> assertEquals(4, counted(registry, ZenBpmMetrics.JOBS_RECEIVED)),
-                () -> assertEquals(1, counted(registry, ZenBpmMetrics.JOBS_REDELIVERED),
+                () -> assertEquals(4, before.since(ZenBpmMetrics.JOBS_RECEIVED)),
+                () -> assertEquals(1, before.since(ZenBpmMetrics.JOBS_REDELIVERED),
                         "the engine hands the job of the failed weighing out again, with its next delivery token"),
-                () -> assertTrue(counted(registry, ZenBpmMetrics.JOBS_QUEUED) >= 1, "a job waited for the slot"),
-                () -> assertEquals(3, counted(registry, ZenBpmMetrics.JOBS_COMPLETED)),
-                () -> assertEquals(1, counted(registry, ZenBpmMetrics.JOBS_FAILED)),
-                () -> assertTrue(counted(registry, ZenBpmMetrics.LOCK_RENEWED) >= 1,
+                () -> assertTrue(before.since(ZenBpmMetrics.JOBS_QUEUED) >= 1, "a job waited for the slot"),
+                () -> assertEquals(3, before.since(ZenBpmMetrics.JOBS_COMPLETED)),
+                () -> assertEquals(1, before.since(ZenBpmMetrics.JOBS_FAILED)),
+                () -> assertTrue(before.since(ZenBpmMetrics.LOCK_RENEWED) >= 1,
                         "the second weighing runs longer than its job-timeout"),
-                () -> assertEquals(0, counted(registry, ZenBpmMetrics.LOCK_LOST)),
-                () -> assertEquals(0, counted(registry, ZenBpmMetrics.STREAM_RECONNECTS),
+                () -> assertEquals(0, before.since(ZenBpmMetrics.LOCK_LOST)),
+                () -> assertEquals(0, before.since(ZenBpmMetrics.STREAM_RECONNECTS),
                         "the job stream stayed connected"),
-                () -> assertEquals(0, counted(registry, ZenBpmMetrics.USER_TASK_POLLS),
+                () -> assertEquals(0, before.since(ZenBpmMetrics.USER_TASK_POLLS),
                         "the module has no user task to look for"),
                 () -> assertEquals(1.0, gauged(registry, ZenBpmMetrics.SLOTS_FREE)));
+    }
+
+    @Test
+    @DisplayName("A task left open counts as received and not as completed, neither when its handler returns nor when the application completes it later through the process service: the job meters count what the handlers answered")
+    void aTaskCompletedThroughTheProcessServiceIsNotCountedAsCompleted() {
+        final var registry = new SimpleMeterRegistry();
+        metrics.bindTo(registry);
+        final var before = new Counts(registry);
+        final var palletId = "pallet-%s".formatted(UUID.randomUUID());
+
+        transactionTemplate.executeWithoutResult(status -> palletService.startWorkflow(new Pallet(palletId)));
+        final var taskId = eventually(() -> PalletWorkflow.labelTaskOf(palletId), "the labelling to be left open");
+        eventually(() -> gauged(registry, ZenBpmMetrics.SLOTS_BUSY) == 0, "the handler of the labelling to return");
+        final var whileOpen = new Counts(registry);
+        final var receivedUntilThen = before.since(ZenBpmMetrics.JOBS_RECEIVED);
+        final var completedUntilThen = before.since(ZenBpmMetrics.JOBS_COMPLETED);
+        transactionTemplate.executeWithoutResult(status -> palletService.completeTask(new Pallet(palletId), taskId));
+        final var instance = rest()
+                .instances(InstanceFilter
+                        .anyInstance()
+                        .withBusinessKey(palletId))
+                .items()
+                .getFirst()
+                .key();
+        final var ended = eventually(() -> rest()
+                .instance(instance)
+                .filter(read -> read.state() != ProcessInstanceRef.State.ACTIVE), "the workflow to end");
+        // a job which came after the completion, as the end marker's, is counted once the engine
+        // took its answer, which may be after the workflow ended
+        eventually(() -> (whileOpen.since(ZenBpmMetrics.JOBS_COMPLETED) >= whileOpen.since(
+                ZenBpmMetrics.JOBS_RECEIVED)) && (gauged(registry, ZenBpmMetrics.SLOTS_BUSY) == 0),
+                "every job which came after the completion to be answered");
+
+        assertAll(
+                () -> assertEquals(ProcessInstanceRef.State.COMPLETED, ended.state()),
+                () -> assertTrue(receivedUntilThen >= 1, () -> Long.toString(receivedUntilThen)),
+                () -> assertEquals(receivedUntilThen - 1, completedUntilThen,
+                        "every job but the labelling left open, the start marker's, was completed"),
+                () -> assertEquals(whileOpen.since(ZenBpmMetrics.JOBS_RECEIVED), whileOpen.since(
+                        ZenBpmMetrics.JOBS_COMPLETED),
+                        "after the completion through the process service, only the jobs which came after it count: %s"
+                                .formatted(registry.getMetersAsString())),
+                () -> assertEquals(0, before.since(ZenBpmMetrics.JOBS_FAILED)));
     }
 
     @DynamicPropertySource
@@ -145,6 +198,31 @@ class ZenBpmMetricsIT {
                 .tag(ZenBpmMetrics.TAG_ADAPTER, "zenbpm")
                 .functionCounter()
                 .count();
+    }
+
+    /**
+     * The counters of the adapter id at one moment, to tell what moved since.
+     */
+    private static final class Counts {
+
+        private final SimpleMeterRegistry registry;
+
+        private final Map<String, Long> counts = new HashMap<>();
+
+        private Counts(final SimpleMeterRegistry registry) {
+            this.registry = registry;
+            for (final var meterName : List.of(ZenBpmMetrics.JOBS_RECEIVED, ZenBpmMetrics.JOBS_REDELIVERED,
+                    ZenBpmMetrics.JOBS_QUEUED, ZenBpmMetrics.JOBS_COMPLETED, ZenBpmMetrics.JOBS_FAILED,
+                    ZenBpmMetrics.LOCK_RENEWED, ZenBpmMetrics.LOCK_LOST, ZenBpmMetrics.STREAM_RECONNECTS,
+                    ZenBpmMetrics.USER_TASK_POLLS)) {
+                counts.put(meterName, counted(registry, meterName));
+            }
+        }
+
+        private long since(final String meterName) {
+            return counted(registry, meterName) - counts.get(meterName);
+        }
+
     }
 
     private static double gauged(

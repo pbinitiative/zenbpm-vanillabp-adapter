@@ -189,6 +189,24 @@ class MicrometerZenBpmMetricsTest {
     }
 
     @Test
+    @DisplayName("A second registration of an adapter id changes nothing: every registry, bound before or after it, reads the values of the first")
+    void aSecondRegistrationOfAnAdapterIdChangesNothing() {
+        final var before = new SimpleMeterRegistry();
+        final var metrics = new MicrometerZenBpmMetrics();
+        metrics.bindTo(before);
+        final var free = new AtomicInteger(4);
+        metrics.registerAdapter("orders", () -> 0, () -> 0, free::get);
+        final var otherFree = new AtomicInteger(9);
+        metrics.registerAdapter("orders", () -> 0, () -> 0, otherFree::get);
+        final var after = new SimpleMeterRegistry();
+        metrics.bindTo(after);
+
+        assertAll(
+                () -> assertEquals(4.0, gauged(before, ZenBpmMetrics.SLOTS_FREE, "orders")),
+                () -> assertEquals(4.0, gauged(after, ZenBpmMetrics.SLOTS_FREE, "orders")));
+    }
+
+    @Test
     @DisplayName("Without a metrics backend nothing is measured, and nothing throws")
     void withoutABackendNothingIsMeasured() {
         assertDoesNotThrow(() -> {

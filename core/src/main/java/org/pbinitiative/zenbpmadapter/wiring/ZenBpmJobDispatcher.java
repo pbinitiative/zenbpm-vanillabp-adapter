@@ -165,8 +165,39 @@ public final class ZenBpmJobDispatcher implements Consumer<ReceivedJob> {
         final var arrived = new Waiting(received);
         waiting.addLast(arrived);
         handOver();
-        if (!arrived.settled) {
+        if (lookedFor(arrived)) {
             metrics.jobQueued(adapterId);
+        }
+    }
+
+    // whether the delivery waits once its arrival looked for a slot; one another handover took out
+    // of the queue meanwhile is decided by that handover once it knows whether the slot took it
+    private boolean lookedFor(final Waiting arrived) {
+        synchronized (waiting) {
+            arrived.looked = true;
+            return arrived.countOnceUnlessTaken();
+        }
+    }
+
+    // taken out of the queue and marked so in one step, so the arrival of a job never reads a job
+    // as waiting which a slot takes at once, nor as taken once it waits again
+    private Waiting takeTheNext() {
+        synchronized (waiting) {
+            final var next = waiting.pollFirst();
+            if (next != null) {
+                next.taken = true;
+            }
+            return next;
+        }
+    }
+
+    // a job the slot refused waits again, in front; it is counted here where its arrival looked
+    // while it was out of the queue
+    private boolean putBack(final Waiting refused) {
+        synchronized (waiting) {
+            refused.taken = false;
+            waiting.addFirst(refused);
+            return refused.looked && refused.countOnceUnlessTaken();
         }
     }
 
@@ -174,12 +205,11 @@ public final class ZenBpmJobDispatcher implements Consumer<ReceivedJob> {
     // comes free meanwhile is seen either by that look or by its own call of this method
     private void handOver() {
         while (true) {
-            final var next = waiting.pollFirst();
+            // out of the queue for good, unless it is put back below
+            final var next = takeTheNext();
             if (next == null) {
                 return;
             }
-            // out of the queue for good, unless it is put back below
-            next.settled = true;
             final var received = next.received;
             final var job = received.job();
             final var jobTimeout = jobTimeoutOf(job.getType());
@@ -212,8 +242,9 @@ public final class ZenBpmJobDispatcher implements Consumer<ReceivedJob> {
             if (handedOver) {
                 continue;
             }
-            next.settled = false;
-            waiting.addFirst(next);
+            if (putBack(next)) {
+                metrics.jobQueued(adapterId);
+            }
             if (executor.getFreeSlots() == 0) {
                 return;
             }
@@ -318,10 +349,24 @@ public final class ZenBpmJobDispatcher implements Consumer<ReceivedJob> {
 
         private final ReceivedJob received;
 
-        private volatile boolean settled;
+        // the three are read and written under the dispatcher's lock of the queue
+
+        private boolean taken;
+
+        private boolean looked;
+
+        private boolean counted;
 
         private Waiting(final ReceivedJob received) {
             this.received = received;
+        }
+
+        private boolean countOnceUnlessTaken() {
+            if (taken || counted) {
+                return false;
+            }
+            counted = true;
+            return true;
         }
 
     }
