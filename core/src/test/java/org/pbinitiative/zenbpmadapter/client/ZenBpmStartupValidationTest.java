@@ -37,8 +37,8 @@ import io.vanillabp.integration.test.utils.SuppressOutputExtension;
 /**
  * What the platforms do with the ZenBPM adapter ids while an application starts, which both reach
  * through {@link ZenBpmStartupValidation}: the outcome of the validation decides, the findings go
- * to the startup report with the adapter id as their scope, and no factory is left open where the
- * start ends.
+ * to the startup report with the adapter id as their scope and without it as their subject, a
+ * refusal included, and no factory is left open where building one fails.
  */
 @ExtendWith(SuppressOutputExtension.class)
 class ZenBpmStartupValidationTest {
@@ -51,7 +51,7 @@ class ZenBpmStartupValidationTest {
     private static final Duration RETENTION = Duration.ofDays(7);
 
     @Test
-    @DisplayName("An adapter id without an address is a warning naming the key, and its factory refuses work with the same words")
+    @DisplayName("An adapter id without an address is a warning naming the key, and its factory refuses work with the same words, which name the adapter id where the warning's scope does")
     void anUnconfiguredAdapterIdIsAWarning() {
         final var report = new CollectedStartupReport();
 
@@ -63,9 +63,12 @@ class ZenBpmStartupValidationTest {
 
             assertAll(
                     () -> assertEquals(List
-                            .of(new Finding("warn", StartupTopic.CONFIGURATION, "zenbpm adapter 'orders'", message)),
+                            .of(new Finding("warn", StartupTopic.CONFIGURATION, "zenbpm adapter 'orders'", message
+                                    .replace("ZenBPM adapter 'orders'", "This adapter"))),
                             report.findings()),
-                    () -> assertTrue(message.contains("'vanillabp.adapters.orders.rest-address' is missing"), message),
+                    () -> assertTrue(message.startsWith(
+                            "ZenBPM adapter 'orders' is not configured: 'vanillabp.adapters.orders.rest-address' is missing."),
+                            message),
                     () -> assertEquals(message, assertThrows(IllegalStateException.class, factory::rest).getMessage()));
         }
     }
@@ -155,17 +158,71 @@ class ZenBpmStartupValidationTest {
 
             assertAll(
                     () -> assertEquals(
-                            List.of(new Finding("warn", StartupTopic.CONFIGURATION, "zenbpm adapter 'old'", message)),
+                            List.of(new Finding("warn", StartupTopic.CONFIGURATION, "zenbpm adapter 'old'", message
+                                    .replace("ZenBPM adapter 'old'", "This adapter"))),
                             report.findings()),
+                    () -> assertTrue(message.startsWith("ZenBPM adapter 'old' is configured inconsistently:"), message),
                     () -> assertTrue(message.contains("boots DEGRADED"), message),
                     () -> assertTrue(message.contains("vanillabp.adapters.old.rest-address"), message));
         }
     }
 
     @Test
-    @DisplayName("Every adapter id which ends the start is named in one exception, and no factory is built")
-    void everyAdapterIdWhichEndsTheStartIsNamedOnce() {
+    @DisplayName("Every adapter id which ends the start is refused in the startup report, scoped to it, and gets a factory without clients which refuses work naming it; the others are built")
+    void everyAdapterIdWhichEndsTheStartIsRefused() {
         final var report = new CollectedStartupReport();
+        final var built = new ArrayList<String>();
+        final var workerThreads = configured(ADDRESS);
+        workerThreads.setWorkerThreads("0");
+
+        try (var registry = ZenBpmStartupValidation.registryOf(List.of("orders", "billing", "shipping"), Map.of(
+                "orders", configured("ftp://engine"), "billing", workerThreads, "shipping", configured(ADDRESS))::get,
+                id -> true, id -> false, RETENTION, report, Optional::empty, building(built))) {
+            final var orders = registry
+                    .getFactory("orders")
+                    .unconfiguredMessage()
+                    .orElseThrow();
+
+            assertAll(
+                    () -> assertEquals(List.of("refuse", "refuse"), report
+                            .findings()
+                            .stream()
+                            .map(Finding::level)
+                            .toList()),
+                    () -> assertEquals(List.of("zenbpm adapter 'orders'", "zenbpm adapter 'billing'"), report
+                            .findings()
+                            .stream()
+                            .map(Finding::scope)
+                            .toList()),
+                    () -> assertTrue(report
+                            .findings()
+                            .stream()
+                            .allMatch(finding -> finding.topic() == StartupTopic.CONFIGURATION)),
+                    () -> assertEquals(orders.replace("ZenBPM adapter 'orders'", "This adapter"), report
+                            .findings()
+                            .getFirst()
+                            .message()),
+                    () -> assertTrue(orders.startsWith("""
+                            ZenBPM adapter 'orders' is configured inconsistently:
+                              - vanillabp.adapters.orders.rest-address needs the scheme http or https"""), orders),
+                    () -> assertTrue(report
+                            .findings()
+                            .getLast()
+                            .message()
+                            .startsWith("""
+                                    This adapter is configured inconsistently:
+                                      - vanillabp.adapters.billing.worker-threads is 0; without a thread the adapter \
+                                    runs no handler"""), report.findings()::toString),
+                    () -> assertFalse(registry
+                            .getFactory("billing")
+                            .isConfigured()),
+                    () -> assertEquals(List.of("shipping"), built));
+        }
+    }
+
+    @Test
+    @DisplayName("Without a startup report every adapter id which ends the start is named in one exception, and no factory is built")
+    void withoutAReportEveryAdapterIdWhichEndsTheStartIsNamedInOneException() {
         final var built = new ArrayList<String>();
         final var workerThreads = configured(ADDRESS);
         workerThreads.setWorkerThreads("0");
@@ -174,7 +231,7 @@ class ZenBpmStartupValidationTest {
                 .of("orders", "billing", "shipping"),
                 Map.of("orders", configured("ftp://engine"), "billing",
                         workerThreads, "shipping", configured(ADDRESS))::get,
-                id -> true, id -> false, RETENTION, report,
+                id -> true, id -> false, RETENTION, null,
                 Optional::empty, building(built)));
 
         assertAll(
@@ -190,35 +247,60 @@ class ZenBpmStartupValidationTest {
                 () -> assertFalse(failure
                         .getMessage()
                         .contains("'shipping'"), failure.getMessage()),
-                () -> assertEquals(List.of(), built),
-                () -> assertEquals(List.of(), report.findings()));
+                () -> assertEquals(List.of(), built));
     }
 
     @Test
-    @DisplayName("A value which cannot work below the adapter level ends the start naming its full key")
-    void aScopedValueWhichCannotWorkEndsTheStart() {
+    @DisplayName("A value which cannot work below the adapter level is refused naming its full key")
+    void aScopedValueWhichCannotWorkIsRefused() {
+        final var report = new CollectedStartupReport();
         final var configuration = configured(ADDRESS);
         configuration.addScopedValue("vanillabp.workflow-modules.shop.adapters.orders.retry-backoff", Duration
                 .ofSeconds(-1));
 
-        final var failure = assertThrows(IllegalStateException.class, () -> registryOf(List.of("orders"), Map.of(
-                "orders", configuration), new CollectedStartupReport()));
-
-        assertTrue(failure
-                .getMessage()
-                .contains(
-                        "vanillabp.workflow-modules.shop.adapters.orders.retry-backoff is PT-1S and must not be negative"),
-                failure.getMessage());
+        try (var registry = registryOf(List.of("orders"), Map.of("orders", configuration), report)) {
+            final var refusal = report
+                    .findings()
+                    .getFirst();
+            assertAll(
+                    () -> assertEquals("refuse", refusal.level()),
+                    () -> assertTrue(refusal
+                            .message()
+                            .contains(
+                                    "  - vanillabp.workflow-modules.shop.adapters.orders.retry-backoff is PT-1S and must not be negative"),
+                            refusal.message()));
+        }
     }
 
     @Test
-    @DisplayName("A protobuf runtime which cannot run the job stream ends the start before a factory with clients is built")
-    void anUnfitProtobufRuntimeEndsTheStart() {
+    @DisplayName("A protobuf runtime which cannot run the job stream is refused under PARTS AND VERSIONS, scoped to the dependency, and no factory with clients is built")
+    void anUnfitProtobufRuntimeIsRefused() {
+        final var report = new CollectedStartupReport();
+        final var built = new ArrayList<String>();
+
+        try (var registry = ZenBpmStartupValidation.registryOf(List.of("orders"), id -> configured(ADDRESS),
+                id -> true, id -> false, RETENTION, report,
+                () -> Optional.of("raise com.google.protobuf:protobuf-java"),
+                building(built))) {
+            assertAll(
+                    () -> assertEquals(List.of(
+                            new Finding("refuse", StartupTopic.PARTS_AND_VERSIONS, "com.google.protobuf:protobuf-java", "raise com.google.protobuf:protobuf-java")),
+                            report
+                                    .findings()),
+                    () -> assertEquals(List.of(), built),
+                    () -> assertEquals(Optional.of("raise com.google.protobuf:protobuf-java"), registry
+                            .getFactory("orders")
+                            .unconfiguredMessage()));
+        }
+    }
+
+    @Test
+    @DisplayName("Without a startup report a protobuf runtime which cannot run the job stream ends the start before a factory with clients is built")
+    void withoutAReportAnUnfitProtobufRuntimeEndsTheStart() {
         final var built = new ArrayList<String>();
 
         final var failure = assertThrows(IllegalStateException.class, () -> ZenBpmStartupValidation.registryOf(List
-                .of("orders"), id -> configured(ADDRESS), id -> true, id -> false, RETENTION,
-                new CollectedStartupReport(),
+                .of("orders"), id -> configured(ADDRESS), id -> true, id -> false, RETENTION, null,
                 () -> Optional.of("raise com.google.protobuf:protobuf-java"), building(built)));
 
         assertAll(
@@ -246,7 +328,7 @@ class ZenBpmStartupValidationTest {
     }
 
     @Test
-    @DisplayName("The check of the protobuf runtime is protobuf's own: a runtime without RuntimeVersion ends the start")
+    @DisplayName("The check of the protobuf runtime is protobuf's own: a runtime without RuntimeVersion is refused")
     void theProtobufCheckIsTheRealOne() throws ReflectiveOperationException {
         final var isolated = new WithoutRuntimeVersion(getClass().getClassLoader());
         final var validation = isolated.loadClass(ZenBpmStartupValidation.class.getName());
@@ -262,8 +344,7 @@ class ZenBpmStartupValidationTest {
 
         final var failure = assertThrows(InvocationTargetException.class, () -> registryOf.invoke(null, List.of(
                 "orders"), (Function<String, Object>) id -> configuration, (Predicate<String>) id -> true,
-                (Predicate<String>) id -> false, RETENTION, (Supplier<String>) () -> "shop",
-                new CollectedStartupReport()));
+                (Predicate<String>) id -> false, RETENTION, (Supplier<String>) () -> "shop", null));
 
         final var cause = assertInstanceOf(IllegalStateException.class, failure.getCause());
         assertTrue(cause
@@ -334,10 +415,10 @@ class ZenBpmStartupValidationTest {
             final var log = output.getAllOfThisTest();
 
             assertAll(
-                    () -> assertTrue(lineOf(log, "zenbpm adapter 'orders': ZenBPM adapter 'orders' is not configured")
+                    () -> assertTrue(lineOf(log, "zenbpm adapter 'orders': This adapter is not configured")
                             .contains(" WARN "), log),
                     () -> assertTrue(lineOf(log,
-                            "zenbpm adapter 'billing': ZenBPM adapter 'billing': 'vanillabp.adapters.billing.rest-address' already ends with '/v1'")
+                            "zenbpm adapter 'billing': 'vanillabp.adapters.billing.rest-address' already ends with '/v1'. The adapter appends it itself, so the key may name the engine's address without it. No second '/v1' is appended.")
                             .contains(" INFO "), log));
         }
     }
@@ -354,22 +435,23 @@ class ZenBpmStartupValidationTest {
     }
 
     @Test
-    @DisplayName("The platform's delivery retention reaches the validation: an async-task-lock-renewal not below it ends the start, naming both keys")
+    @DisplayName("The platform's delivery retention reaches the validation: an async-task-lock-renewal not below it is refused, naming both keys")
     void theDeliveryRetentionReachesTheValidation() {
+        final var report = new CollectedStartupReport();
         final var configuration = configured(ADDRESS);
         configuration.setAsyncTaskLockRenewal(Duration.ofHours(2));
 
-        final var failure = assertThrows(IllegalStateException.class, () -> ZenBpmStartupValidation.registryOf(List
-                .of("orders"), id -> configuration, id -> true, id -> false, Duration.ofHours(2), () -> "shop",
-                new CollectedStartupReport()));
-
-        assertAll(
-                () -> assertTrue(failure
-                        .getMessage()
-                        .contains("vanillabp.adapters.orders.async-task-lock-renewal is PT2H"), failure::getMessage),
-                () -> assertTrue(failure
-                        .getMessage()
-                        .contains("vanillabp.delivery.retention (PT2H)"), failure::getMessage));
+        try (var registry = ZenBpmStartupValidation.registryOf(List.of("orders"), id -> configuration, id -> true,
+                id -> false, Duration.ofHours(2), () -> "shop", report)) {
+            final var refusal = report
+                    .findings()
+                    .getFirst()
+                    .message();
+            assertAll(
+                    () -> assertTrue(refusal.contains("vanillabp.adapters.orders.async-task-lock-renewal is PT2H"),
+                            refusal),
+                    () -> assertTrue(refusal.contains("vanillabp.delivery.retention (PT2H)"), refusal));
+        }
     }
 
     private static ZenBpmClientRegistry registryOf(

@@ -127,6 +127,12 @@ public class ZenBpmAdapterConfiguration {
     public static final String API_VERSION_PATH = "/v1";
 
     /**
+     * What a finding of the validation calls the adapter id, which the startup report shows as the
+     * finding's scope, see decision 60 in the repository's DECISIONS.md.
+     */
+    static final String THE_ADAPTER_IN_A_FINDING = "This adapter";
+
+    /**
      * The default of <code>request-timeout</code> as written in a configuration.
      */
     public static final String DEFAULT_REQUEST_TIMEOUT_ISO = "PT10S";
@@ -318,16 +324,21 @@ public class ZenBpmAdapterConfiguration {
      * What {@link #validate(String, boolean, boolean)} found.
      *
      * @param kind Whether the adapter instance is unconfigured, inconsistent or complete
-     * @param message The guiding message, naming the keys concerned; empty where complete
+     * @param message The guiding message, naming the adapter id and the keys concerned, which every
+     *          use of an adapter id without clients fails with; empty where complete
+     * @param finding The same message as the startup report shows it under the adapter id's scope:
+     *          without the adapter id as its subject; empty where complete
      * @param endsTheBoot Whether the platform has to end the boot with the message instead of
      *          logging it
-     * @param notices Lines worth one INFO at startup, which the platform logs whatever the kind
-     * @param warnings Lines worth one WARN at startup, which the platform logs whatever the kind:
-     *          values which work but hold a risk the application has to deal with
+     * @param notices Findings worth a notice at startup, whatever the kind, without the adapter id
+     *          as their subject
+     * @param warnings Findings worth a warning at startup, whatever the kind: values which work but
+     *          hold a risk the application has to deal with
      */
     public record ValidationResult(
         Kind kind,
         String message,
+        String finding,
         boolean endsTheBoot,
         List<String> notices,
         List<String> warnings
@@ -362,10 +373,11 @@ public class ZenBpmAdapterConfiguration {
          * Copies the notices and the warnings, so a result cannot change after it was handed out.
          *
          * @param kind Whether the adapter instance is unconfigured, inconsistent or complete
-         * @param message The guiding message, naming the keys concerned; empty where complete
+         * @param message The guiding message, naming the adapter id and the keys concerned
+         * @param finding The same message without the adapter id as its subject
          * @param endsTheBoot Whether the platform has to end the boot with the message
-         * @param notices Lines worth one INFO at startup
-         * @param warnings Lines worth one WARN at startup
+         * @param notices Findings worth a notice at startup
+         * @param warnings Findings worth a warning at startup
          */
         public ValidationResult {
             notices = List.copyOf(notices);
@@ -1106,18 +1118,21 @@ public class ZenBpmAdapterConfiguration {
 
         if (connectionDefects.isEmpty() && valueDefects.isEmpty()) {
             if (restAddressMissing) {
-                final var message = unconfiguredMessage(adapterId);
-                return new ValidationResult(ValidationResult.Kind.UNCONFIGURED, message, false, notices, warnings);
+                return new ValidationResult(ValidationResult.Kind.UNCONFIGURED, unconfiguredMessage(adapterId,
+                        subjectOf(adapterId)), unconfiguredMessage(adapterId,
+                                THE_ADAPTER_IN_A_FINDING), false, notices, warnings);
             }
-            return new ValidationResult(ValidationResult.Kind.COMPLETE, "", false, notices, warnings);
+            return new ValidationResult(ValidationResult.Kind.COMPLETE, "", "", false, notices, warnings);
         }
 
         final var defects = new ArrayList<String>(connectionDefects);
         defects.addAll(valueDefects);
         final var degrades = nowhereFirst && deploymentFailureWarns && valueDefects.isEmpty();
         return new ValidationResult(
-                ValidationResult.Kind.INCONSISTENT, inconsistentMessage(adapterId, defects, nowhereFirst,
-                        deploymentFailureWarns, degrades), !degrades, notices, warnings);
+                ValidationResult.Kind.INCONSISTENT, inconsistentMessage(adapterId, subjectOf(adapterId), defects,
+                        nowhereFirst, deploymentFailureWarns, degrades), inconsistentMessage(adapterId,
+                                THE_ADAPTER_IN_A_FINDING, defects, nowhereFirst, deploymentFailureWarns,
+                                degrades), !degrades, notices, warnings);
     }
 
     /**
@@ -1226,18 +1241,16 @@ public class ZenBpmAdapterConfiguration {
         if (normalisedPath(address.getRawPath()).endsWith(API_VERSION_PATH)) {
             notices.add(
                     """
-                            ZenBPM adapter '%s': '%s' already ends with '%s'. The adapter appends it itself, so \
-                            the key may name the engine's address without it. No second '%s' is appended."""
-                            .formatted(adapterId, propertyKey(adapterId, "rest-address"), API_VERSION_PATH,
-                                    API_VERSION_PATH));
+                            '%s' already ends with '%s'. The adapter appends it itself, so the key may name the \
+                            engine's address without it. No second '%s' is appended."""
+                            .formatted(propertyKey(adapterId, "rest-address"), API_VERSION_PATH, API_VERSION_PATH));
         }
         if ("https".equalsIgnoreCase(address.getScheme()) && (grpcAddress == null) && grpcPlaintext) {
             notices.add(
                     """
-                            ZenBPM adapter '%s': '%s' uses https, but the job stream goes to port %d of the same \
-                            host without TLS. Where a proxy terminates TLS for both, set '%s' and '%s: false'."""
+                            '%s' uses https, but the job stream goes to port %d of the same host without TLS. \
+                            Where a proxy terminates TLS for both, set '%s' and '%s: false'."""
                             .formatted(
-                                    adapterId,
                                     propertyKey(adapterId, "rest-address"),
                                     DEFAULT_GRPC_PORT,
                                     propertyKey(adapterId, "grpc-address"),
@@ -1516,11 +1529,19 @@ public class ZenBpmAdapterConfiguration {
                         configured, defect, withoutTheKey)));
     }
 
-    private static String unconfiguredMessage(final String adapterId) {
+    // the adapter id is the subject of the message every use of an adapter id without clients
+    // fails with, and the scope of a finding, whose text names it as this adapter
+    private static String subjectOf(final String adapterId) {
+        return "ZenBPM adapter '%s'".formatted(adapterId);
+    }
+
+    private static String unconfiguredMessage(
+        final String adapterId,
+        final String subject
+    ) {
         return """
-                ZenBPM adapter '%s' is not configured: '%s' is missing. The application boots, and the \
-                adapter refuses work with this message until the address of the engine's REST API is \
-                added, e.g.:
+                %s is not configured: '%s' is missing. The application boots, and the adapter refuses \
+                work with this message until the address of the engine's REST API is added, e.g.:
                   vanillabp:
                     adapters:
                       %s:
@@ -1528,7 +1549,7 @@ public class ZenBpmAdapterConfiguration {
                 The adapter appends '%s' itself. The job stream's address and client id are derived \
                 unless '%s' and '%s' are set."""
                 .formatted(
-                        adapterId,
+                        subject,
                         propertyKey(adapterId, "rest-address"),
                         adapterId,
                         API_VERSION_PATH,
@@ -1538,6 +1559,7 @@ public class ZenBpmAdapterConfiguration {
 
     private static String inconsistentMessage(
         final String adapterId,
+        final String subject,
         final List<String> defects,
         final boolean nowhereFirst,
         final boolean deploymentFailureWarns,
@@ -1567,7 +1589,7 @@ public class ZenBpmAdapterConfiguration {
                     '%s: warn' to boot degraded."""
                     .formatted(propertyKey(adapterId, "deployment-failure"));
         }
-        return "ZenBPM adapter '%s' is configured inconsistently:\n%s\n%s".formatted(adapterId, listed, consequence);
+        return "%s is configured inconsistently:\n%s\n%s".formatted(subject, listed, consequence);
     }
 
     // RFC 3986 normalisation of a raw path (section 6.2.2.2: an escaped unreserved character is

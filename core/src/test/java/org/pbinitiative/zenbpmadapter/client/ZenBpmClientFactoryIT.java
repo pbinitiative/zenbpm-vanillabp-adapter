@@ -60,7 +60,7 @@ class ZenBpmClientFactoryIT {
 
             try (var factory = new ZenBpmClientFactory(ADAPTER_ID, configuration, () -> "factory-it")) {
                 ZenBpmEngineWait.awaitReady(factory);
-                ZenBpmEnvironmentInfo.logOnce(factory, report);
+                ZenBpmEnvironmentInfo.logOnce(factory, new ZenBpmFindings(report));
                 final var up = ZenBpmHealth.check(factory);
 
                 assertAll(

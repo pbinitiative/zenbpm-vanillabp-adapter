@@ -14,7 +14,7 @@ import io.vanillabp.integration.spi.startup.StartupTopic;
  * The startup report of a test: what the platform would fold into its block at the end of the
  * start, kept in a list a test reads back.
  */
-final class CollectedStartupReport implements StartupReport {
+public final class CollectedStartupReport implements StartupReport {
 
     private final List<Finding> findings = new CopyOnWriteArrayList<>();
 
@@ -59,7 +59,7 @@ final class CollectedStartupReport implements StartupReport {
      *
      * @return The findings
      */
-    List<Finding> findings() {
+    public List<Finding> findings() {
         return List.copyOf(findings);
     }
 
@@ -72,7 +72,7 @@ final class CollectedStartupReport implements StartupReport {
      * @param scope What it is about
      * @param message The text
      */
-    record Finding(
+    public record Finding(
         String level,
         StartupTopic topic,
         String scope,

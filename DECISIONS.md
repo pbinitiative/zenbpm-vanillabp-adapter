@@ -1686,3 +1686,59 @@ about:
 
 The names are a public contract from the first release on. The README's section "Metrics" lists
 them, and `MicrometerZenBpmMetricsTest` fails where that list and the meters differ.
+
+### 60. A finding of the start goes to the platform's report under its scope; what a deployment step refuses is thrown
+
+Decided by the implementation pipeline in place of the maintainers, as their policy for the
+autonomous run asks.
+
+What the adapter finds while an application starts is said once, in the block the platform writes
+at the end of the start (decisions 96 and 97 of the platform): it is handed to the platform's
+`StartupReport` through `ZenBpmFindings`, never logged by the check which found it. That covers
+the validation of the keys (its notices, its warnings and its refusals), a workflow module under
+`name-clash-avoidance: none`, `message-start-lookup: scan`, an engine of another commit or one which
+does not say its commit, a model or a list of versions which could not be read, or a count the
+engine did not give while the start asked for it, and a process id declared without a model whose workflows something does
+not reach. Where no report was handed in, as in a test which builds an adapter id by hand, a
+finding goes into the log as `<scope>: <message>`, at the level the report would use.
+
+The scope of a finding is what it is about: `zenbpm adapter '<id>'`, `workflow module '<module>',
+zenbpm adapter '<id>'` or `process '<process>' of workflow module '<module>', zenbpm adapter '<id>'`,
+the last as the platform scopes its own findings about a process. The text does not name its scope
+as its subject; it says "this adapter", "this workflow module" or "this BPMN process". The platform's
+contract for adapter authors contradicts itself here: its example writes the adapter id into the
+text, and its rules right below say never to. The platform's code decides: `StartupFindings` folds
+two findings of one topic into one entry where their TEXT is the same, and writes the scopes on a
+line of their own, so a text which names its scope is never folded. A property key is written out
+in full all the same, with the ids it carries, because a developer copies it from the message, as
+the platform does with its own keys; a finding which names such a key folds only with one which
+names the same key.
+
+A configuration which ends the start is refused through the report, not thrown: the adapter id gets
+a factory without clients, and the platform ends the start with every reason it collected before it
+deploys anything, so a developer who got a key of this adapter and something else wrong learns both
+at once. The same holds for a protobuf runtime too old for the job stream, under the topic
+`PARTS AND VERSIONS` with the dependency as its scope, where every adapter id gets a factory without
+clients so nothing loads a class of the job stream. Only without a report is a refusal thrown at
+once. What a deployment step refuses (`prepareBpmn`, `wireBpmn`, `deployResources`: a construct
+ZenBPM cannot run, `by-adapter`, a process in two files, a message which starts and is awaited, two
+`job-timeout`s of one job type, a file the engine refuses, an engine not ready within
+`startup-wait`) is thrown, because the platform's `deployment-failure` policy decides whether it
+ends the start or stands in the block of an application which boots; a refusal reported instead
+would let the deployment of that workflow module go on. The message every use of an adapter id
+without clients fails with names the adapter id, because there is no scope beside it.
+
+What the adapter reports about doing its work is no finding and stays a line of the log: the engine
+it reached, the tasks it wired, the files it deployed, the job types it subscribed, the wait for the
+engine. What happens after the start is logged where it happens, with the adapter id as
+`ZenBPM[<id>]:` in front. The platform starts the workflow processing of a Spring Boot application
+after the block, so what the adapter finds there, about a declared process id, is written by the
+report into the log on its own, while on Quarkus it stands in the block.
+
+No message quotes a value which may hold a secret or the data of a workflow. The validation names
+keys, numbers and durations, never an address or a client id; an address which carries a user is
+refused, so an address another message names carries none. The variables of a job are never quoted,
+not even through the parser's message where they cannot be read, which would quote the token it
+stopped at.
+
+The README's section "Boot behavior" lists every finding with the test which holds it.

@@ -123,7 +123,9 @@ class ZenBpmMessageStartScanIT {
                 () -> assertTrue(output
                         .getAll()
                         .contains(
-                                "ZenBPM[zenbpm]: vanillabp.adapters.zenbpm.message-start-lookup is 'scan': where the start row does not know a workflow of the processes 'Postcards' of workflow module 'deploy-it', a probe reads their instances to find it by its id variable, at most 1000 (vanillabp.adapters.zenbpm.message-start-lookup-max-instances), and answers BPMS_UNAVAILABLE where it would have to read more."),
+                                """
+                                        workflow module 'deploy-it', zenbpm adapter 'zenbpm'
+                                              vanillabp.adapters.zenbpm.message-start-lookup is 'scan': where the start row does not know a workflow of the processes 'Postcards', a probe reads their instances to find it by its id variable, at most 1000 (vanillabp.adapters.zenbpm.message-start-lookup-max-instances), and answers BPMS_UNAVAILABLE where it would have to read more."""),
                         output::getAll));
     }
 

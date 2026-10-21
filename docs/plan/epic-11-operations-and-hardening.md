@@ -244,7 +244,7 @@ days, so what they showed is written here as well):
 
 ## S11.2.1 Startup-message review
 
-- [ ] **Depends on:** E10.
+- [x] **Depends on:** E10.
 
 Walk every message the adapter writes (grep for `log.warn`, `log.error`, `IllegalStateException`,
 `UnsupportedOperationException`, and every finding handed to the platform's `StartupReport`)
@@ -260,6 +260,103 @@ Camunda 8 does.
 
 **Acceptance criteria**: every guiding message is asserted by content in a test; no startup finding
 of the adapter bypasses the `StartupReport`.
+
+*Fit check, 2026-10-21, decided by the Implementor where it says so.* Checked against `main` at
+`f058a0a`, section 3.9 of the platform's `ADAPTER-AUTHORS.md`, the platform's `StartupReport`,
+`StartupFindings` and `DeploymentService` (where it ends the start and where it starts the
+processing), the Camunda 8 adapter's `Camunda8DeploymentService` (`warnAboutThisAdapter`,
+`warnAboutUnscopedIdentifiers`) and the skill `vanillabp-config-validation`. No claim about the
+engine was needed. What did not fit, and what was decided:
+
+1. **The platform's contract contradicts itself** (open question 1). The example of section 3.9
+   writes the adapter id into the text; the rules below it say never to. The code decides:
+   `StartupFindings` folds findings of one topic by their TEXT and writes the scopes on a line of
+   their own, so a text which names its scope never folds. Decided by the Implementor: the scope
+   carries the adapter id (and the workflow module and process, where the finding is about one),
+   the text says "this adapter", "this workflow module", "this BPMN process", and a property key
+   is still written out in full, as the skill and the platform's own findings write keys. Decision
+   60.
+2. **The inventory.** 207 sites in the main sources of `core`, `spring-boot`, `quarkus/runtime` and
+   `quarkus/deployment` (`log.info|warn|error`, every exception constructed, every report call);
+   the platform modules hand the report to the core and hold no message of their own but the
+   Quarkus build step which refuses an old protobuf runtime while the application is built. Startup findings
+   which bypassed the report: the warning about `name-clash-avoidance: none`, the warning about
+   `message-start-lookup: scan`, the engine which does not say its commit, the versions the held
+   messages could not read, the three questions of the version catalog the engine did not answer,
+   the four findings about a process id declared without a model, and the validation's refusal,
+   which was thrown. All now go through the new `ZenBpmFindings`, which logs `<scope>: <message>`
+   at the report's level where no report was handed in. The deployment service also handed a report
+   which may be `null` to the environment check, which called it unguarded; that is gone with it.
+3. **A configuration which ends the start** (decided by the Implementor): it is refused through the
+   report, and the adapter id gets a factory without clients; the platform ends the start with
+   every collected reason before it deploys anything. So is a protobuf runtime too old for the job
+   stream, under `PARTS AND VERSIONS` with the dependency as its scope, every adapter id then
+   without clients. Only without a report is it thrown at once. Decision 60.
+4. **What a deployment step refuses stays thrown** (decided by the Implementor): `prepareBpmn`,
+   `wireBpmn` and `deployResources` throw, because the platform's `deployment-failure` policy
+   decides whether the start ends or the failure stands in the block of an application which boots;
+   reported instead, the deployment of the workflow module would go on. Decision 60.
+5. **A finding after the block** (open question 2). The platform starts the workflow processing of
+   a Spring Boot application after the block, so the only adapter findings found there, about a
+   declared process id, are late there; the report writes them into the log on its own, with their
+   scope, and a refusal would be written, not thrown. The adapter reports through the report in both
+   cases. Proved on both platforms: `ZenBpmDeclaredProcessFindingTest` (Quarkus, new) reads the
+   finding in the block under `INFRASTRUCTURE`; `ZenBpmRenamedProcessIT` (Spring Boot, against the
+   pinned image; its application now also declares `Parcels`, of which the engine holds no model)
+   reads it written by the platform's `StartupFindings` with its scope.
+6. **Reports about the adapter doing its work** (open question 3) stay INFO lines: the engine
+   reached, the tasks wired, the files deployed, the job types subscribed and unsubscribed, the
+   wait for the engine, the user-task looks, the drain. Where a declared process id is partly
+   served, the INFO says what serves it and a finding says what does not; before, one INFO said
+   both.
+7. **Changed wording** (open question 4): the tests which asserted the old words were changed with
+   them, the README quoted none of them, and the wiki quotes none.
+8. **Runtime messages against the skill.** Two changed: the parse failure of a job's variables
+   quoted the parser's message and carried the parser's exception as its cause, both of which quote
+   a token of the workflow's data, and now does neither; the executor's "a handler threw" now says
+   it is a defect to report. The others name the adapter id, the job, the task and the aggregate or
+   module where they are known, what happens next and the key where one helps; kept.
+9. **`ZenBpmMessagesTest`** (decided by the Implementor): not built. Every message's assertion went
+   into the test which already drives its path; the sites without a literal of their own pass on a
+   message which is asserted where it is built.
+10. **GAPS**: none cited, none added. The README has a new section "Boot behavior".
+11. **Coverage of a class this story did not touch**: the first clean build missed one branch of
+    `ZenBpmDeploymentServiceProducer#measuredInto` on Quarkus, because `findFirst` stopped before
+    the filter saw the binder wherever CDI listed the application's own bean first, and that order
+    is not fixed. The filter now sees every handle and the first other bean is taken; the choice
+    is the same.
+
+**Acceptance evidence, 2026-10-21.**
+
+- [x] Every guiding message is asserted by content in a test. The 207 sites were checked by a
+  script against the test sources (a run of at least four words of each literal); what it found
+  without an assertion got one: the executor's two refusals, the iteration and the instance a
+  lagging node does not list, a probe whose job names an instance the node does not hold yet (new
+  `ZenBpmTaskProbesTest#aJobOfAnInstanceTheNodeDoesNotHoldIsUnavailable`), the two "pushed" lines,
+  the two lines of the check before the commit, "has no job type to subscribe", the address derived
+  from an unvalidated `rest-address`. The remaining sites pass on a message which is asserted where
+  it is built. Every finding of the start is asserted as the report receives it (core, with
+  `CollectedStartupReport`) and in the block on both platforms where the platform writes one; the
+  README's "Boot behavior" names the test of each sentence.
+- [x] No startup finding of the adapter bypasses the `StartupReport`: every one goes through
+  `ZenBpmFindings` or the validation's refusal. The refusal reaches the platform's exception on both
+  platforms (`ZenBpmStartupValidationBootTest#anInconsistentFirstPriorityAdapterIdEndsTheStart`,
+  `ZenBpmInconsistentConfigurationTest`: the scope line under `CONFIGURATION (1)`), a finding of the
+  start of the processing stands in the block on Quarkus (`ZenBpmDeclaredProcessFindingTest`) and is
+  written by the platform's `StartupFindings` on Spring Boot (`ZenBpmRenamedProcessIT`, against the
+  pinned image).
+- Mutants, each compiled and killed by a failing test: the validation's refusal removed, its finding
+  text replaced by the runtime message, the throw kept beside a report, the factory with clients
+  kept beside a refused protobuf runtime; `ZenBpmFindings` logging a warning and a notice beside a
+  report; the deployment service not handing the report on; the finding about what a declared id
+  does not serve and the INFO about what serves it suppressed; the variables' parser exception kept
+  as the cause, the two parse messages swapped (11 in the core); the declared process's finding
+  logged past the report (1, killed by the Quarkus `ZenBpmDeclaredProcessFindingTest`). 12 of 12.
+- Clean build (`TZ=Etc/UTC mvn clean install` on OpenJDK 25.0.2, Docker ITs included, none skipped):
+  engine test support 12 + 5, core 1,275 + 104, Spring Boot 14 + 95, smoke test 41 + 1, Quarkus
+  runtime 13, deployment 54, integration tests 25, gate 37; coverage 100 % on both platforms (0 of
+  38,473 instructions missed on Spring Boot, 0 of 38,395 on Quarkus); `bin/check-deploy-safety.sh`
+  green (13 files deployed by the green build, nothing by the red gate).
 
 ## S11.3.1 Election ITs
 

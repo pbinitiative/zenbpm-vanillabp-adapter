@@ -58,6 +58,7 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.exc.MismatchedInputException;
 import com.fasterxml.jackson.databind.introspect.Annotated;
 import com.fasterxml.jackson.databind.introspect.AnnotatedMember;
 import com.fasterxml.jackson.databind.introspect.JacksonAnnotationIntrospector;
@@ -715,8 +716,11 @@ public class ZenBpmRestClient implements AutoCloseable {
             read = JOB_VARIABLES.readValue(json, new TypeReference<LinkedHashMap<String, Object>>() {
             });
         } catch (final IOException e) {
-            throw new IllegalStateException("The variables of a job are no JSON object: %s".formatted(e
-                    .getMessage()), e);
+            // neither the parser's message nor its exception as the cause: both quote the token the
+            // parser met, which is a piece of the workflow's data
+            throw new IllegalStateException(e instanceof MismatchedInputException
+                    ? "The variables of a job are JSON, but no JSON object."
+                    : "The variables of a job are no JSON the adapter can read: the engine's answer breaks off or is malformed.");
         }
         return variables(Objects.requireNonNullElse(read, Map.of()));
     }

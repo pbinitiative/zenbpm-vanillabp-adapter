@@ -20,6 +20,7 @@ import java.util.stream.Stream;
 import org.pbinitiative.zenbpmadapter.ZenBpmDeployedProcesses;
 import org.pbinitiative.zenbpmadapter.client.ZenBpmClientFactory;
 import org.pbinitiative.zenbpmadapter.client.ZenBpmErrors;
+import org.pbinitiative.zenbpmadapter.client.ZenBpmFindings;
 import org.pbinitiative.zenbpmadapter.client.api.InstanceFilter;
 import org.pbinitiative.zenbpmadapter.client.api.ProcessDefinitionRef;
 import org.pbinitiative.zenbpmadapter.client.api.ProcessInstanceRef;
@@ -34,7 +35,7 @@ import io.vanillabp.integration.adapter.spi.version.CachingProcessVersionCatalog
 import io.vanillabp.integration.adapter.spi.version.DeployedProcessVersion;
 import io.vanillabp.integration.adapter.spi.workflowstart.BpmsInitiatedStartSpec;
 import io.vanillabp.integration.adapter.spi.workflowtask.BpmnTaskSpec;
-import lombok.extern.slf4j.Slf4j;
+import io.vanillabp.integration.spi.startup.StartupTopic;
 
 /**
  * The versions of the processes the engine of ONE adapter id holds, against which the platform
@@ -57,11 +58,12 @@ import lombok.extern.slf4j.Slf4j;
  * start, see decision 56 in the repository's DECISIONS.md. The answers speak about the model the
  * way the wiring speaks about the model it deploys: the tasks without the markers the adapter
  * wrote, the task definitions and the identifiers without the prefixes the deployment added. Where
- * the engine no longer holds the version, or could not be asked, which a WARN says, a question
- * answers <code>null</code>, which the platform reads as "this BPMS cannot say", never as "nothing
- * is there".
+ * the engine no longer holds the version, or could not be asked, which a warning about the
+ * infrastructure says, a question answers <code>null</code>, which the platform reads as "this BPMS
+ * cannot say", never as "nothing is there". The platform asks while the application starts, so the
+ * warning is a finding of the start; one asked later, by an extension, the startup report writes
+ * into the log.
  */
-@Slf4j
 public class ZenBpmProcessVersions extends CachingProcessVersionCatalog {
 
     private final String adapterId;
@@ -69,6 +71,8 @@ public class ZenBpmProcessVersions extends CachingProcessVersionCatalog {
     private final ZenBpmClientFactory factory;
 
     private final NameClashAvoidanceSupport scoping;
+
+    private final ZenBpmFindings findings;
 
     /**
      * The engine's definition key per workflow module, plain process id and version, from the
@@ -93,15 +97,18 @@ public class ZenBpmProcessVersions extends CachingProcessVersionCatalog {
      * @param factory The factory of the adapter id, whose engine holds the versions
      * @param scoping The platform's name-clash scoping, which names a process as the engine knows
      *            it
+     * @param findings Where a question the engine could not answer is reported
      */
     public ZenBpmProcessVersions(
         final String adapterId,
         final ZenBpmClientFactory factory,
-        final NameClashAvoidanceSupport scoping
+        final NameClashAvoidanceSupport scoping,
+        final ZenBpmFindings findings
     ) {
         this.adapterId = adapterId;
         this.factory = factory;
         this.scoping = scoping;
+        this.findings = findings;
     }
 
     /**
@@ -254,9 +261,10 @@ public class ZenBpmProcessVersions extends CachingProcessVersionCatalog {
             instanceCounts.put(keyOf(workflowModuleId, bpmnProcessId, version), count);
             return count;
         } catch (final RuntimeException e) {
-            log.warn(
-                    "ZenBPM[{}]: the engine did not say how many workflows run on version {} of BPMN process '{}' (workflow module '{}'): {}",
-                    adapterId, version, bpmnProcessId, workflowModuleId, ZenBpmErrors.withoutAdapterId(adapterId, e));
+            findings.warn(StartupTopic.INFRASTRUCTURE, ZenBpmFindings.ofProcess(adapterId, workflowModuleId,
+                    bpmnProcessId),
+                    "The engine did not say how many workflows run on version %s of this BPMN process (%s), so VanillaBP cannot tell whether any does. Check that the engine answers; the next start asks again."
+                            .formatted(version, ZenBpmErrors.withoutAdapterId(adapterId, e)));
             return null;
         }
     }
@@ -303,9 +311,10 @@ public class ZenBpmProcessVersions extends CachingProcessVersionCatalog {
             }
             return ZenBpmOlderVersions.whatTheyMiss(deployed, older);
         } catch (final RuntimeException e) {
-            log.warn(
-                    "ZenBPM[{}]: the models of the versions of BPMN process '{}' (workflow module '{}') could not be read, so VanillaBP does not say what the workflows on older versions miss: {}",
-                    adapterId, bpmnProcessId, workflowModuleId, ZenBpmErrors.withoutAdapterId(adapterId, e));
+            findings.warn(StartupTopic.INFRASTRUCTURE, ZenBpmFindings.ofProcess(adapterId, workflowModuleId,
+                    bpmnProcessId),
+                    "The models of the versions of this BPMN process could not be read (%s), so VanillaBP does not say what the workflows on older versions miss. Where the engine did not answer, check that it does; the next start reads them again."
+                            .formatted(ZenBpmErrors.withoutAdapterId(adapterId, e)));
             return null;
         }
     }
@@ -354,10 +363,10 @@ public class ZenBpmProcessVersions extends CachingProcessVersionCatalog {
                     .map(answer)
                     .orElse(null);
         } catch (final RuntimeException e) {
-            log.warn(
-                    "ZenBPM[{}]: the model of version {} of BPMN process '{}' (workflow module '{}') could not be read, so VanillaBP cannot tell {}: {}",
-                    adapterId, version, bpmnProcessId, workflowModuleId, question, ZenBpmErrors.withoutAdapterId(
-                            adapterId, e));
+            findings.warn(StartupTopic.INFRASTRUCTURE, ZenBpmFindings.ofProcess(adapterId, workflowModuleId,
+                    bpmnProcessId),
+                    "The model of version %s of this BPMN process could not be read (%s), so VanillaBP cannot tell %s. Where the engine did not answer, check that it does; the next start reads it again."
+                            .formatted(version, ZenBpmErrors.withoutAdapterId(adapterId, e), question));
             return null;
         }
     }

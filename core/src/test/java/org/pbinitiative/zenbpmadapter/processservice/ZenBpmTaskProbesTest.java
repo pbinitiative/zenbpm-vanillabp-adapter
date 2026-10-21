@@ -228,6 +228,25 @@ class ZenBpmTaskProbesTest {
     }
 
     @Test
+    @DisplayName("A job whose instance the engine node asked does not hold yet, as on a node which lags behind, is unavailable, and the WARN carries why")
+    void aJobOfAnInstanceTheNodeDoesNotHoldIsUnavailable(final CapturedOutput output) {
+        engine.answers("GET", JOB_PATH, 200, job("active"));
+        engine.answers("GET", INSTANCE_PATH, 404, """
+                {"code":"NOT_FOUND","message":"process instance not found"}""");
+
+        final var task = processService.awarenessOfTask(SCOPE, "order-1", String.valueOf(JOB));
+
+        assertAll(
+                () -> assertEquals(WorkflowAwareness.BPMS_UNAVAILABLE, task),
+                () -> assertTrue(output
+                        .getAllOfThisTest()
+                        .contains(
+                                "java.lang.IllegalStateException: the engine holds the job, but not its process instance %d"
+                                        .formatted(INSTANCE)),
+                        output::getAllOfThisTest));
+    }
+
+    @Test
     @DisplayName("The open tasks of a process are the active instances of its job elements in every version, each read with its own model, and no job page is fetched")
     void theOpenTasksOfEveryVersionAreCounted() throws JsonProcessingException {
         engine.answers("GET", "/v1/process-definitions", 200, versions(4503599627370402L, 4503599627370401L));

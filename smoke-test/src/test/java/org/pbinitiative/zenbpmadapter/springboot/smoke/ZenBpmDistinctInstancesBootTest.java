@@ -53,7 +53,7 @@ class ZenBpmDistinctInstancesBootTest {
     }
 
     @Test
-    @DisplayName("Two adapter ids on one engine with two modes boot, as the migration from one mode to the other")
+    @DisplayName("Two adapter ids on one engine with two modes boot, as the migration from one mode to the other, and the one finding about the configuration is the warning about 'none' of the old one")
     void oneEngineWithTwoModesBoots(final CapturedOutput output) {
         try (var context = run(oneEngine("use-prefix", "none"))) {
             final var log = output.getAllOfThisTest();
@@ -69,7 +69,16 @@ class ZenBpmDistinctInstancesBootTest {
                             .getBean(ZenBpmClientRegistry.class)
                             .sharesEngineWith("zenbpm-new")),
                     () -> assertTrue(StartupBlock.isWritten(log), log),
-                    () -> assertEquals("", StartupBlock.configuration(log), log));
+                    () -> assertTrue(StartupBlock
+                            .configuration(log)
+                            .startsWith(
+                                    "  workflow module 'smoke-app', zenbpm adapter 'zenbpm-old'\n      This workflow module is deployed to ZenBPM with name-clash-avoidance 'none'."),
+                            log),
+                    () -> assertEquals(1, StartupBlock
+                            .configuration(log)
+                            .lines()
+                            .filter(line -> line.startsWith("  ") && !line.startsWith("   "))
+                            .count(), log));
         }
     }
 

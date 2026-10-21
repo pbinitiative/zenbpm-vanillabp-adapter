@@ -41,6 +41,7 @@ import org.pbinitiative.zenbpmadapter.TestCollaborators;
 import org.pbinitiative.zenbpmadapter.TestScoping;
 import org.pbinitiative.zenbpmadapter.TestWiring;
 import org.pbinitiative.zenbpmadapter.ZenBpmProcessingContext;
+import org.pbinitiative.zenbpmadapter.client.CollectedStartupReport;
 import org.pbinitiative.zenbpmadapter.client.ZenBpmAdapterConfiguration;
 import org.pbinitiative.zenbpmadapter.client.ZenBpmClientFactory;
 import org.pbinitiative.zenbpmadapter.client.ZenBpmClientRegistry;
@@ -358,27 +359,33 @@ class ZenBpmDeploymentServiceTest {
     }
 
     @Test
-    @DisplayName("'none' warns, naming what ZenBPM offers instead - use-prefix or an engine per workflow module - and the key which accepts unscoped identifiers")
-    void noneWarnsNamingTheAlternatives(final CapturedOutput output) {
+    @DisplayName("Unscoped identifiers are a warning of the start about the configuration, scoped to the workflow module and the adapter id, naming the alternatives of ZenBPM and the keys which accept them")
+    void noneWarnsNamingTheAlternatives() {
         final var deploymentService = new ZenBpmDeploymentService("orders", withoutClients("orders"), TestCollaborators
                 .of("orders"));
+        final var report = new CollectedStartupReport();
+        deploymentService.setStartupReport(report);
 
         deploymentService.warnAboutUnscopedIdentifiers("shop", false);
 
-        final var log = output.getAllOfThisTest();
-        assertAll(
-                () -> assertTrue(log.contains(
-                        "WARN  o.p.z.d.ZenBpmDeploymentService - Workflow module 'shop' is deployed to ZenBPM (adapter 'orders') with name-clash-avoidance 'none'."),
-                        log),
-                () -> assertTrue(log.contains("ZenBPM has no tenants, so 'by-adapter' is no choice; choose instead:\n"
-                        + "  vanillabp.adapters.orders.name-clash-avoidance: use-prefix"), log),
-                () -> assertTrue(log.contains(
-                        "an adapter id of its own with its own vanillabp.adapters.<id>.rest-address"), log),
-                () -> assertTrue(log.contains("(vanillabp.workflow-modules.shop.adapters.orders.name-clash-avoidance)"),
-                        log),
-                () -> assertTrue(log.contains("  vanillabp.adapters.orders.accept-unscoped-identifiers: true\n"), log),
-                () -> assertTrue(log.contains(
-                        "  vanillabp.workflow-modules.shop.adapters.orders.accept-unscoped-identifiers: true"), log));
+        assertEquals(
+                List.of(new CollectedStartupReport.Finding("warn", StartupTopic.CONFIGURATION, "workflow module 'shop', zenbpm adapter 'orders'", """
+                        This workflow module is deployed to ZenBPM with name-clash-avoidance 'none'. Its identifiers \
+                        reach the engine as they are - BPMN process ids, message names, error codes, decision ids and \
+                        job types - so a second workflow module using the same identifier addresses the very same \
+                        processes and jobs, and neither VanillaBP nor the engine can tell. Keep 'none' only as long \
+                        as your identifiers are unique across ALL workflow modules of this application. ZenBPM has no \
+                        tenants, so 'by-adapter' is no choice; choose instead:
+                          vanillabp.adapters.orders.name-clash-avoidance: use-prefix   # VanillaBP prefixes the identifiers with the workflow module id
+                        or give the workflow module an engine of its own: an adapter id of its own with its own \
+                        vanillabp.adapters.<id>.rest-address. The mode may be set per workflow module as well \
+                        (vanillabp.workflow-modules.shop.adapters.orders.name-clash-avoidance). It is not a runtime \
+                        switch - changing it once workflows are running is a BPMS migration. If the identifiers ARE \
+                        unique, say so once and this warning is gone:
+                          vanillabp.adapters.orders.accept-unscoped-identifiers: true
+                        or for this workflow module only:
+                          vanillabp.workflow-modules.shop.adapters.orders.accept-unscoped-identifiers: true""")),
+                report.findings());
     }
 
     @ParameterizedTest
@@ -401,7 +408,9 @@ class ZenBpmDeploymentServiceTest {
 
         final var log = output.getAllOfThisTest();
         if (acceptedBy == null) {
-            assertTrue(log.contains("WARN  o.p.z.d.ZenBpmDeploymentService - Workflow module 'shop'"), log);
+            assertTrue(log.contains(
+                    "WARN  o.p.z.client.ZenBpmFindings - workflow module 'shop', zenbpm adapter 'orders': This workflow module is deployed to ZenBPM with name-clash-avoidance 'none'."),
+                    log);
             return;
         }
         assertAll(

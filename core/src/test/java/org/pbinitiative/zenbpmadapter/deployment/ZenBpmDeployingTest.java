@@ -504,7 +504,7 @@ class ZenBpmDeployingTest {
     }
 
     @Test
-    @DisplayName("Versions the engine does not hand out are named with the reason, in the result and in a WARN which says that correlations are not refused then; what was read counts all the same")
+    @DisplayName("Versions the engine does not hand out are named with the reason, in the result and in a warning of the start about the infrastructure, scoped to the workflow module, which says that correlations are not refused then; what was read counts all the same")
     void versionsWhichCannotBeReadAreNamed(final CapturedOutput output) throws Exception {
         engine.answers("POST", "/v1/process-definitions", 201, "{\"processDefinitionKey\":11}");
         engine.answers("GET", "/v1/process-definitions/11", 200, definition(11, 2, heldOrder("shop__paid")));
@@ -524,10 +524,12 @@ class ZenBpmDeployingTest {
                             .getAllOfThisTest()
                             .contains(
                                     """
-                                            ZenBPM[orders]: %s of workflow module 'shop' could not be read, so a correlation of a \
-                                            message which the models read do not wait for is not refused when the application \
-                                            calls: it is published, and the outbox repeats it for as long as nothing waits for \
-                                            it. The next start of the application reads them again."""
+                                            WARN  o.p.z.client.ZenBpmFindings - workflow module 'shop', zenbpm adapter 'orders': \
+                                            What the engine holds could not be read: %s. So a correlation of a message which the \
+                                            models read do not wait for is not refused when the application calls: it is \
+                                            published, and the outbox repeats it for as long as nothing waits for it. Where the \
+                                            engine did not answer, check that it does; the next start of the application reads \
+                                            them again."""
                                             .formatted(unread)),
                             output::getAllOfThisTest));
         }
@@ -535,7 +537,7 @@ class ZenBpmDeployingTest {
 
     @ParameterizedTest(name = "{0}")
     @EnumSource(MessageStartLookup.class)
-    @DisplayName("Once a workflow module is deployed, one INFO names its processes a message starts and what message-start-lookup does with them, and under scan a WARN names the bound and what the lookup cannot do")
+    @DisplayName("Once a workflow module is deployed, one INFO names its processes a message starts and what message-start-lookup does with them, and under scan a warning of the start, scoped to the workflow module, names the bound, what the lookup cannot do and the default")
     void theProcessesAMessageStartsAreNamedOnce(
         final MessageStartLookup lookup,
         final CapturedOutput output
@@ -594,16 +596,17 @@ class ZenBpmDeployingTest {
         final var expected = lookup == MessageStartLookup.SCAN
                 ? List.of(named + what,
                         """
-                                WARN  o.p.z.d.ZenBpmDeploymentService - ZenBPM[orders]: \
+                                WARN  o.p.z.client.ZenBpmFindings - workflow module 'shop', zenbpm adapter 'orders': \
                                 vanillabp.adapters.orders.message-start-lookup is 'scan': where the start row does not know a \
-                                workflow of the processes 'Order' of workflow module 'shop', a probe reads their instances to \
-                                find it by its id variable, at most 1000 \
-                                (vanillabp.adapters.orders.message-start-lookup-max-instances), and answers BPMS_UNAVAILABLE \
-                                where it would have to read more. A workflow of them which ended is not read where the platform \
-                                asks which adapter holds a workflow, so it is answered as unknown to the engine, as under \
-                                'start-row', which the platform's contract for adapters does not allow: an operation on it is then treated as one on \
-                                a workflow the engine never held. The lookup is an opt-in until ZenBPM gives a workflow it \
-                                starts by a message a business key.""")
+                                workflow of the processes 'Order', a probe reads their instances to find it by its id \
+                                variable, at most 1000 (vanillabp.adapters.orders.message-start-lookup-max-instances), and \
+                                answers BPMS_UNAVAILABLE where it would have to read more. A workflow of them which ended is \
+                                not read where the platform asks which adapter holds a workflow, so it is answered as unknown \
+                                to the engine, as under 'start-row', which the platform's contract for adapters does not \
+                                allow: an operation on it is then treated as one on a workflow the engine never held. The \
+                                lookup is an opt-in until ZenBPM gives a workflow it starts by a message a business key; set \
+                                the key to 'start-row', the default, unless a start sent again after its answer was lost must \
+                                find the workflow it started.""")
                 : List.of(named + what);
         assertEquals(expected, lines);
     }

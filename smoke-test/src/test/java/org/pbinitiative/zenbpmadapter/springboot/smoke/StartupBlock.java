@@ -45,8 +45,21 @@ final class StartupBlock {
      * @return The lines of the topic, joined, or an empty string where the block has no such topic
      */
     static String configuration(final String log) {
-        final var heading = Pattern.compile("^%s \\(\\d+\\)$".formatted(Pattern.quote(StartupTopic.CONFIGURATION
-                .heading())));
+        return topic(log, StartupTopic.CONFIGURATION);
+    }
+
+    /**
+     * The findings under the heading of a topic.
+     *
+     * @param log What the start wrote
+     * @param topic The topic
+     * @return The lines of the topic, joined, or an empty string where the block has no such topic
+     */
+    static String topic(
+        final String log,
+        final StartupTopic topic
+    ) {
+        final var heading = Pattern.compile("^%s \\(\\d+\\)$".formatted(Pattern.quote(topic.heading())));
         final var inTopic = new boolean[1];
         return log
                 .lines()

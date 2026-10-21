@@ -125,14 +125,20 @@ public class ZenBpmDeploymentServiceProducer {
         if (metrics.isResolvable()) {
             return metrics.get();
         }
-        return metrics
+        // the binder is passed over wherever CDI lists it, which is in no fixed order, and the
+        // first other bean is taken
+        final var others = metrics
                 .handlesStream()
                 .filter(handle -> !ZenBpmMetricsProducer.class.equals(handle
                         .getBean()
                         .getBeanClass()))
-                .findFirst()
-                .<ZenBpmMetrics>map(Instance.Handle::get)
-                .orElse(ZenBpmMetrics.NONE);
+                .toList();
+        if (others.isEmpty()) {
+            return ZenBpmMetrics.NONE;
+        }
+        return others
+                .getFirst()
+                .get();
     }
 
     // the platform's list holds Object for both type parameters, see the class comment

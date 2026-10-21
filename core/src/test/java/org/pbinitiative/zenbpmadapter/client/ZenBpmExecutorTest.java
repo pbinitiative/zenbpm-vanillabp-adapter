@@ -51,6 +51,10 @@ import io.vanillabp.integration.test.utils.SuppressOutputExtension;
 @ExtendWith(SuppressOutputExtension.class)
 class ZenBpmExecutorTest {
 
+    private static final String HANDLER_THREW = "ZenBPM[orders]: a handler threw instead of handling its failure itself, which is a defect of the adapter: report it with this stack trace";
+
+    private static final String LISTENER_THREW = "ZenBPM[orders]: the listener of freed slots threw while it handed the next queued job on, which is a defect of the adapter: report it with this stack trace";
+
     private static final String ADAPTER_ID = "orders";
 
     /**
@@ -333,7 +337,7 @@ class ZenBpmExecutorTest {
             assertTrue(next.await(UNTIL_THE_EXECUTOR_COUNTS_AS_STUCK, TimeUnit.MILLISECONDS));
             eventually(() -> Optional
                     .of(output.getAllOfThisTest())
-                    .filter(printed -> printed.contains("ZenBPM[orders]: a handler threw"))
+                    .filter(printed -> printed.contains(HANDLER_THREW))
                     .filter(printed -> printed.contains("broken handler"))
                     .filter(printed -> printed.contains("java.io.IOException: checked failure")));
         } finally {
@@ -366,7 +370,7 @@ class ZenBpmExecutorTest {
             assertTrue(told.await(UNTIL_THE_EXECUTOR_COUNTS_AS_STUCK, TimeUnit.MILLISECONDS));
             eventually(() -> Optional
                     .of(output.getAllOfThisTest())
-                    .filter(printed -> printed.contains("ZenBPM[orders]: the listener of freed slots threw"))
+                    .filter(printed -> printed.contains(LISTENER_THREW))
                     .filter(printed -> printed.contains("broken listener")));
             assertEquals(1, output
                     .getAllOfThisTest()
@@ -396,7 +400,7 @@ class ZenBpmExecutorTest {
 
             eventually(() -> Optional
                     .of(output.getAllOfThisTest())
-                    .filter(printed -> printed.contains("ZenBPM[orders]: the listener of freed slots threw"))
+                    .filter(printed -> printed.contains(LISTENER_THREW))
                     .filter(printed -> printed.contains("java.io.IOException: listener failure")));
         } finally {
             executor.shutdownNow();
@@ -422,7 +426,7 @@ class ZenBpmExecutorTest {
             assertTrue(next.await(UNTIL_THE_EXECUTOR_COUNTS_AS_STUCK, TimeUnit.MILLISECONDS), "the slot came back");
             eventually(() -> Optional
                     .of(output.getAllOfThisTest())
-                    .filter(printed -> printed.contains("ZenBPM[orders]: a handler threw"))
+                    .filter(printed -> printed.contains(HANDLER_THREW))
                     .filter(printed -> printed.contains("java.lang.StackOverflowError: too deep")));
         } finally {
             executor.shutdownNow();
@@ -453,10 +457,8 @@ class ZenBpmExecutorTest {
             final var refusal = assertThrows(ExecutionException.class, () -> waiting
                     .get(UNTIL_THE_EXECUTOR_COUNTS_AS_STUCK, TimeUnit.MILLISECONDS));
             assertInstanceOf(IllegalStateException.class, refusal.getCause());
-            assertTrue(refusal
-                    .getCause()
-                    .getMessage()
-                    .contains("use tryExecute there"),
+            assertEquals(
+                    "ZenBPM[orders]: a timing thread waited for a slot, which holds the job stream back for as long as a handler runs; use tryExecute there",
                     refusal
                             .getCause()
                             .getMessage());
@@ -616,6 +618,9 @@ class ZenBpmExecutorTest {
 
             submitter.join(UNTIL_THE_EXECUTOR_COUNTS_AS_STUCK);
             assertInstanceOf(RejectedExecutionException.class, refusal.get());
+            assertEquals("ZenBPM[orders]: interrupted while the handler waited for a slot", refusal
+                    .get()
+                    .getMessage());
             assertInstanceOf(InterruptedException.class, refusal
                     .get()
                     .getCause());

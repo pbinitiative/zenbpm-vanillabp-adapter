@@ -9,7 +9,6 @@ import java.util.ResourceBundle;
 
 import org.pbinitiative.zenbpmadapter.client.api.EngineStatus;
 
-import io.vanillabp.integration.spi.startup.StartupReport;
 import io.vanillabp.integration.spi.startup.StartupTopic;
 import lombok.extern.slf4j.Slf4j;
 
@@ -20,11 +19,12 @@ import lombok.extern.slf4j.Slf4j;
  * <p>
  * Where the engine runs another commit, that is a finding: the adapter supports the engine it was
  * tested with and nothing newer, see decision 15 in the repository's DECISIONS.md. So it goes to
- * the platform's startup report as a warning about the infrastructure, scoped to the adapter id.
- * The INFO line stays in the log, because which engine the adapter reached is a report about the
- * adapter doing its work, which the startup report leaves out. Versions are not compared: an
- * engine built from <code>main</code> reports the version of the last release, the same for every
- * build since.
+ * the platform's startup report as a warning about the infrastructure, scoped to the adapter id,
+ * and so does an engine which does not say what it runs. The INFO line stays in the log, because
+ * which engine the adapter reached is a report about the adapter doing its work, which the startup
+ * report leaves out, see decision 60 in the repository's DECISIONS.md. Versions are not compared:
+ * an engine built from <code>main</code> reports the version of the last release, the same for
+ * every build since.
  */
 @Slf4j
 public final class ZenBpmEnvironmentInfo {
@@ -44,19 +44,20 @@ public final class ZenBpmEnvironmentInfo {
 
     /**
      * Asks the engine of an adapter id what it runs and says so, once per adapter id. Never throws
-     * because the engine did not answer: that is logged at WARN, and nothing is reported.
+     * because the engine did not answer: that is a finding as well.
      *
      * @param factory The factory of the adapter id; one without clients is skipped
-     * @param startupReport Where a commit the adapter was not tested with is reported
+     * @param findings Where a commit the adapter was not tested with, or an engine which did not
+     *            say its commit, is reported
      */
     public static void logOnce(
         final ZenBpmClientFactory factory,
-        final StartupReport startupReport
+        final ZenBpmFindings findings
     ) {
         if (!factory.isConfigured()) {
             return;
         }
-        factory.logTheEnvironmentOnce(() -> log(factory, startupReport));
+        factory.logTheEnvironmentOnce(() -> log(factory, findings));
     }
 
     /**
@@ -73,21 +74,24 @@ public final class ZenBpmEnvironmentInfo {
 
     private static EngineStatus log(
         final ZenBpmClientFactory factory,
-        final StartupReport startupReport
+        final ZenBpmFindings findings
     ) {
         final var adapterId = factory.getAdapterId();
         final var configuration = factory.configuration();
         final var testedCommit = testedCommit();
+        final var scope = ZenBpmFindings.ofAdapter(adapterId);
         final EngineStatus status;
         try {
             status = factory
                     .rest()
                     .status();
         } catch (final RuntimeException e) {
-            log.warn(
-                    "ZenBPM[{}]: the engine at {} did not say which version it runs, so whether it is the one this adapter was tested with (commit {}) is unknown: {}",
-                    adapterId, configuration.engineAddress(), testedCommit,
-                    ZenBpmErrors.withoutAdapterId(adapterId, e));
+            findings.warn(StartupTopic.INFRASTRUCTURE, scope, """
+                    The engine at %s did not say which version it runs (%s), so whether it runs engine commit %s, \
+                    which this adapter was tested with, is unknown, and an engine this adapter was not tested with \
+                    is not supported. Check that the engine answers GET /system/status; the next start asks \
+                    again.""".formatted(configuration.engineAddress(), ZenBpmErrors.withoutAdapterId(adapterId, e),
+                    testedCommit));
             return null;
         }
         log.info(
@@ -96,7 +100,7 @@ public final class ZenBpmEnvironmentInfo {
                         .version(),
                 status.commit(), String.join(", ", status.nodes()), testedCommit);
         if (!isTested(status.commit(), testedCommit)) {
-            startupReport.warn(StartupTopic.INFRASTRUCTURE, "zenbpm adapter '%s'".formatted(adapterId),
+            findings.warn(StartupTopic.INFRASTRUCTURE, scope,
                     "The engine reports commit %s (version %s), but this adapter was tested with engine commit %s, and an engine is supported only where it was tested. Run the engine image this adapter's release names, or an adapter release tested with this engine."
                             .formatted(status.commit(), status.version(), testedCommit));
         }

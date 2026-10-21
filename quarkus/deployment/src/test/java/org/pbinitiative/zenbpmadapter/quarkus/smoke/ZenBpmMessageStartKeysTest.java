@@ -33,8 +33,9 @@ class ZenBpmMessageStartKeysTest {
             .assertException(failure -> {
                 final var message = SmokeApplication.rootMessageOf(failure);
                 assertAll(
-                        () -> assertTrue(message.startsWith("ZenBPM adapter 'zenbpm' is configured inconsistently:"),
-                                message),
+                        () -> assertTrue(message.contains("""
+                                zenbpm adapter 'zenbpm'
+                                      This adapter is configured inconsistently:"""), message),
                         () -> assertTrue(message.contains(
                                 "  - vanillabp.adapters.zenbpm.message-start-lookup-max-instances is 0 and has to be at least 1; the default is 1000"),
                                 message));
