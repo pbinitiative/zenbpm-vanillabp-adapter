@@ -67,7 +67,6 @@
     <dependency>
       <groupId>io.vanillabp</groupId>
       <artifactId>bpms-double-spring-boot</artifactId>
-      <version>${adapter-platform.version}</version>
       <scope>test</scope>
     </dependency>
   </dependencies>
