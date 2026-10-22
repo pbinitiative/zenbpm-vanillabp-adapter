@@ -778,6 +778,9 @@ Quarkus 3.40 picks), as no GraalVM is installed here. What did not fit, and what
   before for the new build steps); `bin/check-deploy-safety.sh` green (13 files deployed by the
   green build, none of the new module, nothing by the red gate).
 
+**S11.4.1 done 2026-10-22**, merged to `main` as `d686c32` together with S11.5.1 (pull request
+#79); what the runs on `main` showed is written at the end of S11.5.1.
+
 ## S11.6.1 Nightly workflow: the pinned engine, the engine's latest image, the native image
 
 - [ ] **Depends on:** S11.4.1.
@@ -921,3 +924,36 @@ Builds after the fixes (OpenJDK 25.0.2, Docker ITs, none skipped):
   known; the module is untouched by the batch, and its 95 ITs had just passed in the build above);
   the second run was green: 13 files deployed by the green build, none of the new module, nothing
   by the red gate.
+
+**S11.4.1 and S11.5.1 done 2026-10-22**, merged to `main` as `d686c32` (pull request #79: stories
+`2192e43` and `6d4a0d1`, review fixes `2d373f5`; CodeRabbit's one comment was answered as not
+valid and withdrawn). On `d686c32` (GitHub keeps run logs for 90 days, so what they showed is
+written here as well):
+
+- `Checks`, run
+  [39695172319](https://github.com/pbinitiative/zenbpm-vanillabp-adapter/actions/runs/39695172319):
+  green on both JDKs at the first attempt. `bin/check-engine-copies.sh` (in the JDK 25 job)
+  reported both copies as the engine's files of `bdd795a3...`. On both JDKs every module ran its
+  tests, none skipped: engine test support 12 unit and 5 integration tests, core 1,275 unit and
+  104 integration tests (`ZenBpmUnsupportedConstructsTest` 53), Spring Boot 14 + 95, smoke test
+  42 + 1, election integration test 8, Quarkus runtime 13, Quarkus deployment 60
+  (`ZenBpmNativeImageProcessorTest` 6, `QuarkusNettyTest` 2), Quarkus integration tests 25, now on
+  `grpc-netty`, and coverage gate 41 (`CoverageGateTest` 5, `ProductionModulesTest` 9,
+  `QuarkusNettyPinTest` 1). `quarkus/native-image-tests` compiled, built its application in JVM
+  mode and skipped `ZenBpmNativeImageIT` by design ("Tests are skipped" without `-Dnative`); the
+  native build runs in the nightly of S11.6.1. The gate measured 100 % on both platforms: of
+  38,473 instructions for Spring Boot and 38,470 for Quarkus on JDK 25, of 38,461 and 38,458 on
+  JDK 21.
+- `Publish snapshots`, run
+  [39695172436](https://github.com/pbinitiative/zenbpm-vanillabp-adapter/actions/runs/39695172436):
+  green. It skipped the deployment of `quarkus/native-image-tests` ("Skipping artifact
+  deployment"), and GitHub Packages knows no such artifact (its `maven-metadata.xml` answers 404).
+  The snapshot it published, `2.0.0-20261021.234300-75`, holds the core's 266 classes, the Quarkus
+  runtime's 13 and the deployment's 4, among them `ZenBpmNativeImageProcessor` with the new
+  registrations (the gRPC providers, the two allocator holders of `io.grpc.netty.Utils`, the
+  records of `ZenBpmWire`, the platform descriptor), and no test class, fake, fixture or BPMN
+  file. The published POM of the Quarkus runtime excludes `grpc-netty-shaded` and depends on
+  `grpc-netty` 1.81.0 and `quarkus-netty` 3.40.0 (decision 61).
+- Both report pages (`spring-boot-report/index.html`, `quarkus-report/index.html`) answer HTTP 200
+  and show 0 of 38,473 (Spring Boot) and 0 of 38,470 (Quarkus) instructions missed; both badges of
+  the README read 100 %, above the rule of 90.
