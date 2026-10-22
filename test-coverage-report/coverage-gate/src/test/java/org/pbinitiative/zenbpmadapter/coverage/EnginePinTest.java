@@ -8,6 +8,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
@@ -27,7 +28,9 @@ import io.vanillabp.integration.test.utils.SuppressOutputExtension;
  * The build reads the engine pin from {@code zenbpm.commit} and {@code zenbpm.image} of the
  * root POM only. Four places repeat it for people: the headers of the two copied engine files,
  * the table of the README and the wiki's page {@code Home}. This test holds each of them to the
- * POM, so moving the pin cannot leave one of them naming an engine the tests no longer run.
+ * POM, so moving the pin cannot leave one of them naming an engine the tests no longer run, and
+ * it holds {@code bin/zenbpm-engine.sh}, which starts the engine for the blueprints, to reading
+ * the pin from the POM.
  * <p>
  * It checks what the copies say they are, not their content. The content is checked by
  * {@code bin/check-engine-copies.sh} in the pull-request check, see decision 18 in the
@@ -100,6 +103,27 @@ class EnginePinTest {
                                 .formatted(ROOT.relativize(page), commits, images, COMMIT, IMAGE));
             }
         }
+    }
+
+    @Test
+    @DisplayName("The engine script of the blueprints starts the pinned image, read from the root POM and not written a second time")
+    void theBlueprintsEngineIsThePin() throws IOException, InterruptedException {
+        final var script = ROOT.resolve("bin/zenbpm-engine.sh");
+        final var process = new ProcessBuilder("bash", script.toString(), "image")
+                .redirectErrorStream(true)
+                .start();
+        final var printed = new String(process
+                .getInputStream()
+                .readAllBytes(), StandardCharsets.UTF_8).strip();
+
+        assertEquals(0, process.waitFor(), printed);
+        assertEquals(IMAGE, printed, "bin/zenbpm-engine.sh has to start the image the root POM pins");
+        final var text = Files.readString(script);
+        assertEquals(Set.of(), everyMatch(ANY_IMAGE, text), """
+                bin/zenbpm-engine.sh names an image of its own; it reads the pin from 'zenbpm.image' of the \
+                root POM, so moving the pin cannot leave the blueprints on another engine.""");
+        assertTrue(text.contains("docker run ") && text.contains("\"$1\" >/dev/null") && text.contains(
+                "started \"${pinned}\""), "the engine script starts what 'image' prints, as 'pinned'");
     }
 
     /**

@@ -42,7 +42,7 @@ re-checked file by file rather than re-analysed.
 |---|---|
 | every decision of `architecture/02-design-decisions.md`, the gaps, the configuration keys | the adapter SPI (`adapter-platform-integration`) and its `ADAPTER-AUTHORS.md` |
 | the engine changes of the engine-enablement epic (same maintainers, same organisation) | the workspace superproject with its `.claude/skills/` (still saying the ZenBPM adapter is built on the PEA adapter; corrected only in the local workspace, no pull request planned) |
-| CI, releases, wiki at `pbinitiative/zenbpm-vanillabp-adapter.wiki`, coverage pages | the `blueprints` repository (a `-Pzenbpm` profile is a pull request there) and the wiki page `BPMS-adapters` which lists adapters |
+| CI, releases, wiki at `pbinitiative/zenbpm-vanillabp-adapter.wiki`, coverage pages, the overlay `blueprints-overlay/` which gives the blueprints their profile `-Pzenbpm` | the `blueprints` repository (no pull request: the overlay adds the profile from outside, decision 64) and the wiki page `BPMS-adapters` which lists adapters |
 | the code copied from `camunda8-adapter` and `process-engine-api-adapter` (Apache 2.0), which keeps its notices | the `2.0.0-SNAPSHOT` platform artifacts the build reads from the snapshot repository of Maven Central |
 
 The last row is why CI is part of the plan from the first story: a build in a foreign organisation

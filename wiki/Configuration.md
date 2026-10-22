@@ -200,7 +200,12 @@ Set `retries` in the model, or `JOBS_DEFAULT_RETRIES=3` at the engine for the de
 looks for the user tasks a method serves by that type or by the element's id
 (`ZenBpmUserTaskPollerTest#aUserTaskServedByItsElementIdIsNotified`,
 `ZenBpmDeclaredProcessWorkersTest#theDefaultTypeOfAHeldUserTaskIsPolledUnscoped`). A user task marked
-`implemented-externally` is never looked for (`ZenBpmUserTaskIT#aMarkedUserTaskIsNotPolled`).
+`implemented-externally` is never looked for (`ZenBpmUserTaskIT#aMarkedUserTaskIsNotPolled`). The
+Camunda 8 adapter names a user task by the `externalReference` of its `zeebe:formDefinition`; this
+adapter reads no form, so a user task of a Camunda 8 model which names only its form is handed out
+under the default type (`ZenBpmModelReaderTest#aFormNamesNoUserTask`) and is not found for the
+method named after the form. Give it a `zenbpm:taskDefinition type` with that name, as the
+[blueprints](Blueprints) do on ZenBPM.
 
 **No correlation key has to be modelled.** Every message a claimed workflow waits for, and which
 carries no `zenbpm:subscription` of yours, gets the aggregate's id as its key, so `correlateMessage`
@@ -240,7 +245,9 @@ names every element and whether the engine would refuse it or run something else
 
 **A business rule task hands its result to the process only through an output mapping**, for
 example `<zenbpm:output source="=rating" target="rating" />`
-([GAPS 27](Deviations#gaps-27-a-decisions-result-needs-an-output-mapping)).
+([GAPS 27](Deviations#gaps-27-a-decisions-result-needs-an-output-mapping)). The result of a decision
+table whose one output has a name is a context holding that output, so such a mapping reads
+`=rating.rating` ([GAPS 34](Deviations#gaps-34-a-decision-with-one-named-output-hands-a-context)).
 
 **A version tag** is written as `<zenbpm:versionTag value="..." />` on the process, and the engine
 gives a tag to one version only ([GAPS 32](Deviations#gaps-32-a-version-tag-names-one-version)).

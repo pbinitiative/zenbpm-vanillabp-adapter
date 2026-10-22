@@ -46,8 +46,15 @@ class NightlyWorkflowTest {
 
     private static final String RESOLVING_SCRIPT = "bin/resolve-latest-engine.sh";
 
+    private static final String BLUEPRINTS_SCRIPT = "bin/build-blueprints-on-zenbpm.sh";
+
+    /** What a change of starts the nightly in its pull request: the workflow, what it runs, the overlay. */
+    private static final List<String> STARTING_PATHS = List.of(WORKFLOW, RESOLVING_SCRIPT, BLUEPRINTS_SCRIPT,
+            "bin/zenbpm-engine.sh", "blueprints-overlay/**");
+
     /** The jobs the plan asks of the nightly; a later one is added next to them. */
-    private static final Set<String> REQUIRED_JOBS = Set.of("pinned-engine", "latest-engine", "native-image");
+    private static final Set<String> REQUIRED_JOBS = Set.of("pinned-engine", "latest-engine", "native-image",
+            "blueprints");
 
     private static final Pattern JOB_OF_THE_README = Pattern.compile("(?m)^- `([a-z0-9-]+)`:");
 
@@ -72,10 +79,15 @@ class NightlyWorkflowTest {
                 The nightly runs on its schedule, on a dispatch and on a pull request which changes it, \
                 and on nothing else, as the README's section 'What CI runs' says.""");
 
-        assertEquals(Map.of("paths", List.of(WORKFLOW, RESOLVING_SCRIPT)), triggers.get("pull_request"), """
-                A pull request starts the nightly only where it changes the nightly itself or the script \
-                it runs: its native build takes too long for every pull request, and the README promises \
-                that no other pull request starts it.""");
+        assertEquals(Map.of("paths", STARTING_PATHS), triggers.get("pull_request"), """
+                A pull request starts the nightly only where it changes the nightly itself, a script it \
+                runs or the blueprints' overlay: its native build and the blueprints take too long for \
+                every pull request, and the README promises that no other pull request starts it.""");
+        for (final var path : STARTING_PATHS) {
+            assertTrue(readmeSection().contains("`%s`".formatted(path.replace("/**", "/"))), () -> """
+                    The README's section 'What CI runs' has to name '%s', a change of which starts the \
+                    nightly in its pull request.""".formatted(path));
+        }
 
         final var schedules = list(triggers.get("schedule"), "on.schedule");
         assertEquals(1, schedules.size(), "The nightly runs once a night: one schedule.");
@@ -313,6 +325,28 @@ class NightlyWorkflowTest {
                         'native-image' has to run ZenBpmNativeImageIT against the binary it built: a Maven \
                         call of 'quarkus/native-image-tests' up to 'verify', which runs failsafe, and without \
                         skipping tests, but runs '%s'.""".formatted(build));
+    }
+
+    @Test
+    @DisplayName("The blueprints are built by the script with the adapter installed from the checkout, into a directory of the runner")
+    void theBlueprintsAreBuiltWithTheAdapterOfTheCheckout() {
+        final var runs = steps("blueprints")
+                .stream()
+                .map(step -> String
+                        .valueOf(step.get("run"))
+                        .strip())
+                .toList();
+        final var installing = runs.indexOf(
+                "mvn --batch-mode --no-transfer-progress --update-snapshots -Dmaven.test.skip=true --projects spring-boot,quarkus/deployment --also-make install");
+        final var building = runs.indexOf("%s \"$RUNNER_TEMP/blueprints\"".formatted(BLUEPRINTS_SCRIPT));
+
+        assertTrue(installing >= 0, () -> """
+                'blueprints' has to install the Spring Boot starter and the Quarkus extension of this \
+                checkout, which the blueprints' profile 'zenbpm' reads, but runs %s.""".formatted(runs));
+        assertTrue(building > installing, () -> """
+                'blueprints' has to run '%s "$RUNNER_TEMP/blueprints"' after installing the adapter, so \
+                the blueprints are cloned fresh and built against this checkout, but runs %s."""
+                .formatted(BLUEPRINTS_SCRIPT, runs));
     }
 
     @Test

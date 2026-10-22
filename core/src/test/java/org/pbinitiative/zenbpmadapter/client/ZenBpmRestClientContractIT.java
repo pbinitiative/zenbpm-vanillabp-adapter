@@ -118,6 +118,8 @@ class ZenBpmRestClientContractIT {
         client.deployBpmn(fixture("contract-viewed.bpmn"));
         client.deployBpmn(fixture("contract-escalated.bpmn"));
         decision = client.deployDmn(fixture("contract-decision.dmn"));
+        client.deployDmn(fixture("contract-unnamed-decision.dmn"));
+        client.deployBpmn(fixture("contract-decided.bpmn"));
     }
 
     @AfterAll
@@ -425,6 +427,24 @@ class ZenBpmRestClientContractIT {
         assertAll(
                 () -> assertTrue(variables.containsKey("orderId"), variables::toString),
                 () -> assertFalse(variables.containsKey("worked"), variables::toString));
+    }
+
+    @Test
+    @DisplayName("A decision table whose one output has a name hands its business rule task a context holding that output, not the output's value, which a table whose one output has no name hands")
+    void aDecisionTableWithOneNamedOutputHandsAContext() {
+        final var started = client.createInstance(CreateInstanceRequest
+                .latestVersionOf("contract-decided")
+                .withBusinessKey(uniqueBusinessKey())
+                .withVariables(Map.of("amount", 1000)));
+
+        final var variables = eventually(() -> client
+                .instance(started.key())
+                .map(ProcessInstanceRef::variables)
+                .filter(mapped -> mapped.containsKey("unnamedResult")));
+        assertAll(
+                () -> assertEquals(Map.of("discount", 10L), variables.get("result"), variables::toString),
+                () -> assertEquals(10L, variables.get("value"), variables::toString),
+                () -> assertEquals(10L, variables.get("unnamedResult"), variables::toString));
     }
 
     @Test

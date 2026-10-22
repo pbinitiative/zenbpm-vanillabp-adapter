@@ -16,7 +16,17 @@ Every Java file adapted from them carries a header naming its origin and the ide
 "SPDX-License-Identifier: Apache-2.0", and stays under the Apache License, Version 2.0, whose text
 is in LICENSE-APACHE-2.0. Every other Java file carries "SPDX-License-Identifier: MIT". Files
 without such a header (build files, documents, configuration) are under the MIT License, except
-the two files of the next paragraph. Why it is done this way is decision 17 in DECISIONS.md.
+the files of the next two paragraphs. Why it is done this way is decision 17 in DECISIONS.md.
+
+The BPMN models below blueprints-overlay/variants/ are copied and adapted from the VanillaBP
+blueprints, licensed under the Apache License, Version 2.0:
+
+  - vanillabp-blueprints/blueprints     https://github.com/vanillabp-blueprints/blueprints
+
+The software components provided as part of the "VanillaBP Blueprints" were developed by Phactum
+Softwareentwicklung GmbH (https://www.phactum.at/). Each of these models names its origin and
+"SPDX-License-Identifier: Apache-2.0" in its first comment, and stays under the Apache License,
+Version 2.0. Why they are kept here is decision 64 in DECISIONS.md.
 
 Two files are copies of interface descriptions of the ZenBPM engine (pbinitiative/zenbpm,
 https://github.com/pbinitiative/zenbpm, dual-licensed under the AGPL-3.0-or-later and an

@@ -140,6 +140,33 @@ class ZenBpmModelReaderTest {
     }
 
     @Test
+    @DisplayName("A form names no user task: a user task of Camunda 8 which names its form only, by id, key or external reference, is handed out under the default type")
+    void aFormNamesNoUserTask() {
+        final var model = readInline("""
+                <bpmn:process id="Loans" isExecutable="true">
+                  <bpmn:userTask id="AssessRisk">
+                    <bpmn:extensionElements>
+                      <zenbpm:userTask />
+                      <zenbpm:formDefinition externalReference="assessRisk" />
+                    </bpmn:extensionElements>
+                  </bpmn:userTask>
+                  <bpmn:userTask id="Approve">
+                    <bpmn:extensionElements><zenbpm:formDefinition formKey="approve" /></bpmn:extensionElements>
+                  </bpmn:userTask>
+                  <bpmn:userTask id="Review">
+                    <bpmn:extensionElements><zenbpm:formDefinition formId="review" /></bpmn:extensionElements>
+                  </bpmn:userTask>
+                </bpmn:process>
+                """);
+
+        assertEquals(List.of("user-task-type", "user-task-type", "user-task-type"), model
+                .userTasks()
+                .stream()
+                .map(BpmnTaskSpec::taskDefinition)
+                .toList());
+    }
+
+    @Test
     @DisplayName("Job types, user task types and message names are kept as written, whitespace included, as the engine keeps them")
     void namesAreKeptAsWritten() {
         final var model = readInline("""
