@@ -61,7 +61,8 @@ import io.vanillabp.spi.process.ProcessService;
  * The engine runs with the ports of the command and no other setting. Its image is the one this
  * build tests against, see decision 62 in the repository's DECISIONS.md; <code>EnginePinTest</code>
  * holds the page's image to the pin. Testcontainers publishes the engine's ports on free ports of its
- * own, so the test points the page's <code>rest-address</code> at the published REST port and sets
+ * own, so the test points the page's <code>rest-address</code>, through the port of the container the
+ * command publishes it on, at the port Testcontainers published, and sets
  * <code>grpc-address</code>, which the page leaves to its default, to the published gRPC port; the
  * wiki says so. The application is the one of <code>ZenBpmDeploymentAndStartIT</code>: the workflow
  * module <code>deploy-it</code> with the process <code>Ordering</code>, whose task the adapter runs.
@@ -131,7 +132,8 @@ class ZenBpmHomePageIT {
         minimalConfiguration().forEach((
             key,
             value) -> registry.add(key, REST_ADDRESS.equals(key)
-                    ? () -> "http://%s:%d".formatted(ENGINE.getHost(), ENGINE.getMappedPort(publishedPort(value)))
+                    ? () -> "http://%s:%d".formatted(ENGINE.getHost(), ENGINE.getMappedPort(containerPortOf(
+                            publishedPort(value))))
                     : () -> value));
         registry.add("vanillabp.adapters.zenbpm.grpc-address", () -> "%s:%d".formatted(ENGINE.getHost(), ENGINE
                 .getMappedPort(9090)));
@@ -191,6 +193,17 @@ class ZenBpmHomePageIT {
 
     private static int publishedPort(final String address) {
         return Integer.parseInt(address.substring(address.lastIndexOf(':') + 1));
+    }
+
+    // the port of the container the page's command publishes on a port of the host
+    private static int containerPortOf(final int hostPort) {
+        return PUBLISHED_PORT
+                .matcher(codeBlockAfter("### An engine to try it against", "bash"))
+                .results()
+                .filter(published -> Integer.parseInt(published.group(1)) == hostPort)
+                .map(published -> Integer.parseInt(published.group(2)))
+                .findFirst()
+                .orElseThrow(() -> new AssertionError("the command publishes nothing on port %d".formatted(hostPort)));
     }
 
     private static <T> T eventually(final Supplier<Optional<T>> read) {

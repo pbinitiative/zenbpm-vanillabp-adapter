@@ -7,8 +7,8 @@ deviation.
 Each entry carries the number of the gap in the adapter's
 [`GAPS.md`](https://github.com/pbinitiative/zenbpm-vanillabp-adapter/blob/main/GAPS.md), which names
 the evidence in the engine's source, and links the section of the adapter's README which describes
-the behaviour. Where the engine's maintainers could close a gap, the entry says what would close
-it; nothing here promises when.
+the behaviour. `GAPS.md` also names, for every gap, what in the engine would close it, and an entry
+here repeats it where it helps; nothing here promises when.
 
 <!-- gaps: one heading per row of GAPS.md; DocumentationTest compares the two -->
 
@@ -26,11 +26,13 @@ its marker's report, in which only the node which published knows the workflow, 
 again after its answer was lost before the marker wrote the row, which publishes once more and may
 start a second workflow. Nor does it cover a workflow which ended: VanillaBP is then told that the
 engine does not know it, which the contract does not allow
-(`ZenBpmWorkflowProbesTest#whateverElseTheKeyLeadsToFallsThroughToTheSearch`).
+(`ZenBpmWorkflowProbesTest#whateverElseTheKeyLeadsToFallsThroughToTheSearch`), and the viewer
+does not know such a workflow either (`ZenBpmWorkflowViewerTest#anUnknownWorkflowIsUnknown`).
 `message-start-lookup: scan` finds a running workflow a message started by its id variable as well,
-see [Starting a workflow by a message](Configuration#starting-a-workflow-by-a-message). The viewer
-does not know such a workflow either (`ZenBpmWorkflowViewerTest#anUnknownWorkflowIsUnknown`). A
-business key the adapter could set after the start would close the gap.
+for VanillaBP's question and for the viewer
+(`ZenBpmWorkflowProbesTest#underScanAWorkflowAMessageStartedIsFoundByItsIdVariable`,
+`ZenBpmWorkflowViewerTest#underScanAWorkflowAMessageStartedIsFound`), see
+[Starting a workflow by a message](Configuration#starting-a-workflow-by-a-message). A business key the adapter could set after the start would close the gap.
 [README: The probes](https://github.com/pbinitiative/zenbpm-vanillabp-adapter/blob/main/README.md#the-probes)
 
 ### GAPS 2: A new leader hands every job out again
@@ -85,20 +87,26 @@ backoff, so a handler which threw is failed at the engine, and its last attempt 
 The engine passes the variables a job is completed with to the process only through the task's
 output mappings (`ZenBpmRestClientContractIT#aCompletionWithoutAnOutputMappingWritesNothingIntoTheInstance`),
 so the adapter writes the shared values into the workflow first and completes the job afterwards,
-which costs one request more per task (`ZenBpmTaskProcessingIT#gatewayAfterTaskSeesTheNewValues`).
+which costs one update per instance from the task's up to its workflow's
+(`ZenBpmTaskProcessingIT#gatewayAfterTaskSeesTheNewValues`).
 Nothing is asked of you.
 [README: Task processing](https://github.com/pbinitiative/zenbpm-vanillabp-adapter/blob/main/README.md#task-processing)
 
 ### GAPS 8: No listeners and no event stream
 
-Nothing in the engine tells a client that a workflow started or ended, so the adapter writes a start
-marker behind every start event and an end marker in front of every end event into the model it
-deploys, and serves their jobs (`ZenBpmLifecycleIT#theEndOfAWorkflowIsReportedWithItsEndEvent`). A
+Nothing in the engine tells a client that a workflow started or ended, so the adapter writes markers
+into the model it deploys and serves their jobs: a start marker behind every start event of the
+top-level process which starts a workflow of its own, and, where your application listens to the
+end of a workflow, an end marker in front of every none, message and terminate end event of the
+top-level process (`ZenBpmLifecycleIT#theEndOfAWorkflowIsReportedWithItsEndEvent`,
+[decision 52](https://github.com/pbinitiative/zenbpm-vanillabp-adapter/blob/main/DECISIONS.md#52-the-end-marker-reports-an-end-only-where-nothing-else-of-the-workflow-runs-and-no-error-end-event-gets-one)). A
 workflow of a version deployed before the markers existed reports neither, a workflow which ends in an
 interrupting event sub-process or in an error event sub-process reports no end, an error end event
 which nothing catches raises an incident instead of ending the workflow, as on Camunda 8
 (`ZenBpmMarkerTasksIT#anUncaughtErrorEndEventRaisesAnIncident`), a message end event's own task runs
-after `@WorkflowEnded`, and two branches which end at the same moment may report the end twice.
+after `@WorkflowEnded`, because its marker stands in front of it
+(`ZenBpmMarkerTasksTest#aMessageEndEventGetsItsMarkerInFront`), and two branches which end at the
+same moment may each report the end (`ZenBpmWorkflowEndedHandlerTest#branchesWhichEndAtOnceReportTheEnd`).
 The start marker of a workflow the engine started builds its aggregate through your
 `@WorkflowStartedByBpms` method and then writes the aggregate's id into the instance, so a second
 delivery of the marker finds it and builds nothing (`ZenBpmBpmsInitiatedStartHandlerTest#aRedeliveryFindsTheNameWrittenBefore`).
@@ -147,7 +155,7 @@ engine behind a proxy which does both, and reach it with an `https` `rest-addres
 `grpc-plaintext: false` (`ZenBpmAdapterConfigurationTest#aTlsRestAddressBesideAPlaintextJobStreamIsNoticed`);
 [Engine APIs](Engine-APIs) lists what the proxy has to let through. Authentication and TLS on the
 engine's ports would close the gap.
-[README: Configuration](https://github.com/pbinitiative/zenbpm-vanillabp-adapter/blob/main/README.md#configuration)
+[README: Boot behavior](https://github.com/pbinitiative/zenbpm-vanillabp-adapter/blob/main/README.md#boot-behavior)
 
 ### GAPS 13: No signals
 
@@ -178,7 +186,7 @@ keeps what does not change while it runs, at most `instance-cache-max-entries` o
 (`ZenBpmInstanceCacheTest#theFactsAreReadOnce`). A delivery of a job whose instance is not known yet waits for the
 next delivery (`ZenBpmJobDispatcherTest#aJobOfAnInstanceNotKnownYetIsLeftToItsLock`). A richer job
 on the stream would close the gap.
-[README: Task processing](https://github.com/pbinitiative/zenbpm-vanillabp-adapter/blob/main/README.md#task-processing)
+[README: The workflow id](https://github.com/pbinitiative/zenbpm-vanillabp-adapter/blob/main/README.md#the-workflow-id)
 
 ### GAPS 16: An iteration is told neither its index nor its total
 
@@ -252,8 +260,9 @@ GAPS 30.
 ### GAPS 24: Nothing tells who deployed a definition
 
 The engine does not record which application deployed a definition, so the start cannot warn about an
-identifier another application on the same engine uses; two workflow modules of one application
-sharing one are warned about (`ZenBpmDeploymentServiceTest#twoFilesDeclaringOneProcessAreRefused`).
+identifier another application on the same engine uses. The processes the files of your application
+declare are handed to VanillaBP's check for colliding identifiers, so two workflow modules of one
+application sharing one are found (`ZenBpmDeploymentServiceTest#deployingChecksForCollidingProcessIdsFirst`).
 Under `use-prefix` the module's id keeps them apart anyway.
 [README: Deployment](https://github.com/pbinitiative/zenbpm-vanillabp-adapter/blob/main/README.md#deployment)
 
@@ -267,9 +276,12 @@ nothing takes, so it is refused in a claimed process unless the task is marked
 ### GAPS 26: Variables larger than 4 MiB cannot be sent
 
 A workflow whose shared values are larger than 4 MiB cannot be started, and a task whose values are
-cannot be completed: the engine answers with a technical failure, which VanillaBP repeats until the
-outbox blocks the entry. Nothing measures this beforehand, because a limit in the adapter would refuse
-what a fixed engine takes (`ZenBpmErrorsIT#aStartLargerThanTheEnginePassesOnIsRepeatable`).
+cannot be completed: the engine answers with a technical failure. A start, and a task your application
+completes later, go through the outbox, which repeats them until it blocks the entry
+(`ZenBpmErrorsIT#aStartLargerThanTheEnginePassesOnIsRepeatable`). The answer of a `@WorkflowTask`
+method does not: the job is left to its lock, and the engine hands it out again
+(`ZenBpmJobHandlerTest#anUpdateOrAFailureRefusedForGoodLeavesTheJobToItsLock`). Nothing measures the
+size beforehand, because a limit in the adapter would refuse what a fixed engine takes.
 [README: Which phase-two failures are repeated](https://github.com/pbinitiative/zenbpm-vanillabp-adapter/blob/main/README.md#which-phase-two-failures-are-repeated)
 
 ### GAPS 27: A decision's result needs an output mapping
@@ -329,7 +341,8 @@ workflows would start on the newest one, so that start ends naming both versions
 
 The viewer reports no element as cancelled, which Camunda 8 does, because the engine keeps none, and
 the end of a workflow is the latest end of its elements
-(`ZenBpmRestClientContractIT#aTerminatedElementEndsAsACompletedOneDoes`).
+(`ZenBpmWorkflowViewerTest#aMultiInstanceTaskAloneAndACancelledWorkflow`; the engine's side:
+`ZenBpmRestClientContractIT#aTerminatedElementEndsAsACompletedOneDoes`).
 [README: Viewing workflows](https://github.com/pbinitiative/zenbpm-vanillabp-adapter/blob/main/README.md#viewing-workflows)
 
 <!-- /gaps -->

@@ -269,6 +269,72 @@ was decided:
 - `bin/check-deploy-safety.sh` (the gate module changed): green at the first run, 13 files deployed
   by the green build, nothing by the red gate.
 
+**Answers to two reviews of e12-s12.1.1, 2026-10-22** (one by Claude, approve with minor fixes: 5
+Minor, 5 Nit; one by Copilot, changes requested: 1 Major). Every claim was checked in the code of
+the branch, in the platform's code and against the pages; all eleven are valid, Claude's ninth for
+two of its four links. No decision and no GAPS row was needed.
+
+- **`Home`'s engine took the application's port** (Copilot 1, Major). The command published the
+  REST API on port 8080 of the host and `rest-address` pointed there, where Spring Boot and Quarkus
+  serve an application by default; Copilot started the pinned image as the page says and a Quarkus
+  application of the page test beside it, which ended with "Port 8080 seems to be in use", and with
+  `18080:8080` the same jar booted and ran a workflow. The boot tests could not see it:
+  Testcontainers publishes on ports of its own, and the Quarkus test sets `quarkus.http.port`. Now
+  the command is `-p 18080:8080 -p 9090:9090`, `rest-address` is `http://localhost:18080`, and the
+  page says why.
+  `DocumentationTest#theEngineOfThePageHomeLeavesTheApplicationItsPort` (new) holds the command: it
+  publishes the container's 8080 and 9090, no host port 8080, the job stream on host port 9090
+  (where the adapter derives it), and the minimal configuration's `rest-address` names the host port
+  of 8080. `ZenBpmHomePageIT` maps the page's address through the command to the container's port.
+  Mutants, all killed: the old `8080:8080` with its address, `rest-address` on 18081, the job
+  stream on host port 9091.
+- **One custom adapter id was said to need `prioritized-adapters`** (Claude 1, Minor). The
+  platform's `MigrationAdapterProperties#normalize` sets the list to the only configured id, as
+  `Configuration` and fit-check point 3 say. `Home` now asks for `type`, and for the list once
+  several ids are configured, and links `Configuration`; no test boots one custom id without the
+  list, so the example still writes it.
+- **`Engine-APIs` named wrong occasions** (Claude 2, Minor). Read from the call sites:
+  `GET /v1/process-definitions/{key}/statistics` serves only the open-task count
+  (`ZenBpmProcessService#openTaskCount`); the start counts the workflows of an older version with
+  `GET /v1/process-instances` and a page of one (`ZenBpmProcessVersions`); the lock renewal calls
+  only `extend-lock`. `GET /v1/jobs/{key}` was missing the open-task probe after a delivery, a push
+  from a task and the look after a BPMN error; `GET /v1/process-definitions/{key}` the read after
+  each deployment and the viewer; `GET /v1/process-instances/{key}` the lookup by the start row's
+  key and the viewer; and the job stream's `max_active_jobs` counts the parked tasks too (decision
+  37, `ZenBpmJobStreamTest#aParkedJobRaisesTheCapOfItsType`). The six rows are rewritten.
+- **`Deviations` cited tests of other claims** (Claude 3, Minor). GAPS 24 cited a refusal of two
+  files of one module; it now cites
+  `ZenBpmDeploymentServiceTest#deployingChecksForCollidingProcessIdsFirst`, which holds that the
+  declared processes go to VanillaBP's check for colliding identifiers. GAPS 33 cited the engine's
+  contract only; it now cites the viewer's
+  `ZenBpmWorkflowViewerTest#aMultiInstanceTaskAloneAndACancelledWorkflow` beside it.
+- **GAPS 26 put a handler's answer into the outbox** (Claude 4, Minor). A `@WorkflowTask` method's
+  answer which the engine refuses leaves the job to its lock (`ZenBpmJobHandler`,
+  `ZenBpmJobHandlerTest#anUpdateOrAFailureRefusedForGoodLeavesTheJobToItsLock`); only a start and a
+  task completed later go through the outbox. The entry says both.
+- **GAPS 8 put an end marker in front of every end event** (Claude 5, Minor). The entry takes the
+  scope of `GAPS.md` and decision 52 (none, message and terminate end events of the top-level
+  process, where the application listens to the end), and its two sentences without a test now cite
+  `ZenBpmMarkerTasksTest#aMessageEndEventGetsItsMarkerInFront` and
+  `ZenBpmWorkflowEndedHandlerTest#branchesWhichEndAtOnceReportTheEnd`.
+- **Nits** (Claude 6 to 10). The intro of `Deviations` no longer promises a closing sentence in
+  every entry: `GAPS.md` names one for every gap. GAPS 1 says what the viewer does not know before
+  the `scan` sentence, which now names the probe's and the viewer's tests. GAPS 7 costs one update
+  per instance up to the workflow, not one request per task. GAPS 12 links the README's "Boot
+  behavior" and GAPS 15 "The workflow id"; the links of GAPS 24 and 27 to "Deployment" stay, because
+  that section discusses identifiers and business rule tasks. The contract IT of GAPS 7 also asserts
+  that the instance it reads holds the start's `orderId`.
+
+Builds after the fixes (OpenJDK 25.0.2, Docker ITs, none skipped):
+
+- `TZ=Etc/UTC mvn clean install`, 18:23 min, green: engine test support 12 + 5, core 1,275 + 106
+  (`ZenBpmRestClientContractIT` 34), Spring Boot 14 + 97 (`ZenBpmHomePageIT` 2), smoke test
+  42 + 1, election integration test 8, Quarkus runtime 13, deployment 60, integration tests 26
+  (`ZenBpmHomePageTest` 1), gate 64 (`DocumentationTest` 11); coverage 100 % on both platforms (0
+  of 38,473 instructions missed on Spring Boot, 0 of 38,470 on Quarkus).
+- `bin/check-deploy-safety.sh`: green at the first run, 13 files deployed by the green build,
+  nothing by the red gate.
+
 ## S12.2.1 Blueprints profile `-Pzenbpm` (a pull request to the VanillaBP project)
 
 - [ ] **Depends on:** S12.1.1 (a released or snapshot artifact a foreign build can resolve).

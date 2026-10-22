@@ -71,15 +71,19 @@ the module which builds the application
 
 ### An engine to try it against
 
-One node of the engine, with its REST API on port 8080 and its job stream on port 9090, which are
-the engine's defaults. The image is the one this adapter is tested against, see
+One node of the engine, with its REST API on port 18080 of your machine and its job stream on port
+9090. Inside the container the engine listens on its defaults, 8080 and 9090; the REST API is
+published on another port because Spring Boot and Quarkus serve your application on 8080 by
+default. The image is the one this adapter is tested against, see
 [below](#the-engine-this-adapter-is-tested-against):
 
 ```bash
-docker run --rm -p 8080:8080 -p 9090:9090 ghcr.io/pbinitiative/zenbpm@sha256:d7808e30821a7349e0f42476d8aaa21ff92fc752c0ccc432771764d307b87ed0
+docker run --rm -p 18080:8080 -p 9090:9090 ghcr.io/pbinitiative/zenbpm@sha256:d7808e30821a7349e0f42476d8aaa21ff92fc752c0ccc432771764d307b87ed0
 ```
 
 The engine keeps its data inside the container, so `--rm` gives you a fresh engine on every run.
+`DocumentationTest#theEngineOfThePageHomeLeavesTheApplicationItsPort` holds the command to the
+configuration below and keeps it off port 8080.
 
 ### Minimal configuration
 
@@ -94,7 +98,7 @@ read from the
 vanillabp:
   adapters:
     zenbpm:
-      rest-address: http://localhost:8080
+      rest-address: http://localhost:18080
       name-clash-avoidance: use-prefix
 ```
 
@@ -118,8 +122,11 @@ BPMS chooses what its identifiers become instead of getting prefixes nobody chos
 ([decision 24](https://github.com/pbinitiative/zenbpm-vanillabp-adapter/blob/main/DECISIONS.md#24-by-adapter-stays-the-default-and-is-refused-while-deploying)).
 
 Give the adapter instance a **custom id** whenever the id is not the type, for example to run two
-engines side by side. Then the type and the priority list are required
-(`ZenBpmDistinctInstancesBootTest#oneEngineWithTwoModesBoots` boots two such ids):
+engines side by side. Then `type` is required, and so is `vanillabp.prioritized-adapters` once
+several ids are configured (`ZenBpmDistinctInstancesBootTest#oneEngineWithTwoModesBoots` boots two
+such ids). With one id VanillaBP takes it as the prioritized adapter, see
+[Configuration](Configuration#several-adapter-ids); the example writes the list anyway,
+which is never wrong:
 
 ```yaml
 vanillabp:

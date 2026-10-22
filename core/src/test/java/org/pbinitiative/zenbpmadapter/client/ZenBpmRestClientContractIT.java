@@ -422,7 +422,9 @@ class ZenBpmRestClientContractIT {
                 .instance(started.key())
                 .orElseThrow()
                 .variables();
-        assertFalse(variables.containsKey("worked"), variables::toString);
+        assertAll(
+                () -> assertTrue(variables.containsKey("orderId"), variables::toString),
+                () -> assertFalse(variables.containsKey("worked"), variables::toString));
     }
 
     @Test

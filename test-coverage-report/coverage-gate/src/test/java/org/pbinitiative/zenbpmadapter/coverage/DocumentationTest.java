@@ -4,6 +4,7 @@
  */
 package org.pbinitiative.zenbpmadapter.coverage;
 
+import static org.junit.jupiter.api.Assertions.assertAll;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -50,8 +51,9 @@ import io.vanillabp.integration.test.utils.SuppressOutputExtension;
  * may be set at, and no other;</li>
  * <li>every call of the REST client, every endpoint of the engine and the job stream stand on the
  * page <code>Engine-APIs</code>;</li>
- * <li>the coordinates, the versions and the Java of the page <code>Home</code> are the build's, and
- * every meter a page names is one the README's table names.</li>
+ * <li>the coordinates, the versions and the Java of the page <code>Home</code> are the build's, its
+ * engine leaves the application its default HTTP port, and every meter a page names is one the
+ * README's table names.</li>
  * </ul>
  * Whether a sentence says what its test holds is not checked: that stays the reviewer's.
  */
@@ -103,6 +105,16 @@ class DocumentationTest {
     private static final Pattern RPC = Pattern.compile("(?m)^\\s*rpc (\\w+)\\(");
 
     private static final Pattern METER = Pattern.compile("vanillabp\\.zenbpm\\.[a-z]+\\.[a-z]+");
+
+    /** A port a <code>docker run</code> publishes: the host's port, then the container's. */
+    private static final Pattern PUBLISHED_PORT = Pattern.compile("-p (\\d+):(\\d+)");
+
+    private static final int ENGINE_REST_PORT = 8080;
+
+    private static final int ENGINE_GRPC_PORT = 9090;
+
+    /** The default of Spring Boot's <code>server.port</code> and of <code>quarkus.http.port</code>. */
+    private static final int APPLICATION_HTTP_PORT = 8080;
 
     @Test
     @DisplayName("The wiki has exactly the pages the repository publishes")
@@ -297,6 +309,28 @@ class DocumentationTest {
                 .map(version -> version.group(1))
                 .collect(Collectors.toSet()));
         assertEquals(java, first(Pattern.compile("needs Java (\\d+) or newer"), home));
+    }
+
+    @Test
+    @DisplayName("The engine of the page Home leaves port 8080, where Spring Boot and Quarkus serve an application by default, to the application, and the minimal configuration reaches the engine where the command publishes it")
+    void theEngineOfThePageHomeLeavesTheApplicationItsPort() {
+        final var home = read(WIKI.resolve("Home.md"));
+        final var command = codeBlockAfter(home, "### An engine to try it against", "bash");
+        final var published = new TreeMap<Integer, Integer>();
+        PUBLISHED_PORT
+                .matcher(command)
+                .results()
+                .forEach(port -> published.put(Integer.valueOf(port.group(2)), Integer.valueOf(port.group(1))));
+        final var restAddress = first(Pattern.compile("rest-address: (\\S+)"), codeBlockAfter(home,
+                "### Minimal configuration", "yaml"));
+
+        assertAll(
+                () -> assertEquals(Set.of(ENGINE_REST_PORT, ENGINE_GRPC_PORT), published.keySet(), command),
+                () -> assertFalse(published.containsValue(APPLICATION_HTTP_PORT),
+                        "the engine takes the port the application listens on by default: %s".formatted(command)),
+                () -> assertEquals(ENGINE_GRPC_PORT, published.get(ENGINE_GRPC_PORT),
+                        "the adapter looks for the job stream on port 9090 of the REST host: %s".formatted(command)),
+                () -> assertEquals("http://localhost:%d".formatted(published.get(ENGINE_REST_PORT)), restAddress));
     }
 
     @Test
@@ -575,6 +609,17 @@ class DocumentationTest {
                 .filter(dependency -> !dependency.contains("<scope>") || dependency.contains("<scope>compile</scope>"))
                 .map(dependency -> first(Pattern.compile("<artifactId>([^<]+)</artifactId>"), dependency))
                 .collect(Collectors.toSet());
+    }
+
+    // the first code block of a language after a heading of the page
+    private static String codeBlockAfter(
+        final String page,
+        final String heading,
+        final String language
+    ) {
+        final var section = page.substring(page.indexOf(heading));
+        final var start = section.indexOf("```%s\n".formatted(language)) + language.length() + 4;
+        return section.substring(start, section.indexOf("```", start));
     }
 
     private static String first(
