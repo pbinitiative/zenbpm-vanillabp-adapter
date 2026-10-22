@@ -25,9 +25,9 @@ import io.vanillabp.integration.test.utils.SuppressOutputExtension;
 
 /**
  * The build reads the engine pin from {@code zenbpm.commit} and {@code zenbpm.image} of the
- * root POM only. Three places repeat it for people: the headers of the two copied engine files
- * and the table of the README. This test holds each of them to the POM, so moving the pin
- * cannot leave one of them naming an engine the tests no longer run.
+ * root POM only. Four places repeat it for people: the headers of the two copied engine files,
+ * the table of the README and the wiki's page {@code Home}. This test holds each of them to the
+ * POM, so moving the pin cannot leave one of them naming an engine the tests no longer run.
  * <p>
  * It checks what the copies say they are, not their content. The content is checked by
  * {@code bin/check-engine-copies.sh} in the pull-request check, see decision 18 in the
@@ -71,6 +71,27 @@ class EnginePinTest {
         assertNamesThePin("the section 'Supported engine version' of README.md", section);
     }
 
+    @Test
+    @DisplayName("The wiki's page Home names the pinned commit and image, and no page of the wiki names another engine")
+    void theWikiNamesThePin() throws IOException {
+        assertNamesThePin("wiki/Home.md", Files.readString(ROOT.resolve("wiki/Home.md")));
+        try (var pages = Files.list(ROOT.resolve("wiki"))) {
+            for (final var page : pages.toList()) {
+                final var text = Files.readString(page);
+                final var commits = everyMatch(ANY_COMMIT, text);
+                final var images = everyMatch(ANY_IMAGE, text);
+
+                assertTrue(Set
+                        .of(COMMIT)
+                        .containsAll(commits) && Set
+                                .of(IMAGE)
+                                .containsAll(images),
+                        () -> "%s names the commits %s and the images %s, but the pin is '%s' and '%s'."
+                                .formatted(ROOT.relativize(page), commits, images, COMMIT, IMAGE));
+            }
+        }
+    }
+
     /**
      * The comment lines a file starts with, which is where a copy says where it came from.
      */
@@ -100,14 +121,14 @@ class EnginePinTest {
                 Set.of(COMMIT),
                 commits,
                 () -> ("%s names the commits %s, but the pin of the root POM is '%s' alone. Moving the pin "
-                        + "updates the README's table and the headers of both engine copies in the same "
+                        + "updates the README's table, the wiki's page Home and the headers of both engine copies in the same "
                         + "commit, see the README, section 'Supported engine version'.")
                         .formatted(place, commits, COMMIT));
         assertEquals(
                 Set.of(IMAGE),
                 images,
                 () -> ("%s names the images %s, but the pin of the root POM is '%s' alone. Moving the pin "
-                        + "updates the README's table and the headers of both engine copies in the same "
+                        + "updates the README's table, the wiki's page Home and the headers of both engine copies in the same "
                         + "commit, see the README, section 'Supported engine version'.")
                         .formatted(place, images, IMAGE));
     }

@@ -10,6 +10,10 @@ never edited. Entries 24 to 28 were added on 2026-10-15, after VanillaBP's adapt
 under the plan; the numbers 18 to 23 are taken by entries the repository's `DECISIONS.md` added on
 its own.
 
+*Since S12.1.1 (2026-10-22) every entry of this draft the code relies on is in the repository's
+`DECISIONS.md`, which wins where the two differ: 4, 7 and 11 were entered as the code works, and 2,
+5, 6 and 8 stay drafts, superseded by 24, 26, 25 and 27 before they were entered.*
+
 ### 1. The adapter is native, and the Camunda 8 adapter is its template
 
 ZenBPM is a remote, at-least-once, polling BPMS with a query API, which is the shape the Camunda 8

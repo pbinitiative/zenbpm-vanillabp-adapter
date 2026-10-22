@@ -37,6 +37,63 @@ against the image the integration tests run.
 *The last sentence is superseded by decision 18: the engine does not serve its OpenAPI document, so
 the copies are checked against the engine's files of the pinned commit instead.*
 
+### 4. The deployed model is rewritten once per file, and never over what the modeller wrote
+
+Entered by the implementation pipeline in place of the maintainers, from the plan's draft, as the
+code works.
+
+Like Camunda 8, ZenBPM answers only what its protocol carries, so what VanillaBP expects of a BPMS
+beyond it is written into the model before it reaches the engine:
+
+- under `use-prefix`, the identifiers scoped by the workflow module (decision 24);
+- a `zenbpm:subscription` whose correlation key reads the aggregate id, on every message a claimed
+  workflow waits for and which carries no subscription of the modeller's;
+- input mappings of the aggregate id, and of the names the methods serving a job read, on every
+  multi-instance element around such a job, because the engine starts the body of a multi-instance
+  element with its item alone;
+- on a call activity which starts a process of the module on an aggregate of its own, an empty
+  business key and id variable (decision 45), and the aggregate id carried into a multi-instance
+  body around a call on the same aggregate;
+- an output of the id variable on a message start event which maps its outputs (decision 48);
+- the start and end markers (decisions 26, 44 and 52).
+
+What the modeller wrote stays: a subscription of their own, an `in` of their own and a mapping of
+the id variable are left as they are (`ZenBpmCorrelationKeysTest#aBodyAroundAModelledKeyGetsNoMapping`,
+`ZenBpmCallActivitiesTest#theModellersMappingOfTheIdStays`,
+`ZenBpmMessageStartsTest#aMappedMessageStartKeepsTheId`). The deployment applies each step once per
+file; the markers are idempotent (`ZenBpmMarkerTasksTest#aSecondInsertionWritesNothing`), the scoping
+is not, which is why nothing applies it twice. A file which needs none of it reaches the engine as
+the bytes it was read from, and a rewritten file is written out the same way at every start; the
+engine tells an unchanged deployment from a new version by its content, so a start with unchanged
+files and methods deploys no new version (`ZenBpmDeploymentServiceIT#anUnchangedFileKeepsItsVersion`).
+A message which starts a workflow of the module and which a claimed workflow waits for is refused
+rather than rewritten, see GAPS 4.
+
+The plan's draft also wrote an input mapping for every `@TaskParam` name of every job and a
+`zenbpm:in businessKey` on every call activity of the same aggregate. The engine hands a job the
+variables of its scope and a called instance the business key of its caller by itself, so both are
+written only into a multi-instance body, where neither arrives.
+
+### 7. Shared values are written before the job is completed, because job outputs only travel through mappings
+
+Entered by the implementation pipeline in place of the maintainers, from the plan's draft, as the
+code works.
+
+`POST /v1/jobs/{key}/complete` hands its variables to the output mappings of the task, and a task
+without mappings sets nothing in its instance (GAPS 7), so a gateway right behind a `@WorkflowTask`
+would decide on the values of the last start. The adapter therefore writes the values the aggregate
+shares with `PATCH /v1/process-instances/{key}/variables`, into the job's instance and every instance
+above it up to the workflow's root (decision 35), repeating an update which finds no instance yet
+(decision 34), and only then completes the job with the same values. A BPMN error, and a task or a
+user task the application completes or cancels later, write the values the same way before their
+command. Both commands may be repeated: a repeated update writes the same state, and the engine
+answers a repeated completion of a completed job as it answered the first, which is what an
+at-least-once delivery needs.
+
+An output mapping per shared attribute, written into the model, was rejected: which attributes are
+shared depends on the aggregate's class and its annotations, not on the model, and a mapping would
+make a model deployed for one version of the class wrong for the next.
+
 ### 9. Job delivery takes the stream, with a lock the adapter sizes and renews
 
 Only the gRPC stream hands a job to one client at a time; the REST list of jobs is a plain query
@@ -78,6 +135,26 @@ that status decides, even when the HTTP client then timed out on the body.
 
 *Superseded by decision 30, which keeps this rule and adds the `404` of a start to the permanent
 answers.*
+
+### 11. Ownership is decided by the scoped process id of the call, never by a key
+
+Entered by the implementation pipeline in place of the maintainers, from the plan's draft, as the
+code works.
+
+The keys of instances and jobs are unique per engine and carry no scope. Two adapter ids may address
+one engine in different name-clash-avoidance modes, and two workflow modules of one adapter id may
+use the same aggregate id. So every probe compares the process of the instance with the scoped
+process ids of the `WorkflowScope` it was asked about before it answers anything but
+`UNKNOWN_TO_BPMS`: the probe of a workflow searches the aggregate's business key in each process of
+the scope and holds an instance the start row's key leads to against the scope as well, and the
+probes of a task and of a user task read the job and compare the process of its instance
+(`ZenBpmWorkflowProbesTest#aWorkflowOfAnotherModuleIsUnknown`,
+`ZenBpmTaskProbesTest#aJobOutsideTheScopeIsUnknown`,
+`ZenBpmSharedEngineElectionIT#aTaskProbeOfTheWrongIdAnswersUnknown`). A job the stream delivers is
+routed the same way, to the workflow module which serves the scoped process id of its instance
+(`ZenBpmJobDispatcherTest#aJobGoesToTheModuleWhichServesItsProcess`). The process of an instance
+never changes while it runs, so it is read once per key and kept in the instance cache, which makes
+the comparison affordable on every delivery.
 
 ### 12. User-task notifications are polled, not streamed
 
@@ -1821,3 +1898,26 @@ A red `latest-engine` job does not turn the nightly red (`continue-on-error`), b
 this repository changed, and the workflow writes its finding into the run's summary only: it opens
 no issue and writes nowhere, in this repository or the engine's. A person reads it and takes the
 finding to the engine's maintainers.
+
+### 63. The wiki's pages are written in `wiki/` and copied into the wiki after the merge
+
+Decided by the implementation pipeline in place of the maintainers, as their policy for the
+autonomous run asks.
+
+The wiki of a GitHub repository is a repository of its own, without pull requests, reviews or
+required checks: whoever may push to it changes the user documentation at once. So the pages are
+written here, one file per page in the directory `wiki/`, named as the wiki names the page
+(`Home.md`, `Configuration.md`, `Deviations.md`, `Engine-APIs.md`, `Native-images.md`,
+`_Footer.md`), and they are reviewed and checked in the pull request like code. After the merge,
+exactly the merged `wiki/` is copied into the wiki repository and pushed. Nothing is written on the
+wiki directly: the next copy overwrites it, and the footer of every page says where to change it.
+
+A page links another page in the wiki's own form, `[Configuration](Configuration)` or
+`[Configuration](Configuration#every-key)`, and the repository with a full address of `main`,
+because a page is read on the wiki, where a path of the repository resolves to nothing.
+`DocumentationTest` in `test-coverage-report/coverage-gate` holds the pages and the README to what
+can be checked without reading them: every test they name exists, every link leads to a page and a
+heading, every row of `GAPS.md` has its entry on `Deviations`, every key the adapter reads stands on
+`Configuration`, and every call of the REST client and every endpoint of the engine on
+`Engine-APIs`. `EnginePinTest` holds the engine the page `Home` names to the pin. The README's
+section "The wiki" says who copies the pages.

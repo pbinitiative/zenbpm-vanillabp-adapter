@@ -5,6 +5,10 @@ the adapter behaves. The `Deviations` wiki page says the same in one sentence pe
 an outlook where the engine-enablement epic has one. Both are seeded here so every story which meets a
 gap cites the same number.
 
+*Since S12.1.1 (2026-10-22) the repository's `GAPS.md` holds every row of this draft, the closed ones
+(3, 6) included, and the page is `wiki/Deviations.md` of the repository; both win where they differ
+from this draft.*
+
 ## GAPS.md (draft)
 
 | # | Gap | Evidence (zenbpm/) | Adapter behaviour | Engine-enablement | ZenBPM dev discussion notes |

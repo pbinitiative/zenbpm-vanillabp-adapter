@@ -86,6 +86,19 @@ DECISIONS.md). Save the file from a modeler, or give a file written by hand a ge
 the build on a file without one and names what is missing. BPMN written inline in a Java test is
 exempt, and so is a file which is no model on purpose; the check names such a file with its reason.
 
+## The wiki is written here
+
+The user documentation is the repository's wiki, and its pages are written in [`wiki/`](wiki), one
+file per page (decision 63 in the repository's DECISIONS.md). A change of behaviour changes the page
+which describes it, and the README section for contributors, in the same pull request. After the
+merge, the merged `wiki/` is copied into the wiki repository; never edit the wiki itself. A page
+links another page as `[Configuration](Configuration)` and the repository with a full address of
+`main`. Every sentence which promises behaviour names the test which holds it. `DocumentationTest`
+in `test-coverage-report/coverage-gate` fails on a test the README or a page names which does not
+exist, a link which leads nowhere, a row of `GAPS.md` without its entry on `Deviations`, a key the
+code reads which `Configuration` does not list, and a call of the REST client or an endpoint of the
+engine which `Engine-APIs` does not name.
+
 ## What belongs in `UPGRADE.md`
 
 [`UPGRADE.md`](./UPGRADE.md) holds what a released version of this adapter asks an upgrading

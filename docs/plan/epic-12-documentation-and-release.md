@@ -8,7 +8,7 @@ holds it or says it is an assumption and what would disprove it.
 
 ## S12.1.1 Wiki and README
 
-- [ ] **Depends on:** E11.
+- [x] **Depends on:** E11.
 
 Wiki (`zenbpm-vanillabp-adapter.wiki`): `Home` (getting started per platform, minimal configuration
 = one `rest-address`, the outbox requirement, what a handler may assume about its thread with the
@@ -85,6 +85,189 @@ for it (`ZenBpmNativeImageIT`, `ZenBpmNativeImageProcessorTest`, `QuarkusNettyTe
 
 **Acceptance criteria**: every claim names its test; a reviewer following the wiki alone boots an
 application against a fresh engine container.
+
+*Fit check, 2026-10-22, decided by the Implementor where it says so.* Checked against `main` at
+`dc2ba7f`: the README, `DECISIONS.md`, `GAPS.md`, `AGENTS.md`, the drafts
+`architecture/02-design-decisions.md` and `03-deviations-and-gaps.md`, section 6 of
+`architecture/01-architecture.md`, the configuration overlays of both platforms with the core's
+`ZenBpmAdapterConfiguration`, `ZenBpmRestClient` with the two copies of the engine's contract, and
+the coverage gate's tests which read the README; the Camunda 8 adapter's README and wiki (`Home`,
+`Configuration`, `Deviations`, `Cluster-APIs`, `_Footer`) as the template; the pages of the VanillaBP
+wiki the new pages link, whose anchors were checked by hand; the platform's
+`MigrationAdapterProperties#normalize` and `PhaseTwoOutboxProperties`; and the engine at the pin
+`bdd795a3`, exported from the checkout, for the gaps 3, 6, 7, 15 and 17. What did not fit, and what
+was decided:
+
+1. **Where the pages live** (open question 1). As the brief answered in place of the maintainer:
+   the pages are written in `wiki/` of this repository, one file per page under the wiki's name
+   (`Home.md`, `Configuration.md`, `Deviations.md`, `Engine-APIs.md`, `Native-images.md`,
+   `_Footer.md`), reviewed and checked in the pull request, and after the merge the orchestrator
+   copies exactly the merged `wiki/` into `pbinitiative/zenbpm-vanillabp-adapter.wiki` and pushes
+   it. Decision 63. The wiki checkout was not touched. The README's new section "The wiki", a
+   section of `AGENTS.md` and the footer of every page say how the pages are published. Links
+   between pages use the wiki's form, a link into the repository a full address of `main`.
+2. **"Every claim names its test", made mechanical** (open question 2). Decided by the Implementor
+   as the brief recommends: `DocumentationTest` in the coverage gate (10 tests) reads the README and
+   every page and fails where a test they name (`SomeTest`, `SomeIT`, `SomeTest#method`, or a
+   backticked `#method` of a class named before it in the same paragraph) is declared by no source
+   of the repository; where a link leads to no page, file or heading (the anchors as GitHub makes
+   them); where `Deviations` has no heading `### GAPS <n>:` for a row of `GAPS.md`, in its order, or
+   a document names a gap `GAPS.md` has no row of; where the table on `Configuration` and the keys
+   the Spring Boot overlay reads differ in a key or a level (the walk of the overlays moved from
+   `QuarkusOverlayTest` into a helper `OverlayKeys`, which both tests use, so `QuarkusOverlayTest`
+   keeps the Quarkus overlay equal to the same set); where `Engine-APIs` misses a call of the REST
+   client, an endpoint of the engine's contract copy or the job stream's call, or names a call the
+   client does not make; where the coordinates, the version and the Java of `Home` are not the
+   build's, or the Spring Boot artifact does not hand an application the core and VanillaBP's
+   Spring Boot integration; and where a page names a meter the README's table (which
+   `MicrometerZenBpmMetricsTest` holds to the code) does not. `EnginePinTest#theWikiNamesThePin`
+   holds `Home` to the pin. What it does not check: whether a sentence says what the test it names
+   holds, and whether a sentence which promises something names a test at all (both read by hand,
+   see the acceptance below); links outside this repository (the VanillaBP wiki, checked by hand on
+   2026-10-22); the VanillaBP keys the pages name.
+3. **The reviewer's boot, held by a test** (open question 3). Decided as the brief recommends, on
+   both platforms: `ZenBpmHomePageIT` (Spring Boot) and `ZenBpmHomePageTest` (Quarkus, prod mode)
+   read the engine command of `Home`'s section "An engine to try it against" and the YAML of its
+   section "Minimal configuration" from `wiki/Home.md`, start the engine with the command's ports
+   and no other setting, and boot an application of the module with nothing but that YAML (the
+   Quarkus one beside its own database settings), which deploys its workflow module, starts a
+   workflow after the commit and runs its task over the job stream. Two departures, both said on
+   `Home` and in the tests' javadoc: the image is the build's (`EngineUnderTest.image()`), so the
+   nightly's `latest-engine` run tests the newest engine with it (decision 62), and
+   `EnginePinTest` holds the page's image to the pin; and the tests point the page's
+   `rest-address` at the port Testcontainers publishes and set `grpc-address`, because the
+   published gRPC port is not 9090. The Quarkus boot showed what the S3.2.1 note above left open:
+   one adapter id needs no `prioritized-adapters` on Quarkus either. The platform defaults the list
+   where exactly one adapter is configured (`MigrationAdapterProperties#normalize`, the same code on
+   both platforms), so the note's "every configured id has to be listed" holds for several ids, on
+   both platforms; `Configuration` says so under "Several adapter ids".
+4. **The engine version the pages name** (open question 4). `Home` names the pinned commit and the
+   image digest, "tested, not newer", and says nowhere that a released engine version is supported;
+   `EnginePinTest#theWikiNamesThePin` fails where `Home` misses the pin or any page names another
+   commit or image. Step 5 of moving the pin in the README names `wiki/Home.md`. The version and the
+   Java of `Home` come from the root POM (`DocumentationTest#theHomePageNamesTheBuildsVersions`).
+5. **The VanillaBP wiki** (open question 5). The pages link its concepts; they say nothing about a
+   row on `BPMS-adapters`. No VanillaBP repository or wiki was changed.
+6. **Licence of the engine copies** (open question 6). The README's licence section is unchanged and
+   says the question is open.
+7. **Decisions.** Read against the code: draft 4 (the model rewrite) holds, apart from two items
+   of the draft (an input mapping per `@TaskParam` for every job, a `zenbpm:in businessKey` on a
+   call of the same aggregate), which the code writes only into a multi-instance body, because the
+   engine hands a job the variables of its scope and a called instance its caller's business key by
+   itself; draft 7 (shared values before the completion) holds, with decisions 34 and 35 saying
+   where and how often; draft 11 (ownership by the scoped process id) holds for every probe and for
+   the routing of a job. All three are entered under their numbers as the code works, marked as
+   entered by the pipeline from the plan's draft; no supersession was needed, because none of them
+   was ever entered. Drafts 2, 5, 6 and 8 stay drafts, superseded by 24 to 27, and the draft file got
+   a note saying so. Every decision any code cites is entered (checked with a search of every
+   source file). The example `see decision 7` of `AGENTS.md` resolves now and stays. Decision 63 is
+   new; the next free number is 64.
+8. **Gaps.** At the pin: the gaps 3 (ten active jobs per client) and 6 (no retries) are closed by
+   the engine commits `071460cc` and `bc3384b3`, which the pin contains (`max_active_jobs` per
+   subscription counted per client and type in `capacityLocked`; `JobFailByKey` with `retries` and
+   `retryBackoff`), and are entered struck through and marked closed; 7 (job outputs only through
+   mappings: `JobCompleteByKey` hands them to `PropagateOnlyMappedOutputs`), 15 (`WaitingJob` names
+   no process, version, business key or element instance) and 17 (no request id on a start, no
+   unique index on `business_key`) are true and entered with the evidence, 7 and 17 also measured
+   by two new tests of `ZenBpmRestClientContractIT`,
+   `#aCompletionWithoutAnOutputMappingWritesNothingIntoTheInstance` and
+   `#twoStartsUnderOneBusinessKeyCreateTwoInstances`. Three rows still said *planned* for merged
+   code and lost it: 12 (the wiki names the proxy: `Deviations` and `Engine-APIs` do now), 13
+   (`SEND_SIGNAL` is not offered, `ZenBpmProcessServiceTest#everyRequiredOperationIsServed`) and 22
+   (every delivery reports the root as the workflow id,
+   `ZenBpmTaskProcessingIT#aTaskInASubProcessNamesTheRootAndTheGatewayBehindItSeesTheValues`). The
+   header of `GAPS.md` says where users read the list and that a closed gap keeps its row. The next
+   free number is still 34.
+9. **The keys.** Section 6 of the architecture matches the code: `shared-engine` and
+   `max-redeliveries` are gone from it already, and every key of the overlays stands there with its
+   levels and default. The users' table on `Configuration` is compared with the code, not with the
+   architecture (`DocumentationTest#everyKeyStandsOnTheConfigurationPage`); section 6 got a line
+   naming it.
+10. **The javadoc of `VanillaBpZenBpmProperties`** (the note of S3.1.1). Decided by the Implementor:
+    it stays on both platforms. It says what the class's own binding does with a key it does not
+    know, which is code reasoning a contributor needs where the overlay is changed, and its
+    sentences are held by the same tests as the page (`ZenBpmStartupValidationBootTest#aMisspeltKeyIsIgnored`,
+    `ZenBpmUnknownKeyTest#aMisspeltKeyFailsTheStart`). The users' version is on `Configuration`,
+    "A key the adapter does not know", the case beside the Camunda 8 extension included, which the
+    page marks as seen in a boot and held by no test of this repository.
+11. **The README.** Its section `Status` (lines 20 to 402 of `main`) became a short `Status`, and its
+    content moved, sentence by sentence, into `Configuration` and the subsections of `Behavior`,
+    which follow the sections of the Camunda 8 README with ZenBPM's facts: deployment, two-phase
+    start, the probes, the workflow id, the start marker, task processing, tasks left open, a process
+    declared without a model, the shutdown, user tasks, the end of a workflow, multi-instance,
+    messages, starting by a message, pushing, versions, viewing, which phase-two failures are
+    repeated (moved under `Behavior`) and testing. New are `Documentation`, `Dependencies`,
+    `Configuration`, `Decision log`, `Known deviations` (the gaps a user meets first with their
+    numbers, and the deviation of expressions which is no gap) and `The wiki`. Every test the old
+    README named is still named; six citations of a method alone, which `DocumentationTest` reads as
+    a method of a class named before it in the same paragraph, are written out with their class now,
+    because four of them named a method of `ZenBpmLifecycleIT` after a citation of
+    `ZenBpmWorkflowLifecycleTest` or `ZenBpmMarkerTasksIT`. The gate's tests of the README
+    (`EnginePinTest`, `NightlyWorkflowTest`, `WorkflowPermissionsTest`, `PublicationSafetyTest`,
+    `EngineTestsWithoutDockerTest`) and the core's (`ZenBpmErrorsTest`, `MicrometerZenBpmMetricsTest`)
+    stayed green. The line saying the user documentation is not written is gone.
+12. **The notes for this story elsewhere in the plan**, each now a sentence with its test: the keys
+    and the javadoc stand-in of epic 3 (`Configuration`, "Every key" and "A key the adapter does not
+    know"); decision 24's sentence for the first page, epic 4 (`Home`, "Minimal configuration");
+    GAPS 26 as an entry of `Deviations`, epic 5; the two VanillaBP settings which decide the cost of
+    the open-task probe, epic 6 (`Configuration`, the table of VanillaBP's keys), and the incident at
+    the first exception without `retries` (`Configuration`, the BPMN model; `Deviations`, GAPS 6);
+    `message-start-lookup`, what the start row does not cover and how long it lives, epic 7
+    (`Configuration`, "Starting a workflow by a message"; `Deviations`, GAPS 1 and 30); the window of
+    a crash between the aggregate's commit and the write of its id, which Camunda 8 has too, epic 9
+    (`Deviations`, GAPS 8); no page quotes a message of the adapter, epic 11; the page `Native
+    images` with the tests of the README's section, epic 11; the notes of S3.1.1, S3.2.1, S3.3.1,
+    S7.1.2 and S11.4.1 above (`Configuration` and `Native images`); `DECISIONS.md` decision 24 and
+    the header of `GAPS.md`.
+13. **`UPGRADE.md`**: nothing is released, so no entry.
+14. **The policy items.** The pages name the snapshot coordinates `2.0.0-SNAPSHOT` and promise no
+    release (S12.4.1); they say nothing about the blueprints (S12.2.1) or a row on VanillaBP's wiki
+    (S12.3.1); `Deviations` describes each gap with the adapter's behaviour today and says what would
+    close it, without an engine story or a date (E13).
+
+**Acceptance evidence, 2026-10-22.** Everything here ran on this machine (OpenJDK 25.0.2, Maven
+3.9.12, Docker 29.1, 14 cores).
+
+- [x] Every claim names its test. Mechanically: `DocumentationTest` (10 tests, new) finds every test
+  the README and the six pages name, and `EnginePinTest#theWikiNamesThePin` (new) the pin on
+  `Home`, both green in the clean build below. By hand: every page was read sentence by sentence;
+  a sentence which promises behaviour names its test, apart from four which say why they cannot:
+  the unknown key beside the Camunda 8 extension (needs that extension), the leader change of GAPS
+  2 (one node of the engine has one leader), the files a refused deployment leaves behind (follows
+  from one file per request) and what the adapter does not detect (GAPS 23, 27). Six citations of
+  the old README were written out with their class (fit-check point 11), and several citations of
+  the pages' first drafts which named a method under the wrong class were found by looking each one
+  up and corrected before the pages were committed.
+- [x] A reviewer following the wiki alone boots an application against a fresh engine container:
+  `ZenBpmHomePageIT` (2 tests, Spring Boot) and `ZenBpmHomePageTest` (1 test, Quarkus prod mode)
+  start a fresh engine with the ports of `Home`'s command and boot an application with the YAML of
+  its section "Minimal configuration", read from the page; the workflow runs its task over the job
+  stream (Spring Boot) and to its end (Quarkus).
+- [x] `DECISIONS.md` completed: 4, 7 and 11 entered, 63 new (fit-check points 1 and 7). `GAPS.md`
+  completed: 3 and 6 closed, 7, 15 and 17 entered, two new contract ITs, no *planned* left for merged
+  code (point 8). `UPGRADE.md` unchanged (point 13).
+- Mutants, all killed (29): of `DocumentationTest`, a cited method renamed, a cited class renamed, a
+  bare method of a class not before it, a key row dropped, a stale key `max-redeliveries` added, a
+  level dropped from `retry-backoff`, the entry of GAPS 33 dropped, `GAPS 99` named, a page link,
+  a heading anchor of a page, an anchor of the README, a file of the repository, an anchor of the
+  README's own, an anchor of `DECISIONS.md` and a wiki address of the README broken, the row of
+  `POST /v1/messages` dropped, an endpoint of the never-list dropped, a call the client does not
+  make added, the job stream dropped, the version `2.0.0` and Java 17 on `Home`, an unknown meter,
+  `vanillabp-spring-boot-integration` in scope `provided`, a page more in `wiki/`; of `EnginePinTest`,
+  another commit on `Home` and another image on `Native-images`; of the boot tests, `by-adapter` in
+  `Home`'s YAML (both platforms end the start) and port 9091 in its command (Spring Boot). Two link
+  mutants survived the first version of the link check, which removed code spans with a pattern
+  reaching from one span to the next and swallowing links between them; fixed, then killed. The
+  unchanged pages pass.
+- Clean build (`TZ=Etc/UTC mvn clean install`, Docker ITs included, none skipped, 18:07 min): engine
+  test support 12 + 5, core 1,275 + 106 (two new contract ITs), Spring Boot 14 + 97 (two of
+  `ZenBpmHomePageIT`), smoke test 42 + 1, election integration test 8, Quarkus runtime 13,
+  deployment 60, integration tests 26 (`ZenBpmHomePageTest`), gate 63 (`DocumentationTest` 10 and
+  `EnginePinTest#theWikiNamesThePin` new); coverage 100 % on both platforms (0 of 38,473
+  instructions missed on Spring Boot, 0 of 38,470 on Quarkus, unchanged: no production code
+  changed).
+- `bin/check-deploy-safety.sh` (the gate module changed): green at the first run, 13 files deployed
+  by the green build, nothing by the red gate.
 
 ## S12.2.1 Blueprints profile `-Pzenbpm` (a pull request to the VanillaBP project)
 

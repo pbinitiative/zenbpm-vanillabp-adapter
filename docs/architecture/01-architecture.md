@@ -544,6 +544,10 @@ and are re-parked by whichever node receives them next.
 | `async-task-max-age-action` | adapter | `report` | `incident` fails an overdue asynchronous task's job with `retries: 0`, so the engine raises an incident; any other value ends the start |
 | `deployment-failure` | adapter | `fail` | core key |
 
+The users' version of this table is the wiki's page `Configuration` (`wiki/Configuration.md`),
+whose table `DocumentationTest` holds to the keys the code reads (checked 2026-10-22: this table
+matches them).
+
 Scoped keys resolve through the four levels of the configuration model, most specific first, with
 the same resolver shape on both platforms (`PeaFetchVariables` pattern). Every key is modelled in
 the Quarkus overlay, or the startup fails on it.
