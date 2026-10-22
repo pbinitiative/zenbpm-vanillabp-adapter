@@ -351,6 +351,30 @@ generic docstring-coverage warning not acted on, as in every batch before). All 
 - Builds: `TZ=Etc/UTC mvn clean install`, 17:57 min, green, the same counts as above, none
   skipped, coverage 100 % on both platforms; `bin/check-deploy-safety.sh` green at the first run.
 
+**S12.1.1 done 2026-10-22**, merged to `main` as `42b3fb6` (pull request #83: story `6d4004e`,
+review fixes `2bca20f`, CodeRabbit fixes `e3aa12f`). GitHub keeps run logs for 90 days, so what the
+runs showed is written here as well:
+
+- `Checks` on `42b3fb6`, run
+  [39758279637](https://github.com/pbinitiative/zenbpm-vanillabp-adapter/actions/runs/39758279637):
+  green on both JDKs at the first attempt. `bin/check-engine-copies.sh` reported both copies as the
+  engine's files of `bdd795a3...`. On both JDKs every module ran its tests, none skipped: engine
+  test support 12 + 5, core 1,275 + 106 (`ZenBpmRestClientContractIT` 34), Spring Boot 14 + 97
+  (`ZenBpmHomePageIT` 2), smoke test 42 + 1, election integration test 8, Quarkus runtime 13,
+  deployment 60, integration tests 26 (`ZenBpmHomePageTest` 1), gate 64 (`DocumentationTest` 11,
+  `EnginePinTest` 4). The gate measured 100 %: 0 of 38,473 (Spring Boot) and 0 of 38,470 (Quarkus)
+  instructions missed on JDK 25, 0 of 38,461 and 0 of 38,458 on JDK 21.
+- `Publish snapshots` on `42b3fb6`, run
+  [39758279449](https://github.com/pbinitiative/zenbpm-vanillabp-adapter/actions/runs/39758279449):
+  green. The snapshot it published, `2.0.0-20261022.094849-79`, holds the core's 266 classes as
+  before (the story adds no production class) and no test class, fake, fixture or BPMN file.
+- Both report pages (`spring-boot-report/index.html`, `quarkus-report/index.html`) answer HTTP 200
+  and show 0 of 38,473 (Spring Boot) and 0 of 38,470 (Quarkus) instructions missed.
+- The wiki: the six pages of `wiki/` at `42b3fb6` were copied into
+  `pbinitiative/zenbpm-vanillabp-adapter.wiki` and pushed as its commit `4f1397b` (decision 63),
+  replacing the placeholder `Home`. `Home`, `Configuration`, `Deviations`, `Engine-APIs` and
+  `Native-images` answer HTTP 200 on github.com, and `Home` shows the engine command on port 18080.
+
 ## S12.2.1 Blueprints profile `-Pzenbpm` (a pull request to the VanillaBP project)
 
 - [ ] **Depends on:** S12.1.1 (a released or snapshot artifact a foreign build can resolve).
