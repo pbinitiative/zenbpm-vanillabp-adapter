@@ -557,8 +557,9 @@ blueprints CI" into three proofs:
   at its first start. The run before the last changes of the overlay (run 4: 52 minutes, 3,113 s) built 50
   of the 59 green; its nine red twins were what fit-check points 5 and 2 (the changelog) fixed,
   and the same nine built green with the final overlay before the final run.
-- [ ] The job `blueprints` of the nightly green on GitHub: the pull request's own nightly run,
-  which the workflow change starts, after the push (the orchestrator's step).
+- [x] The job `blueprints` of the nightly green on GitHub: the pull request's own nightly run,
+  which the workflow change starts, after the push (the orchestrator's step). Green on the
+  reviewed head, see "S12.2.1 done" below.
 - [x] A broken overlay makes the job fail. The job's step is `bin/build-blueprints-on-zenbpm.sh`,
   which ends with 1 where the overlay does not fit or a twin fails. Shown on a copy of the
   adapter whose `blueprints.txt` lacks `bpmn-timer`: against a fresh clone the script printed "The
@@ -684,6 +685,37 @@ the blueprints at `7acfef0`. All eight are valid. No new decision and no new GAP
   The gate measured 100 %: 0 of 38,473 (Spring Boot) and 0 of 38,470 (Quarkus) instructions
   missed. `bin/check-deploy-safety.sh` was green: the green build deployed exactly the 13 published
   files, and the red gate deployed nothing.
+
+**S12.2.1 done 2026-10-22**, merged to `main` as `0aac752` (pull request #85: story `6d00f39`,
+review fixes `9ac2b63`; CodeRabbit left no comment). GitHub keeps run logs for 90 days, so what the
+runs showed is written here as well:
+
+- The pull request's `Nightly`, run
+  [39811072729](https://github.com/pbinitiative/zenbpm-vanillabp-adapter/actions/runs/39811072729),
+  on the head `9ac2b63`: all four jobs green. The job `blueprints` cloned
+  `vanillabp-blueprints/blueprints` at `7acfef0`, the overlay listed 59 twins, and "0 of 59 twins
+  failed." after 50 minutes of twins (52 minutes the job). The proof of the acceptance's third item.
+- `Checks` on `0aac752`, run
+  [39818677744](https://github.com/pbinitiative/zenbpm-vanillabp-adapter/actions/runs/39818677744):
+  green on both JDKs at the first attempt. `bin/check-engine-copies.sh` reported both copies as the
+  engine's files of `bdd795a3...`. On both JDKs every module ran its tests, none skipped: engine
+  test support 12 + 5, core 1,276 + 108 (`ZenBpmModelReaderTest` 38, `ZenBpmRestClientContractIT`
+  36), Spring Boot 14 + 97, smoke test 42 + 1, election integration test 8, Quarkus runtime 13,
+  deployment 60, integration tests 26, gate 92 (`BlueprintsOverlayTest` 26, `NightlyWorkflowTest`
+  10, `EnginePinTest` 5, `DocumentationTest` 11). The gate measured 100 %: 0 of 38,473 (Spring
+  Boot) and 0 of 38,470 (Quarkus) instructions missed on JDK 25, 0 of 38,461 and 0 of 38,458 on
+  JDK 21.
+- `Publish snapshots` on `0aac752`, run
+  [39818677698](https://github.com/pbinitiative/zenbpm-vanillabp-adapter/actions/runs/39818677698):
+  green. The snapshot it published, `2.0.0-20261022.165922-81`, holds the core's 266 classes as
+  before (the story adds no production class), the Spring Boot starter's 13, the Quarkus runtime's
+  13 and the deployment's 4, and no test class, fake, fixture, BPMN file or part of the overlay.
+- Both report pages (`spring-boot-report/index.html`, `quarkus-report/index.html`) answer HTTP 200
+  and show 0 of 38,473 (Spring Boot) and 0 of 38,470 (Quarkus) instructions missed.
+- The wiki: `wiki/` at `0aac752` was copied into `pbinitiative/zenbpm-vanillabp-adapter.wiki` and
+  pushed as its commit `f043071` (decision 63), adding the page `Blueprints`. `Blueprints`,
+  `Configuration` and `Deviations` answer HTTP 200 on github.com, and `Home` (served at `/wiki`)
+  links `Blueprints`.
 
 ## S12.3.1 Renovate, local workspace notes and the VanillaBP wiki row
 
