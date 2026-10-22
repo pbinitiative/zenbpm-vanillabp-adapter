@@ -910,10 +910,10 @@ images show. What did not fit, and what was decided:
 **Acceptance evidence, 2026-10-22.** Everything here ran on this machine (OpenJDK 25.0.2, Maven
 3.9.12, Docker 29.1, 14 cores); a scheduled or dispatched run needs the file on `main`. What the
 three jobs show on GitHub is seen on the feature pull request, which the workflow's `paths` filter
-makes run them all (fit-check point 3); those runs are added below after the pull request's checks.
+makes run them all (fit-check point 3); what they showed is written at the end of this story.
 
 - [x] The nightly runs green against the pinned engine. Locally: the job's build is the clean build
-  below, green. On GitHub: on the pull request, added after its checks.
+  below, green. On GitHub: green on the pull request, see the end of this story.
 - [x] The `latest` job reports the engine version it met. Locally:
   `bin/resolve-latest-engine.sh ghcr.io/pbinitiative/zenbpm:dev` resolved the tag in 8 s to
   `ghcr.io/pbinitiative/zenbpm@sha256:a847afe3f96b9faf4807a1907154c7ecb00c75f1469c8cc7ad890b7052190392`,
@@ -929,7 +929,7 @@ makes run them all (fit-check point 3); those runs are added below after the pul
   eight commits later; its newest commit makes the engine refuse a multi-instance
   `completionCondition`, which the adapter refuses already (`ZenBpmUnsupportedConstructs`), and its
   `api.yaml` differs from the copy by one line. No engine gap was met (open question 6), so no GAPS
-  row. On GitHub: on the pull request, added after its checks.
+  row. On GitHub: green on the pull request, see the end of this story.
 - [x] The native job runs the lifecycle flow. Locally, as the job runs it: Mandrel
   25.0.4.1-Final for Java 25 (the release `graalvm/setup-graalvm` takes for `java-version: "25"`,
   downloaded from `graalvm/mandrel`) as `JAVA_HOME` of both calls, `mvn -Dmaven.test.skip=true
@@ -939,8 +939,8 @@ makes run them all (fit-check point 3); those runs are added below after the pul
   image built on the machine with gcc 13.3 in 2 min 1 s, peak RSS 6.19 GB, and `ZenBpmNativeImageIT`
   passed (1 test) against the pinned engine: the binary served both tasks and the end marker,
   stopped after draining, and the engine showed the instance completed. This was the first build
-  with a local GraalVM (the note of S11.4.1). On GitHub: on the pull request, added after its
-  checks.
+  with a local GraalVM (the note of S11.4.1). On GitHub: green on the pull request, see the end of
+  this story.
 - [x] Every job writes a summary line, and the README describes the jobs in "What CI runs" with
   the nightly's badge next to `Checks`: `NightlyWorkflowTest` (8 tests, 9 since the review fixes)
   holds both. actionlint 1.7.12 passes the workflows; shellcheck, which its image carries, run by
@@ -976,7 +976,7 @@ makes run them all (fit-check point 3); those runs are added below after the pul
   clean build above and against `:dev`.
 - *The native image runs the lifecycle flow*: met locally. S11.4.1's `ZenBpmNativeImageIT` with the
   builder container, and in this story with a local Mandrel as the nightly's `native-image` job runs
-  it; the job's first run on GitHub is added with the pull request's checks.
+  it, and on GitHub in the job's first run, on the pull request (see the end of this story).
 - *Both coverage reports read above 90*: met. 100 % on both platforms in the clean build above, and
   both badges read 100 % since S11.5.1.
 
@@ -1035,6 +1035,44 @@ Builds after the fixes (OpenJDK 25.0.2, Docker ITs, none skipped):
 - `bin/check-deploy-safety.sh`, green at the first run: 13 files deployed by the green build,
   nothing by the red gate.
 - actionlint 1.7.12 and the new shellcheck step, run as `checks.yaml` runs them: both exit 0.
+
+**S11.6.1 done 2026-10-22**, merged to `main` as `96c2a7a` (pull request #81: story `4bbc51f`,
+review fixes `28b1563`; CodeRabbit had no comment). With it E11 is complete. GitHub keeps run logs
+for 90 days, so what the runs showed is written here as well:
+
+- `Nightly` on the pull request, run
+  [39717515078](https://github.com/pbinitiative/zenbpm-vanillabp-adapter/actions/runs/39717515078)
+  (event `pull_request`, started by the `paths` filter, head `28b1563`): all three jobs green at the
+  first attempt, the first run of each on a GitHub runner.
+  - `pinned-engine` (21:31 min of Maven): engine test support 12 + 5, core 1,275 + 104, Spring
+    Boot 14 + 95, smoke test 42 + 1, election integration test 8, Quarkus runtime 13, deployment
+    60, integration tests 25, gate 52; 100 % on both platforms (0 of 38,473 and 0 of 38,470
+    instructions missed).
+  - `latest-engine` (20:03 min of Maven): `bin/resolve-latest-engine.sh` resolved `:dev` to
+    `sha256:a847afe3...`, built from `1ee1fd663e340017725b9867c9db41c476f8d94a`, which the engine
+    reported as `1ee1fd663e34` with version `v1.9.0`, "not the pinned commit"; the build with both
+    values ran the same counts as `pinned-engine` without the gate, green.
+  - `native-image` (4 min 38 s in all): `graalvm/setup-graalvm` installed Mandrel
+    25.0.4.1-Final for Java 25; "Running Quarkus native-image plugin on MANDREL 25.0.4.1 JDK
+    25.0.4.1+1-LTS" on the runner, without a container; the image was generated in 2 min 24 s at a
+    peak RSS of 5.10 GB on the 4-core runner, linked without an extra package, and
+    `ZenBpmNativeImageIT` passed (1 test).
+- `Checks` on `96c2a7a`, run
+  [39719732462](https://github.com/pbinitiative/zenbpm-vanillabp-adapter/actions/runs/39719732462):
+  green on both JDKs at the first attempt. `bin/check-engine-copies.sh` reported both copies as the
+  engine's files of `bdd795a3...`. On both JDKs every module ran its tests, none skipped, with the
+  counts of the clean build above; the gate ran 52 tests, among them `NightlyWorkflowTest` 9 and
+  `WorkflowPermissionsTest` 2; `quarkus/native-image-tests` skipped its IT by design. The gate
+  measured 100 %: 0 of 38,473 (Spring Boot) and 0 of 38,470 (Quarkus) instructions missed on JDK 25,
+  0 of 38,461 and 0 of 38,458 on JDK 21. `workflow-lint` ran actionlint and the new step "Lint the
+  scripts" (shellcheck over `bin/*.sh`), both green; its log shows the steps run as
+  `/usr/bin/bash -e {0}`, the shell the answer to Claude's third finding names.
+- `Publish snapshots` on `96c2a7a`, run
+  [39719732512](https://github.com/pbinitiative/zenbpm-vanillabp-adapter/actions/runs/39719732512):
+  green. The snapshot it published, `2.0.0-20261022.035822-77`, holds the core's 266 classes as
+  before (the story adds no production class) and no test class, fake, fixture or BPMN file.
+- Both report pages (`spring-boot-report/index.html`, `quarkus-report/index.html`) answer HTTP 200
+  and show 0 of 38,473 (Spring Boot) and 0 of 38,470 (Quarkus) instructions missed.
 
 ## S11.5.1 Coverage at the rule
 
