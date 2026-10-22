@@ -112,6 +112,11 @@ which holds it.
    how). A `customManagers` entry for engine releases is added once the pin is a release tag
    (S12.3.1).
 
+   *Note from S12.3.1, 2026-10-22.* The entry is NOT added: the pin is still a `main` commit with a
+   `dev` digest, and moving it to a release is left to the maintainer (the pipeline's policy forbids
+   the re-pin). The step which re-pins to a release adds it; S12.3.1 holds the entry, ready to copy
+   and proven against a scratch copy of the root POM.
+
 **Tests**
 
 - `test-coverage-report/coverage-gate`: `CoverageGateTest` (with `@PrintsWhenPassing`) and

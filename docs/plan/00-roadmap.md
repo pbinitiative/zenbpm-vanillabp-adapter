@@ -111,7 +111,7 @@ where the dependency is not simply the previous one.
 | 57 | S11.6.1 Nightly workflow | E11 | pinned engine, engine `:dev`, native image, each with a summary line |
 | 58 | S12.1.1 Wiki and README | E12 | pages exist, every claim names its test |
 | 59 | S12.2.1 Blueprints profile `-Pzenbpm` (an overlay in this repository, built by the nightly) | E12 | the blueprints run on the pinned engine in the adapter's nightly |
-| 60 | S12.3.1 Renovate, local workspace notes, VanillaBP wiki row | E12 | local notes re-read, the `BPMS-adapters` wiki row proposed |
+| 60 | S12.3.1 Renovate, local workspace notes, VanillaBP wiki row | E12 | `renovate.json` reviewed and held by `RenovateConfigurationTest`; local notes re-read and their corrections written down; left to the maintainer: applying the local notes, asking VanillaBP for the `BPMS-adapters` wiki row (text in the story), the engine's `customManagers` entry with the re-pin |
 | 61 | S12.4.1 Release workflow and first release | E12 | `v2.0.0` tag builds, publishes and creates the release |
 
 E13 stories are ordered by value in their own file and slot in wherever the engine work is done.

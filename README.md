@@ -917,6 +917,30 @@ Working rules for this repository, for people and coding agents alike, are in
 [`DECISIONS.md`](./DECISIONS.md), what the engine cannot do and how the adapter answers it in
 [`GAPS.md`](./GAPS.md).
 
+## Dependency updates
+
+[Renovate](https://docs.renovatebot.com) opens the pull requests which move the dependencies, the
+Maven plugins, the actions of the workflows, the JDK they build on and the image of actionlint
+(`renovate.json`, on `config:recommended`). What moves with something else is switched off, each
+rule saying why: VanillaBP and this adapter, which follow their own releases; the Spring Boot and
+Quarkus versions, which move with the VanillaBP platform; gRPC and protobuf, which are raised by hand
+when a platform BOM moves; and Netty, which moves with Quarkus. Renovate moves a property of the POM
+with whichever of its artifacts has an update, so every artifact which reads such a version is named
+in its rule, the Quarkus Maven plugin and Spring Boot's configuration processor included. The JDK
+moves in every workflow in one pull request, the matrix of `checks.yaml` included.
+
+`RenovateConfigurationTest` in `test-coverage-report/coverage-gate` holds `renovate.json` to this:
+every version the root POM says never moves on its own is read only by artifacts a rule switches off,
+every rule says why and still matches an artifact of the build, the image a workflow runs by its
+version and the JDK of the required check are found by a custom manager, and every workflow builds on
+the same JDK.
+
+The engine pin is not Renovate's. While it is a build of the engine's `main`, it moves by hand
+together with the copies of the engine's contract, as the section
+[Supported engine version](#supported-engine-version) says. Once the pin is an engine release, an
+entry which follows the engine's GitHub releases is added to `renovate.json`, and the pull request it
+opens is completed by hand the same way.
+
 ## Using the snapshots
 
 Every push to `main` publishes the artifacts as `2.0.0-SNAPSHOT` to this repository's GitHub

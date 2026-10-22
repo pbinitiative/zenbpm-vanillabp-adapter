@@ -719,7 +719,7 @@ runs showed is written here as well:
 
 ## S12.3.1 Renovate, local workspace notes and the VanillaBP wiki row
 
-- [ ] **Depends on:** S12.1.1.
+- [x] **Depends on:** S12.1.1.
 
 `renovate.json` reviewed against the finished dependency tree (the VanillaBP platform version, the
 Spring Boot and Quarkus BOMs which have to move together with the platform). Once the engine pin is
@@ -730,6 +730,152 @@ the two skill edits) re-read against the finished adapter; they stay local, beca
 superproject belongs to the VanillaBP project and no pull request to it is planned. One request to
 the VanillaBP project: a row for this adapter on the platform wiki's `BPMS-adapters` page linking
 `pbinitiative/zenbpm-vanillabp-adapter`.
+
+*Fit check, 2026-10-22, by the Implementor of the pipeline.* The pipeline's policy changes two parts
+of this story: the request for the wiki row is NOT made, and the local workspace notes are read but
+NOT edited (the superproject is VanillaBP's; the policy forbids changing, staging or reverting its
+local changes). Both are recorded below as left to the maintainer. What did not fit the merged code,
+and what was decided:
+
+1. **`renovate.json` let two artifacts move a platform version.** Renovate (44.178.1, run locally with
+   `--platform=local --dry-run=lookup` on a clone of `main` at `5d207f6`) extracts a version which
+   reads a property as an update of that property. The rule for the platform BOMs named the BOMs and
+   the Quarkus extension plugin and processor, but not `io.quarkus:quarkus-maven-plugin` (the native
+   build of `quarkus/native-image-tests`, added in S11.4.1) nor
+   `org.springframework.boot:spring-boot-configuration-processor` (the Spring Boot module's
+   annotation processor). Renovate would have opened `quarkus-maven-plugin` 3.40.1.1 and
+   `spring-boot-configuration-processor` 4.1.2, each rewriting `quarkus.version` or
+   `springboot.version` for the whole build, which is exactly what the rule's description forbids.
+   Both are named in the rule now, and its description says why every reader of the property is.
+   The same run after the change opens no branch for either.
+2. **The JDK would have split.** Renovate's GitHub Actions manager reads the JDK of
+   `actions/setup-java` (`25.0.4+101.0.LTS`) and proposed 25.0.5 for `nightly.yaml` and
+   `publish-snapshots.yaml`, but not for `checks.yaml`, whose job `build` names it in its matrix
+   (`${{ matrix.java }}` is no version it can read). The nightly and the publication would have
+   built on another JDK than the required check, against the comments of both workflows. Decided:
+   a regex custom manager reads the matrix entry, and one rule groups every full JDK version into
+   one pull request (`renovate/the-jdk-of-the-workflows`, five updates in the lookup run). The
+   Mandrel of the nightly's native build is named `25`, a line Renovate leaves alone; it stays
+   Renovate's.
+3. **The image of actionlint was nobody's.** `checks.yaml` runs `rhysd/actionlint:1.7.12` in a `run:`
+   line, which no manager reads. Decided: a regex custom manager with the `docker` datasource reads it.
+   `enabledManagers` gains `custom.regex`.
+4. **What else the tree holds, and stays as it was:** the VanillaBP rule's two regular expressions
+   match `io.vanillabp:*`, `io.vanillabp.adapter:migration-adapter` and this repository's own
+   artifacts; `io.grpc{/,}**` matches `grpc-bom` and `protoc-gen-grpc-java`, `com.google.protobuf{/,}**`
+   `protobuf-java`, `io.netty{/,}**` the `netty-bom` of the four Quarkus modules. Micrometer, Jackson,
+   SLF4J and SnakeYAML carry no version of their own (the platform BOMs manage them). Testcontainers,
+   Lombok, JaCoCo, `protobuf-maven-plugin` and Maven's plugins, and every action of the four
+   workflows (`nightly.yaml`'s `graalvm/setup-graalvm` included), are Renovate's. The blueprints'
+   overlay names no version: its generator writes this repository's `revision` into the blueprints
+   (decision 64), and its `settings.xml` names repositories only.
+5. **The test (docs are behaviour).** `RenovateConfigurationTest` in the gate holds `renovate.json` to
+   the README's new section "Dependency updates" and to the root POM: the versions whose comment says
+   "never on its own" (Spring Boot, Quarkus, gRPC, protobuf, Netty; the gRPC comment gained the
+   phrase, and Testcontainers a comment of its own so the Netty comment no longer stands above it) are
+   read only by artifacts a switched-off rule names; every rule has a description, and every name a
+   switched-off rule matches is still an artifact of a POM; the custom managers find every image a
+   workflow runs by its version and the JDK of the required check; every workflow names the same JDK
+   and one rule groups it. It judges Renovate's three pattern forms used here (regular expression,
+   `prefix{/,}**`, exact name) and fails on any other form. `renovate-config-validator` of the same
+   Renovate version accepts the file; the build does not depend on it.
+6. **The `customManagers` entry for engine releases is NOT added.** The pin is still the `main` commit
+   `bdd795a3` with a `dev` digest, and the policy forbids the re-pin. It is left to the step which
+   re-pins to a release (S12.4.1). The entry the maintainer adds then, to `customManagers` of
+   `renovate.json`, together with `zenbpm.version` in the root POM:
+
+   ```json
+   {
+     "description": "The engine's releases: the pin follows the GitHub releases of pbinitiative/zenbpm. The pull request moves zenbpm.version only and is completed by hand with zenbpm.commit, zenbpm.image and the two copies of the engine's contract, by the steps of the README's section 'Supported engine version'.",
+     "customType": "regex",
+     "managerFilePatterns": ["/^pom\\.xml$/"],
+     "matchStrings": ["<zenbpm\\.version>(?<currentValue>v[^<]+)</zenbpm\\.version>"],
+     "depNameTemplate": "pbinitiative/zenbpm",
+     "datasourceTemplate": "github-releases"
+   }
+   ```
+
+   Proven on a scratch clone only: with the entry added and `<zenbpm.version>v1.8.0</zenbpm.version>`
+   written into the root POM, the validator accepts the file and the lookup run proposes `v1.9.0` on
+   the branch `renovate/pbinitiative-zenbpm-1.x`. The release guard of S12.4.1 refuses an adapter
+   release whose `zenbpm.commit` and `zenbpm.image` the pull request left behind (decision 66,
+   entered by S12.4.1), so a half-completed pull request cannot reach a release.
+7. **The VanillaBP wiki row is NOT requested** (policy). Left to the maintainer, who asks the VanillaBP
+   project for it once the adapter is released (a row of a list of adapters "an application adds as
+   a dependency" should name a released version). The proposed text, in the two tables of the page
+   `BPMS-adapters` of `vanillabp/adapter-platform-integration`'s wiki:
+
+   ```markdown
+   | [ZenBPM](https://github.com/pbinitiative/zenbpm) | `zenbpm` | remote engine (REST and a gRPC job stream), eventually consistent; built and owned by the ZenBPM maintainers at pbinitiative; snapshots only, not released | [Wiki](https://github.com/pbinitiative/zenbpm-vanillabp-adapter/wiki) · [Repository](https://github.com/pbinitiative/zenbpm-vanillabp-adapter) |
+   ```
+
+   and in "The dependency to add": `org.pbinitiative.zenbpm:zenbpm-vanillabp-adapter-spring-boot` and
+   `org.pbinitiative.zenbpm:zenbpm-vanillabp-adapter-quarkus`, with the note that until the first
+   release they are `2.0.0-SNAPSHOT` in the GitHub Packages of `pbinitiative/zenbpm-vanillabp-adapter`.
+8. **The local workspace notes of S1.1.2, re-read against the finished adapter. Left for the
+   maintainer to apply locally** (the pipeline changes none of them):
+   - Root `AGENTS.md`, paragraph on `zenbpm-vanillabp-adapter`: "its integration tests will start the
+     engine image" → they do: they start the image `zenbpm.image` of the adapter's root POM names (by
+     its digest) and need Docker; without Docker they are skipped (the adapter's README, "Building").
+   - Root `AGENTS.md`, "Build & verify": the adapter is listed in the chain "downstream repos resolve
+     upstream from ~/.m2" → it resolves VanillaBP's snapshots from the snapshot repository of Maven
+     Central its root POM names, so nothing has to be built first (the adapter's README, "Building";
+     open question 16, answered 2026-10-15).
+   - Root `AGENTS.md`, "Their two skills (`zenbpm-*`)" and the section "Skills" → there are three
+     `zenbpm-*` skills: `zenbpm-code-review`, `zenbpm-e2e-tests` and the pipeline's
+     `zenbpm-adapter-review` (ignored through `.git/info/exclude` with `/.github/agents/`).
+   - Root `AGENTS.md`, the adapter paragraph could add: the user documentation is written in the
+     adapter's `wiki/` and copied into its wiki after each merge (decision 63).
+   - `vanillabp-bpms-characteristics`, the anchor "decision 17 of `zenbpm-vanillabp-adapter` ... engine
+     `main` at `ab85f922`" → decision 66 (entered by S12.4.1) and the pin `bdd795a3`.
+   - `vanillabp-bpms-characteristics`, ZenBPM "No retries (yet) ... in progress (pull request #862)" and
+     the cheat sheet's "incident at once (no retries yet)" → the engine counts retries and waits a
+     backoff since commit `bc3384b3` (inside the pin); the adapter fails a job without an error code
+     and the engine raises the incident at the last attempt (decision 27, GAPS 6 closed); the adapter
+     writes no default of retries into a model (decision 38).
+   - `vanillabp-bpms-characteristics`, "the adapter defaults to `use-prefix`" and the cheat sheet's
+     "prefixed identifiers (`use-prefix` default)" → wrong: `by-adapter` stays the default and is
+     refused while deploying, so every application chooses `use-prefix` or `none` (decision 24).
+   - `vanillabp-bpms-characteristics`, job outputs "process scope only" → the adapter writes the shared
+     values into every instance from the task's own up to its workflow's root (decision 35), repeating
+     an update which finds no instance yet (decision 34), before it completes the job (decision 7).
+   - `vanillabp-bpms-characteristics`, "Starting a workflow the BPMS decides on": "its decision 5, not
+     built yet" → built as marker service tasks after every start event and before every end event
+     (decisions 26, 44 and 52); the identity is the process instance key (decision 25).
+   - `vanillabp-bpms-characteristics`, "Signals": "plans to offer no `SEND_SIGNAL` and to refuse a model
+     with a signal event" → done (GAPS 13, `ZenBpmUnsupportedConstructs`).
+   - `vanillabp-bpms-characteristics`, "Versions": "a `main` commit plus image digest until a release
+     carries what it needs" → the engine release `v1.9.0` (2026-10-17) carries the pin (`bdd795a3` is
+     seven commits behind it); the pin stays on `main` until the maintainer re-pins, and an adapter
+     release refuses an unreleased engine (decision 66).
+   - `vanillabp-adapter-building`: "`ZenBpmBpmnModel`, planned for its deployment pipeline" → built
+     (`core/.../model/ZenBpmBpmnModel.java`, a record holding the DOM `Document`); its anchor could
+     name decision 66 of `zenbpm-vanillabp-adapter`; "All adapter artifacts are versioned
+     2.0.0-SNAPSHOT" stays true, and this adapter's release takes its version from the tag
+     (decision 65).
+
+**Acceptance criteria**
+
+- [x] `renovate.json` reviewed against the finished dependency tree: every artifact of every POM and
+  every action and image of the workflows is either Renovate's or named by a switched-off rule with
+  its reason, and `RenovateConfigurationTest` holds it (4 tests; 9 mutants applied to
+  `renovate.json`, the root POM and a workflow, 9 killed: a reader of `quarkus.version` dropped from
+  its rule, the "never on their own" of the gRPC comment dropped, a stale name, a rule without a
+  description, either custom manager dropped, another JDK in one workflow, the JDK group dropped, a
+  glob form the test cannot judge). Renovate's own lookup on a scratch clone opens no branch for
+  Quarkus or Spring Boot, and one for the JDK of all five places.
+- [x] The engine's `customManagers` entry is written down, ready and proven on a scratch clone, and
+  NOT added (left to the re-pin, item 6).
+- [x] The local workspace notes are re-read and their corrections listed (item 8); applying them is
+  left to the maintainer.
+- [ ] The `BPMS-adapters` wiki row: NOT requested (policy); the proposed text is in item 7, left to
+  the maintainer.
+
+*Evidence, 2026-10-22*, a clean `TZ=Etc/UTC mvn clean install` of the story's commit on JDK 25, green
+in 18:22, no test skipped: engine test support 12 + 5, core 1,276 + 108, Spring Boot 14 + 97, smoke
+test 42 + 1, election integration test 8, Quarkus runtime 13, deployment 60, integration tests 26,
+gate 96 (`RenovateConfigurationTest` 4 new). The gate measured 100 %: 0 of 38,473 (Spring Boot) and
+0 of 38,470 (Quarkus) instructions missed. `bin/check-deploy-safety.sh`: green in 36:46, the green deploy staged exactly the 13 published files and the red gate deployed nothing.
 
 ## S12.4.1 Release workflow and the first release
 
