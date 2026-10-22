@@ -7,6 +7,7 @@ package org.pbinitiative.zenbpmadapter.client;
 import static org.junit.jupiter.api.Assertions.assertAll;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -404,6 +405,43 @@ class ZenBpmRestClientContractIT {
                 .toList()
                 .containsAll(List.of("StartEvent", "Task_Work", "Catch_Paid", "EndEvent")), history::toString);
         assertTrue(history.totalCount() >= 4);
+    }
+
+    @Test
+    @DisplayName("The variables a job is completed with reach its instance only through an output mapping, which a task without one has not")
+    void aCompletionWithoutAnOutputMappingWritesNothingIntoTheInstance() {
+        final var started = start(client, uniqueBusinessKey());
+        final var job = waitingJobOf(client, started);
+
+        client.completeJob(job.key(), Map.of("worked", true));
+
+        eventually(() -> client
+                .job(job.key())
+                .filter(completed -> completed.state() == JobRef.State.COMPLETED));
+        final var variables = client
+                .instance(started.key())
+                .orElseThrow()
+                .variables();
+        assertAll(
+                () -> assertTrue(variables.containsKey("orderId"), variables::toString),
+                () -> assertFalse(variables.containsKey("worked"), variables::toString));
+    }
+
+    @Test
+    @DisplayName("Two starts under one business key create two instances: the engine knows no idempotent start")
+    void twoStartsUnderOneBusinessKeyCreateTwoInstances() {
+        final var businessKey = uniqueBusinessKey();
+
+        final var first = start(client, businessKey);
+        final var second = start(client, businessKey);
+
+        assertNotEquals(first.key(), second.key());
+        assertEquals(2, client
+                .instances(InstanceFilter
+                        .anyInstance()
+                        .withBusinessKey(businessKey)
+                        .withBpmnProcessId("contract-task"))
+                .totalCount());
     }
 
     @Test

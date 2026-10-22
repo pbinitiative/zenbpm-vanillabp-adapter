@@ -12,31 +12,158 @@ business application run its workflows on a ZenBPM engine without the business c
 the ZenBPM API. It is owned by the ZenBPM maintainers at pbinitiative and follows the conventions
 of the VanillaBP adapters.
 
-This `README.md` is aimed at contributors. The user documentation is not written yet: it goes into
-the [wiki](https://github.com/pbinitiative/zenbpm-vanillabp-adapter/wiki) as the features land, and
-until then the wiki holds a placeholder page only. The VanillaBP concepts the adapter builds on are
+This `README.md` is aimed at contributors. The user documentation is the
+[wiki](https://github.com/pbinitiative/zenbpm-vanillabp-adapter/wiki), whose pages are written in
+this repository, see [The wiki](#the-wiki). The VanillaBP concepts the adapter builds on are
 documented in the [VanillaBP wiki](https://github.com/vanillabp/adapter-platform-integration/wiki).
 
 ## Status
 
-**Under construction.** On Spring Boot and on Quarkus the adapter registers one process service and
-one deployment service per adapter id of type `zenbpm`, validates the configuration of each id
-while the application starts and answers the platform's health check. The smoke tests in
-`smoke-test` boot it on Spring Boot with no, one and two adapter ids, the extension tests in
-`quarkus/deployment` on Quarkus with one and two, and with none configured at all, where the
-platform derives the id `zenbpm`. An application on Quarkus which configures adapter ids of another
-type only is refused by the platform, which asks for an id of every adapter type on the classpath.
-Two adapter ids on one `rest-address` boot only where their `name-clash-avoidance` at the adapter
-level differs, the setup of a migration from one mode to the other; with the same mode they end the
-start, naming the keys which tell them apart. The address is compared as configured, so two
-addresses of one engine (an alias, a proxy, two nodes of one cluster) are not recognised as one.
-`election-integration-test` runs that migration against the pinned engine on Spring Boot: every key
-of the engine answers for both ids, and each id still answers the platform's probes only for the
-workflows and tasks of its own mode, so a workflow the old id started is completed through it, a
-new workflow starts under the new id, and the platform's election walks past the new id to a
-workflow of the old one it holds no row of. Next to the platform's BPMS double as a second BPMS,
-the adapter does not claim the double's workflows, and it says that it asks the engine, so the
-platform's refusal of an adapter which guesses next to another one does not apply to it.
+**Feature-complete against the VanillaBP 2 adapter SPI, and not released yet.** On Spring Boot and
+on Quarkus the adapter deploys each workflow module's BPMN and DMN files to a ZenBPM engine, starts
+workflows through VanillaBP's two-phase start, also by a message, runs `@WorkflowTask` methods for
+the jobs the engine hands out over its job stream, completes and cancels the tasks and the user
+tasks the application left open, tells the application about user tasks, correlates messages, pushes
+a changed aggregate, reports the start and the end of a workflow, answers every probe of the
+platform and the viewer/history API, and runs in a native image. Each of these is described under
+[Behavior](#behavior) and [Native image](#native-image), with the tests which hold it. The snapshots
+of `main` are published, see [Using the snapshots](#using-the-snapshots); no version is released.
+
+What the engine cannot do, and how the adapter answers it, is under
+[Known deviations](#known-deviations). The adapter is tested against exactly one build of the
+engine, see [Supported engine version](#supported-engine-version).
+
+## Documentation
+
+The wiki is for users, this README for contributors:
+
+1. [Home](https://github.com/pbinitiative/zenbpm-vanillabp-adapter/wiki/Home): the dependencies, an
+   engine to try the adapter against, the smallest configuration, what a handler may assume about
+   its thread, and the engine version tested.
+2. [Configuration](https://github.com/pbinitiative/zenbpm-vanillabp-adapter/wiki/Configuration):
+   every key with its levels and default, the BPMN model for ZenBPM, keeping workflow modules
+   apart, the boot behavior and what an operator gets to see.
+3. [Deviations](https://github.com/pbinitiative/zenbpm-vanillabp-adapter/wiki/Deviations): one entry
+   per row of [`GAPS.md`](./GAPS.md).
+4. [Engine APIs](https://github.com/pbinitiative/zenbpm-vanillabp-adapter/wiki/Engine-APIs): every
+   call the adapter makes against the engine, and those it never makes.
+5. [Native images](https://github.com/pbinitiative/zenbpm-vanillabp-adapter/wiki/Native-images).
+
+A change of behaviour changes the page which describes it in the same pull request. The analysis,
+the architecture and the implementation plan the adapter was built from are in
+[`docs/`](docs/README.md).
+
+## Supported engine version
+
+The adapter is tested against exactly one ZenBPM engine build, and supports that one: tested, not
+newer. Today it is a build of the engine's `main`, because no engine release carries the job lock the
+adapter's task delivery is built on (decision 15 in [`DECISIONS.md`](./DECISIONS.md)). The pin
+becomes a release tag once the engine tags a release containing that commit.
+
+| Pinned |                                                 Value                                                 |
+|--------|-------------------------------------------------------------------------------------------------------|
+| commit | `bdd795a399b6484d062d52ac90c0d0725cb0ad91` (2026-10-13)                                               |
+| image  | `ghcr.io/pbinitiative/zenbpm@sha256:d7808e30821a7349e0f42476d8aaa21ff92fc752c0ccc432771764d307b87ed0` |
+
+The build reads both from `zenbpm.commit` and `zenbpm.image` in the root `pom.xml`. The integration
+tests start that image, and `EngineUnderTestIT` fails when the running container is not that image
+or the engine reports another commit.
+
+The REST contract the adapter is written against is the copy `core/src/main/zenbpm/api.yaml`. The
+job stream's contract is the copy `core/src/main/proto/zenbpm.proto`. Both come from the pinned
+commit and name it, with the image, in their first lines. The table above repeats the pin as well,
+and so does the wiki's page `Home`. `EnginePinTest` fails when one of them names another pin than
+the POM. `bin/check-engine-copies.sh` compares the two copies with the engine's files of the pinned
+commit, which it reads from GitHub. Only the header and the proto's `java_package` line may differ.
+The pull-request check runs it, and it fails on any other difference (decision 18 in
+[`DECISIONS.md`](./DECISIONS.md)).
+
+Moving the pin is one commit with these steps:
+
+1. Pull `ghcr.io/pbinitiative/zenbpm:dev` and read its digest and its
+   `org.opencontainers.image.revision` label; `bin/resolve-latest-engine.sh` does both and prints
+   them.
+2. Check that the revision is the head of the engine's `main`, or the newest commit which got an
+   image.
+3. Write the commit and the digest into `zenbpm.commit` and `zenbpm.image` of the root `pom.xml`.
+4. Copy `openapi/api.yaml` and `pkg/zenclient/proto/zenbpm.proto` of exactly that commit over the
+   two copies (`git show <commit>:<path>`). Keep the header of each, with the new commit, date and
+   image, and keep the `java_package` line of the proto.
+5. Update the table above, and the commit and the image on the wiki's page `wiki/Home.md`.
+6. Run `bin/check-engine-copies.sh` and `mvn install`.
+
+## Dependencies
+
+All artifacts have the groupId `org.pbinitiative.zenbpm`. Until the first release they are
+`2.0.0-SNAPSHOT`, published as the section [Using the snapshots](#using-the-snapshots) says.
+
+On Spring Boot an application adds `zenbpm-vanillabp-adapter-spring-boot`, which brings the
+platform-neutral core and VanillaBP's Spring Boot integration with it
+(`DocumentationTest#theSpringBootDependencyBringsThePlatform`). On Quarkus it adds the extension
+`zenbpm-vanillabp-adapter-quarkus` beside VanillaBP's `io.vanillabp:vanillabp-quarkus-integration`.
+The wiki's page `Home` shows both.
+
+## Modules
+
+|                Module                |                   Artifact                    |                                    Purpose                                    |
+|--------------------------------------|-----------------------------------------------|-------------------------------------------------------------------------------|
+| `engine-test-support`                | (not published)                               | the pinned ZenBPM engine as a Testcontainers container, for integration tests |
+| `core`                               | `zenbpm-vanillabp-adapter`                    | the platform-neutral adapter: deployment, task delivery, REST and gRPC client |
+| `spring-boot`                        | `zenbpm-vanillabp-adapter-spring-boot`        | Spring Boot auto-configuration                                                |
+| `smoke-test`                         | (not published)                               | discovery, health and startup validation on Spring Boot without an engine     |
+| `election-integration-test`          | (not published)                               | the BPMS election on Spring Boot: two adapter ids on one engine, the double   |
+| `quarkus/runtime`                    | `zenbpm-vanillabp-adapter-quarkus`            | Quarkus extension, runtime part                                               |
+| `quarkus/deployment`                 | `zenbpm-vanillabp-adapter-quarkus-deployment` | Quarkus extension, build-time part                                            |
+| `quarkus/integration-tests`          | (not published)                               | end-to-end tests on a booted Quarkus application                              |
+| `quarkus/native-image-tests`         | (not published)                               | an application built as a native image, run against the pinned engine         |
+| `test-coverage-report/spring-boot`   | (not published)                               | aggregated coverage of the core and the Spring Boot modules                   |
+| `test-coverage-report/quarkus`       | (not published)                               | aggregated coverage of the core and the Quarkus modules                       |
+| `test-coverage-report/coverage-gate` | (not published)                               | breaks the build below the coverage threshold, last module of the reactor     |
+
+All artifacts have the groupId `org.pbinitiative.zenbpm`, the Java packages start with
+`org.pbinitiative.zenbpmadapter`.
+
+## Configuration
+
+The adapter provides the adapter type `zenbpm`, and every configured adapter id of that type gets
+an instance of its own, configured under `vanillabp.adapters.<id>.*`. Where nothing is configured,
+the platform derives the id `zenbpm`. An application needs two keys, `rest-address` and
+`name-clash-avoidance`, see the wiki's page `Home`. Every key, with the levels it may be set at and
+its default, is on the wiki's page
+[Configuration](https://github.com/pbinitiative/zenbpm-vanillabp-adapter/wiki/Configuration), and
+`DocumentationTest` fails when its table and the keys the code reads differ.
+
+In the code, the core's `ZenBpmAdapterConfiguration` documents what each key means, its default
+and how it is validated; it does not depend on a platform. Each platform binds the keys into an
+overlay of its own, `VanillaBpZenBpmProperties` with `ZenBpmAdapterKeys` on Spring Boot and the
+mapping `VanillaBpZenBpmProperties` on Quarkus, and copies them into the core's configuration.
+`QuarkusOverlayTest` holds the two overlays to the same keys at the same places, and
+`VanillaBpZenBpmPropertiesTest` fails where the Spring Boot overlay misses a setter of the core
+configuration.
+
+On Spring Boot and on Quarkus the adapter registers one process service and one deployment service
+per adapter id of type `zenbpm`, validates the configuration of each id while the application starts
+and answers the platform's health check. The smoke tests in `smoke-test` boot it on Spring Boot with
+no, one and two adapter ids, the extension tests in `quarkus/deployment` on Quarkus with one and
+two, and with none configured at all, where the platform derives the id `zenbpm`. An application on
+Quarkus which configures adapter ids of another type only is refused by the platform, which asks for
+an id of every adapter type on the classpath. Two adapter ids on one `rest-address` boot only where
+their `name-clash-avoidance` at the adapter level differs, the setup of a migration from one mode to
+the other; with the same mode they end the start, naming the keys which tell them apart. The address
+is compared as configured, so two addresses of one engine (an alias, a proxy, two nodes of one
+cluster) are not recognised as one. `election-integration-test` runs that migration against the
+pinned engine on Spring Boot: every key of the engine answers for both ids, and each id still
+answers the platform's probes only for the workflows and tasks of its own mode (decision 11 in
+[`DECISIONS.md`](./DECISIONS.md)), so a workflow the old id started is completed through it, a new
+workflow starts under the new id, and the platform's election walks past the new id to a workflow
+of the old one it holds no row of. Next to the platform's BPMS double as a second BPMS, the adapter
+does not claim the double's workflows, and it says that it asks the engine, so the platform's
+refusal of an adapter which guesses next to another one does not apply to it.
+
+## Behavior
+
+### Deployment
+
 The adapter reads the BPMN files of a workflow module, also for an adapter id without an engine, and
 refuses a file holding an executable process and any other process, because the engine would read
 them as one, and a file which uses what ZenBPM cannot run or would run differently from the model,
@@ -46,148 +173,70 @@ BPMN files, naming `use-prefix` and `none` (decision 24 in [`DECISIONS.md`](./DE
 `use-prefix` the identifiers of the BPMN and DMN files are prefixed with the workflow module id, and
 a business rule task whose decision ZenBPM would then not find ends the start, and `none` warns
 unless `accept-unscoped-identifiers` says that the identifiers are unique. Two
-processes which would reach the engine under one id end the start. Every message a claimed workflow
-waits for and which carries no correlation key of the modeller's gets the aggregate id as its key,
-carried into the multi-instance bodies around the elements which wait for it, and a message which
-both starts a workflow of the module and is awaited by a claimed one ends the start, because ZenBPM
-would start a workflow with a correlation which finds none waiting. A job inside a multi-instance
-body carries only what input mappings give it, so the adapter maps the names the methods serving it
-read (theirs and the extensions'), and the aggregate id, into the body; a job anywhere else gets the
-variables of its scope from the engine. The processes a workflow service claims are wired with
-the platform: a task nothing serves ends the start, and so does an element which creates a job
-and names no task definition, which ZenBPM would give a job of the type `''` that nothing takes,
-unless the application marks the task `implemented-externally`; the start events, the start
-messages, the expressions the modeller wrote and the elements which give a workflow a second token
-are reported, a method which wants the item of an iteration whose element names none ends the
-start, and a process called on the same aggregate from inside a multi-instance body gets the
-aggregate id carried into that body. Then the files are deployed, one request per file and the
-DMN files first, once the engine answers ready; a file the pipeline left as it was written reaches
-the engine as its bytes, and a file the engine refuses ends the start with the engine's reason. The
-files sent before it stay deployed, because ZenBPM takes one file per request, but no version is
-reported then; once the engine took every file, the version of every process is reported to the
-platform, also where the engine kept an unchanged file. An adapter id without clients ends the
-start there with the message of its validation, which names the key to set. Starting a workflow
-module subscribes the job types of its claimed processes on the job stream, each with the
-`job-timeout` of its tasks as the lock (set per adapter id, workflow module, workflow or task,
-`PT5M` by default) and the number of handler slots as the cap of active jobs, and stopping it
-unsubscribes them before the clients close; a type two modules share stays subscribed until both
-stopped, and two tasks of one type with different `job-timeout`s end the start, also where two
-modules share the type. A workflow is started: phase one asks the engine nothing, and phase two
-starts the latest version of the process under the id the engine knows it by, with the aggregate's
-id as the business key and as a text variable after the values the aggregate shares, sends
-`history-time-to-live` in whole seconds where a level sets it, and reports the key and the version
-of the new instance. The instance is created only once the caller's transaction committed,
-through the platform's phase-two outbox, and a start whose transaction rolls back creates none. A
-`history-time-to-live` with a fraction of a second is refused while the application starts, and a
-start of a process the engine does not hold is not repeated (decisions 30 and 31 in
-[`DECISIONS.md`](./DECISIONS.md)). The adapter tells the platform what the engine does with the type
-of a value which travels: a whole number above 2^53, a `BigDecimal`, a character and a text of
-another type than `String` come back changed. The probe which asks for the workflow of an aggregate
-first asks the engine for the instance whose key the platform holds, which may only make an `ACTIVE`
-answer shorter (decision 25), and otherwise searches the aggregate's business key in each process
-of the scope; a search which fails answers that the engine is unavailable, never that it holds
-nothing. The probe asked before a start is sent again counts only the workflows created from the
-millisecond the start was planned in, and a workflow may stay invisible to the search for
-`workflow-visibility-timeout`. The workflow id of an instance is the key of its root instance, or
-of the instance a call activity started (decision 28). The probes which ask for a task and for a
-user task read the job by its key and the process of its instance, and answer for the scope they
-are asked about only; a task id of a partition the engine does not have is unknown to it (decision
-32), and so is the job of a user task to the probe of a task, and the job of any other element to
-the probe of a user task (decision 51). The open tasks of a process are counted from the engine's statistics
-of every version it holds. A job of a subscribed type runs its `@WorkflowTask` method on a handler
-slot, under a lock which is renewed while the method runs; then the values the aggregate shares and
-its id are written into the job's instance and every instance above it up to the workflow's root,
-and the job is completed (decision 35). A job whose instance names no aggregate, and one of a
-workflow whose aggregate this application does not hold, are failed without retries, so an incident
-shows them (decision 33). A BPMN error writes the same values and then fails the job with the
-error code as the deployed model carries it, so an error boundary event or an error event
-sub-process of the model takes over, and where none catches the code the engine raises an incident
-on the task, which a WARN names. A task left open for its asynchronous completion keeps its job
-locked for `async-task-lock-renewal` (`PT1H` by default; one not shorter than
-`vanillabp.delivery.retention` ends the start), after which the engine hands the job out again and
-it is locked once more without running the method again. The engine counts a locked job against
-its type's cap of active jobs, so the adapter raises the cap by every task it keeps open, and the
-next task of the type still arrives (decision 37). With `async-task-max-age-action: incident` a
-task open longer than `vanillabp.delivery.max-task-age` is failed without retries instead, so an
-incident names it. The application completes such a task later, or cancels it with a BPMN error,
-through its process service: right before its transaction commits, the adapter asks the engine
-whether the task still waits and belongs to the workflow module; a task which ended, or which the
-engine does not know within `workflow-visibility-timeout`, throws the platform's
-`TaskNotFoundException`, and a task of another module or one which carries an incident rolls the
-transaction back with an `IllegalStateException` naming the reason. After the commit the shared
-values are written as for a completed task, and the job is completed, or failed with the error code
-as the deployed model carries it, so an error boundary event takes over; a task which ended
-meanwhile costs a WARN and nothing else, and one which meanwhile carries an incident is repeated by
-the outbox until the incident is resolved. The engine takes both from any node of the application,
-without the delivery which left the task open (decision 40). A process id a workflow service
-declares without bringing a model for it, such as the old id of a renamed process, keeps its
-workflows served: the methods' task definitions are scoped by that id, and each one a model the
-engine holds under the id gives to a task is subscribed and routed to the module; one a held model
-gives to a user task, in any version, is not, because the engine hands a user task out as a job of
-the same kind, but is looked for like the user tasks of a deployed process, and the start's line
-names it, as it names a method wired by element id, whose workflows stand still (decision 41). A method which throws is failed at the engine without an error code, so the
-engine spends one attempt of the task, hands the job out again after the backoff, and after the
-last attempt raises an incident which names the attempts, the task, the aggregate and the
-exception (decision 27); a failure sent again for the same delivery counts once. How many attempts
-a task has is its model's `zenbpm:taskDefinition retries`. A model without it gets the engine's
-`JOBS_DEFAULT_RETRIES`, one attempt by default, so the first exception raises an incident: set
-`retries` in the model, or `JOBS_DEFAULT_RETRIES=3` at the engine for the default of Camunda 8
-(decision 38). The backoff is `retry-backoff` (set per adapter id, workflow module, workflow or
-task, in whole seconds) where a level sets it; where none does, the failure carries none and the
-engine decides. Once the outcome of a delivery reached the engine, the
-platform asks the adapter about the other tasks it believes open in the same workflow: a task the
-engine took away, as an interrupting boundary event does, is reported to the application as
-`CANCELED`, once; only a task served by a job of the job stream is asked about, and an engine which
-cannot be asked or does not know the job, or a job of another workflow, reports nothing.
-A user task is a job as well, which nothing pushes, so the job stream never subscribes its type: the
-adapter looks for the user tasks a method serves, by its task definition or its element id, every
-`user-task-poll-interval` (`PT5S` by default; `PT0S` switches the looks off, and the start warns
-about it and about an interval below a second), and tells the application once per node that a user
-task was created, when its job is listed active, and that it was cancelled, when its job is listed
-terminated, as an interrupting boundary event or a cancelled instance leaves it; a user task which
-came and went between two looks is told as cancelled only, and a user task marked
-`implemented-externally` is never looked for (decision 12). The start names the job types and the
-interval. A notification carries the job key as the task id and the kind `USER_TASK`, and after a
-restart the platform answers from its record what it was told before. Each look reads every page of
-the active and the terminated jobs of each type, because the engine filters jobs by neither time nor
-key, so it reads more the more terminated user tasks the engine keeps: set `history-time-to-live`,
-but long enough, because a cancellation is told only while the engine still lists the terminated
-job, and one whose job the engine deleted with its instance's history before a look reached it,
-while a node was down for example, is never told. A look starts one interval after the last one
-ended, so a notification is told one interval and the time of a look late, and later where every
-handler slot is taken or the engine does not answer. One which threw is told again by the next look,
-and after each further failure by a look which waits twice as many looks, at most 64, so it cannot
-take the handler slots from the others; its failure is logged at WARN, and a failure right after
-another at DEBUG. A user task whose workflow module starts after the first look is told once it
-started. A user task told as cancelled is not told as created afterwards by the same node, even
-where a lagging node of the engine lists it active again. A cancelled user task wakes its workflow
-up, so a service task left open in a cancelled instance is told as cancelled as well. The
-application completes a user task, or cancels it with a BPMN error, through its process service as
-it does a task left open: right before its transaction commits, the adapter asks the engine whether
-the user task still waits and belongs to the workflow module, and after the commit the shared values
-are written up to the workflow's root and the job is completed, so the gateway behind the user task
-decides on them, or failed with the error code as the deployed model carries it, so an error
-boundary event of the user task takes over (`ZenBpmUserTaskIT#cancelUserTaskRoutesTheBoundaryEvent`
-on Spring Boot, `ZenBpmWorkflowLifecycleTest#userTaskCancellationByError` on Quarkus). The Camunda
-8 adapter cannot do the second: no cluster up to 8.9 offers a command to cancel a Camunda-managed
-user task by BPMN error. The application is
-then told once that the user task was cancelled, as the Camunda 7 adapter tells it (decision 50); a
-completed user task is not told as cancelled. The commands of a task find no user task, and those
-of a user task no task: the call throws the platform's `TaskNotFoundException`, which names the
-method meant for the id where the platform recorded the delivery of the task (decision 51). A shutdown
-unsubscribes the job types of each workflow module and then waits for the handlers which still run,
-those of every module of an adapter id together, at most `shutdown-grace` (`PT20S` by default;
-above thirty seconds the start warns that the runtime's shutdown budget has to grow with it), and
-names each handler it gave up on with its job, task and aggregate. While a module stops, an outcome
-a handler reached is still reported, but a handler which threw is not failed at the engine, so its
-job keeps its retries; the job stream closes last, which releases every lock the application held,
-so another node gets those jobs at once instead of after their `job-timeout` (decision 39). The
-engine can hand a job out again: when its lock was lost, when its partition got a new leader, which
-knows no locks (see [`GAPS.md`](./GAPS.md)), or after the application restarted. Where an earlier
-delivery committed, the method does not run again: the platform answers the delivery from its
-record of deliveries, and the adapter sends the recorded outcome to the engine. Two deliveries which
-run at the same time both run; the adapter names the lock it could not keep, and the platform names
-the second run.
+processes which would reach the engine under one id end the start.
+
+What VanillaBP needs beyond what the engine's protocol carries is written into the model before it
+is deployed, once per file and never over what the modeller wrote (decision 4). Every message a
+claimed workflow waits for and which carries no correlation key of the modeller's gets the aggregate
+id as its key, carried into the multi-instance bodies around the elements which wait for it, and a
+message which both starts a workflow of the module and is awaited by a claimed one ends the start,
+because ZenBPM would start a workflow with a correlation which finds none waiting. A job inside a
+multi-instance body carries only what input mappings give it, so the adapter maps the names the
+methods serving it read (theirs and the extensions'), and the aggregate id, into the body; a job
+anywhere else gets the variables of its scope from the engine. The processes a workflow service
+claims are wired with the platform: a task nothing serves ends the start, and so does an element
+which creates a job and names no task definition, which ZenBPM would give a job of the type `''`
+that nothing takes, unless the application marks the task `implemented-externally`; the start
+events, the start messages, the expressions the modeller wrote and the elements which give a
+workflow a second token are reported, a method which wants the item of an iteration whose element
+names none ends the start, and a process called on the same aggregate from inside a multi-instance
+body gets the aggregate id carried into that body.
+
+Then the files are deployed, one request per file and the DMN files first, once the engine answers
+ready; a file the pipeline left as it was written reaches the engine as its bytes, and a file the
+engine refuses ends the start with the engine's reason. The files sent before it stay deployed,
+because ZenBPM takes one file per request, but no version is reported then; once the engine took
+every file, the version of every process is reported to the platform, also where the engine kept an
+unchanged file. An adapter id without clients ends the start there with the message of its
+validation, which names the key to set.
+
+### Two-phase start
+
+A workflow is started: phase one asks the engine nothing, and phase two starts the latest version of
+the process under the id the engine knows it by, with the aggregate's id as the business key and as
+a text variable after the values the aggregate shares, sends `history-time-to-live` in whole seconds
+where a level sets it, and reports the key and the version of the new instance. The instance is
+created only once the caller's transaction committed, through the platform's phase-two outbox, and
+a start whose transaction rolls back creates none. A `history-time-to-live` with a fraction of a
+second is refused while the application starts, and a start of a process the engine does not hold
+is not repeated (decisions 30 and 31 in [`DECISIONS.md`](./DECISIONS.md)). The adapter tells the
+platform what the engine does with the type of a value which travels: a whole number above 2^53, a
+`BigDecimal`, a character and a text of another type than `String` come back changed.
+
+### The probes
+
+The probe which asks for the workflow of an aggregate first asks the engine for the instance whose
+key the platform holds, which may only make an `ACTIVE` answer shorter (decision 25), and otherwise
+searches the aggregate's business key in each process of the scope; a search which fails answers
+that the engine is unavailable, never that it holds nothing. The probe asked before a start is sent
+again counts only the workflows created from the millisecond the start was planned in, because the
+engine knows no idempotent start (GAPS 17), and a workflow may stay invisible to the search for
+`workflow-visibility-timeout`. The probes which ask for a task and for a user task read the job by
+its key and the process of its instance, and answer for the scope they are asked about only
+(decision 11); a task id of a partition the engine does not have is unknown to it (decision 32),
+and so is the job of a user task to the probe of a task, and the job of any other element to the
+probe of a user task (decision 51). The open tasks of a process are counted from the engine's
+statistics of every version it holds.
+
+### The workflow id
+
+The workflow id of an instance is the key of its root instance, or of the instance a call activity
+started (decision 28). A job names the instance it waits in, which is often an embedded sub-process
+or an iteration (GAPS 22), so the adapter walks up to the root, reading each instance on the way
+once and keeping what does not change while it runs in the instance cache of the adapter id
+(GAPS 15).
+
+### The start marker
 
 A claimed process which starts a workflow of its own gets a start marker behind every start event of
 its own: a service task whose job tells the platform that a workflow started (decisions 26 and 44 in
@@ -209,28 +258,152 @@ they wrote a `zenbpm:in` of their own or a mapping of the called process's id va
 the called process belongs to another workflow module or application, which the boot cannot judge:
 there the model hands on whatever name the called workflow is to start with.
 
+### Task processing
+
+Starting a workflow module subscribes the job types of its claimed processes on the job stream, each
+with the `job-timeout` of its tasks as the lock (set per adapter id, workflow module, workflow or
+task, `PT5M` by default) and the number of handler slots as the cap of active jobs, and stopping it
+unsubscribes them before the clients close; a type two modules share stays subscribed until both
+stopped, and two tasks of one type with different `job-timeout`s end the start, also where two
+modules share the type. A job of a subscribed type runs its `@WorkflowTask` method on a handler
+slot, under a lock which is renewed while the method runs (decision 9); then the values the
+aggregate shares and its id are written into the job's instance and every instance above it up to
+the workflow's root, and the job is completed (decisions 7 and 35): the engine hands the variables
+of a completion to the process only through output mappings (GAPS 7), so the values are written
+first. A job whose instance names no aggregate, and one of a workflow whose aggregate this
+application does not hold, are failed without retries, so an incident shows them (decision 33). A
+BPMN error writes the same values and then fails the job with the error code as the deployed model
+carries it, so an error boundary event or an error event sub-process of the model takes over, and
+where none catches the code the engine raises an incident on the task, which a WARN names.
+
+A method which throws is failed at the engine without an error code, so the engine spends one
+attempt of the task, hands the job out again after the backoff, and after the last attempt raises
+an incident which names the attempts, the task, the aggregate and the exception (decision 27); a
+failure sent again for the same delivery counts once. How many attempts a task has is its model's
+`zenbpm:taskDefinition retries`. A model without it gets the engine's `JOBS_DEFAULT_RETRIES`, one
+attempt by default, so the first exception raises an incident: set `retries` in the model, or
+`JOBS_DEFAULT_RETRIES=3` at the engine for the default of Camunda 8 (decision 38). The backoff is
+`retry-backoff` (set per adapter id, workflow module, workflow or task, in whole seconds) where a
+level sets it; where none does, the failure carries none and the engine decides. Once the outcome of
+a delivery reached the engine, the platform asks the adapter about the other tasks it believes open
+in the same workflow: a task the engine took away, as an interrupting boundary event does, is
+reported to the application as `CANCELED`, once; only a task served by a job of the job stream is
+asked about, and an engine which cannot be asked or does not know the job, or a job of another
+workflow, reports nothing.
+
+The engine can hand a job out again: when its lock was lost, when its partition got a new leader,
+which knows no locks (GAPS 2), or after the application restarted. Where an earlier delivery
+committed, the method does not run again: the platform answers the delivery from its record of
+deliveries, and the adapter sends the recorded outcome to the engine. Two deliveries which run at the
+same time both run; the adapter names the lock it could not keep, and the platform names the second
+run.
+
+### Tasks left open
+
+A task left open for its asynchronous completion keeps its job locked for `async-task-lock-renewal`
+(`PT1H` by default; one not shorter than `vanillabp.delivery.retention` ends the start), after which
+the engine hands the job out again and it is locked once more without running the method again. The
+engine counts a locked job against its type's cap of active jobs, so the adapter raises the cap by
+every task it keeps open, and the next task of the type still arrives (decision 37, GAPS 28). With
+`async-task-max-age-action: incident` a task open longer than `vanillabp.delivery.max-task-age` is
+failed without retries instead, so an incident names it. The application completes such a task
+later, or cancels it with a BPMN error, through its process service: right before its transaction
+commits, the adapter asks the engine whether the task still waits and belongs to the workflow
+module; a task which ended, or which the engine does not know within `workflow-visibility-timeout`,
+throws the platform's `TaskNotFoundException`, and a task of another module or one which carries an
+incident rolls the transaction back with an `IllegalStateException` naming the reason. After the
+commit the shared values are written as for a completed task, and the job is completed, or failed
+with the error code as the deployed model carries it, so an error boundary event takes over; a task
+which ended meanwhile costs a WARN and nothing else, and one which meanwhile carries an incident is
+repeated by the outbox until the incident is resolved. The engine takes both from any node of the
+application, without the delivery which left the task open (decision 40).
+
+### A process declared without a model
+
+A process id a workflow service declares without bringing a model for it, such as the old id of a
+renamed process, keeps its workflows served: the methods' task definitions are scoped by that id,
+and each one a model the engine holds under the id gives to a task is subscribed and routed to the
+module; one a held model gives to a user task, in any version, is not, because the engine hands a
+user task out as a job of the same kind, but is looked for like the user tasks of a deployed
+process, and the start's line names it, as it names a method wired by element id, whose workflows
+stand still (decision 41).
+
+### The shutdown
+
+A shutdown unsubscribes the job types of each workflow module and then waits for the handlers which
+still run, those of every module of an adapter id together, at most `shutdown-grace` (`PT20S` by
+default; above thirty seconds the start warns that the runtime's shutdown budget has to grow with
+it), and names each handler it gave up on with its job, task and aggregate. While a module stops, an
+outcome a handler reached is still reported, but a handler which threw is not failed at the engine,
+so its job keeps its retries; the job stream closes last, which releases every lock the application
+held, so another node gets those jobs at once instead of after their `job-timeout` (decision 39).
+
+### User tasks
+
+A user task is a job as well, which nothing pushes, so the job stream never subscribes its type
+(GAPS 10): the adapter looks for the user tasks a method serves, by its task definition or its
+element id, every `user-task-poll-interval` (`PT5S` by default; `PT0S` switches the looks off, and
+the start warns about it and about an interval below a second), and tells the application once per
+node that a user task was created, when its job is listed active, and that it was cancelled, when its
+job is listed terminated, as an interrupting boundary event or a cancelled instance leaves it; a user
+task which came and went between two looks is told as cancelled only, and a user task marked
+`implemented-externally` is never looked for (decision 12). The start names the job types and the
+interval. A notification carries the job key as the task id and the kind `USER_TASK`, and after a
+restart the platform answers from its record what it was told before. Each look reads every page of
+the active and the terminated jobs of each type, because the engine filters jobs by neither time nor
+key, so it reads more the more terminated user tasks the engine keeps: set `history-time-to-live`,
+but long enough, because a cancellation is told only while the engine still lists the terminated
+job, and one whose job the engine deleted with its instance's history before a look reached it,
+while a node was down for example, is never told. A look starts one interval after the last one
+ended, so a notification is told one interval and the time of a look late, and later where every
+handler slot is taken or the engine does not answer. One which threw is told again by the next look,
+and after each further failure by a look which waits twice as many looks, at most 64, so it cannot
+take the handler slots from the others; its failure is logged at WARN, and a failure right after
+another at DEBUG. A user task whose workflow module starts after the first look is told once it
+started. A user task told as cancelled is not told as created afterwards by the same node, even
+where a lagging node of the engine lists it active again. A cancelled user task wakes its workflow
+up, so a service task left open in a cancelled instance is told as cancelled as well.
+
+The application completes a user task, or cancels it with a BPMN error, through its process service
+as it does a task left open: right before its transaction commits, the adapter asks the engine
+whether the user task still waits and belongs to the workflow module, and after the commit the
+shared values are written up to the workflow's root and the job is completed, so the gateway behind
+the user task decides on them, or failed with the error code as the deployed model carries it, so an
+error boundary event of the user task takes over
+(`ZenBpmUserTaskIT#cancelUserTaskRoutesTheBoundaryEvent` on Spring Boot,
+`ZenBpmWorkflowLifecycleTest#userTaskCancellationByError` on Quarkus). The Camunda 8 adapter cannot
+do the second: no cluster up to 8.9 offers a command to cancel a Camunda-managed user task by BPMN
+error. The application is then told once that the user task was cancelled, as the Camunda 7 adapter
+tells it (decision 50); a completed user task is not told as cancelled. The commands of a task find
+no user task, and those of a user task no task: the call throws the platform's
+`TaskNotFoundException`, which names the method meant for the id where the platform recorded the
+delivery of the task (decision 51).
+
+### The end of a workflow
+
 A claimed process whose end the application listens to, through a `@WorkflowEnded` method or
 `vanillabp.delivery.release-on-workflow-end`, gets an end marker in front of every none, message and
 terminate end event of its own (decision 52). Its job reports the end with the end event's id
 (`ZenBpmLifecycleIT#theEndOfAWorkflowIsReportedWithItsEndEvent`, on Quarkus
 `ZenBpmWorkflowLifecycleTest#theWorkflowEndIsReported`), after the platform told every task
 it believed open in the workflow as cancelled, a task inside an embedded sub-process included, and
-the instance ends only once the report committed (`#theEndCancelsTheTasksStillOpen`). An end event
-which ends one branch while another branch of the workflow still runs reports nothing, and the end
-the last branch reaches is reported (`#aBranchWhichEndsWhileAnotherRunsReportsNothing`); an end
-reached while a non-interrupting event sub-process still runs is reported once that sub-process
-ended, up to one `job-timeout` of `vanillabp__ended` later, because the marker's job is left to its
-lock until then (`#theEndWaitsForAnEventSubProcessStillRunning`). A workflow cancelled at the engine
-reports nothing (`#aCancelledWorkflowReportsNothing`), and neither does one which ends inside an
-interrupting event sub-process. An error end event gets no marker: where nothing catches the error,
-the engine raises an incident there and the workflow does not end
+the instance ends only once the report committed
+(`ZenBpmLifecycleIT#theEndCancelsTheTasksStillOpen`). An end event which ends one branch while
+another branch of the workflow still runs reports nothing, and the end the last branch reaches is
+reported (`ZenBpmLifecycleIT#aBranchWhichEndsWhileAnotherRunsReportsNothing`); an end reached while a
+non-interrupting event sub-process still runs is reported once that sub-process ended, up to one
+`job-timeout` of `vanillabp__ended` later, because the marker's job is left to its lock until then
+(`ZenBpmLifecycleIT#theEndWaitsForAnEventSubProcessStillRunning`). A workflow cancelled at the engine
+reports nothing (`ZenBpmLifecycleIT#aCancelledWorkflowReportsNothing`, GAPS 9), and neither does one
+which ends inside an interrupting event sub-process. An error end event gets no marker: where nothing
+catches the error, the engine raises an incident there and the workflow does not end
 (`ZenBpmMarkerTasksIT#anUncaughtErrorEndEventRaisesAnIncident`). A `@WorkflowEnded` method which
 throws fails the marker's job like a handler which threw, so the engine hands it out again after the
-`retry-backoff` where the job has retries left (`#aReportWhichThrewIsRepeated`), and a workflow
-whose aggregate the application deleted ends without a report
-(`#aWorkflowWhoseAggregateIsGoneEnds`). A user task the end took away is told as cancelled once, by
-that report, and the looks for user tasks tell it under the same id, so the platform answers them
-from its record, also after a restart (decision 53,
+`retry-backoff` where the job has retries left (`ZenBpmLifecycleIT#aReportWhichThrewIsRepeated`),
+and a workflow whose aggregate the application deleted ends without a report
+(`ZenBpmLifecycleIT#aWorkflowWhoseAggregateIsGoneEnds`). A user task the end took away is told as
+cancelled once, by that report, and the looks for user tasks tell it under the same id, so the
+platform answers them from its record, also after a restart (decision 53,
 `ZenBpmUserTaskRestartIT#aUserTaskTheEndTookAwayIsToldOnceAcrossARestart`); where the end releases
 the platform's records, the next look tells it a second time
 (`#aUserTaskTheEndTookAwayIsToldTwiceWhereTheEndReleasesTheRecords`). Whether an end event ends the
@@ -240,13 +413,16 @@ of a version deployed while somebody listened to the end are served after nobody
 report (`#anEndNobodyListensToAnyMoreIsCompletedWithoutAReport`). A report costs one job, a
 transaction for the end and one for each task still open, a read of the instance's tokens and of its
 child instances, and a read of the model once per version; a message end event's own task runs after
-the report, and two branches whose end markers wait at the same time may report the end twice.
+the report, and two branches whose end markers wait at the same time may report the end twice
+(GAPS 8).
+
+### Multi-instance
 
 A task inside a multi-instance element is told the iteration it runs in, through
 `@MultiInstanceElement`, `@MultiInstanceIndex` and `@MultiInstanceTotal` named after the id of the
-multi-instance element (decision 54). ZenBPM hands a job neither an index nor a total (see
-[`GAPS.md`](./GAPS.md)), so the adapter reads them from the instances the engine keeps of the
-element, only where a method asks for one and once for all its parameters
+multi-instance element (decision 54). ZenBPM hands a job neither an index nor a total (GAPS 16), so
+the adapter reads them from the instances the engine keeps of the element, only where a method asks
+for one and once for all its parameters
 (`ZenBpmJobHandlerTest#theIterationsAreReadOnceWhereTheMethodAsksForThem`). The element is the item
 of the iteration, the index counts from 0 in the order the engine handed out the items, and the
 total is the size of the collection the engine iterates over, as it evaluated it when the element
@@ -270,53 +446,57 @@ waits at neither, the caller's iterations are not told, which a WARN says once
 iteration as a job is (`ZenBpmUserTaskPollerTest#aUserTaskInAnIterationIsToldItsIteration`). The
 reads cost the model once per version, the instance the element stands in and its history once per
 body (again at the next ask where the total could not be read,
-`ZenBpmMultiInstanceTest#aTotalWhichCouldNotBeReadIsReadAgain`), and the list of its iterations once per body and once more for every iteration of a sequential
-element; a read which fails fails
-the delivery like a method which threw
-(`ZenBpmJobHandlerTest#aReadOfTheIterationsWhichFailsFailsTheJob`).
+`ZenBpmMultiInstanceTest#aTotalWhichCouldNotBeReadIsReadAgain`), and the list of its iterations once
+per body and once more for every iteration of a sequential element; a read which fails fails the
+delivery like a method which threw (`ZenBpmJobHandlerTest#aReadOfTheIterationsWhichFailsFailsTheJob`).
+
+### Messages
 
 A message is correlated in two phases. Phase one never asks the engine whether
 something waits. It refuses where the application calls a message which no version the engine holds
 of the workflow module's processes waits for, and one which the newest version of a process starts
 it with, also where an older version waits for it, naming `startWorkflowByMessage`, because ZenBPM
-hands a message no workflow waits for under its key to a start event of the same name. Before it
-refuses, it reads those versions from the engine again, because another node may have deployed a
-newer one since; where a version could not be read, or the module serves a process it brought no
-model for, it refuses nothing (decision 42). Phase two publishes the message under its scoped name,
-with the values the aggregate shares and its id, and with the correlation id as its correlation key
-where the application passed one, else the aggregate id. So a correlation id is the correlation key,
-and the subscription a modeller writes for a message has to read it, as on Camunda 8: the key the
-deployment writes reads the aggregate id. ZenBPM keeps no message nothing waits for and answers
-`404` (see [`GAPS.md`](./GAPS.md)): the outbox repeats such a publication every
+hands a message no workflow waits for under its key to a start event of the same name (GAPS 4).
+Before it refuses, it reads those versions from the engine again, because another node may have
+deployed a newer one since; where a version could not be read, or the module serves a process it
+brought no model for, it refuses nothing (decision 42). Phase two publishes the message under its
+scoped name, with the values the aggregate shares and its id, and with the correlation id as its
+correlation key where the application passed one, else the aggregate id. So a correlation id is the
+correlation key, and the subscription a modeller writes for a message has to read it, as on Camunda
+8: the key the deployment writes reads the aggregate id. ZenBPM keeps no message nothing waits for
+and answers `404` (GAPS 5): the outbox repeats such a publication every
 `workflow-visibility-timeout` without counting an attempt, until the workflow waits for it, or until
 `vanillabp.outbox.wait-for-visibility-at-most` passed and the entry is blocked; a workflow which
 passed the waiting element, or waits under another key, is answered the same way. ZenBPM answers the
 same `404` where the message was received and the workflow failed right behind the waiting element
 on something it does not find, such as a called process which is not deployed, so that publication
 is repeated as well, and is received a second time where the workflow waits for it again within the
-window (decision 43). ZenBPM deduplicates no message: a second correlation with the same correlation
-id is not planned while the first still waits in the outbox, a correlation without one is never
-deduplicated, and a publication repeated after its answer was lost may correlate twice.
+window (decision 43, GAPS 29). ZenBPM deduplicates no message: a second correlation with the same
+correlation id is not planned while the first still waits in the outbox, a correlation without one
+is never deduplicated, and a publication repeated after its answer was lost may correlate twice.
+One subscription per message name and correlation key may wait at a time, engine-wide (GAPS 23).
+
+### Starting a workflow by a message
 
 A workflow is started by a message in two phases as well, and how it is found afterwards is
 `message-start-lookup`. ZenBPM gives a workflow it starts by a message no business key and names no
-instance in its answer (see [`GAPS.md`](./GAPS.md)). Unless `refuse` is set, phase one refuses
-where the application calls a message the newest version of no process of the workflow module
-starts with, read again from the engine before it refuses, naming `correlateMessage` where a model
-waits for the name; phase two publishes the message under its scoped name without a correlation key,
-with the values the aggregate shares and its id, and reports nothing. Where the modeller maps the
-outputs of a message start event, the deployment adds an output of the id variable, because the
-engine hands the instance the mapped variables only (decision 48). Under `start-row`, the default, the start
-marker behind the message start event reports the instance's key, which the platform writes into the
-start row of the aggregate, and every later operation on the running workflow finds it through that
-key. The start row does not cover an application without a delivery log, the moments between the
-publication and the commit of the marker's report, in which only the node which published knows the
-workflow, or a start sent again after its answer was lost before the marker wrote the row, which
-publishes once more and may start a second workflow. Nor does it cover a workflow which ended: the
-key finds a running instance only, so where the platform asks which adapter holds a workflow a
-message started and which ended, it is answered as unknown to the engine, in every mode, which the
-platform's contract for adapters does not allow. How long the row lives is
-`vanillabp.delivery.workflow-start-retention` (`P30D` by default, `0` keeps rows for good) or
+instance in its answer (GAPS 1). Unless `refuse` is set, phase one refuses where the application
+calls a message the newest version of no process of the workflow module starts with, read again from
+the engine before it refuses, naming `correlateMessage` where a model waits for the name; phase two
+publishes the message under its scoped name without a correlation key, with the values the aggregate
+shares and its id, and reports nothing. Where the modeller maps the outputs of a message start
+event, the deployment adds an output of the id variable, because the engine hands the instance the
+mapped variables only (decision 48). Under `start-row`, the default, the start marker behind the
+message start event reports the instance's key, which the platform writes into the start row of the
+aggregate, and every later operation on the running workflow finds it through that key. The start
+row does not cover an application without a delivery log, the moments between the publication and
+the commit of the marker's report, in which only the node which published knows the workflow, or a
+start sent again after its answer was lost before the marker wrote the row, which publishes once more
+and may start a second workflow. Nor does it cover a workflow which ended: the key finds a running
+instance only, so where the platform asks which adapter holds a workflow a message started and which
+ended, it is answered as unknown to the engine, in every mode, which the platform's contract for
+adapters does not allow. How long the row lives is `vanillabp.delivery.workflow-start-retention`
+(`P30D` by default, `0` keeps rows for good) or
 `vanillabp.delivery.keep-workflow-start-while-aggregate-exists`. Under `scan`, an opt-in, the probes
 in addition read the instances of the processes a version of which has a message start event where
 nothing else finds the workflow, and find a running one by its id variable, also before a start is
@@ -324,15 +504,16 @@ sent again, at most `message-start-lookup-max-instances` instances (`1000` by de
 they answer that the engine is unavailable. A workflow which ended stays unknown to them as well, and
 the start of the application warns so. The engine hands out the running instances page by page, so a
 lookup over several pages may miss a workflow while other instances of its process end, and then
-answers as `start-row` does. Under
-`refuse` every start by a message is refused where the application calls, naming the key. Each start
-of the application names the processes a message starts and the value in force. ZenBPM loses starts
-when two start messages of one name reach it at the same moment, answering one of them as if it
-started a workflow, so each node publishes the start messages of one name one after the other;
-several nodes of an application may still lose such a start unseen. A start message no start event
-takes is answered `404`, also where another node took the start event at that moment, so it is
-repeated with the outbox's backoff and blocked after `vanillabp.outbox.block-after-attempts`
-(decision 47).
+answers as `start-row` does. Under `refuse` every start by a message is refused where the
+application calls, naming the key. Each start of the application names the processes a message
+starts and the value in force. ZenBPM loses starts when two start messages of one name reach it at
+the same moment, answering one of them as if it started a workflow (GAPS 30), so each node publishes
+the start messages of one name one after the other; several nodes of an application may still lose
+such a start unseen. A start message which no start event takes is answered `404`, also where
+another node took the start event at that moment, so it is repeated with the outbox's backoff and
+blocked after `vanillabp.outbox.block-after-attempts` (decision 47).
+
+### Pushing a changed aggregate
 
 A changed aggregate is pushed in phase two only. A push of the workflow writes the values the
 aggregate shares, and its id, into the workflow's root and then into every instance which runs below
@@ -350,30 +531,35 @@ and every other branch as they were; the task's completion writes the values up 
 Where the instance the task waits in ended, nothing is written; a task the engine does not know yet
 is pushed again later. A handler which runs already, or a task handed out again, gets the variables
 its job was created with all the same. An iteration of a multi-instance element which starts after a
-push reads the pushed value only where the element maps it in (see [`GAPS.md`](./GAPS.md)).
+push reads the pushed value only where the element maps it in (GAPS 31).
+
+### Versions of a process
 
 A `@WorkflowTask(version = ...)` method runs for the jobs of the versions it names. A version made
 of numbers is compared with the version the job carries. A version tag, which a model carries as
 `<zenbpm:versionTag value="..." />` on its process, is placed by the list of the definitions the
-engine holds under the process, one request per process and start, and the version this start deployed is
-known from the deployment's answer (decision 55). A tag no version carries is reported once at
-startup, and a task of the version this start deployed which no method serves for that version ends
-the start. ZenBPM gives a tag to one version of a process only: it refuses a changed model under a
-tag an earlier version carries, so a changed model needs a new tag, also where only the methods
-changed, because the adapter writes into the model it deploys; and a model deployed again with the
-tag and the content of an older version gets that older version back, while new workflows would
-start on the newest one, so such a start ends, naming both versions and the fix: a tag no version
-carries yet (see [`GAPS.md`](./GAPS.md)).
+engine holds under the process, one request per process and start, and the version this start
+deployed is known from the deployment's answer (decision 55). A tag no version carries is reported
+once at startup, and a task of the version this start deployed which no method serves for that
+version ends the start. ZenBPM gives a tag to one version of a process only: it refuses a changed
+model under a tag an earlier version carries, so a changed model needs a new tag, also where only
+the methods changed, because the adapter writes into the model it deploys; and a model deployed
+again with the tag and the content of an older version gets that older version back, while new
+workflows would start on the newest one, so such a start ends, naming both versions and the fix: a
+tag no version carries yet (GAPS 32).
 
 At startup the versions the engine holds of a process which are older than the one this start
 deployed are checked: the platform names such a version with the number of workflows which still
 run on it, a task of it which no method serves any more, and what those workflows miss, which the
-adapter reads from the models of the older versions workflows still run on, because it writes VanillaBP's behaviour into the
-model it deploys: the end markers, the start markers and the names mapped into a multi-instance
-body. A version faded out with `vanillabp.adapters.<id>.outfaded-versions` is not checked for its
-tasks; the workflows still running on it are named instead. The numbers are counted by the engine,
-so no page of instances is read, and every question of a start which reads a model the engine
-holds reads it through one cache of the adapter id, so a start reads each model once (decision 56).
+adapter reads from the models of the older versions workflows still run on, because it writes
+VanillaBP's behaviour into the model it deploys: the end markers, the start markers and the names
+mapped into a multi-instance body. A version faded out with
+`vanillabp.adapters.<id>.outfaded-versions` is not checked for its tasks; the workflows still running
+on it are named instead. The numbers are counted by the engine, so no page of instances is read, and
+every question of a start which reads a model the engine holds reads it through one cache of the
+adapter id, so a start reads each model once (decision 56).
+
+### Viewing workflows
 
 The viewer/history API is read from the engine (decision 57). A process definition's id is its key
 at the engine, and its BPMN is the model as the engine holds it, with the markers the adapter wrote.
@@ -390,75 +576,9 @@ of a multi-instance element as `MULTI_INSTANCE`, leaves the adapter's markers ou
 message of an incident nobody resolved, and names, for a call activity, the instance it started,
 whose history and definitions are read through that context; a context which belongs to another
 workflow is not served. The engine keeps no state of an element, so none is reported as cancelled
-(see [`GAPS.md`](./GAPS.md)).
+(GAPS 33).
 
-What an operator sees is in the sections [Health](#health) and [Metrics](#metrics): an entry of the
-platform's health check per adapter id, which names the state of the job stream, and, where the
-application brings Micrometer, eleven meters per adapter id tagged with it. An application on
-Quarkus can be built as a native image, see [Native image](#native-image).
-
-What is built next, and in which order, is the implementation plan in [`docs/`](docs/README.md).
-
-## Modules
-
-|                Module                |                   Artifact                    |                                    Purpose                                    |
-|--------------------------------------|-----------------------------------------------|-------------------------------------------------------------------------------|
-| `engine-test-support`                | (not published)                               | the pinned ZenBPM engine as a Testcontainers container, for integration tests |
-| `core`                               | `zenbpm-vanillabp-adapter`                    | the platform-neutral adapter: deployment, task delivery, REST and gRPC client |
-| `spring-boot`                        | `zenbpm-vanillabp-adapter-spring-boot`        | Spring Boot auto-configuration                                                |
-| `smoke-test`                         | (not published)                               | discovery, health and startup validation on Spring Boot without an engine     |
-| `election-integration-test`          | (not published)                               | the BPMS election on Spring Boot: two adapter ids on one engine, the double   |
-| `quarkus/runtime`                    | `zenbpm-vanillabp-adapter-quarkus`            | Quarkus extension, runtime part                                               |
-| `quarkus/deployment`                 | `zenbpm-vanillabp-adapter-quarkus-deployment` | Quarkus extension, build-time part                                            |
-| `quarkus/integration-tests`          | (not published)                               | end-to-end tests on a booted Quarkus application                              |
-| `quarkus/native-image-tests`         | (not published)                               | an application built as a native image, run against the pinned engine         |
-| `test-coverage-report/spring-boot`   | (not published)                               | aggregated coverage of the core and the Spring Boot modules                   |
-| `test-coverage-report/quarkus`       | (not published)                               | aggregated coverage of the core and the Quarkus modules                       |
-| `test-coverage-report/coverage-gate` | (not published)                               | breaks the build below the coverage threshold, last module of the reactor     |
-
-All artifacts have the groupId `org.pbinitiative.zenbpm`, the Java packages start with
-`org.pbinitiative.zenbpmadapter`.
-
-## Supported engine version
-
-The adapter is tested against exactly one ZenBPM engine build, and supports that one: tested, not
-newer. Today it is a build of the engine's `main`, because no engine release carries the job lock the
-adapter's task delivery is built on (decision 15 in [`DECISIONS.md`](./DECISIONS.md)). The pin
-becomes a release tag once the engine tags a release containing that commit.
-
-| Pinned |                                                 Value                                                 |
-|--------|-------------------------------------------------------------------------------------------------------|
-| commit | `bdd795a399b6484d062d52ac90c0d0725cb0ad91` (2026-10-13)                                               |
-| image  | `ghcr.io/pbinitiative/zenbpm@sha256:d7808e30821a7349e0f42476d8aaa21ff92fc752c0ccc432771764d307b87ed0` |
-
-The build reads both from `zenbpm.commit` and `zenbpm.image` in the root `pom.xml`. The integration
-tests start that image, and `EngineUnderTestIT` fails when the running container is not that image
-or the engine reports another commit.
-
-The REST contract the adapter is written against is the copy `core/src/main/zenbpm/api.yaml`. The
-job stream's contract is the copy `core/src/main/proto/zenbpm.proto`. Both come from the pinned
-commit and name it, with the image, in their first lines. The table above repeats the pin as well.
-`EnginePinTest` fails when one of these three names another pin than the POM.
-`bin/check-engine-copies.sh` compares the two copies with the engine's files of the pinned commit,
-which it reads from GitHub. Only the header and the proto's `java_package` line may differ. The
-pull-request check runs it, and it fails on any other difference (decision 18 in
-[`DECISIONS.md`](./DECISIONS.md)).
-
-Moving the pin is one commit with these steps:
-
-1. Pull `ghcr.io/pbinitiative/zenbpm:dev` and read its digest and its
-   `org.opencontainers.image.revision` label; `bin/resolve-latest-engine.sh` does both and prints
-   them.
-2. Check that the revision is the head of the engine's `main`, or the newest commit which got an
-   image.
-3. Write the commit and the digest into `zenbpm.commit` and `zenbpm.image` of the root `pom.xml`.
-4. Copy `openapi/api.yaml` and `pkg/zenclient/proto/zenbpm.proto` of exactly that commit over the
-   two copies (`git show <commit>:<path>`). Keep the header of each, with the new commit, date and
-   image, and keep the `java_package` line of the proto.
-5. Update the table above.
-6. Run `bin/check-engine-copies.sh` and `mvn install`.
-
-## Which phase-two failures are repeated
+### Which phase-two failures are repeated
 
 A failed call of the engine is classified in one place, `ZenBpmErrors` in the core, so that the
 phase-two outbox and the commands a job handler sends back cannot disagree about what a failure
@@ -513,6 +633,29 @@ Where the status says less than it seems:
 - A `404` or `409` is read from its status, method and path alone. A proxy in front of the engine
   which answers `404` to a call of a job, for example because its routes leave out a path, is read
   as a gone job like the engine's own answer.
+
+### Testing
+
+The adapter is tested at the boundary of VanillaBP's adapter SPI, as every VanillaBP adapter is, and
+against the engine itself wherever the engine decides what happens:
+
+- the integration tests (`*IT` on Spring Boot and in the core, the prod-mode tests of
+  `quarkus/integration-tests`) start the pinned engine image with Testcontainers
+  (`engine-test-support`, `EngineUnderTest`), one engine per test class, and boot real applications
+  against it;
+- `ZenBpmRestClientContractIT` runs every method of the REST client once against the engine, and
+  the rows of [`GAPS.md`](./GAPS.md) name the tests which measured each gap against it;
+- the smoke tests in `smoke-test` and the extension tests in `quarkus/deployment` boot an application
+  without an engine, or against a stand-in which answers what the test needs, and the platform's
+  BPMS double stands in for a second BPMS;
+- unit tests in the core cover the edge cases, with stand-ins of the engine shaped like what the
+  engine answers;
+- the wiki's configuration is booted against a fresh engine by `ZenBpmHomePageIT` and
+  `ZenBpmHomePageTest`, which read it from `wiki/Home.md`.
+
+Every test class uses VanillaBP's `test-utils` (`SuppressOutputExtension`), which
+`TestClassConventionsTest` checks. Without Docker the tests which start the engine are skipped
+(`EngineTestsWithoutDockerTest`); CI always has Docker.
 
 ## Boot behavior
 
@@ -698,6 +841,51 @@ Without an installed GraalVM the image is built in a container of
 either way. On a laptop with 14 cores the image took about two minutes and 6 GB of
 memory at its peak. What the binary printed is in
 `quarkus/native-image-tests/target/native-image-application.log`, the place to read when it fails.
+
+## Decision log
+
+Decisions which several places in this repository rely on live in [`DECISIONS.md`](./DECISIONS.md).
+It is the one thing the code is allowed to cite. A citation reads `see decision 3 in the
+repository's DECISIONS.md`, numbers are never reused, and an overturned entry stays and names its
+successor, so a citation written today still resolves in a year. The plan handed out the numbers 1
+to 17 in advance; the four of them which the code works differently from (2, 5, 6 and 8) were
+superseded by 24 to 27 before they were entered, and their drafts stay in
+[`docs/architecture/02-design-decisions.md`](docs/architecture/02-design-decisions.md).
+
+## Known deviations
+
+What the engine cannot do that VanillaBP's contract for adapters asks for is listed in
+[`GAPS.md`](./GAPS.md), with the evidence in the engine's source at the pinned commit and how the
+adapter answers it; the wiki's page
+[Deviations](https://github.com/pbinitiative/zenbpm-vanillabp-adapter/wiki/Deviations) says the same
+for users, one entry per row. The two-phase start and the at-least-once delivery of a task are not
+among them: that is what a remote BPMS looks like in VanillaBP. The ones a user meets first:
+
+- GAPS 1: a workflow the engine starts itself, by a timer or a message, carries no business key, so
+  it is found only through the instance key its start marker recorded, while the start row lives
+  ([The probes](#the-probes), [Starting a workflow by a message](#starting-a-workflow-by-a-message));
+- GAPS 2: a change of a partition's leader hands every waiting job out again
+  ([Task processing](#task-processing));
+- GAPS 5: a message nothing waits for is dropped by the engine and published again by the outbox
+  ([Messages](#messages));
+- GAPS 8 and 9: no listeners, so the start and the end are reported by markers, and a cancelled
+  workflow tells nobody ([The end of a workflow](#the-end-of-a-workflow));
+- GAPS 10: user tasks are polled ([User tasks](#user-tasks));
+- GAPS 11: no tenant, so `by-adapter` is refused and every application writes `use-prefix` or
+  `none` ([Deployment](#deployment));
+- GAPS 12: no authentication and no TLS, so the adapter sends no credentials;
+- GAPS 14: what the engine refuses or runs differently is refused before anything is deployed
+  ([Deployment](#deployment));
+- GAPS 15 and 22: a job names neither its process nor its root instance, so the adapter reads and
+  keeps both ([The workflow id](#the-workflow-id));
+- GAPS 16: an iteration is told neither its index nor its total, so the adapter reads them
+  ([Multi-instance](#multi-instance)).
+
+One deviation is no gap of the engine: an expression in the model which reads an attribute the
+aggregate does not share is not found while the application starts, and fails while the workflow
+runs; like Camunda 8, the adapter does not tell VanillaBP which attributes its expressions read.
+
+The gaps 3 and 6 were closed by engine changes the pin contains, and keep their rows.
 
 ## Building
 
@@ -903,6 +1091,23 @@ reports its two threshold tests as skipped rather than passed. A build which sto
 never writes the reports. A report without a single instruction (what the skeleton produces today,
 and what an aggregate which lost all its modules would produce) prints
 `the report holds no instruction, so there is no coverage to check`.
+
+## The wiki
+
+The pages of the [wiki](https://github.com/pbinitiative/zenbpm-vanillabp-adapter/wiki) are written
+in this repository, one file per page in [`wiki/`](wiki), named as the wiki names the page, and they
+are reviewed and checked in a pull request like code (decision 63 in
+[`DECISIONS.md`](./DECISIONS.md)). After the merge, whoever merged copies exactly the merged `wiki/`
+into the wiki repository, `pbinitiative/zenbpm-vanillabp-adapter.wiki`, and pushes it; today that is
+a step of the implementation pipeline after each merge. Nothing is written on the wiki directly,
+because the next copy overwrites it.
+
+A page links another one in the wiki's form, `[Configuration](Configuration)`, and the repository
+with a full address of `main`. `DocumentationTest` in `test-coverage-report/coverage-gate` reads this
+README and every page and fails when a test they name does not exist, a link leads to no page or
+heading, a row of `GAPS.md` has no entry on `Deviations`, the table on `Configuration` and the keys
+the code reads differ, or `Engine-APIs` misses a call of the REST client or an endpoint of the
+engine. What it cannot check is whether a sentence says what its test holds.
 
 ## Licence
 
