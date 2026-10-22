@@ -119,6 +119,7 @@ class ZenBpmRestClientContractIT {
         client.deployBpmn(fixture("contract-escalated.bpmn"));
         decision = client.deployDmn(fixture("contract-decision.dmn"));
         client.deployDmn(fixture("contract-unnamed-decision.dmn"));
+        client.deployDmn(fixture("contract-collected-decision.dmn"));
         client.deployBpmn(fixture("contract-decided.bpmn"));
     }
 
@@ -445,6 +446,24 @@ class ZenBpmRestClientContractIT {
                 () -> assertEquals(Map.of("discount", 10L), variables.get("result"), variables::toString),
                 () -> assertEquals(10L, variables.get("value"), variables::toString),
                 () -> assertEquals(10L, variables.get("unnamedResult"), variables::toString));
+    }
+
+    @Test
+    @DisplayName("A decision table which collects every matching rule hands a list of contexts where its one output has a name, and a path through the list reads the list of values")
+    void aDecisionTableWhichCollectsHandsAListOfContexts() {
+        final var started = client.createInstance(CreateInstanceRequest
+                .latestVersionOf("contract-decided")
+                .withBusinessKey(uniqueBusinessKey())
+                .withVariables(Map.of("amount", 1000)));
+
+        final var variables = eventually(() -> client
+                .instance(started.key())
+                .map(ProcessInstanceRef::variables)
+                .filter(mapped -> mapped.containsKey("collectedValues")));
+        assertAll(
+                () -> assertEquals(List.of(Map.of("discount", 10L), Map.of("discount", 5L)), variables.get(
+                        "collectedResult"), variables::toString),
+                () -> assertEquals(List.of(10L, 5L), variables.get("collectedValues"), variables::toString));
     }
 
     @Test

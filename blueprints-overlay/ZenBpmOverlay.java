@@ -76,6 +76,12 @@ class ZenBpmOverlay {
 
     private static final Pattern ACTIVATION = Pattern.compile("(?s)\\s*<activation>.*?</activation>");
 
+    private static final Pattern BPMS_PROFILE = Pattern.compile(
+            "(?s)<profile>\\s*<id>(camunda7|camunda8|process-engine-api)</id>(.*?)</profile>");
+
+    /** The one activation '-Pzenbpm' switches off: Maven ends it once another profile is named. */
+    private static final String BY_DEFAULT = "<activation><activeByDefault>true</activeByDefault></activation>";
+
     private static final Pattern REVISION = Pattern.compile("<revision>([^<]+)</revision>");
 
     /** A file named for Camunda 8, such as <code>db/changelog-camunda8.xml</code>. */
@@ -261,6 +267,7 @@ class ZenBpmOverlay {
                         %s chooses a BPMS but has no profile 'camunda8' the overlay could copy, so \
                         '-Pzenbpm' would leave its default BPMS on.""".formatted(where));
             }
+            problems.addAll(activatedOtherwise(original, where));
             write(pom, withVersion);
         }
         if (!versionDeclared) {
@@ -326,6 +333,32 @@ class ZenBpmOverlay {
         // the copy starts with the indentation of the profile it was made from
         return "%s\n%s\n%s%s".formatted(pom.substring(0, profile.end()), comment, zenbpm, pom.substring(profile
                 .end()));
+    }
+
+    /** The profiles of a BPMS which '-Pzenbpm' would leave on next to the profile zenbpm. */
+    private static List<String> activatedOtherwise(
+        final String pom,
+        final Path where
+    ) {
+        final var problems = new ArrayList<String>();
+        final var profile = BPMS_PROFILE.matcher(pom);
+        while (profile.find()) {
+            final var activation = ACTIVATION.matcher(COMMENT
+                    .matcher(profile.group(2))
+                    .replaceAll(""));
+            if (activation.find() && !activation
+                    .group()
+                    .replaceAll("\\s+", "")
+                    .equals(BY_DEFAULT)) {
+                problems.add("""
+                        The profile '%s' of %s is activated by more than activeByDefault, which \
+                        '-Pzenbpm' does not switch off, so it would stay on next to the profile 'zenbpm':
+                        %s""".formatted(profile.group(1), where, activation
+                        .group()
+                        .strip()));
+            }
+        }
+        return problems;
     }
 
     private String withAdapterVersion(final String pom) {
@@ -422,7 +455,7 @@ class ZenBpmOverlay {
      * by its task definition. So a user task which names the first and not the second gets the
      * reference as its task definition, beside its form.
      */
-    static String withUserTasksNamedByTheirForm(final String model) {
+    private static String withUserTasksNamedByTheirForm(final String model) {
         return USER_TASK
                 .matcher(model)
                 .replaceAll(userTask -> {

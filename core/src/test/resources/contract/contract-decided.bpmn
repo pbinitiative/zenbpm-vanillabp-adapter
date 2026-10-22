@@ -30,9 +30,22 @@
         </zenbpm:ioMapping>
       </bpmn:extensionElements>
       <bpmn:incoming>Flow_ToDecideUnnamed</bpmn:incoming>
+      <bpmn:outgoing>Flow_ToDecideCollected</bpmn:outgoing>
+    </bpmn:businessRuleTask>
+    <bpmn:sequenceFlow id="Flow_ToDecideCollected" sourceRef="DecideUnnamed" targetRef="DecideCollected" />
+    <!-- the decision 'contract-collected-discount' of contract-collected-decision.dmn collects every matching rule, its one output named 'discount' -->
+    <bpmn:businessRuleTask id="DecideCollected" name="Collect the discounts">
+      <bpmn:extensionElements>
+        <zenbpm:calledDecision decisionId="contract-collected-discount" resultVariable="collected" />
+        <zenbpm:ioMapping>
+          <zenbpm:output source="=collected" target="collectedResult" />
+          <zenbpm:output source="=collected.discount" target="collectedValues" />
+        </zenbpm:ioMapping>
+      </bpmn:extensionElements>
+      <bpmn:incoming>Flow_ToDecideCollected</bpmn:incoming>
       <bpmn:outgoing>Flow_ToEnd</bpmn:outgoing>
     </bpmn:businessRuleTask>
-    <bpmn:sequenceFlow id="Flow_ToEnd" sourceRef="DecideUnnamed" targetRef="EndEvent" />
+    <bpmn:sequenceFlow id="Flow_ToEnd" sourceRef="DecideCollected" targetRef="EndEvent" />
     <bpmn:endEvent id="EndEvent">
       <bpmn:incoming>Flow_ToEnd</bpmn:incoming>
     </bpmn:endEvent>
@@ -48,8 +61,11 @@
       <bpmndi:BPMNShape id="DecideUnnamed_di" bpmnElement="DecideUnnamed">
         <dc:Bounds x="416" y="80" width="100" height="80" />
       </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="DecideCollected_di" bpmnElement="DecideCollected">
+        <dc:Bounds x="576" y="80" width="100" height="80" />
+      </bpmndi:BPMNShape>
       <bpmndi:BPMNShape id="EndEvent_di" bpmnElement="EndEvent">
-        <dc:Bounds x="576" y="80" width="36" height="36" />
+        <dc:Bounds x="736" y="80" width="36" height="36" />
       </bpmndi:BPMNShape>
       <bpmndi:BPMNEdge id="Flow_ToDecide_di" bpmnElement="Flow_ToDecide">
         <di:waypoint x="196" y="98" />
@@ -61,11 +77,15 @@
         <di:waypoint x="356" y="120" />
         <di:waypoint x="416" y="120" />
       </bpmndi:BPMNEdge>
-      <bpmndi:BPMNEdge id="Flow_ToEnd_di" bpmnElement="Flow_ToEnd">
+      <bpmndi:BPMNEdge id="Flow_ToDecideCollected_di" bpmnElement="Flow_ToDecideCollected">
         <di:waypoint x="516" y="120" />
-        <di:waypoint x="546" y="120" />
-        <di:waypoint x="546" y="98" />
-        <di:waypoint x="576" y="98" />
+        <di:waypoint x="576" y="120" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_ToEnd_di" bpmnElement="Flow_ToEnd">
+        <di:waypoint x="676" y="120" />
+        <di:waypoint x="706" y="120" />
+        <di:waypoint x="706" y="98" />
+        <di:waypoint x="736" y="98" />
       </bpmndi:BPMNEdge>
     </bpmndi:BPMNPlane>
   </bpmndi:BPMNDiagram>

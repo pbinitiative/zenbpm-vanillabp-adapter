@@ -352,10 +352,15 @@ the end of a workflow is the latest end of its elements
 A decision table whose one output has a name, such as `<output name="approval" />`, hands its
 business rule task a context holding that output, `{"approval": "APPROVED"}`, where Camunda 8 hands
 the value `"APPROVED"`; a table whose one output has no name hands the value itself
-(`ZenBpmRestClientContractIT#aDecisionTableWithOneNamedOutputHandsAContext`). So the output mapping
-a business rule task needs ([GAPS 27](#gaps-27-a-decisions-result-needs-an-output-mapping)) reads
-the output out of the result: `<zenbpm:output source="=approval.approval" target="approval" />`.
-The adapter does not detect a mapping which takes the whole context.
+(`ZenBpmRestClientContractIT#aDecisionTableWithOneNamedOutputHandsAContext`). A table which hands
+every matching rule, `COLLECT` without an aggregation or `RULE ORDER`, hands a list of such
+contexts, `[{"discount": 10}, {"discount": 5}]`, where Camunda 8 hands the list of values
+(`ZenBpmRestClientContractIT#aDecisionTableWhichCollectsHandsAListOfContexts`). So the output
+mapping a business rule task needs
+([GAPS 27](#gaps-27-a-decisions-result-needs-an-output-mapping)) reads the output out of the
+result: `<zenbpm:output source="=approval.approval" target="approval" />` reads the value of a
+single result, and the same path through a collected one reads its list of values, `[10, 5]`. The
+adapter does not detect a mapping which takes the whole context.
 [README: Deployment](https://github.com/pbinitiative/zenbpm-vanillabp-adapter/blob/main/README.md#deployment)
 
 <!-- /gaps -->

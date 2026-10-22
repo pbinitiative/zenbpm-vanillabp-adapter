@@ -102,9 +102,11 @@ building less than this page says:
   (`BlueprintsOverlayTest#aBlueprintTheListDoesNotNameEndsTheRun`,
   `BlueprintsOverlayTest#aListedBlueprintWhichIsGoneEndsTheRun`);
 - a profile `camunda8` with more than the Camunda 8 adapter, a POM which chooses a BPMS without a
-  profile `camunda8`, and a twin which does not declare the Camunda 8 adapter's version
+  profile `camunda8`, a profile of a BPMS activated by more than `activeByDefault`, which
+  `-Pzenbpm` would leave on, and a twin which does not declare the Camunda 8 adapter's version
   (`BlueprintsOverlayTest#aCamunda8ProfileWithMoreThanTheAdapterEndsTheRun`,
   `BlueprintsOverlayTest#aPomChoosingABpmsWithoutACamunda8ProfileEndsTheRun`,
+  `BlueprintsOverlayTest#aBpmsProfileActivatedByMoreThanItsDefaultEndsTheRun`,
   `BlueprintsOverlayTest#aTwinWithoutTheVersionOfTheCamunda8AdapterEndsTheRun`);
 - an `application-camunda8.yaml` with more than the overlay translates, and another file named for
   Camunda 8 which names Camunda
@@ -114,7 +116,10 @@ building less than this page says:
   gone (`BlueprintsOverlayTest#aModelWhichChangedSinceItsVariantEndsTheRun`,
   `BlueprintsOverlayTest#aVariantWhichReplacesNoModelEndsTheRun`).
 
-A blueprint which builds but fails a test on ZenBPM turns the nightly red as well.
+A blueprint which builds but fails a test on ZenBPM turns the nightly red as well: the script builds
+every other twin all the same and ends with 1
+(`BlueprintsOverlayTest#theBuildScriptEndsRedWhereATwinFailed`), as it does where the overlay does
+not fit (`BlueprintsOverlayTest#theBuildScriptEndsRedWhereTheOverlayDoesNotFit`).
 
 ## Running a blueprint on ZenBPM
 
@@ -127,9 +132,16 @@ mvn -Dmaven.test.skip=true --projects spring-boot,quarkus/deployment --also-make
 bin/build-blueprints-on-zenbpm.sh /tmp/blueprints blueprints-bpmn/bpmn-service-task/springboot
 ```
 
-Without a twin named, the script builds every twin of the table above, each against an engine of
-its own, which `bin/zenbpm-engine.sh` starts and removes again. It clones into a directory which
-does not exist yet only (`BlueprintsOverlayTest#theBuildScriptRefusesADirectoryWhichExists`). Once
-the overlay is applied, the clone is a checkout of the blueprints like any other: start the engine
-with `bin/zenbpm-engine.sh start` and build a twin with `mvn -Pzenbpm install`, with
+Without a twin named, the script builds every twin of the table above, each against an engine of its
+own, which `bin/zenbpm-engine.sh` starts and removes again. The engine has a fixed name and fixed
+ports, so one run at a time works on a machine: a start ends with 1 where the engine of another run
+is running and leaves it alone
+(`BlueprintsOverlayTest#theEngineScriptLeavesTheEngineOfAnotherRunAlone`,
+`BlueprintsOverlayTest#theBuildScriptLeavesTheEngineOfAnotherRunAlone`), and a container which does
+not start ends the start as well, also where another engine answers on the port
+(`BlueprintsOverlayTest#theEngineScriptEndsRedWhereItsContainerDoesNotStart`). It clones into a
+directory which does not exist yet only
+(`BlueprintsOverlayTest#theBuildScriptRefusesADirectoryWhichExists`). Once the overlay is applied,
+the clone is a checkout of the blueprints like any other: start the engine with
+`bin/zenbpm-engine.sh start` and build a twin with `mvn -Pzenbpm verify`, with
 `blueprints-overlay/settings.xml` of the adapter as its Maven settings.

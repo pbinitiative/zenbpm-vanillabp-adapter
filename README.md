@@ -1033,8 +1033,8 @@ no other pull request starts it. A person can start it on `main` from the Action
   `-Pzenbpm` against an engine of its own, the pinned one, which `bin/zenbpm-engine.sh` starts.
   The blueprints read VanillaBP from Maven Central's snapshots and the adapter from the local
   repository, so the job needs no token. A blueprint which fails, or a change of the blueprints the
-  overlay cannot follow, turns the run red; the logs of the failed twins are attached as the
-  artifact `blueprints-reports`. The wiki page
+  overlay cannot follow, turns the run red; the build logs and test reports of every twin, and the engine's log of
+  each failed one, are attached as the artifact `blueprints-reports`. The wiki page
   [Blueprints](https://github.com/pbinitiative/zenbpm-vanillabp-adapter/wiki/Blueprints) lists the
   blueprints and why some do not run on ZenBPM (decision 64 in [`DECISIONS.md`](./DECISIONS.md)).
 

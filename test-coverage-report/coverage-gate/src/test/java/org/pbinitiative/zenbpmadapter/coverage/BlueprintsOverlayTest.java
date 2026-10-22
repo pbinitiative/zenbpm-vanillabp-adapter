@@ -13,6 +13,7 @@ import java.io.UncheckedIOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
@@ -80,8 +81,14 @@ class BlueprintsOverlayTest {
     void writeACheckoutAndAnOverlay() throws IOException {
         overlay = temporary.resolve("adapter/blueprints-overlay");
         checkout = temporary.resolve("blueprints");
-        write(temporary.resolve("adapter/pom.xml"),
-                "<project><properties><revision>9.9.9-SNAPSHOT</revision></properties></project>");
+        write(temporary.resolve("adapter/pom.xml"), """
+                <project>
+                  <properties>
+                    <revision>9.9.9-SNAPSHOT</revision>
+                    <zenbpm.image>ghcr.io/pbinitiative/zenbpm@sha256:pinned</zenbpm.image>
+                  </properties>
+                </project>
+                """);
         write(overlay.resolve("blueprints.txt"), """
                 # a comment
                 %s runs
@@ -291,6 +298,19 @@ class BlueprintsOverlayTest {
     }
 
     @Test
+    @DisplayName("A profile of a BPMS activated by more than activeByDefault ends the run, because -Pzenbpm would leave it on")
+    void aBpmsProfileActivatedByMoreThanItsDefaultEndsTheRun() {
+        final var pom = checkout.resolve(RUNS).resolve("springboot/application/pom.xml");
+        write(pom, read(pom).replace("<activeByDefault>true</activeByDefault>",
+                "<!-- a comment --><property><name>!bpms</name></property>"));
+
+        assertTheRunEndsNaming(
+                "The profile 'camunda8' of %s/springboot/application/pom.xml is activated by more than activeByDefault"
+                        .formatted(RUNS),
+                "<property><name>!bpms</name></property>");
+    }
+
+    @Test
     @DisplayName("A twin without the version of the Camunda 8 adapter ends the run")
     void aTwinWithoutTheVersionOfTheCamunda8AdapterEndsTheRun() {
         final var pom = checkout.resolve(RUNS).resolve("quarkus/pom.xml");
@@ -424,6 +444,112 @@ class BlueprintsOverlayTest {
         }
     }
 
+    @Test
+    @DisplayName("The build script builds every twin, each against an engine of its own, and ends with 1 where one failed")
+    void theBuildScriptEndsRedWhereATwinFailed() {
+        final var clone = temporary.resolve("clone");
+
+        final var run = buildScript(clone, Map.of("FAILING_TWIN", RUNS
+                + "/springboot"));
+
+        assertEquals(1, run.exitCode(), run::output);
+        assertEquals(List.of(RUNS
+                + "/springboot failed",
+                RUNS
+                        + "/quarkus passed"),
+                results(clone), run::output);
+        assertTrue(run
+                .output()
+                .contains("1 of 2 twins failed."), run::output);
+        assertTrue(Files.exists(clone.resolve("zenbpm-logs/%s_springboot.engine.log".formatted(RUNS.replace('/',
+                '_')))), "the engine's log of the failed twin is kept");
+        assertEquals(List.of("rm", "run", "rm", "rm", "run", "rm"), stubCalls("docker")
+                .stream()
+                .filter(call -> call.equals("run") || call.equals("rm"))
+                .toList(), "every twin gets a fresh engine of its own, removed after its build");
+        assertTrue(stubCalls("mvn")
+                .stream()
+                .allMatch(call -> call.endsWith("-Pzenbpm verify")),
+                () -> """
+                        A twin is verified, never installed into the local Maven repository: %s""".formatted(stubCalls(
+                        "mvn")));
+        assertFalse(Files.exists(stubs().resolve("running")), "no engine is left running");
+    }
+
+    @Test
+    @DisplayName("The build script ends with 0 where every twin passed")
+    void theBuildScriptEndsGreenWhereEveryTwinPassed() {
+        final var clone = temporary.resolve("clone");
+
+        final var run = buildScript(clone, Map.of());
+
+        assertEquals(0, run.exitCode(), run::output);
+        assertEquals(List.of(RUNS
+                + "/springboot passed",
+                RUNS
+                        + "/quarkus passed"),
+                results(clone), run::output);
+    }
+
+    @Test
+    @DisplayName("The build script ends with 1 and builds nothing where the overlay does not fit the clone")
+    void theBuildScriptEndsRedWhereTheOverlayDoesNotFit() {
+        delete(checkout.resolve(NOT_RUNNABLE));
+        final var clone = temporary.resolve("clone");
+
+        final var run = buildScript(clone, Map.of());
+
+        assertEquals(1, run.exitCode(), run::output);
+        assertTrue(run
+                .output()
+                .contains("The ZenBPM overlay does not fit this checkout of the blueprints"), run::output);
+        assertEquals(List.of(), stubCalls("mvn"), "no twin is built");
+    }
+
+    @Test
+    @DisplayName("The engine script ends with 1 where its container does not start, also where another engine answers on its port")
+    void theEngineScriptEndsRedWhereItsContainerDoesNotStart() {
+        final var run = engineScript(Map.of("DOCKER_RUN_FAILS", "true"));
+
+        assertEquals(1, run.exitCode(), run::output);
+        assertTrue(run
+                .output()
+                .contains("The engine did not become ready (attempt 3 of 3)"), run::output);
+        assertFalse(run
+                .output()
+                .contains("answers on"), run::output);
+        assertEquals("rm", stubCalls("docker").getLast(), "the container of the last attempt is removed");
+    }
+
+    @Test
+    @DisplayName("The engine script leaves the engine of another run alone and ends with 1")
+    void theEngineScriptLeavesTheEngineOfAnotherRunAlone() {
+        write(stubs().resolve("running"), "");
+
+        final var run = engineScript(Map.of());
+
+        assertEquals(1, run.exitCode(), run::output);
+        assertTrue(run
+                .output()
+                .contains("The engine zenbpm-blueprints-engine is running already, started by another run"),
+                run::output);
+        assertTrue(Files.exists(stubs().resolve("running")), "the other run's engine is not removed");
+        assertFalse(stubCalls("docker").contains("run"), "no second engine is started");
+    }
+
+    @Test
+    @DisplayName("The build script leaves the engine of another run alone, also when it ends, and builds nothing")
+    void theBuildScriptLeavesTheEngineOfAnotherRunAlone() {
+        write(stubs().resolve("running"), "");
+
+        final var run = buildScript(temporary.resolve("clone"), Map.of());
+
+        assertEquals(1, run.exitCode(), run::output);
+        assertTrue(Files.exists(stubs().resolve("running")), "the other run's engine is not removed");
+        assertFalse(stubCalls("docker").contains("rm"), () -> "nothing is removed: %s".formatted(stubCalls("docker")));
+        assertEquals(List.of(), stubCalls("mvn"), "no twin is built");
+    }
+
     private void assertTheRunEndsNaming(final String... parts) {
         final var run = overlay();
 
@@ -437,6 +563,117 @@ class BlueprintsOverlayTest {
                     .contains(part), () -> "'%s' is not named in:%n%s".formatted(part, run.output()));
         }
         assertFalse(Files.exists(checkout.resolve("zenbpm-twins.txt")), "a run which ends lists no twin to build");
+    }
+
+    /**
+     * The build script of a copy of the adapter whose overlay is the one of this test, run against
+     * stand-ins of git, docker, curl and Maven: git clones the test's checkout, the engine answers
+     * ready, and Maven fails the twin {@code FAILING_TWIN} names.
+     */
+    private Run buildScript(
+        final Path clone,
+        final Map<String, String> environment
+    ) {
+        return run(List.of("bash", adapterCopy()
+                .resolve("bin/build-blueprints-on-zenbpm.sh")
+                .toString(), clone.toString()), withStubs(environment));
+    }
+
+    /** The engine script of a copy of the adapter, run against the stand-ins. */
+    private Run engineScript(final Map<String, String> environment) {
+        return run(List.of("bash", adapterCopy()
+                .resolve("bin/zenbpm-engine.sh")
+                .toString(), "start"), withStubs(environment));
+    }
+
+    private Path adapterCopy() {
+        final var adapter = temporary.resolve("adapter");
+        copy(ROOT.resolve("bin/build-blueprints-on-zenbpm.sh"), adapter.resolve("bin/build-blueprints-on-zenbpm.sh"));
+        copy(ROOT.resolve("bin/zenbpm-engine.sh"), adapter.resolve("bin/zenbpm-engine.sh"));
+        copy(OVERLAY.resolve("ZenBpmOverlay.java"), overlay.resolve("ZenBpmOverlay.java"));
+        return adapter;
+    }
+
+    private Map<String, String> withStubs(final Map<String, String> environment) {
+        final var stubs = stubs();
+        write(stubs.resolve("bin/git"), """
+                #!/usr/bin/env bash
+                echo "$*" >>"$STUBS/git.calls"
+                case "$1" in
+                  clone) cp -R "$BLUEPRINTS" "${@: -1}" ;;
+                  -C) echo 0123456789abcdef0123456789abcdef01234567 ;;
+                  *) exit 3 ;;
+                esac
+                """);
+        write(stubs.resolve("bin/docker"), """
+                #!/usr/bin/env bash
+                echo "$1" >>"$STUBS/docker.calls"
+                case "$1" in
+                  run)
+                    if [ -n "${DOCKER_RUN_FAILS:-}" ]; then
+                      echo "Bind for 0.0.0.0:18080 failed: port is already allocated" >&2
+                      exit 125
+                    fi
+                    touch "$STUBS/running" ;;
+                  rm) rm -f "$STUBS/running" ;;
+                  inspect)
+                    if [ -e "$STUBS/running" ]; then echo true; else echo "No such object" >&2; exit 1; fi ;;
+                  logs) echo "what the engine wrote" ;;
+                esac
+                """);
+        // the readiness of an engine, this run's or another's
+        write(stubs.resolve("bin/curl"), """
+                #!/usr/bin/env bash
+                exit 0
+                """);
+        write(stubs.resolve("bin/mvn"), """
+                #!/usr/bin/env bash
+                echo "$PWD $*" >>"$STUBS/mvn.calls"
+                if [ -n "${FAILING_TWIN:-}" ] && [ "${PWD%/$FAILING_TWIN}" != "$PWD" ]; then
+                  echo "BUILD FAILURE"
+                  exit 1
+                fi
+                echo "BUILD SUCCESS"
+                """);
+        for (final var command : List.of("git", "docker", "curl", "mvn")) {
+            stubs
+                    .resolve("bin")
+                    .resolve(command)
+                    .toFile()
+                    .setExecutable(true);
+        }
+        final var java = Path
+                .of(ProcessHandle
+                        .current()
+                        .info()
+                        .command()
+                        .orElseThrow())
+                .getParent();
+        final var all = new TreeMap<>(environment);
+        all.put("PATH", "%s:%s:%s".formatted(stubs.resolve("bin"), java, System.getenv("PATH")));
+        all.put("STUBS", stubs.toString());
+        all.put("BLUEPRINTS", checkout.toString());
+        return all;
+    }
+
+    private Path stubs() {
+        return temporary.resolve("stubs");
+    }
+
+    /** What a stand-in was called with, one line per call: docker's command, Maven's directory and arguments. */
+    private List<String> stubCalls(final String command) {
+        final var calls = stubs().resolve("%s.calls".formatted(command));
+        return Files.exists(calls) ? read(calls)
+                .lines()
+                .toList() : List.of();
+    }
+
+    /** The lines of the script's results without the seconds each twin took. */
+    private static List<String> results(final Path clone) {
+        return read(clone.resolve("zenbpm-results.txt"))
+                .lines()
+                .map(line -> line.replaceAll(" \\d+$", ""))
+                .toList();
     }
 
     /** The overlay of this repository's source, run with the Java which runs this test. */
@@ -457,12 +694,22 @@ class BlueprintsOverlayTest {
      * after a while instead of holding it.
      */
     private Run run(final List<String> command) {
+        return run(command, Map.of());
+    }
+
+    private Run run(
+        final List<String> command,
+        final Map<String, String> environment
+    ) {
         try {
             final var output = Files.createTempFile(temporary, "output", ".txt");
-            final var process = new ProcessBuilder(command)
+            final var builder = new ProcessBuilder(command)
                     .redirectErrorStream(true)
-                    .redirectOutput(output.toFile())
-                    .start();
+                    .redirectOutput(output.toFile());
+            builder
+                    .environment()
+                    .putAll(environment);
+            final var process = builder.start();
             if (!process.waitFor(2, TimeUnit.MINUTES)) {
                 process
                         .descendants()
@@ -572,6 +819,19 @@ class BlueprintsOverlayTest {
         try {
             Files.createDirectories(file.getParent());
             Files.writeString(file, content);
+        } catch (final IOException e) {
+            throw new UncheckedIOException(e);
+        }
+    }
+
+    private static void copy(
+        final Path from,
+        final Path to
+    ) {
+        try {
+            Files.createDirectories(to.getParent());
+            // with its permissions: the build script runs the engine script as a command
+            Files.copy(from, to, StandardCopyOption.COPY_ATTRIBUTES, StandardCopyOption.REPLACE_EXISTING);
         } catch (final IOException e) {
             throw new UncheckedIOException(e);
         }

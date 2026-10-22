@@ -41,6 +41,12 @@ image() {
 start() {
   local pinned attempt
   pinned="$(image)"
+  # Another run on this machine, a person's or a test's, uses the same name and ports; removing
+  # its engine would fail the twin it builds, or let it pass against a fresh engine.
+  if [ "$(docker inspect --format '{{.State.Running}}' "${CONTAINER}" 2>/dev/null)" = "true" ]; then
+    echo "The engine ${CONTAINER} is running already, started by another run. End that run, or remove its engine with '$0 stop'." >&2
+    exit 1
+  fi
   # Now and then the node gives up its own bootstrap ("failed to bootstrap cluster: boot
   # timeout") when the first call it makes to itself times out, and the container ends. On a
   # laptop it happened once in about ten starts; a fresh container boots.
@@ -52,10 +58,13 @@ start() {
     echo "The engine did not become ready (attempt ${attempt} of ${START_ATTEMPTS}):" >&2
     logs | tail -n 20 >&2
   done
+  # the container of the last attempt is this run's, and may still be booting
+  stop
   exit 1
 }
 
-# Starts a fresh container and waits until it answers ready, gives up or ends.
+# Starts a fresh container and waits until it answers ready, gives up or ends. It runs as the
+# condition of an 'if', where errexit does not hold, so every failure returns by itself.
 started() {
   local waited=0
   stop
@@ -70,7 +79,7 @@ started() {
     --env REST_API_ADDR=:8080 --env GRPC_API_ADDR=:9090 \
     --env CLUSTER_RAFT_BOOTSTRAP_EXPECT=1 --env POLL_TIMER_DELAY_SECONDS=1 \
     --env PERSISTENCE_INSTANCE_HISTORY_TTL=0 --env JOBS_DEFAULT_RETRIES=3 \
-    "$1" >/dev/null
+    "$1" >/dev/null || return 1
   # 503 until the node is the leader and its partitions are initialized
   until curl --silent --fail --output /dev/null "http://localhost:${REST_PORT}/system/health/ready"; do
     if [ "${waited}" -ge "${READY_TIMEOUT_SECONDS}" ] \

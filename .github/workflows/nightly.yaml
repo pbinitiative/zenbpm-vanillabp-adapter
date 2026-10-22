@@ -1,11 +1,11 @@
 name: Nightly
 # What no pull request should have to wait for: the full build against the pinned engine on a
 # quiet night, the same integration tests against the engine's newest build of its main, the
-# native image, and the VanillaBP blueprints on ZenBPM. The jobs do not depend on one another, so one more is added without
-# touching the others. Each writes its result into the run's summary and nothing anywhere
-# else: no job of this workflow may write to any repository, package or issue tracker. The
-# README describes the jobs in its section 'What CI runs', and NightlyWorkflowTest in
-# test-coverage-report/coverage-gate holds what the README says.
+# native image, and the VanillaBP blueprints on ZenBPM. The jobs do not depend on one another,
+# so one more is added without touching the others. Each writes its result into the run's
+# summary and nothing anywhere else: no job of this workflow may write to any repository,
+# package or issue tracker. The README describes the jobs in its section 'What CI runs', and
+# NightlyWorkflowTest in test-coverage-report/coverage-gate holds what the README says.
 "on":
   schedule:
     # 02:37 UTC every night: before the engine's own scheduled workflows, which run from 04:00
@@ -206,7 +206,7 @@ jobs:
   # blueprint on ZenBPM, turns the run red. See decision 64 in the repository's DECISIONS.md.
   blueprints:
     runs-on: ubuntu-latest
-    # the twins one after the other took 52 minutes on a laptop with 14 cores; GitHub's runner
+    # the twins one after the other took 54 minutes on a laptop with 14 cores; GitHub's runner
     # has four, and the first run of a night downloads what every blueprint needs
     timeout-minutes: 150
     permissions:
@@ -234,7 +234,7 @@ jobs:
           --projects spring-boot,quarkus/deployment --also-make install
       - name: Build the blueprints with -Pzenbpm against the pinned engine
         run: bin/build-blueprints-on-zenbpm.sh "$RUNNER_TEMP/blueprints"
-      - name: Upload the logs and the reports of failed twins
+      - name: Upload the logs and the reports of the twins
         if: failure()
         uses: actions/upload-artifact@v7
         with:

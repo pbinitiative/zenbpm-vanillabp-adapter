@@ -423,7 +423,9 @@ decision results (point 6) and its boot (point 8). What did not fit, and what wa
    with `-Pzenbpm` against the pinned engine. Decision 64, decided by the pipeline in place of the
    maintainers. The story's heading, row 59 of the roadmap, the milestone M6 and the ownership
    table of `docs/README.md` say so now. Nothing of the workspace's `blueprints` submodule was
-   changed or built, and nothing of VanillaBP was installed into the local Maven repository.
+   changed or built. The script's first runs installed the overlaid blueprints into the local
+   Maven repository; since the reviews it builds a twin with `verify`, so it installs nothing of
+   VanillaBP (see the answers to the reviews below).
 2. **A generator, not a patch** (decided by the Implementor). A patch over the 142 POMs would stop
    applying at every change of a line near a hunk, also one which changes nothing for ZenBPM, and
    hand-edited copies would drift. `ZenBpmOverlay.java`, run with the build's Java as a source file,
@@ -594,6 +596,94 @@ blueprints CI" into three proofs:
   (new) and sentences on `Home`, `Configuration` and `Deviations`; the README's "Documentation",
   "What CI runs" and "The blueprints on ZenBPM" (new); `NOTICE` names the blueprints; the plan's
   heading, row 59, M6 and `docs/README.md`; a note under S12.4.1.
+
+**Answers to two reviews of e12-s12.2.1, 2026-10-22** (one by Claude, approve with minor changes:
+4 Minor, 2 Nit; one by Copilot, changes requested: 1 Major, 1 Minor). Every claim was checked in
+the scripts, in the generator and in the engine's source at the pin, and against a fresh clone of
+the blueprints at `7acfef0`. All eight are valid. No new decision and no new GAPS number; decision
+64 and GAPS 34 were corrected on this branch, before their first merge.
+
+- **A `docker run` which failed could pass as a ready engine** (Copilot 1, Major). `started` runs
+  as the condition of an `if`, where Bash does not apply errexit, so a failed `docker run` went on
+  to the readiness poll, and where another engine answered on port 18080 the start reported the
+  pinned engine ready and ended with 0. Now `docker run ... || return 1`, and a comment says why.
+  `BlueprintsOverlayTest#theEngineScriptEndsRedWhereItsContainerDoesNotStart` (new) runs the
+  script against stand-ins of `docker` (its `run` failing with "port is already allocated") and
+  `curl` (always ready): three attempts, exit 1.
+- **Decision 64 promised a check the generator did not make** (Claude 1, Minor). Claude's probe
+  holds: a `camunda7` profile activated by `<property><name>!bpms</name></property>` stayed on
+  next to `zenbpm` and the generator said "applied". Maven ends `activeByDefault` profiles only.
+  The generator now refuses a profile of a BPMS (`camunda7`, `camunda8`, `process-engine-api`)
+  whose activation, comments aside, is anything but `activeByDefault`, and names the POM and the
+  activation. `BlueprintsOverlayTest#aBpmsProfileActivatedByMoreThanItsDefaultEndsTheRun` (new);
+  the decision's sentence says what is checked, and the page `Blueprints` lists the refusal.
+- **Nothing held the script's exit code** (Claude 2, Minor). Three new tests run
+  `bin/build-blueprints-on-zenbpm.sh` of a copy of the adapter against stand-ins of `git` (cloning
+  the test's checkout), `docker`, `curl` and `mvn`:
+  `#theBuildScriptEndsRedWhereATwinFailed` (every twin built, a fresh engine for each, removed
+  after its build, the engine's log of the failed twin kept, exit 1),
+  `#theBuildScriptEndsGreenWhereEveryTwinPassed` and
+  `#theBuildScriptEndsRedWhereTheOverlayDoesNotFit` (exit 1, no twin built). The page `Blueprints`
+  names them.
+- **The script installed the blueprints into `~/.m2`** (Claude 3, Minor). True: 65 directories
+  under `io/vanillabp/blueprint` came from the first runs, against the brief. A twin is a reactor
+  of its own: in a fresh clone at `7acfef0` no POM of the 69 twin directories refers to a
+  blueprint artifact or parent outside its twin. So the script builds with `-Pzenbpm verify`, and
+  the page `Blueprints` says `verify` too. The stand-in Maven records its arguments, and
+  `#theBuildScriptEndsRedWhereATwinFailed` asserts every call ends with `-Pzenbpm verify`.
+  Fit-check point 1 no longer says nothing was installed.
+- **Two runs on one machine removed each other's engine** (Claude 4, Minor). This is what spoiled
+  the full run of fit-check point 9. `bin/zenbpm-engine.sh start` now ends with 1 where a container
+  of its name is running, names `bin/zenbpm-engine.sh stop`, and leaves it alone; a container
+  which stopped is still removed. `#theEngineScriptLeavesTheEngineOfAnotherRunAlone` (new). The
+  build script's exit trap removed the engine as well, so a refused start would still have removed
+  the other run's engine on the way out. The trap now removes only an engine this run started:
+  `#theBuildScriptLeavesTheEngineOfAnotherRunAlone` (new). A start which gives up after its three
+  attempts removes the container of its last attempt itself.
+- **A decision which collects hands a list of contexts** (Copilot 2, Minor). True at the pin:
+  `evaluateCollectOutput`, which `evaluateRuleOrderOutput` calls as well, builds a list of
+  contexts where the one output has a name. Camunda 8 hands a list of values there. New
+  `ZenBpmRestClientContractIT#aDecisionTableWhichCollectsHandsAListOfContexts` (a `COLLECT` table
+  in the new `contract-collected-decision.dmn`, a third task of `contract-decided.bpmn`, its diagram
+  regenerated): `=collected` is `[{"discount": 10}, {"discount": 5}]`, and `=collected.discount`
+  is `[10, 5]`, the list Camunda 8 hands. GAPS 34 (row and `Deviations`) and `Configuration` say
+  both shapes. The row also had no text in its last column, "Engine change which would close it";
+  it has one now.
+- **The artifact holds every twin's reports** (Claude 5, Nit). The step is now "Upload the logs
+  and the reports of the twins", and the README says what is in it.
+- **Wording and layout** (Claude 6, Nit). Decision 64 and the workflow's header comment are wrapped
+  at 100 columns, the comment of the job says 54 minutes (the final run), and
+  `withUserTasksNamedByTheirForm` is private.
+- Mutants, 12 applied, 11 killed and 1 equivalent:
+  - killed:
+    - `docker run` unchecked;
+    - the check for a running engine switched off;
+    - the exit trap removing the engine unconditionally;
+    - the trap's flag never cleared after a twin;
+    - a start which gives up leaving its last container;
+    - the script ending with 0 always;
+    - `install` in place of `verify`;
+    - the script ending at the first red twin;
+    - the engine not removed after a twin;
+    - the activation check dropped;
+    - comments kept in the activation read;
+  - equivalent: `|| true` after the overlay. A run which does not fit writes no
+    `zenbpm-twins.txt`, so the script ends with 1 at reading it and builds nothing, which is what
+    the test asserts.
+- `shellcheck` (koalaman/shellcheck:stable) is clean on both scripts. `ZenBpmRestClientContractIT`:
+  36 green against the pinned image.
+- Builds: `TZ=Etc/UTC mvn clean install` green in 18:11 min, Docker ITs included and none skipped:
+  - engine test support 12 + 5;
+  - core 1,276 + 108 (the new contract case);
+  - Spring Boot 14 + 97;
+  - smoke test 42 + 1;
+  - election integration test 8;
+  - Quarkus runtime 13, deployment 60, integration tests 26;
+  - gate 92 (`BlueprintsOverlayTest` 26, seven new).
+
+  The gate measured 100 %: 0 of 38,473 (Spring Boot) and 0 of 38,470 (Quarkus) instructions
+  missed. `bin/check-deploy-safety.sh` was green: the green build deployed exactly the 13 published
+  files, and the red gate deployed nothing.
 
 ## S12.3.1 Renovate, local workspace notes and the VanillaBP wiki row
 

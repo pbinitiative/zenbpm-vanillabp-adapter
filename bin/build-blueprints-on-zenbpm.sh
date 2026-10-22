@@ -10,7 +10,7 @@
 # It clones the newest 'main' of vanillabp-blueprints/blueprints into <directory>, which must not
 # exist yet, applies the overlay of blueprints-overlay/ to it, and builds every twin the overlay
 # lists, or only the twins named (for example 'blueprints-bpmn/bpmn-timer/quarkus'), each with
-# 'mvn -Pzenbpm install' against an engine of its own which bin/zenbpm-engine.sh starts and
+# 'mvn -Pzenbpm verify' against an engine of its own which bin/zenbpm-engine.sh starts and
 # removes again: the twins of a blueprint deploy the same processes under the same identifiers,
 # and a twin must not find the workflows, timers and versions the one before it left. It reads
 # the adapter from the local Maven repository, so install it from this checkout first:
@@ -21,6 +21,9 @@
 # fit the checkout or a twin failed, and writes into <directory>:
 #   zenbpm-results.txt   one line per twin: '<twin> passed|failed <seconds>'
 #   zenbpm-logs/         the build's output of every twin, and the engine's of a failed one
+#
+# 'verify', not 'install': a twin is a reactor of its own, and the blueprints changed by the
+# overlay have no business in the local Maven repository.
 
 set -o errexit
 set -o nounset
@@ -58,7 +61,9 @@ LOGS="${CHECKOUT}/zenbpm-logs"
 mkdir -p "${LOGS}"
 : >"${RESULTS}"
 failed=0
-trap '"${ROOT}/bin/zenbpm-engine.sh" stop' EXIT
+# only an engine this run started: one bin/zenbpm-engine.sh refused to start belongs to another run
+own_engine=false
+trap 'if [ "${own_engine}" = true ]; then "${ROOT}/bin/zenbpm-engine.sh" stop; fi' EXIT
 
 for twin in "${twins[@]}"; do
   if ! grep --quiet --line-regexp --fixed-strings "${twin}" "${CHECKOUT}/zenbpm-twins.txt"; then
@@ -69,10 +74,11 @@ for twin in "${twins[@]}"; do
   started="${SECONDS}"
   echo "::group::${twin}"
   "${ROOT}/bin/zenbpm-engine.sh" start
+  own_engine=true
   # --update-snapshots, as the blueprints' own CI does: the VanillaBP platform is a snapshot,
   # and a local repository would keep yesterday's for the rest of the day
   if (cd "${CHECKOUT}/${twin}" && mvn --settings "${ROOT}/blueprints-overlay/settings.xml" \
-    --batch-mode --no-transfer-progress --update-snapshots -Pzenbpm install) >"${log}" 2>&1; then
+    --batch-mode --no-transfer-progress --update-snapshots -Pzenbpm verify) >"${log}" 2>&1; then
     result=passed
   else
     result=failed
@@ -81,6 +87,7 @@ for twin in "${twins[@]}"; do
     tail -n 60 "${log}"
   fi
   "${ROOT}/bin/zenbpm-engine.sh" stop
+  own_engine=false
   echo "${twin} ${result} $((SECONDS - started))" | tee -a "${RESULTS}"
   echo "::endgroup::"
 done

@@ -246,8 +246,10 @@ names every element and whether the engine would refuse it or run something else
 **A business rule task hands its result to the process only through an output mapping**, for
 example `<zenbpm:output source="=rating" target="rating" />`
 ([GAPS 27](Deviations#gaps-27-a-decisions-result-needs-an-output-mapping)). The result of a decision
-table whose one output has a name is a context holding that output, so such a mapping reads
-`=rating.rating` ([GAPS 34](Deviations#gaps-34-a-decision-with-one-named-output-hands-a-context)).
+table whose one output has a name is a context holding that output, or a list of such contexts
+where the table hands every matching rule, so such a mapping reads `=rating.rating`, which is the
+value or the list of values
+([GAPS 34](Deviations#gaps-34-a-decision-with-one-named-output-hands-a-context)).
 
 **A version tag** is written as `<zenbpm:versionTag value="..." />` on the process, and the engine
 gives a tag to one version only ([GAPS 32](Deviations#gaps-32-a-version-tag-names-one-version)).
