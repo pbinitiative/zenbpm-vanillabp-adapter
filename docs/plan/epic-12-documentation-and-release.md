@@ -1089,6 +1089,13 @@ was corrected on this branch, before its first merge.
   which the build before had passed and which this change does not touch; the script deletes its
   directory, so the failing test is not known. The second run, of the same tree, was green.
 
+**CodeRabbit on the pull request, 2026-10-23**: two comments, both valid. `bin/release.sh rehearse`
+threw away the output of the upload, and Maven writes its errors there, so a failed rehearsal
+ended without its reason; the output now goes to the log
+(`ReleaseScriptTest#aFailedRehearsalSaysWhatMavenSaid`, red before the change). `Home`'s sentence
+that the pin moves to an engine release before the first release names
+`ReleaseScriptTest#aPinOnTheEnginesMainIsRefused`.
+
 **E12's goal, checked at its end** (E12 has no "Done when"; its goal stands in for it):
 
 - "A user finds everything on the wiki": MET. S12.1.1's pages, published from `wiki/`, held by

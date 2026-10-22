@@ -367,6 +367,16 @@ class ReleaseScriptTest {
     }
 
     @Test
+    @DisplayName("A rehearsed upload which fails ends the rehearsal with Maven's reason")
+    void aFailedRehearsalSaysWhatMavenSaid() {
+        final var release = stage();
+        final var run = release(Map.of("UPLOAD_FAILS", "Failed to deploy artifacts: status code 409"), "rehearse",
+                release.toString());
+
+        assertRefused(run, "[ERROR] Failed to deploy artifacts: status code 409");
+    }
+
+    @Test
     @DisplayName("An upload without a staged release uploads nothing, and a command without its arguments is refused")
     void nothingIsUploadedWithoutAStagedRelease() {
         assertRefused(release(Map.of(), "upload", temporary.toString(), "https://maven.example/releases"),
@@ -543,6 +553,7 @@ class ReleaseScriptTest {
                           exit 0
                         fi
                         if [ -n "${target:-}" ]; then
+                          if [ -n "${UPLOAD_FAILS:-}" ]; then echo "[ERROR] $UPLOAD_FAILS"; exit 1; fi
                           for source in "$file" "$pom" ${sources:+"$sources"}; do
                             if [ -n "${DROPPED:-}" ] && [[ "$source" == *"$DROPPED" ]]; then continue; fi
                             versioned="$(dirname "$source")"

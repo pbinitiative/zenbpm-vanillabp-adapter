@@ -211,7 +211,8 @@ rehearse() {
   target="$(mktemp -d)"
   # shellcheck disable=SC2064 # the directory is known now
   trap "rm -rf '$target'" EXIT
-  upload "$staged" "file://$target" >/dev/null
+  # Maven writes its errors to standard output, which goes to the log with them, not to the result
+  upload "$staged" "file://$target" >&2
   expected="$(published_files "$staged/repository")"
   uploaded="$(published_files "$target")"
   if [ "$uploaded" != "$expected" ]; then

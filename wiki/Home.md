@@ -215,7 +215,8 @@ cannot be reproduced by the adapter's tests, which run one node.
 The adapter is tested against exactly one build of the engine, and supports that one: tested, not
 newer. No released engine version is supported yet: the adapter was pinned while no engine release
 carried the job lock the task delivery is built on, and the pin moves to an engine release before
-the adapter's first release. The build is one of the engine's `main`:
+the adapter's first release, which refuses a pin on the engine's `main`
+(`ReleaseScriptTest#aPinOnTheEnginesMainIsRefused`). The build is one of the engine's `main`:
 
 - commit `bdd795a399b6484d062d52ac90c0d0725cb0ad91`,
 - image `ghcr.io/pbinitiative/zenbpm@sha256:d7808e30821a7349e0f42476d8aaa21ff92fc752c0ccc432771764d307b87ed0`.
