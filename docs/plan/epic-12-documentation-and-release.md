@@ -335,6 +335,22 @@ Builds after the fixes (OpenJDK 25.0.2, Docker ITs, none skipped):
 - `bin/check-deploy-safety.sh`: green at the first run, 13 files deployed by the green build,
   nothing by the red gate.
 
+**Answers to CodeRabbit on pull request #83, 2026-10-22** (two inline comments, one nitpick, its
+generic docstring-coverage warning not acted on, as in every batch before). All three are valid.
+
+- **`EnginePinTest` did not read the image of `Home`'s command** (nitpick). Its pattern matches an
+  image by digest only, so a command starting `ghcr.io/pbinitiative/zenbpm:latest` passed while the
+  pinned digest stood elsewhere on the page. `EnginePinTest#theWikiNamesThePin` now also asserts
+  that every `docker run` of `Home` starts the pinned image. Mutant: the command on `:latest`;
+  killed.
+- **The README's `Status` named no test** (README line 29). The paragraph sums up what the sections
+  below describe; it now says that each item is described under `Behavior` and `Native image` with
+  the tests which hold it, rather than repeating them.
+- **"A start message no start event takes"** (README line 511) reads as broken English; now "which
+  no start event takes".
+- Builds: `TZ=Etc/UTC mvn clean install`, 17:57 min, green, the same counts as above, none
+  skipped, coverage 100 % on both platforms; `bin/check-deploy-safety.sh` green at the first run.
+
 ## S12.2.1 Blueprints profile `-Pzenbpm` (a pull request to the VanillaBP project)
 
 - [ ] **Depends on:** S12.1.1 (a released or snapshot artifact a foreign build can resolve).

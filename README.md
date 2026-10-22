@@ -25,8 +25,9 @@ workflows through VanillaBP's two-phase start, also by a message, runs `@Workflo
 the jobs the engine hands out over its job stream, completes and cancels the tasks and the user
 tasks the application left open, tells the application about user tasks, correlates messages, pushes
 a changed aggregate, reports the start and the end of a workflow, answers every probe of the
-platform and the viewer/history API, and runs in a native image. The snapshots of `main` are
-published, see [Using the snapshots](#using-the-snapshots); no version is released.
+platform and the viewer/history API, and runs in a native image. Each of these is described under
+[Behavior](#behavior) and [Native image](#native-image), with the tests which hold it. The snapshots
+of `main` are published, see [Using the snapshots](#using-the-snapshots); no version is released.
 
 What the engine cannot do, and how the adapter answers it, is under
 [Known deviations](#known-deviations). The adapter is tested against exactly one build of the
@@ -508,9 +509,9 @@ application calls, naming the key. Each start of the application names the proce
 starts and the value in force. ZenBPM loses starts when two start messages of one name reach it at
 the same moment, answering one of them as if it started a workflow (GAPS 30), so each node publishes
 the start messages of one name one after the other; several nodes of an application may still lose
-such a start unseen. A start message no start event takes is answered `404`, also where another node
-took the start event at that moment, so it is repeated with the outbox's backoff and blocked after
-`vanillabp.outbox.block-after-attempts` (decision 47).
+such a start unseen. A start message which no start event takes is answered `404`, also where
+another node took the start event at that moment, so it is repeated with the outbox's backoff and
+blocked after `vanillabp.outbox.block-after-attempts` (decision 47).
 
 ### Pushing a changed aggregate
 

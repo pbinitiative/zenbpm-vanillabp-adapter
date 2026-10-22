@@ -47,6 +47,9 @@ class EnginePinTest {
 
     private static final Pattern ANY_IMAGE = Pattern.compile("[^\\s`|(]+@sha256:[0-9a-f]{64}");
 
+    /** The image a <code>docker run</code> starts: the last word of the command. */
+    private static final Pattern IMAGE_OF_A_COMMAND = Pattern.compile("(?m)^docker run [^\\n]*[ \\t](\\S+)[ \\t]*$");
+
     @Test
     @DisplayName("The header of the copied REST contract names the pinned commit and image")
     void theRestContractNamesThePin() throws IOException {
@@ -74,7 +77,14 @@ class EnginePinTest {
     @Test
     @DisplayName("The wiki's page Home names the pinned commit and image, and no page of the wiki names another engine")
     void theWikiNamesThePin() throws IOException {
-        assertNamesThePin("wiki/Home.md", Files.readString(ROOT.resolve("wiki/Home.md")));
+        final var home = Files.readString(ROOT.resolve("wiki/Home.md"));
+        assertNamesThePin("wiki/Home.md", home);
+        // a command which starts an image by a tag names no digest, which the check above would miss
+        assertEquals(List.of(IMAGE), IMAGE_OF_A_COMMAND
+                .matcher(home)
+                .results()
+                .map(command -> command.group(1))
+                .toList(), "every 'docker run' of wiki/Home.md has to start the pinned image");
         try (var pages = Files.list(ROOT.resolve("wiki"))) {
             for (final var page : pages.toList()) {
                 final var text = Files.readString(page);
