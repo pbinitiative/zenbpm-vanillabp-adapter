@@ -98,5 +98,5 @@ Four things were added to what was asked for, because the analysis made them una
 4. **CI from the first commit, shaped by every epic.** The repository lives in an organisation other
    than the platform it builds against, so the pull-request workflow, the snapshot publication and the
    coverage pages exist before the first line of Java (E1, feature F1.3) and grow with the plan: Docker
-   integration tests from E4, a nightly run against the engine's `latest` image and a native-image job
-   in E11, the release workflow in E12, and a cross-repository trigger from the engine's CI in E13.
+   integration tests from E4, a nightly run against the pinned engine and the engine's newest `main`
+   build (`ghcr.io/pbinitiative/zenbpm:dev`) and a native-image job in E11, the release workflow in E12, and a cross-repository trigger from the engine's CI in E13.

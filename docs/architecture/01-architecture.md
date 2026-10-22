@@ -59,7 +59,8 @@ zenbpm-vanillabp-adapter/
   .github/workflows/              checks.yaml (PR + main: Spotless, build, unit and Docker tests, report upload)
                                   publish-snapshots.yaml (main: snapshots to pbinitiative's GitHub Packages,
                                     coverage reports to GitHub Pages)
-                                  nightly.yaml (E11: pinned engine plus the engine's latest image, native image)
+                                  nightly.yaml (E11: pinned engine, the engine's newest main build ':dev',
+                                    native image; one summary line per job, writes nothing)
                                   release.yaml (E12: tag -> release build, publication, wiki version table)
                                   settings.xml with the server publish-snapshots.yaml deploys to
   renovate.json                   own configuration (config:recommended); the engine image and pin move together

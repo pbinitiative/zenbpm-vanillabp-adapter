@@ -1,0 +1,193 @@
+name: Nightly
+# What no pull request should have to wait for: the full build against the pinned engine on a
+# quiet night, the same integration tests against the engine's newest build of its main, and
+# the native image. The jobs do not depend on one another, so one more is added without
+# touching the others. Each writes one line about its result into the run's summary and
+# nothing anywhere else: no job of this workflow may write to any repository, package or
+# issue tracker. The README describes the jobs in its section 'What CI runs', and
+# NightlyWorkflowTest in test-coverage-report/coverage-gate holds what the README says.
+"on":
+  schedule:
+    # 02:37 UTC every night: before the engine's own scheduled workflows, which run from 04:00
+    # to 06:00 UTC, and off the full hour, at which GitHub delays the runs it starts
+    - cron: "37 2 * * *"
+  workflow_dispatch:
+  # A pull request which changes this file runs it, so a change of the nightly is seen working
+  # before it is merged. A dispatch or a schedule can only run the file on main. Any other
+  # pull request never starts it.
+  pull_request:
+    paths:
+      - .github/workflows/nightly.yaml
+permissions:
+  contents: read
+concurrency:
+  # as in checks.yaml: on a pull request the newest run wins, on main every run keeps its answer
+  group: nightly-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+jobs:
+  # The build of checks.yaml's required check, once a night with nobody waiting for it: a test
+  # which fails now and then shows up here and not in somebody's pull request.
+  pinned-engine:
+    runs-on: ubuntu-latest
+    # as in checks.yaml: well above a normal run, so a container which hangs costs this much
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      # the engine image is pulled from ghcr.io logged in as this workflow, as in checks.yaml
+      packages: read
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      # the JDK of the required check; settings.xml out of Maven's way, as in checks.yaml
+      - uses: actions/setup-java@v6
+        with:
+          java-version: 25.0.4+101.0.LTS
+          distribution: temurin
+          cache: maven
+          settings-path: ${{ runner.temp }}/setup-java
+      - name: Log in to the GitHub container registry
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build and test against the pinned engine
+        run: mvn --batch-mode --no-transfer-progress --update-snapshots install
+      - name: Upload the reports of a failed build
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: pinned-engine-reports
+          path: |
+            **/target/surefire-reports/**
+            **/target/failsafe-reports/**
+            **/target/site/jacoco*/**
+            test-coverage-report/*/report/**
+          retention-days: 7
+          if-no-files-found: warn
+      - name: Write the summary line
+        if: always()
+        env:
+          RESULT: ${{ job.status }}
+        run: |
+          commit="$(sed -nE 's|.*<zenbpm\.commit>([0-9a-f]{40})</zenbpm\.commit>.*|\1|p' pom.xml)"
+          echo "Pinned engine: the build against commit \`$commit\` ended with \`$RESULT\`." >>"$GITHUB_STEP_SUMMARY"
+
+  # The integration tests against the engine's newest build of its main, the moving tag
+  # ghcr.io/pbinitiative/zenbpm:dev. A red run is the earliest warning that an engine change
+  # breaks the adapter, and a person takes the finding to the engine's maintainers; it must not
+  # turn the nightly red, because nothing in this repository changed. See decision 62 in the
+  # repository's DECISIONS.md.
+  latest-engine:
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@v6
+        with:
+          java-version: 25.0.4+101.0.LTS
+          distribution: temurin
+          cache: maven
+          settings-path: ${{ runner.temp }}/setup-java
+      - name: Log in to the GitHub container registry
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      # The tests refuse a tag, and they hold the engine to the commit it reports, so ':dev' is
+      # turned into its digest and the commit it was built from. The script writes the summary
+      # line naming both and the commit the engine reported.
+      - name: Resolve the engine's newest build
+        id: engine
+        run: bin/resolve-latest-engine.sh ghcr.io/pbinitiative/zenbpm:dev
+      # The same build as the job above with the engine replaced, without the coverage gate:
+      # the gate's EnginePinTest compares the README and the copies of the engine's contract
+      # with the engine the build runs against, which here is on purpose another one, and
+      # coverage is the business of the pinned build.
+      - name: Build and test against the engine's newest build
+        env:
+          ENGINE_IMAGE: ${{ steps.engine.outputs.image }}
+          ENGINE_COMMIT: ${{ steps.engine.outputs.commit }}
+        run: mvn --batch-mode --no-transfer-progress --update-snapshots install
+          "-Dzenbpm.image=$ENGINE_IMAGE" "-Dzenbpm.commit=$ENGINE_COMMIT"
+          --projects '!test-coverage-report/coverage-gate'
+      - name: Upload the reports of a failed build
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: latest-engine-reports
+          path: |
+            **/target/surefire-reports/**
+            **/target/failsafe-reports/**
+          retention-days: 7
+          if-no-files-found: warn
+      - name: Write the summary line
+        if: always()
+        env:
+          RESULT: ${{ job.status }}
+          ENGINE_COMMIT: ${{ steps.engine.outputs.commit }}
+        run: |
+          echo "Latest engine: the build against commit \`${ENGINE_COMMIT:-unresolved}\` ended with \`$RESULT\`." >>"$GITHUB_STEP_SUMMARY"
+
+  # The application of quarkus/native-image-tests built as a native image, and the binary run
+  # against the pinned engine: the two Maven calls of the README's section 'Native image'. The
+  # image is built with Mandrel, the GraalVM distribution Quarkus builds with, installed on the
+  # runner rather than in the builder container a laptop uses, so the build with a local GraalVM
+  # the README names is the one tested here.
+  native-image:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      # The newest Mandrel for Java 25, the line of the builder image Quarkus picks (jdk-25). It
+      # is the JDK of the whole job.
+      - uses: graalvm/setup-graalvm@v1
+        with:
+          distribution: mandrel
+          java-version: "25"
+          cache: maven
+      - name: Log in to the GitHub container registry
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      # '-Dmaven.test.skip=true' and not '-DskipTests', which still runs the core's integration
+      # tests
+      - name: Install what the native application needs
+        run: mvn --batch-mode --no-transfer-progress --update-snapshots -Dmaven.test.skip=true
+          --projects quarkus/deployment,quarkus/native-image-tests --also-make install
+      - name: Build the native image and run it against the pinned engine
+        run: mvn --batch-mode --no-transfer-progress --projects quarkus/native-image-tests
+          -Dnative -Dquarkus.native.container-build=false verify
+      # what the binary printed is the place to read when it failed
+      - name: Upload the binary's log and the reports of a failed build
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: native-image-reports
+          path: |
+            quarkus/native-image-tests/target/native-image-application.log
+            quarkus/native-image-tests/target/failsafe-reports/**
+          retention-days: 7
+          if-no-files-found: warn
+      - name: Write the summary line
+        if: always()
+        env:
+          RESULT: ${{ job.status }}
+        run: |
+          builder="$(native-image --version | head -n 1)"
+          echo "Native image: the build with \`$builder\` and the run of the binary against the pinned engine ended with \`$RESULT\`." >>"$GITHUB_STEP_SUMMARY"

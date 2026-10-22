@@ -33,6 +33,12 @@
       <artifactId>junit-jupiter</artifactId>
       <scope>test</scope>
     </dependency>
+    <!-- reads the nightly workflow, which NightlyWorkflowTest holds to the README -->
+    <dependency>
+      <groupId>org.yaml</groupId>
+      <artifactId>snakeyaml</artifactId>
+      <scope>test</scope>
+    </dependency>
     <!-- the two overlays of the configuration, which QuarkusOverlayTest compares by
          reflection: the jars alone, without anything they bring, so no class of one platform
          meets the other, and the core for the types their methods name -->

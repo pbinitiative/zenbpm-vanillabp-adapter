@@ -247,8 +247,8 @@ class ZenBpmTaskOutcomesTest {
         engine.answers("GET", "/v1/jobs/%d".formatted(keyOfPartitionTwo), 502, """
                 {"code":"CLUSTER_ERROR","message":"partition 2 not found"}""");
         engine.answers("GET", "/system/status", 200, """
-                {"git": {"commitId": "bdd795a399b6"}, "build": {"version": "v1.8.0"}, "nodes": {"zen-1": {}},
-                 "partitions": {"1": {"id": 1}}}""");
+                {"git": {"commitId": "%s"}, "build": {"version": "v1.8.0"}, "nodes": {"zen-1": {}},
+                 "partitions": {"1": {"id": 1}}}""".formatted(FakeEngine.pinnedCommitAsReported()));
 
         final var gone = assertThrows(TaskNotFoundException.class, () -> check(PhaseOperation.COMPLETE_TASK, String
                 .valueOf(keyOfPartitionTwo)));

@@ -668,8 +668,8 @@ class ZenBpmWorkflowViewerTest {
         engine.answers("GET", "/v1/process-instances/%d".formatted(otherPartition), 502, """
                 {"code":"CLUSTER_ERROR","message":"partition not found"}""");
         engine.answers("GET", "/system/status", 200, """
-                {"git": {"commitId": "bdd795a399b6"}, "build": {"version": "v1.8.0"}, "nodes": {"zen-1": {}},
-                 "partitions": {"1": {"id": 1}}}""");
+                {"git": {"commitId": "%s"}, "build": {"version": "v1.8.0"}, "nodes": {"zen-1": {}},
+                 "partitions": {"1": {"id": 1}}}""".formatted(FakeEngine.pinnedCommitAsReported()));
         engine.answers("GET", "/v1/process-instances/5", 503, null);
 
         final var ofAnotherPartition = processService.getWorkflowHistory("shop", "Order", null, "order-1", String

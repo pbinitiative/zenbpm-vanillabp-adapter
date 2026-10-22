@@ -105,6 +105,15 @@ says.
 **Acceptance criteria**: `./mvnw install -Pzenbpm` is green in the blueprints CI after the pull
 request is merged; until then, green locally against the workspace checkout.
 
+*Note from S11.6.1, 2026-10-22.* The pipeline's policy turns this story into an overlay kept in this
+repository and a job of the adapter's nightly, `.github/workflows/nightly.yaml`. The nightly is
+shaped for it: its jobs do not depend on one another, and `NightlyWorkflowTest` in the coverage
+gate asks every job for a description in the README's section "What CI runs" (a bullet naming the
+job) and for a last step with `if: always()` which appends a line to `$GITHUB_STEP_SUMMARY`. The
+new job adds both, reads with the workflow's `GITHUB_TOKEN` only (the test refuses any other secret
+and any write permission), and must not set `continue-on-error`, which the test allows for
+`latest-engine` only, unless this story decides otherwise and changes the test with the README.
+
 ## S12.3.1 Renovate, local workspace notes and the VanillaBP wiki row
 
 - [ ] **Depends on:** S12.1.1.

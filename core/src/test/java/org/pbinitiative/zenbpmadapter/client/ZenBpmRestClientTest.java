@@ -181,7 +181,7 @@ class ZenBpmRestClientTest {
     void theStatusNamesVersionCommitAndNodes() {
         engine.answers("GET", "/system/status", 200, """
                 {
-                  "git": {"branch": "main", "commitId": "bdd795a399b6"},
+                  "git": {"branch": "main", "commitId": "0123456789ab"},
                   "build": {"version": "v1.8.0", "time": "2026-10-13T08:00:00Z"},
                   "health": {"ok": true, "reasons": []},
                   "clusterConfig": {"desiredPartitions": 1},
@@ -189,7 +189,7 @@ class ZenBpmRestClientTest {
                   "nodes": {"zen-2": {"id": "zen-2"}, "zen-1": {"id": "zen-1"}}
                 }""");
 
-        assertEquals(new EngineStatus("v1.8.0", "bdd795a399b6", List.of("zen-1", "zen-2"), List.of(1)),
+        assertEquals(new EngineStatus("v1.8.0", "0123456789ab", List.of("zen-1", "zen-2"), List.of(1)),
                 client.status());
     }
 
@@ -964,7 +964,7 @@ class ZenBpmRestClientTest {
         try (var addressed = clientOf("http://127.0.0.1:%d/zenbpm".formatted(port()))) {
             engine.answers("GET", "/zenbpm/v1/jobs/1", 404, null);
             engine.answers("GET", "/zenbpm/system/status", 200, """
-                    {"git": {"commitId": "bdd795a399b6"}, "build": {"version": "v1.8.0"}, "nodes": {}}""");
+                    {"git": {"commitId": "0123456789ab"}, "build": {"version": "v1.8.0"}, "nodes": {}}""");
 
             addressed.job(1);
             addressed.status();
