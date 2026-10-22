@@ -947,7 +947,10 @@ The engine pin is not Renovate's. While it is a build of the engine's `main`, it
 together with the copies of the engine's contract, as the section
 [Supported engine version](#supported-engine-version) says. Once the pin is an engine release, an
 entry which follows the engine's GitHub releases is added to `renovate.json`, and the pull request it
-opens is completed by hand the same way.
+opens is completed by hand the same way. The plan holds that entry ready (story S12.3.1 in
+[`docs/plan/epic-12-documentation-and-release.md`](./docs/plan/epic-12-documentation-and-release.md)),
+and it finds the release a re-pinned root POM names
+(`RenovateConfigurationTest#theEntryForTheEnginesReleasesFindsTheRelease`).
 
 ## Using the snapshots
 
@@ -1117,17 +1120,23 @@ changes `.github/workflows/release.yaml`, `.github/workflows/settings.xml`, `bin
 `bin/published-artifacts.sh`. Without a tag it rehearses the version the root POM's `revision` leads
 to. It runs every step of `build`, writes each refusal into the run's summary instead of stopping, and
 goes on, so its summary shows what a release of that commit would meet. Today a release would be
-refused three times: the engine pin is a build of the engine's `main`, the tag does not exist, and
-the POMs name VanillaBP's `2.0.0-SNAPSHOT`.
+refused for these reasons: the engine pin is a build of the engine's `main`, the POMs name
+VanillaBP's `2.0.0-SNAPSHOT`, and the tag does not exist. The README names the first two exactly
+while the root POM gives them (`ReleaseWorkflowTest#theReadmeNamesTodaysRefusalsWhileTheyHold`).
+A pull request which changes only the root POM's publication settings (`distributionManagement`,
+`deployAtEnd`, the flatten plugin) does not run the dry run, because nearly every update of a
+dependency changes the root POM too; such a change is rehearsed by a dispatch of its branch,
+`gh workflow run release.yaml --ref <branch>`.
 
 `bin/release.sh` holds the steps, one command each, and a person runs them the same way, for example
 `bin/release.sh engine`. `ReleaseScriptTest` in `test-coverage-report/coverage-gate` runs every
-command against stand-ins for git, curl, the GitHub CLI and Maven, and checks that today's pin is
-refused (`ReleaseScriptTest#todaysPinIsRefused`). `ReleaseWorkflowTest` holds the workflow to this
-section: its triggers, the refusals before the build which stop a release and not a dry run, the job
-`publish` as the only one which uploads and only for a pushed tag, no other workflow which publishes
-a release, and the root POM's `revision`, which has to stay a snapshot, because
-`publish-snapshots.yaml` deploys it as it stands. Every job writes into the run's summary.
+command against stand-ins for git, curl, the GitHub CLI and Maven, and checks that a pin on a build
+of the engine's `main` is refused (`ReleaseScriptTest#aPinOnTheEnginesMainIsRefused`).
+`ReleaseWorkflowTest` holds the workflow to this section: its triggers, the refusals before the
+build which stop a release and not a dry run, the job `publish` as the only one which uploads and
+only for a pushed tag, no other workflow which publishes a release, and the root POM's `revision`,
+which has to stay a snapshot, because `publish-snapshots.yaml` deploys it as it stands. Every job
+writes into the run's summary.
 
 What the first release needs, all of it the maintainers':
 
@@ -1136,9 +1145,22 @@ What the first release needs, all of it the maintainers':
 2. The engine pin moves to an engine release, as the section
    [Supported engine version](#supported-engine-version) says, and `renovate.json` gets the entry
    which follows the engine's releases (section [Dependency updates](#dependency-updates)).
-3. A dispatch of the dry run on `main` shows no refusal but the missing tag.
-4. An annotated tag `v2.0.0` with the release's notes is pushed. `UPGRADE.md` already says that
-   there is nothing to upgrade from.
+3. In the same pull request, the README's sections [Dependencies](#dependencies),
+   [Using the snapshots](#using-the-snapshots) and this one, and the wiki's page `Home` in `wiki/`,
+   name `2.0.0` and the engine release instead of `2.0.0-SNAPSHOT` and "not released yet".
+   `ReleaseWorkflowTest#theReadmeNamesTodaysRefusalsWhileTheyHold` fails while this section still
+   names a reason which no longer holds.
+4. A dispatch of the dry run on `main` shows no refusal but the missing tag.
+5. An annotated tag `v2.0.0` with the release's notes is pushed on a commit of `main`. The workflow
+   releases the commit of any tag `v*`, so a tag ruleset which lets only maintainers create `v*`
+   tags, and an environment with required reviewers for the job `publish`, are recommended; both
+   are settings of the repository. `UPGRADE.md` already says that there is nothing to upgrade from.
+
+If the job `publish` fails after it uploaded a part of the release, running it again cannot
+upload that version once more, because GitHub Packages does not replace a version of a package it
+holds. Delete the versions the failed run uploaded in the repository's Packages and run the job
+again. Where only the GitHub release is missing, create it by hand from the run's artifact
+`release`, which holds the notes: `gh release create v2.0.0 --verify-tag --notes-file notes.md`.
 
 Publishing to Maven Central as well needs the organisation's namespace and signing secrets there,
 and is left open (decision 65).

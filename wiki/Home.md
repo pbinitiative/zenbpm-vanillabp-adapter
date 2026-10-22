@@ -42,8 +42,8 @@ says how to add it to your Maven settings. The adapter needs Java 21 or newer.
 A release will be published to the same GitHub Packages by the repository's release workflow, from
 a tag, and by nothing else (`ReleaseWorkflowTest#onlyThePublishJobOfAPushedTagPublishes`). It
 refuses to release while the adapter is tested against an engine which is no engine release
-(`ReleaseScriptTest#todaysPinIsRefused`), or while it depends on a snapshot
-(`ReleaseScriptTest#aSnapshotIsRefused`), and both hold today. The first release is the maintainers'
+(`ReleaseScriptTest#aPinOnTheEnginesMainIsRefused`), or while it depends on a snapshot
+(`ReleaseScriptTest#aSnapshotIsRefused`). The first release is the maintainers'
 step; the README's section
 [Releasing](https://github.com/pbinitiative/zenbpm-vanillabp-adapter/blob/main/README.md#releasing)
 says what it needs.

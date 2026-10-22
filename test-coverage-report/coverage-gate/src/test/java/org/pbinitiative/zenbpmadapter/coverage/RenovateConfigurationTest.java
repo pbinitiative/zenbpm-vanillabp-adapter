@@ -70,6 +70,10 @@ class RenovateConfigurationTest {
     /** An image a workflow names by a version, as a 'run:' line names actionlint. */
     private static final Pattern IMAGE_BY_VERSION = Pattern.compile("\\b[a-z0-9.-]+(?:/[a-z0-9._-]+)+:[0-9][^\\s\"']*");
 
+    /** The custom manager for the engine's releases, which the plan holds ready in a 'json' block. */
+    private static final Pattern ENGINE_ENTRY = Pattern.compile(
+            "```json\\s*(\\{[^`]*?\"depNameTemplate\": \"pbinitiative/zenbpm\"[^`]*?})\\s*```");
+
     /** A full version of the JDK, as the workflows name the one they build on. */
     private static final Pattern FULL_JDK = Pattern.compile("\\b\\d+\\.\\d+\\.\\d+\\+[0-9.]+\\.LTS\\b");
 
@@ -132,35 +136,24 @@ class RenovateConfigurationTest {
     @Test
     @DisplayName("The custom managers find every image a workflow runs by a version and the JDK of the required check")
     void theCustomManagersFindWhatTheirDescriptionsSay() throws IOException {
+        final var files = new ArrayList<Path>(workflows());
+        files.addAll(poms());
         final var found = new TreeSet<String>();
         for (final var manager : list(configuration().get("customManagers"), "customManagers")) {
             final var description = String.valueOf(manager.getOrDefault("description", ""));
             assertFalse(description.isBlank(), () -> "The custom manager %s says nothing about why it is there."
                     .formatted(manager));
-            var matched = false;
-            for (final var workflow : workflows()) {
+            final var foundByTheManager = new TreeSet<String>();
+            for (final var file : files) {
                 final var path = ROOT
-                        .relativize(workflow)
+                        .relativize(file)
                         .toString();
-                if (strings(manager.get("managerFilePatterns"))
-                        .stream()
-                        .noneMatch(pattern -> matches(pattern, path))) {
-                    continue;
-                }
-                final var content = Files.readString(workflow);
-                for (final var matchString : strings(manager.get("matchStrings"))) {
-                    final var matcher = Pattern
-                            .compile(matchString)
-                            .matcher(content);
-                    while (matcher.find()) {
-                        matched = true;
-                        found.add("%s %s".formatted(path, matcher
-                                .group("currentValue")
-                                .strip()));
-                    }
-                }
+                foundByTheManager.addAll(whatTheManagerFinds(manager, path, Files.readString(file)));
             }
-            assertTrue(matched, () -> "The custom manager '%s' finds nothing in the workflows.".formatted(description));
+            assertFalse(foundByTheManager.isEmpty(), () -> """
+                    The custom manager '%s' finds nothing in the workflows and POMs its managerFilePatterns \
+                    select.""".formatted(description));
+            found.addAll(foundByTheManager);
         }
 
         final var named = new TreeSet<String>();
@@ -182,6 +175,28 @@ class RenovateConfigurationTest {
                 The custom managers of renovate.json have to find every image a workflow runs by its version \
                 and the JDK of the required check, which the GitHub Actions manager does not see. They find \
                 %s, the workflows name %s.""".formatted(found, named));
+    }
+
+    @Test
+    @DisplayName("The entry the plan holds ready for the engine's releases finds the release a re-pinned root POM names")
+    void theEntryForTheEnginesReleasesFindsTheRelease() {
+        final var plan = read(ROOT.resolve("docs/plan/epic-12-documentation-and-release.md"));
+        final var entry = ENGINE_ENTRY.matcher(plan);
+        assertTrue(entry.find(), """
+                The plan's story S12.3.1 holds, in a 'json' block of its own, the custom manager which \
+                follows the engine's releases once the pin is one; the README's section 'Dependency \
+                updates' points to it.""");
+        @SuppressWarnings("unchecked")
+        final var manager = (Map<String, Object>) new Yaml(new SafeConstructor(new LoaderOptions())).load(entry
+                .group(1));
+        assertEquals("github-releases", manager.get("datasourceTemplate"));
+        assertEquals("pbinitiative/zenbpm", manager.get("depNameTemplate"));
+
+        final var pom = read(ROOT.resolve("pom.xml"))
+                .replaceAll("\\s*<zenbpm\\.version>[^<]*</zenbpm\\.version>", "")
+                .replace("<zenbpm.commit>", "<zenbpm.version>v1.9.0</zenbpm.version>\n    <zenbpm.commit>");
+        assertEquals(Set.of("pom.xml v1.9.0"), whatTheManagerFinds(manager, "pom.xml", pom), """
+                The entry finds the engine's release in 'zenbpm.version' of the root POM, and nothing else.""");
     }
 
     @Test
@@ -213,6 +228,31 @@ class RenovateConfigurationTest {
         assertTrue(matches(String.valueOf(grouping
                 .getFirst()
                 .get("matchCurrentValue")), jdk), () -> "The rule grouping the JDK has to match '%s'.".formatted(jdk));
+    }
+
+    /** What a custom manager finds in a file its managerFilePatterns select: the path and each current value. */
+    private static Set<String> whatTheManagerFinds(
+        final Map<String, Object> manager,
+        final String path,
+        final String content
+    ) {
+        final var found = new TreeSet<String>();
+        if (strings(manager.get("managerFilePatterns"))
+                .stream()
+                .noneMatch(pattern -> matches(pattern, path))) {
+            return found;
+        }
+        for (final var matchString : strings(manager.get("matchStrings"))) {
+            final var matcher = Pattern
+                    .compile(matchString)
+                    .matcher(content);
+            while (matcher.find()) {
+                found.add("%s %s".formatted(path, matcher
+                        .group("currentValue")
+                        .strip()));
+            }
+        }
+        return found;
     }
 
     /**

@@ -2031,7 +2031,9 @@ at, not the tag object), and the registry names `zenbpm.image`'s digest for the 
 `ghcr.io/pbinitiative/zenbpm:<tag>`. Each refusal names the three properties and the fix, the steps
 of the README's section "Supported engine version".
 
-Renovate follows the engine's GitHub releases through `zenbpm.version` once it exists; the pull
-request it opens moves that property only, and a person completes it with the commit, the digest
-and the two copies of the engine's contract. Until then the check refuses a release of the half-moved
+Once the pin is an engine release and `renovate.json` carries the custom manager for it, which the
+plan holds ready (story S12.3.1), Renovate follows the engine's GitHub releases through
+`zenbpm.version`; the property alone moves nothing. The pull request Renovate opens moves that
+property only, and a person completes it with the commit, the digest and the two copies of the
+engine's contract. Until then the check refuses a release of the half-moved
 pin.

@@ -990,10 +990,14 @@ did not fit, and what was decided:
   `spi-for-java.version` and `adapter-platform.version` of the root POM to it; (2) re-pin the engine
   to a release by the README's steps of "Supported engine version" with `zenbpm.version` (the engine's
   `v1.9.0` of 2026-10-17 contains today's pin; its commit is `9b8a0f02`, its image digest
-  `sha256:295ca2a2...`) and add the `customManagers` entry of S12.3.1, item 6; (3) run
-  `gh workflow run release.yaml` on `main` and check that its summary refuses nothing but the missing
-  tag; (4) push an annotated tag `v2.0.0` with the release's notes; (5) optionally add Maven Central
-  (namespace and signing secrets, decision 65). Recommended, as repository settings the pipeline may
+  `sha256:295ca2a2...`) and add the `customManagers` entry of S12.3.1, item 6; (3) in the same
+  pull request, switch the README's sections "Dependencies", "Using the snapshots" and "Releasing"
+  and the wiki's `Home` from `2.0.0-SNAPSHOT` and "not released" to `2.0.0` and the engine release
+  (`ReleaseWorkflowTest#theReadmeNamesTodaysRefusalsWhileTheyHold` fails while "Releasing" names a
+  reason which no longer holds); (4) run `gh workflow run release.yaml` on `main` and check that its
+  summary refuses nothing but the missing tag; (5) push an annotated tag `v2.0.0` with the release's
+  notes on a commit of `main`; (6) optionally add Maven Central (namespace and signing secrets,
+  decision 65). Recommended, as repository settings the pipeline may
   not change: a tag ruleset which lets only maintainers create `v*` tags, and an environment with
   required reviewers for the job `publish`.
 - [x] Checked as far as it can be: "the release workflow is the only path a release takes".
@@ -1028,6 +1032,62 @@ POMs; `rehearse` uploads the 13 files with Maven's `deploy:deploy-file` into a l
 byte for byte unchanged. All three refusals stood in the summary file. Nothing of `2.0.0` reached the
 local Maven repository. The runs on GitHub, the pull request's own dry run and a dispatch on `main`
 after the merge, are left to the Orchestrator to record.
+
+**Answers to two reviews of e12-s12.3.1-s12.4.1, 2026-10-22** (one by Claude, approve with minor
+fixes: 4 Minor, 3 Nit; one by Copilot, request changes: 2 Major). Every claim was checked in the
+tests, the scripts and `renovate.json`, and the two Major ones by re-pinning a copy of the root POM
+to the engine's `v1.9.0`. All nine are valid. No new decision and no new GAPS number; decision 66
+was corrected on this branch, before its first merge.
+
+- **The test of the refused pin read the real root POM** (Copilot 1, Major). After the re-pin the
+  README asks for, `ReleaseScriptTest#todaysPinIsRefused` failed in every build, the release's own
+  `stage` included. Renamed `#aPinOnTheEnginesMainIsRefused`; it removes `zenbpm.version` from its
+  copy of the root POM, so it holds before and after the re-pin. With the root POM re-pinned to
+  `v1.9.0`, `9b8a0f02` and `sha256:295ca2a2...` it passes.
+- **The custom managers were matched against the workflows only** (Copilot 2, Major), so the entry
+  of S12.3.1 item 6, which reads `pom.xml`, would have failed the gate. Each manager is now matched
+  against the workflows and the POMs its `managerFilePatterns` select, and the new
+  `RenovateConfigurationTest#theEntryForTheEnginesReleasesFindsTheRelease` reads that entry from
+  this plan's `json` block and finds `v1.9.0`, and nothing else, in a re-pinned root POM. The
+  README's section "Dependency updates" names the test. With the re-pinned POM and the entry added
+  to `renovate.json` the whole class passes.
+- **The first release's list did not switch the documentation** (Claude 1, Minor). A step in both
+  lists (README "Releasing", the NOT MET item above): in the pull request of the re-pin, the
+  README's "Dependencies", "Using the snapshots" and "Releasing" and the wiki's `Home` name `2.0.0`
+  and the engine release. Partly enforced: the new
+  `ReleaseWorkflowTest#theReadmeNamesTodaysRefusalsWhileTheyHold` fails once the root POM names an
+  engine release while "Releasing" still says the pin is a build of the engine's `main`.
+- **Decision 66 promised more of `zenbpm.version` than it does** (Claude 2, Minor). The property
+  alone moves nothing; Renovate reads it only through the custom manager. The paragraph says so.
+- **A deploy on the second line of a `run:` was not seen** (Claude 3, Minor). The pattern of
+  `ReleaseWorkflowTest` anchored at the start of the whole command. It now finds `mvn` or a wrapper
+  on any line and after `&&`, `;`, `|` or `(`, with lines continued by a backslash joined first;
+  `#aMavenDeployIsSeenWhereverItStands` (7 forms) and `#aMavenCallWithoutDeployIsNoDeploy` (5) hold
+  it, and `publish-snapshots.yaml` is still the only workflow which deploys.
+- **A partly failed `publish` cannot be run again** (Claude 4, Minor). The README's "Releasing" says
+  what to do: delete the versions the failed run uploaded and run the job again, or create a missing
+  GitHub release by hand from the artifact `release`. That GitHub Packages keeps a release version
+  was not probed, because a probe would publish. No upload which skips an existing version: it could
+  hide a version of other content.
+- **"Both hold today" had no test** (Claude 5, Nit). `Home` drops it; the README names today's
+  reasons, and `#theReadmeNamesTodaysRefusalsWhileTheyHold` holds each to the root POM: the engine
+  reason while it names no `zenbpm.version`, the snapshot reason while a VanillaBP version is one.
+- **Any tag `v*` releases** (Claude 6, Nit). The fifth step of "Releasing" says the tag goes on a
+  commit of `main` and recommends the tag ruleset and the environment, settings of the repository.
+- **A change of the root POM alone runs no dry run** (Claude 7, Nit). On purpose: nearly every
+  dependency update changes the root POM. The README says so and how to rehearse such a change,
+  `gh workflow run release.yaml --ref <branch>`.
+- Mutants, 6 applied, 6 killed: the old deploy pattern; no joining of continued lines; the pin test
+  without removing `zenbpm.version`, against a re-pinned POM; the README without the snapshot
+  reason; the managers matched against the workflows only, with the entry and a re-pinned POM; the
+  plan's entry reading `zenbpm.commit`.
+- Build: a clean `TZ=Etc/UTC mvn clean install` on JDK 25, green in 18:18, no test skipped, with the
+  counts above except the gate: 139 (`ReleaseWorkflowTest` 18, `RenovateConfigurationTest` 5). The
+  gate measured 100 %: 0 of 38,473 (Spring Boot) and 0 of 38,470 (Quarkus) instructions missed.
+  `bin/check-deploy-safety.sh`: green, the green build deployed exactly the 13 published files and
+  the red gate nothing. Its first run ended red in an integration test of the Spring Boot module,
+  which the build before had passed and which this change does not touch; the script deletes its
+  directory, so the failing test is not known. The second run, of the same tree, was green.
 
 **E12's goal, checked at its end** (E12 has no "Done when"; its goal stands in for it):
 

@@ -5,6 +5,7 @@
 package org.pbinitiative.zenbpmadapter.coverage;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.IOException;
@@ -23,6 +24,8 @@ import java.util.stream.Stream;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.yaml.snakeyaml.LoaderOptions;
 import org.yaml.snakeyaml.Yaml;
 import org.yaml.snakeyaml.constructor.SafeConstructor;
@@ -65,8 +68,17 @@ class ReleaseWorkflowTest {
     private static final Pattern PUBLISHING = Pattern.compile(
             "bin/release\\.sh upload|gh release|deploy:deploy-file|-Drevision|altDeploymentRepository");
 
-    /** A Maven call which runs the phase or goal deploy. */
-    private static final Pattern MAVEN_DEPLOY = Pattern.compile("(?s)^\\s*mvn\\b.*\\sdeploy(\\s|$)");
+    /**
+     * A Maven call, by <code>mvn</code> or a wrapper, on any line of a run and after any other
+     * command, which runs the phase deploy; a line continued by a backslash is joined first.
+     */
+    private static final Pattern MAVEN_DEPLOY = Pattern.compile(
+            "(?m)(?:^|[\\s/;&|(])mvnw?(?=\\s)[^\\n;&|]*?\\sdeploy(?=[\\s;&|)]|$)");
+
+    /** What the README says a release would meet today, each while the root POM gives it a reason. */
+    private static final String UNRELEASED_ENGINE = "the engine pin is a build of the engine's `main`";
+
+    private static final String SNAPSHOT_OF_VANILLABP = "the POMs name VanillaBP's `";
 
     @Test
     @DisplayName("A pushed tag v* releases, and a dispatch and a pull request changing the release run a dry run")
@@ -197,9 +209,7 @@ class ReleaseWorkflowTest {
                         .find() || run.contains(SCRIPT)) {
                     publishing.add(name);
                 }
-                if (MAVEN_DEPLOY
-                        .matcher(run)
-                        .find()) {
+                if (deploysWithMaven(run)) {
                     deploying.add(name);
                 }
             }
@@ -217,6 +227,46 @@ class ReleaseWorkflowTest {
                 .endsWith("-SNAPSHOT"), """
                         The root POM's revision has to be a snapshot: publish-snapshots.yaml deploys it as it \
                         stands, so a release version there would be published by every push to main.""");
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {
+            "mvn deploy", "mvn --batch-mode -s settings.xml deploy", "set -e\nmvn -B deploy\n", "cd core && mvn deploy", "./mvnw deploy", "mvn -B \\\n  --update-snapshots deploy", "mvn install; (mvn deploy)"
+    })
+    @DisplayName("A Maven deploy is seen on any line of a run, after any command and by the wrapper")
+    void aMavenDeployIsSeenWhereverItStands(final String run) {
+        assertTrue(deploysWithMaven(run), () -> "'%s' deploys, and the test has to see it.".formatted(run));
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {
+            "mvn install", "mvn -Ddeploy.skip=true install", "mvn install; echo deploy", "mvn deploy:deploy-file -Dfile=x.jar", "mvnd install"
+    })
+    @DisplayName("A Maven call which runs no phase deploy is no deploy")
+    void aMavenCallWithoutDeployIsNoDeploy(final String run) {
+        assertFalse(deploysWithMaven(run), () -> "'%s' runs no phase deploy.".formatted(run));
+    }
+
+    @Test
+    @DisplayName("The README names a reason a release would meet today exactly while the root POM gives it")
+    void theReadmeNamesTodaysRefusalsWhileTheyHold() throws IOException {
+        final var pom = Files.readString(ROOT.resolve("pom.xml"));
+        final var section = readmeSection().replaceAll("\\s+", " ");
+
+        final var engineUnreleased = !pom.contains("<zenbpm.version>");
+        assertEquals(engineUnreleased, section.contains(UNRELEASED_ENGINE), () -> """
+                The README's section 'Releasing' says '%s' exactly while the root POM names no \
+                'zenbpm.version', the pin of an engine release. After a re-pin to an engine release, \
+                remove the reason from the README, and from the wiki's page 'Home'.""".formatted(UNRELEASED_ENGINE));
+
+        final var vanillaBpSnapshot = Pattern
+                .compile("<(spi-for-java|adapter-platform)\\.version>[^<]*-SNAPSHOT</")
+                .matcher(pom)
+                .find();
+        assertEquals(vanillaBpSnapshot, section.contains(SNAPSHOT_OF_VANILLABP), () -> """
+                The README's section 'Releasing' says '%s...' exactly while the root POM's \
+                'spi-for-java.version' or 'adapter-platform.version' names a snapshot. Once both name a \
+                release of VanillaBP, remove the reason.""".formatted(SNAPSHOT_OF_VANILLABP));
     }
 
     @Test
@@ -238,6 +288,12 @@ class ReleaseWorkflowTest {
                 These jobs of the release write nothing into the run's summary. Give each a last step with \
                 'if: always()' which appends to "$GITHUB_STEP_SUMMARY", as the README's section 'Releasing' \
                 promises.""");
+    }
+
+    private static boolean deploysWithMaven(final String run) {
+        return MAVEN_DEPLOY
+                .matcher(run.replace("\\\n", " "))
+                .find();
     }
 
     /** The first step whose command runs the given one, on a line of its own or in an assignment. */

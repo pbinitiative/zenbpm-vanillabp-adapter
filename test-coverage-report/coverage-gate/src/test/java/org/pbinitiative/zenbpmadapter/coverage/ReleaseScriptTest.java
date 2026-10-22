@@ -94,8 +94,14 @@ class ReleaseScriptTest {
     }
 
     @Test
-    @DisplayName("Today's pin, a build of the engine's main, is refused, with the keys and the fix, also in the summary")
-    void todaysPinIsRefused() throws IOException {
+    @DisplayName("A pin on a build of the engine's main is refused, with the keys and the fix, also in the summary")
+    void aPinOnTheEnginesMainIsRefused() throws IOException {
+        // the root POM as it stands, without the release a re-pin writes into it, so this test
+        // holds before and after the first re-pin
+        final var pom = adapter.resolve("pom.xml");
+        write(pom, Files
+                .readString(pom)
+                .replaceAll("\\s*<zenbpm\\.version>[^<]*</zenbpm\\.version>", ""));
         final var summary = temporary.resolve("summary.md");
         final var run = release(Map.of("GITHUB_STEP_SUMMARY", summary.toString()), "engine");
 
