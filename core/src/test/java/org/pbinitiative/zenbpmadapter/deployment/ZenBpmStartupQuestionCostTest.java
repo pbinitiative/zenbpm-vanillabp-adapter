@@ -155,7 +155,8 @@ class ZenBpmStartupQuestionCostTest {
     ) throws JsonProcessingException {
         engine.answers("GET", "/system/health/ready", 200, "{\"status\":\"UP\",\"reasons\":[]}");
         engine.answers("GET", "/system/status", 200, """
-                {"git":{"commitId":"bdd795a399b6"},"build":{"version":"1.2.0"},"nodes":{"node-1":{}}}""");
+                {"git":{"commitId":"%s"},"build":{"version":"1.2.0"},"nodes":{"node-1":{}}}"""
+                .formatted(FakeEngine.pinnedCommitAsReported()));
         engine.answers("POST", "/v1/process-definitions", 200, "{\"processDefinitionKey\":%d}".formatted(key(
                 heldVersions)));
         engine.answers("GET", "/v1/process-definitions", 200, JSON.writeValueAsString(Map.of("items", IntStream

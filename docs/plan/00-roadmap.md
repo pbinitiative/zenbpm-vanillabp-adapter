@@ -27,7 +27,7 @@
 | M3 "It works" | E6 | a service task runs a `@WorkflowTask`, a gateway behind it sees the shared values, a BPMN error routes a boundary event, an asynchronous task is completed later, a redelivery is skipped |
 | M4 "It talks" | E7, E8, and the start half of E9 (S9.1.1, S9.3.1) | messages correlate, a workflow started by message is found again, the aggregate is pushed, user tasks notify and complete |
 | M5 "It is complete against the SPI" | the rest of E9, E10 | `@WorkflowEnded`, multi-instance, versions, viewer; every row of the mapping is SUPPORTED or documented |
-| M6 "It ships" | E11, E12 | metrics, election ITs, nightly against the engine's latest image, native image, coverage at the rule, wiki, blueprints pull request, release workflow and first release |
+| M6 "It ships" | E11, E12 | metrics, election ITs, nightly against the engine's newest `main` build (`:dev`), native image, coverage at the rule, wiki, blueprints pull request, release workflow and first release |
 | E13 runs in parallel from M2 on; each engine change lands with its adapter twin | | |
 
 ## Dependency graph
@@ -108,7 +108,7 @@ where the dependency is not simply the previous one.
 | 54 | S11.3.1 Election ITs | E11 | two ids on one engine; zenbpm next to the double |
 | 55 | S11.4.1 Native image | E11 | native build runs the lifecycle flow |
 | 56 | S11.5.1 Coverage at the rule | E11 | both platforms above 90 |
-| 57 | S11.6.1 Nightly workflow | E11 | pinned engine, engine `latest`, native image, each with a summary line |
+| 57 | S11.6.1 Nightly workflow | E11 | pinned engine, engine `:dev`, native image, each with a summary line |
 | 58 | S12.1.1 Wiki and README | E12 | pages exist, every claim names its test |
 | 59 | S12.2.1 Blueprints profile `-Pzenbpm` (pull request to VanillaBP) | E12 | blueprints run on the engine in their CI |
 | 60 | S12.3.1 Renovate, local workspace notes, VanillaBP wiki row | E12 | local notes re-read, the `BPMS-adapters` wiki row proposed |

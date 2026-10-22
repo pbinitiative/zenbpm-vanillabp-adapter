@@ -408,8 +408,8 @@ class ZenBpmTaskProbesTest {
 
     private static String statusWith(final String partitions) {
         return """
-                {"git": {"commitId": "bdd795a399b6"}, "build": {"version": "v1.8.0"}, "nodes": {"zen-1": {}}%s}"""
-                .formatted(partitions);
+                {"git": {"commitId": "%s"}, "build": {"version": "v1.8.0"}, "nodes": {"zen-1": {}}%s}"""
+                .formatted(FakeEngine.pinnedCommitAsReported(), partitions);
     }
 
     private static String versions(final long... keys) {

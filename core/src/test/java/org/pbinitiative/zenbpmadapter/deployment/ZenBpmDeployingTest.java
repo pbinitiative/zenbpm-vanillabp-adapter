@@ -97,7 +97,8 @@ class ZenBpmDeployingTest {
         engine = FakeEngine.started();
         engine.answers("GET", "/system/health/ready", 200, "{\"status\":\"UP\",\"reasons\":[]}");
         engine.answers("GET", "/system/status", 200, """
-                {"git":{"commitId":"bdd795a399b6"},"build":{"version":"1.2.0"},"nodes":{"node-1":{}}}""");
+                {"git":{"commitId":"%s"},"build":{"version":"1.2.0"},"nodes":{"node-1":{}}}"""
+                .formatted(FakeEngine.pinnedCommitAsReported()));
     }
 
     @AfterEach

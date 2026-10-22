@@ -783,7 +783,7 @@ Quarkus 3.40 picks), as no GraalVM is installed here. What did not fit, and what
 
 ## S11.6.1 Nightly workflow: the pinned engine, the engine's latest image, the native image
 
-- [ ] **Depends on:** S11.4.1.
+- [x] **Depends on:** S11.4.1.
 
 `.github/workflows/nightly.yaml`, `on: schedule` (once a night) and `workflow_dispatch`, three jobs:
 
@@ -793,7 +793,8 @@ Quarkus 3.40 picks), as no GraalVM is installed here. What did not fit, and what
    `main` build; the property the container helper reads is overridable for exactly this),
    `continue-on-error: true`, and a summary line naming the engine commit the container reported; a
    red job here is the earliest warning that an engine change broke the adapter, and because the
-   same organisation owns both, the finding goes straight into the engine's issue tracker;
+   same organisation owns both, a person takes the finding to the engine's maintainers (the
+   workflow itself opens no issue, see fit-check point 2);
 3. `native-image`: the native build and `ZenBpmNativeImageIT` of S11.4.1 (GraalVM via
    `graalvm/setup-graalvm`), never on pull requests because it takes long.
 
@@ -801,6 +802,239 @@ The README's "What CI runs" section describes the three jobs; the nightly gets i
 
 **Acceptance criteria**: the nightly runs green against the pinned engine; the `latest` job reports
 the engine version it met; the native job runs the lifecycle flow.
+
+*Fit check, 2026-10-22, decided by the Implementor where it says so.* Checked against `main` at
+`02b0254`: `checks.yaml`, `publish-snapshots.yaml`, `EngineUnderTest` with its IT and
+`MalformedPinsTest`, the coverage gate's `EnginePinTest` and `PublicationSafetyTest`, the module
+`quarkus/native-image-tests` and the README's section "Native image"; the scheduled workflows of
+`pbinitiative/zenbpm` on its `main` (read only); `graalvm/setup-graalvm` v1.6.7 (`src/mandrel.ts`)
+and the releases of `graalvm/mandrel`; and the engine image `ghcr.io/pbinitiative/zenbpm:dev` as it
+stood on 2026-10-22 (digest `a847afe3...`, revision `1ee1fd663e340017725b9867c9db41c476f8d94a` of
+2026-10-19, eight commits after the pin; see the acceptance below for what it showed). The story
+touches CI and test fixtures only, so neither `ADAPTER-AUTHORS.md` nor the platform's code was
+concerned, and no claim about the engine's behaviour was needed beyond what the runs against both
+images show. What did not fit, and what was decided:
+
+1. **Pointing the build at the newest engine** (open question 1). `-Dzenbpm.image=...:dev`, as the
+   story writes it, is refused by `EngineUnderTest` ("is not pinned by its digest"). Decided as the
+   brief recommends: `bin/resolve-latest-engine.sh` pulls the tag, takes the image's digest of
+   `ghcr.io/pbinitiative/zenbpm` and the full commit of its `org.opencontainers.image.revision`
+   label, starts the image once and reads `git.commitId` of `/system/status`, and fails unless that
+   is the start of the label's commit; it writes `image` and `commit` to the step's outputs and one
+   line to the job's summary naming the tag, the digest, the commit, the commit the engine reported
+   and whether it is the pin (and, since the review fixes, the version the engine reported). The
+   build then runs with `-Dzenbpm.image` and `-Dzenbpm.commit` set to them. A script in `bin/`
+   rather than lines in the workflow, so it runs by hand the same way. actionlint does not read a
+   script a workflow calls; shellcheck passed it when run by hand, and since the review fixes the
+   job `workflow-lint` of `checks.yaml` runs shellcheck over every script of `bin/`. Every test
+   which reads the engine follows the two properties: `EngineUnderTest` reads its filtered
+   resource, failsafe hands `zenbpm.image` to `EngineUnderTestIT`, and the core filters
+   `zenbpm.commit` into the adapter's descriptor, which `ZenBpmEnvironmentInfo` and the tests of
+   `pinnedCommit()` read. Two things did not follow:
+   - **The coverage gate's `EnginePinTest`** compares the README's table and the headers of the two
+     copied engine files with the pin, which in this run is on purpose another engine. The job
+     leaves out the whole gate (`--projects '!test-coverage-report/coverage-gate'`): its other
+     checks read the repository's files, not the engine, and coverage is the pinned build's
+     business, as the brief recommends.
+   - **Eight test files wrote the pinned commit `bdd795a399b6` into a stand-in engine's
+     `/system/status`.** The first local run against `:dev` failed four tests of
+     `ZenBpmDeployingTest`: the adapter's warning "The engine reports commit bdd795a399b6 (version
+     1.2.0), but this adapter was tested with engine commit 1ee1fd66..." entered the findings these
+     tests count. Moving the pin would fail them the same way. Decided by the Implementor, a
+     minimal change of test code only: a stand-in reports the build's pin, through the new
+     `FakeEngine#pinnedCommitAsReported` (`zenbpm.commit` shortened to twelve characters, as the
+     engine reports it) in five core tests, and through the adapter's own descriptor in the
+     `StandInEngine`s of `smoke-test` and `quarkus/deployment`, which do not depend on
+     `engine-test-support`; `ZenBpmRestClientTest`'s two tests which only parse a status take the
+     made-up commit `0123456789ab`, as `ZenBpmHealthTest` does. No production code changed. Since
+     this shapes every later stand-in, it is decision 62 in `DECISIONS.md`, together with the
+     override itself. The pin was not moved.
+2. **A red `latest-engine`** (open question 2). The story's sentence that "the finding goes
+   straight into the engine's issue tracker" contradicts the pipeline's policy, so it is reworded
+   above: the job writes its line into the run's summary and nothing else, a person takes the
+   finding to the engine's maintainers. Recorded in decision 62 and the README; the workflow's
+   permissions are all `read` (`NightlyWorkflowTest#theNightlyWritesNothing`).
+3. **Proving the nightly before the merge** (open question 3). Taken as the brief decided: the
+   workflow also runs on a `pull_request` whose changes include `.github/workflows/nightly.yaml`
+   or, since the review fixes, `bin/resolve-latest-engine.sh` (a `paths` filter), so the feature
+   pull request runs all three jobs, and so does any later change of the nightly; a pull request
+   which does not touch them never starts it. The README's section
+   "What CI runs" says so, `NightlyWorkflowTest#theNightlyRunsWhenTheReadmeSays` holds the triggers
+   to exactly `schedule`, `workflow_dispatch` and that `pull_request`, and actionlint 1.7.12 accepts
+   them. A pull request from a fork needs nothing but the read-only `GITHUB_TOKEN`, with which the
+   jobs log in to ghcr.io as `checks.yaml` does (the test refuses any other secret). The
+   `concurrency` group is `nightly-<ref>`, cancelled on a pull request only, as in `checks.yaml`.
+   The nightly's jobs are not added to the required checks (no settings change).
+4. **The schedule** (open question 4). The engine's scheduled workflows run on Mondays at 04:00
+   (`codeql-analysis.yml`), 05:00 (`go-static-analysis.yml`) and 06:00 UTC (`gosec.yml`), and every
+   day at 06:00 UTC (`trivy-scan.yml`); its image `:dev` is built on every push to its `main`.
+   Taken: `37 2 * * *`, every night at 02:37 UTC, before those and off the full hour. The test
+   holds the schedule to one fixed daily time off the full hour and to the time the README names.
+5. **The badge and what holds it** (open question 5). The badge `Nightly` of `nightly.yaml` on
+   `main` stands in the line after `Checks`. No test read a workflow before:
+   `PublicationSafetyTest` reads the README's coverage badges and the POMs only. So
+   `NightlyWorkflowTest` in the coverage gate (8 tests, reading the workflow with SnakeYAML, which
+   the Spring Boot BOM manages, in test scope) pins the triggers and the time, the jobs (the three
+   of the story kept, and the same set as the README's list), no `needs` between them,
+   `continue-on-error` on `latest-engine` alone, permissions which only read and no secret but
+   `GITHUB_TOKEN`, a summary line written with `if: always()` by every job, the build of
+   `latest-engine` with the resolved image and commit and without the gate, Mandrel for Java 25 with
+   `-Dquarkus.native.container-build=false`, and the badge.
+6. **The GraalVM of the native job** (the note of S11.4.1). Decided by the Implementor: the job
+   installs Mandrel for Java 25 with `graalvm/setup-graalvm` (`distribution: mandrel`,
+   `java-version: "25"`) and builds with `-Dquarkus.native.container-build=false`. Mandrel is the
+   GraalVM distribution Quarkus builds with, and the newest Mandrel for Java 25 (25.0.4.1-Final
+   today) is the same one the builder image `ubi9-quarkus-mandrel-builder-image:jdk-25` carries
+   (its `native-image --version` reads 25.0.4.1), so the job builds what a laptop builds, by the
+   path the README names but no run had taken. No release is pinned: the job follows the line the
+   builder image's moving tag follows, and its summary line names the `native-image` version it
+   used. The container build stays the README's default for a laptop. Mandrel's JDK runs the whole
+   job, both Maven calls included.
+7. **A fourth job** (the policy for S12.2.1). The jobs do not depend on one another, the README
+   lists them by name without counting them, and `NightlyWorkflowTest` asks every job for a README
+   description and a summary line; S12.2.1 got a note saying what its job has to bring.
+8. **`pinned-engine` runs on one JDK**, 25.0.4 of the required check `build`; the second run on
+   Java 21 stays the business of `checks.yaml`, and the engine copies are checked there too. The
+   reports of a failed build are attached as `pinned-engine-reports`, `latest-engine-reports` and
+   `native-image-reports` (the last with `native-image-application.log`).
+9. **The documents.** The README's section "Contributing", which held only what `checks.yaml`
+   runs, became "What CI runs" with that paragraph unchanged and the snapshot publication and the
+   nightly added; the section "Native image" names the nightly's build, and step 1 of moving the pin
+   names the script. `docs/README.md` (point 4 of its summary) and the module tree of
+   `docs/architecture/01-architecture.md` said "the engine's `latest` image", which does not exist
+   for `main`: both name `:dev` now. `epic-13-engine-enablement.md` still holds: the job is
+   `latest-engine`.
+10. **GAPS.** None (point 1 of the acceptance below says what the run against `:dev` showed); GAPS
+    34 stays free, decision 63 is the next free number.
+
+**Acceptance evidence, 2026-10-22.** Everything here ran on this machine (OpenJDK 25.0.2, Maven
+3.9.12, Docker 29.1, 14 cores); a scheduled or dispatched run needs the file on `main`. What the
+three jobs show on GitHub is seen on the feature pull request, which the workflow's `paths` filter
+makes run them all (fit-check point 3); those runs are added below after the pull request's checks.
+
+- [x] The nightly runs green against the pinned engine. Locally: the job's build is the clean build
+  below, green. On GitHub: on the pull request, added after its checks.
+- [x] The `latest` job reports the engine version it met. Locally:
+  `bin/resolve-latest-engine.sh ghcr.io/pbinitiative/zenbpm:dev` resolved the tag in 8 s to
+  `ghcr.io/pbinitiative/zenbpm@sha256:a847afe3f96b9faf4807a1907154c7ecb00c75f1469c8cc7ad890b7052190392`,
+  built from `1ee1fd663e340017725b9867c9db41c476f8d94a`, which the started engine reported as
+  `1ee1fd663e34`, and wrote "...; not the pinned commit bdd795a399b6484d062d52ac90c0d0725cb0ad91".
+  The job's build with both values and without the gate (`TZ=Etc/UTC mvn install
+  -Dzenbpm.image=... -Dzenbpm.commit=... --projects '!test-coverage-report/coverage-gate'`) was red
+  at the first attempt, in four tests of `ZenBpmDeployingTest` (fit-check point 1), and green after
+  the fix of the stand-ins, in 17:48 min: engine test support 12 + 5 (so `EngineUnderTestIT` saw
+  the container run the `:dev` digest and the engine report its commit), core 1,275 + 104, Spring
+  Boot 14 + 95, smoke test 42 + 1, election integration test 8, Quarkus runtime 13, deployment 60,
+  integration tests 25. So the adapter at the pin runs against the engine's `main` of 2026-10-19,
+  eight commits later; its newest commit makes the engine refuse a multi-instance
+  `completionCondition`, which the adapter refuses already (`ZenBpmUnsupportedConstructs`), and its
+  `api.yaml` differs from the copy by one line. No engine gap was met (open question 6), so no GAPS
+  row. On GitHub: on the pull request, added after its checks.
+- [x] The native job runs the lifecycle flow. Locally, as the job runs it: Mandrel
+  25.0.4.1-Final for Java 25 (the release `graalvm/setup-graalvm` takes for `java-version: "25"`,
+  downloaded from `graalvm/mandrel`) as `JAVA_HOME` of both calls, `mvn -Dmaven.test.skip=true
+  --projects quarkus/deployment,quarkus/native-image-tests --also-make install` (14 s), then
+  `mvn --projects quarkus/native-image-tests -Dnative -Dquarkus.native.container-build=false verify`
+  (2:22 min): "Running Quarkus native-image plugin on MANDREL 25.0.4.1 JDK 25.0.4.1+1-LTS", the
+  image built on the machine with gcc 13.3 in 2 min 1 s, peak RSS 6.19 GB, and `ZenBpmNativeImageIT`
+  passed (1 test) against the pinned engine: the binary served both tasks and the end marker,
+  stopped after draining, and the engine showed the instance completed. This was the first build
+  with a local GraalVM (the note of S11.4.1). On GitHub: on the pull request, added after its
+  checks.
+- [x] Every job writes a summary line, and the README describes the jobs in "What CI runs" with
+  the nightly's badge next to `Checks`: `NightlyWorkflowTest` (8 tests, 9 since the review fixes)
+  holds both. actionlint 1.7.12 passes the workflows; shellcheck, which its image carries, run by
+  hand, passes the script (actionlint itself does not read it; see the answers to the reviews).
+- Mutants, all killed: 17 changes of the workflow or the README, each failing `NightlyWorkflowTest`:
+  `continue-on-error` removed from `latest-engine`, and added to `pinned-engine`; a `needs` between
+  jobs; `packages: write`; the `paths` filter removed; the schedule on the full hour, and at another
+  time than the README's; the summary step of `native-image` on `failure()` only; a job renamed; the
+  gate kept in `latest-engine`'s build; the container build back; GraalVM CE instead of Mandrel; the
+  badge removed; a secret other than `GITHUB_TOKEN`; the image taken from the wrong output; the
+  workflow's own `permissions` removed; a job's README bullet dropped. The stand-ins' commit has no
+  guard to mutate: the red run against `:dev` before the fix and the green one after are its proof.
+- Clean build (`TZ=Etc/UTC mvn clean install`, Docker ITs included, none skipped, 17:43 min): engine
+  test support 12 + 5, core 1,275 + 104, Spring Boot 14 + 95, smoke test 42 + 1, election
+  integration test 8, Quarkus runtime 13, deployment 60, integration tests 25, native-image tests 0
+  (the IT runs only with `-Dnative`), gate 49 (41 before: `NightlyWorkflowTest` is new); coverage
+  100 % on both platforms (0 of 38,473 instructions missed on Spring Boot, 0 of 38,470 on Quarkus,
+  unchanged: the story adds no production code).
+- `bin/check-deploy-safety.sh` (the gate module changed): the first run was red in its green build,
+  in an integration test of the core; the script removes its reports on exit, so which one is not
+  known (the same happened once in the batch before; the core's 104 ITs had passed in both builds
+  above and the batch changes none of them). The second run, with the failsafe reports copied out
+  while it ran, was green: 13 files deployed by the green build, nothing by the red gate.
+
+**E11 "Done when"**, checked at the end of the epic:
+
+- *Meters and health are documented and tested*: met. The README's sections "Metrics" and "Health"
+  name their tests; S11.1.1's acceptance lists them (`ZenBpmMetricsIT`, `ZenBpmMetricsBootTest`,
+  `ZenBpmWithoutMicrometerTest`,
+  `ZenBpmWorkflowLifecycleTest#theMetersOfTheAdapterIdMoveWithTheWork`, the health tests of E3),
+  all green in the clean build above.
+- *The election ITs are green*: met. `election-integration-test`, 8 ITs of S11.3.1, green in the
+  clean build above and against `:dev`.
+- *The native image runs the lifecycle flow*: met locally. S11.4.1's `ZenBpmNativeImageIT` with the
+  builder container, and in this story with a local Mandrel as the nightly's `native-image` job runs
+  it; the job's first run on GitHub is added with the pull request's checks.
+- *Both coverage reports read above 90*: met. 100 % on both platforms in the clean build above, and
+  both badges read 100 % since S11.5.1.
+
+**Answers to two reviews of e11-s11.6.1, 2026-10-22** (one by Claude, approve with minor fixes:
+3 Minor, 5 Nit; one by Copilot, approve: 1 Minor). Every claim was checked in the workflow, the
+script, the test and the engine's code at the pin, by the reviewers' probes and by probes of my
+own. All nine findings were valid, one of them in its effect though not in its mechanism; all are
+fixed. No decision and no GAPS row was needed.
+
+- **A step could let a job that has to fail the run pass** (Claude 1, Minor). The test read
+  `continue-on-error` at job level only, and only `true`, so a step's `continue-on-error`, an
+  `|| true` after the build, or `continue-on-error: ${{ true }}` on the job turned a red
+  `pinned-engine` or `native-image` green unnoticed. Now
+  `NightlyWorkflowTest#noStepOfAJobWhichHasToFailLetsAFailurePass` refuses, in every job but
+  `latest-engine`, a step with `continue-on-error` and a step without an `if` whose command
+  contains `||`. A `continue-on-error` which is anything but `false` counts, at job level too.
+- **The native job's run of the binary was not held** (Copilot 1, Minor). `verify` changed to
+  `package` kept every test green while `ZenBpmNativeImageIT` would never run.
+  `#theNativeImageIsBuiltOnTheRunner` now requires the one step with `-Dnative` to be a `mvn` call
+  of `--projects quarkus/native-image-tests` ending in `verify`, with no switch which skips tests.
+- **The resolve script was neither run nor linted by a pull request** (Claude 2, Minor). The
+  `paths` filter named the workflow only, and actionlint does not read a script a workflow calls,
+  which fit-check point 1 claimed it did. The script is in the filter now, and the job
+  `workflow-lint` of `checks.yaml` runs the shellcheck of the actionlint image over every script
+  of `bin/` (all four pass). Fit-check points 1 and 3, the acceptance line and the README say so.
+- **A summary step could lose its line** (Claude 3, Minor). The review said GitHub runs a step with
+  `pipefail`; it does so only with `shell: bash`, and these steps name no shell, so they run as
+  `bash -e`. Probed locally without `native-image` and without `pom.xml`: the native step wrote its
+  line with an empty builder, and the pinned step stopped at its `sed` (exit 2) before its line.
+  Both now fall back (`... || true`, "no native-image on the runner", commit "unread") and write
+  their line in either shell.
+- **Nits** (Claude 4 to 8). The README said each job writes one line; `latest-engine` writes its
+  script's line too, and the README says so now. The script's line names the version the engine
+  reports as well (`.build.version` of `/system/status`; `v1.9.0` for `:dev` today), which the
+  acceptance asks for; the commit still tells two builds apart. The roadmap's M6 row and row 57
+  and step 3 of S1.3.1 name `:dev` and "What CI runs"; `docs/open-questions.md` keeps "Contributing"
+  as the record of a question answered before. Five lines of this section and one of
+  `docs/README.md` are wrapped; the image digest of the acceptance stays one line. The README's
+  sentence that no workflow needs a secret and only the publication writes is held by the new
+  `WorkflowPermissionsTest` (every workflow: no secret but `GITHUB_TOKEN`, permissions named at the
+  top, a permission which writes in `publish-snapshots.yaml` only).
+- Mutants, all killed (10 of 10): the script dropped from `paths`; a step's `continue-on-error` on
+  the pinned build and on the native build; `|| true` after the pinned build;
+  `continue-on-error: ${{ true }}` on `pinned-engine`; `verify` to `package` and `-DskipITs` in the
+  native build; another secret, `packages: write` and no top-level permissions in `checks.yaml`.
+  Unmutated, `NightlyWorkflowTest` 9 and `WorkflowPermissionsTest` 2 pass.
+
+Builds after the fixes (OpenJDK 25.0.2, Docker ITs, none skipped):
+
+- `TZ=Etc/UTC mvn clean install`, 17:42 min, green: engine test support 12 + 5, core 1,275 + 104,
+  Spring Boot 14 + 95, smoke test 42 + 1, election integration test 8, Quarkus runtime 13,
+  deployment 60, integration tests 25, native-image tests 0 (the IT runs only with `-Dnative`),
+  gate 52 (49 before: one test of `NightlyWorkflowTest` and the two of `WorkflowPermissionsTest`
+  are new); coverage 100 % on both platforms (0 of 38,473 instructions missed on Spring Boot, 0 of
+  38,470 on Quarkus).
+- `bin/check-deploy-safety.sh`, green at the first run: 13 files deployed by the green build,
+  nothing by the red gate.
+- actionlint 1.7.12 and the new shellcheck step, run as `checks.yaml` runs them: both exit 0.
 
 ## S11.5.1 Coverage at the rule
 

@@ -16,6 +16,8 @@ import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
+import org.pbinitiative.zenbpmadapter.test.EngineUnderTest;
+
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
 
@@ -63,6 +65,22 @@ public final class FakeEngine implements AutoCloseable {
         } catch (IOException e) {
             throw new UncheckedIOException(e);
         }
+    }
+
+    /**
+     * The commit the engine this build runs against reports in <code>git.commitId</code> of
+     * <code>GET /system/status</code>: <code>zenbpm.commit</code>, shortened to twelve characters as
+     * the engine shortens it. A status answering it stands for the engine the adapter was tested
+     * with, so the adapter warns about no other engine. A commit written into a test instead would
+     * bring that warning into the test once the build runs against another engine, or the pin moves,
+     * see decision 62 in the repository's DECISIONS.md.
+     *
+     * @return The shortened commit
+     */
+    public static String pinnedCommitAsReported() {
+        return EngineUnderTest
+                .pinnedCommit()
+                .substring(0, 12);
     }
 
     /**

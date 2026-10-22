@@ -1,6 +1,7 @@
 # VanillaBP adapter for ZenBPM
 
 [![Checks](https://github.com/pbinitiative/zenbpm-vanillabp-adapter/actions/workflows/checks.yaml/badge.svg?branch=main)](https://github.com/pbinitiative/zenbpm-vanillabp-adapter/actions/workflows/checks.yaml)
+[![Nightly](https://github.com/pbinitiative/zenbpm-vanillabp-adapter/actions/workflows/nightly.yaml/badge.svg?branch=main)](https://github.com/pbinitiative/zenbpm-vanillabp-adapter/actions/workflows/nightly.yaml)
 [![MIT License](https://img.shields.io/badge/License-MIT-blue.svg)](./LICENSE)
 [![Coverage Spring Boot](https://img.shields.io/badge/dynamic/regex?url=https%3A%2F%2Fpbinitiative.github.io%2Fzenbpm-vanillabp-adapter%2Fspring-boot-report%2Findex.html&search=Total%3C%2Ftd%3E%3Ctd%20class%3D%22bar%22%3E%5B%5E%3C%5D%2A%3C%2Ftd%3E%3Ctd%20class%3D%22ctr2%22%3E%28%5B%5E%3C%5D%2B%29%3C&replace=%241&label=Coverage%20Spring%20Boot&color=green&cacheSeconds=60)](https://pbinitiative.github.io/zenbpm-vanillabp-adapter/spring-boot-report/index.html)
 [![Coverage Quarkus](https://img.shields.io/badge/dynamic/regex?url=https%3A%2F%2Fpbinitiative.github.io%2Fzenbpm-vanillabp-adapter%2Fquarkus-report%2Findex.html&search=Total%3C%2Ftd%3E%3Ctd%20class%3D%22bar%22%3E%5B%5E%3C%5D%2A%3C%2Ftd%3E%3Ctd%20class%3D%22ctr2%22%3E%28%5B%5E%3C%5D%2B%29%3C&replace=%241&label=Coverage%20Quarkus&color=green&cacheSeconds=60)](https://pbinitiative.github.io/zenbpm-vanillabp-adapter/quarkus-report/index.html)
@@ -446,7 +447,8 @@ pull-request check runs it, and it fails on any other difference (decision 18 in
 Moving the pin is one commit with these steps:
 
 1. Pull `ghcr.io/pbinitiative/zenbpm:dev` and read its digest and its
-   `org.opencontainers.image.revision` label.
+   `org.opencontainers.image.revision` label; `bin/resolve-latest-engine.sh` does both and prints
+   them.
 2. Check that the revision is the head of the engine's `main`, or the newest commit which got an
    image.
 3. Write the commit and the digest into `zenbpm.commit` and `zenbpm.image` of the root `pom.xml`.
@@ -691,8 +693,9 @@ mvn -pl quarkus/native-image-tests -Dnative verify
 
 Without an installed GraalVM the image is built in a container of
 `quay.io/quarkus/ubi9-quarkus-mandrel-builder-image:jdk-25`, the builder Quarkus picks; with one,
-`-Dquarkus.native.container-build=false` builds it locally. The integration test needs Docker for
-the engine either way. On a laptop with 14 cores the image took about two minutes and 6 GB of
+`-Dquarkus.native.container-build=false` builds it locally, which is how the nightly's job
+`native-image` builds it (see "What CI runs"). The integration test needs Docker for the engine
+either way. On a laptop with 14 cores the image took about two minutes and 6 GB of
 memory at its peak. What the binary printed is in
 `quarkus/native-image-tests/target/native-image-application.log`, the place to read when it fails.
 
@@ -784,21 +787,62 @@ adapter's published POMs name it. A consumer whose build does not read the repos
 dependencies, one behind a mirror for example, adds it itself, with snapshots switched on and
 releases switched off, the way the root `pom.xml` of this repository does.
 
-## Contributing
+## What CI runs
 
-Every pull request and every push to `main` runs `.github/workflows/checks.yaml`: one `mvn install`,
-which is Spotless, compile, javadoc, the tests, both coverage reports and the gate. Its job `build`
-is the check branch protection on `main` requires, so nothing reaches `main` without it. The same
-build runs a second time on Java 21 (`build on Java 21`), the Java the published classes are
-compiled for, because a dependency built for a newer Java would only fail at run time. When a red
-run got as far as writing test or coverage reports, they are attached to the run as the artifact
-`test-reports` (`test-reports-java-21` for the run on Java 21). A build which stops earlier, at
-Spotless or the compiler, has none, and its log is the place to read.
+No workflow of this repository needs a secret of its own: each works with the workflow's
+`GITHUB_TOKEN`, and only the publication may write with it. `WorkflowPermissionsTest` in
+`test-coverage-report/coverage-gate` holds every workflow to this.
+
+**Every pull request and every push to `main`** run `.github/workflows/checks.yaml`: one
+`mvn install`, which is Spotless, compile, javadoc, the tests, both coverage reports and the gate.
+Its job `build` is the check branch protection on `main` requires, so nothing reaches `main`
+without it. The same build runs a second time on Java 21 (`build on Java 21`), the Java the
+published classes are compiled for, because a dependency built for a newer Java would only fail at
+run time. When a red run got as far as writing test or coverage reports, they are attached to the
+run as the artifact `test-reports` (`test-reports-java-21` for the run on Java 21). A build which
+stops earlier, at Spotless or the compiler, has none, and its log is the place to read. The job
+`workflow-lint` checks every workflow of the repository with actionlint and every script of `bin/`
+with shellcheck.
 
 The build reads the VanillaBP snapshots from the snapshot repository of Maven Central, which needs
-no login. So a pull request from a fork builds exactly like one from this repository, and the
-workflows need no secret of their own: `publish-snapshots.yaml` deploys with the workflow's
-`GITHUB_TOKEN`.
+no login. So a pull request from a fork builds exactly like one from this repository.
+
+**Every push to `main`** runs `.github/workflows/publish-snapshots.yaml`, which builds once more and
+publishes the snapshots and the coverage reports, see the sections "Using the snapshots" and "Test
+coverage". It deploys with the workflow's `GITHUB_TOKEN`.
+
+**Every night** at 02:37 UTC, `.github/workflows/nightly.yaml` runs what no pull request should
+wait for, in jobs which do not depend on one another. Its badge at the top shows the last run on
+`main`. A pull request which changes the workflow or `bin/resolve-latest-engine.sh`, the script it
+runs, runs it too, so a change of the nightly is seen working before it is merged; no other pull
+request starts it. A person can start it on `main` from the Actions tab. Its jobs:
+
+- `pinned-engine`: the build of `checks.yaml`'s job `build`, against the pinned engine. With nobody
+  waiting for it, a test which fails now and then shows up here and not in somebody's pull request.
+- `latest-engine`: the same build against the engine's newest build of its `main`, the moving tag
+  `ghcr.io/pbinitiative/zenbpm:dev`. `bin/resolve-latest-engine.sh` turns the tag into the image's
+  digest and the commit it was built from, starts it once to read the commit the engine reports,
+  and writes all three into the run's summary together with the version the engine reports and
+  whether that commit is the pin. The build then runs with `-Dzenbpm.image` and `-Dzenbpm.commit`
+  set to them and without the coverage gate: the gate compares the README and the copies of the
+  engine's contract with the engine the build runs against, which here is another one on purpose,
+  and coverage is the pinned build's business. The job may fail without turning the run red (`continue-on-error`), because nothing in
+  this repository changed. A red job is the earliest warning that an engine change breaks the
+  adapter: a person reads it and takes the finding to the engine's maintainers. The workflow
+  itself opens no issue and writes nowhere (decision 62 in [`DECISIONS.md`](./DECISIONS.md)).
+- `native-image`: the two Maven calls of the section "Native image", with Mandrel for Java 25
+  installed on the runner by `graalvm/setup-graalvm` and `-Dquarkus.native.container-build=false`,
+  so the image is built with a local GraalVM rather than in the builder container. When it fails,
+  the binary's log and the test reports are attached as the artifact `native-image-reports`.
+
+Each job ends with a line in the run's summary: what it ran against and how it ended, also where
+it failed before its build; `latest-engine` writes the line of its script before. A failed build
+attaches its test reports (`pinned-engine-reports`, `latest-engine-reports`). Every job reads with
+the workflow's token and writes nothing. `NightlyWorkflowTest` in
+`test-coverage-report/coverage-gate` holds the workflow to this section: the triggers, the jobs it
+names, the jobs' independence, the one job which may fail and no step of another job which could
+hide a failure, the native build reaching its integration test, the permissions and the summary
+line.
 
 ## Test coverage
 

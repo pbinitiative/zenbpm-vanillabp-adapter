@@ -1786,3 +1786,38 @@ service loader, the run-time initialization of gRPC's two buffer-allocator holde
 the REST client for Jackson, the classes generated from the proto, and the platform's version
 descriptor. The README's section "Native image" says what an application needs and how the native
 build is run.
+
+### 62. The engine under test is replaced from the command line, and no stand-in names an engine of its own
+
+Decided by the implementation pipeline in place of the maintainers, as their policy for the
+autonomous run asks.
+
+The build reads the engine its tests run against from `zenbpm.image` and `zenbpm.commit` of the
+root POM, and both can be set on the command line to run every test against another build of the
+engine: `-Dzenbpm.image=ghcr.io/pbinitiative/zenbpm@sha256:<digest> -Dzenbpm.commit=<commit>`. The
+image stays pinned by its digest and the commit stays the full one, because `EngineUnderTest`
+refuses a tag, which can move between two pulls of one build, and the tests hold the engine to the
+commit it reports. The nightly's job `latest-engine` runs the build this way against the engine's
+newest build of its `main`: `bin/resolve-latest-engine.sh` turns the moving tag
+`ghcr.io/pbinitiative/zenbpm:dev` into its digest and the commit of its revision label, and starts
+the image once to read the commit the engine reports.
+
+For that to work, nothing which stands in for the engine names a commit of its own. A stand-in which
+answers `GET /system/status` reports the commit of the build's pin, shortened as the engine shortens
+it: `FakeEngine#pinnedCommitAsReported` in the core's tests, the adapter's own descriptor in the
+stand-ins of `smoke-test` and `quarkus/deployment`. The adapter warns when the engine reports
+another commit than the one it was tested with, so a commit written into a stand-in brings that
+warning into every test which counts the findings of a start, as soon as the build runs against
+another engine, and the same happens when the pin moves. A test which wants the warning makes up a
+commit no engine has.
+
+What compares the pin with the repository's own files is left out of such a run: the coverage
+gate's `EnginePinTest` holds the README's table and the headers of the copied engine contract to the
+pin, which on purpose is not the engine of that run, and `bin/check-engine-copies.sh` compares the
+copies with the pinned commit's files. The nightly leaves out the whole gate, as coverage is the
+business of the build against the pin.
+
+A red `latest-engine` job does not turn the nightly red (`continue-on-error`), because nothing in
+this repository changed, and the workflow writes its finding into the run's summary only: it opens
+no issue and writes nowhere, in this repository or the engine's. A person reads it and takes the
+finding to the engine's maintainers.

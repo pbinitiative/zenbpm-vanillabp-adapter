@@ -9,6 +9,8 @@ import java.io.UncheckedIOException;
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
+import java.util.Locale;
+import java.util.ResourceBundle;
 import java.util.concurrent.CopyOnWriteArrayList;
 
 import com.sun.net.httpserver.HttpExchange;
@@ -22,7 +24,16 @@ import com.sun.net.httpserver.HttpServer;
  */
 final class StandInEngine implements AutoCloseable {
 
-    private static final String TESTED_COMMIT = "bdd795a399b6";
+    /**
+     * The engine commit this build of the adapter was tested with, read from where the adapter reads
+     * it and shortened to twelve characters as the engine reports it. So the stand-in is the tested
+     * engine whichever engine the build runs against, and the adapter warns about no other one (see
+     * decision 62 in the repository's DECISIONS.md).
+     */
+    private static final String TESTED_COMMIT = ResourceBundle
+            .getBundle("META-INF/vanillabp/adapter-zenbpm", Locale.ROOT)
+            .getString("zenbpm.engine")
+            .substring(0, 12);
 
     private final HttpServer server;
 

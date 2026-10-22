@@ -107,3 +107,8 @@ jobs:
           persist-credentials: false
       - name: Lint the workflows
         run: docker run --rm --volume "$PWD:/repo" --workdir /repo rhysd/actionlint:1.7.12 -color
+      # actionlint checks the lines of a workflow's 'run:' only, not the scripts of bin/ which a
+      # workflow or a person runs. The image carries the shellcheck actionlint uses.
+      - name: Lint the scripts
+        run: docker run --rm --volume "$PWD:/repo" --workdir /repo --entrypoint shellcheck
+          rhysd/actionlint:1.7.12 bin/*.sh
