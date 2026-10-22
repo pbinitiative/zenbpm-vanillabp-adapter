@@ -790,7 +790,8 @@ releases switched off, the way the root `pom.xml` of this repository does.
 ## What CI runs
 
 No workflow of this repository needs a secret of its own: each works with the workflow's
-`GITHUB_TOKEN`, and only the publication may write with it.
+`GITHUB_TOKEN`, and only the publication may write with it. `WorkflowPermissionsTest` in
+`test-coverage-report/coverage-gate` holds every workflow to this.
 
 **Every pull request and every push to `main`** run `.github/workflows/checks.yaml`: one
 `mvn install`, which is Spotless, compile, javadoc, the tests, both coverage reports and the gate.
@@ -800,7 +801,8 @@ published classes are compiled for, because a dependency built for a newer Java 
 run time. When a red run got as far as writing test or coverage reports, they are attached to the
 run as the artifact `test-reports` (`test-reports-java-21` for the run on Java 21). A build which
 stops earlier, at Spotless or the compiler, has none, and its log is the place to read. The job
-`workflow-lint` checks every workflow of the repository with actionlint.
+`workflow-lint` checks every workflow of the repository with actionlint and every script of `bin/`
+with shellcheck.
 
 The build reads the VanillaBP snapshots from the snapshot repository of Maven Central, which needs
 no login. So a pull request from a fork builds exactly like one from this repository.
@@ -811,20 +813,20 @@ coverage". It deploys with the workflow's `GITHUB_TOKEN`.
 
 **Every night** at 02:37 UTC, `.github/workflows/nightly.yaml` runs what no pull request should
 wait for, in jobs which do not depend on one another. Its badge at the top shows the last run on
-`main`. A pull request which changes the workflow runs it too, so a change of the nightly is seen
-working before it is merged; no other pull request starts it. A person can start it on `main` from
-the Actions tab. Its jobs:
+`main`. A pull request which changes the workflow or `bin/resolve-latest-engine.sh`, the script it
+runs, runs it too, so a change of the nightly is seen working before it is merged; no other pull
+request starts it. A person can start it on `main` from the Actions tab. Its jobs:
 
 - `pinned-engine`: the build of `checks.yaml`'s job `build`, against the pinned engine. With nobody
   waiting for it, a test which fails now and then shows up here and not in somebody's pull request.
 - `latest-engine`: the same build against the engine's newest build of its `main`, the moving tag
   `ghcr.io/pbinitiative/zenbpm:dev`. `bin/resolve-latest-engine.sh` turns the tag into the image's
   digest and the commit it was built from, starts it once to read the commit the engine reports,
-  and writes all three into the run's summary together with whether that commit is the pin. The
-  build then runs with `-Dzenbpm.image` and `-Dzenbpm.commit` set to them and without the coverage
-  gate: the gate compares the README and the copies of the engine's contract with the engine the
-  build runs against, which here is another one on purpose, and coverage is the pinned build's
-  business. The job may fail without turning the run red (`continue-on-error`), because nothing in
+  and writes all three into the run's summary together with the version the engine reports and
+  whether that commit is the pin. The build then runs with `-Dzenbpm.image` and `-Dzenbpm.commit`
+  set to them and without the coverage gate: the gate compares the README and the copies of the
+  engine's contract with the engine the build runs against, which here is another one on purpose,
+  and coverage is the pinned build's business. The job may fail without turning the run red (`continue-on-error`), because nothing in
   this repository changed. A red job is the earliest warning that an engine change breaks the
   adapter: a person reads it and takes the finding to the engine's maintainers. The workflow
   itself opens no issue and writes nowhere (decision 62 in [`DECISIONS.md`](./DECISIONS.md)).
@@ -833,11 +835,14 @@ the Actions tab. Its jobs:
   so the image is built with a local GraalVM rather than in the builder container. When it fails,
   the binary's log and the test reports are attached as the artifact `native-image-reports`.
 
-Each job writes one line into the run's summary: what it ran against and how it ended. A failed
-build attaches its test reports (`pinned-engine-reports`, `latest-engine-reports`). Every job
-reads with the workflow's token and writes nothing. `NightlyWorkflowTest` in
+Each job ends with a line in the run's summary: what it ran against and how it ended, also where
+it failed before its build; `latest-engine` writes the line of its script before. A failed build
+attaches its test reports (`pinned-engine-reports`, `latest-engine-reports`). Every job reads with
+the workflow's token and writes nothing. `NightlyWorkflowTest` in
 `test-coverage-report/coverage-gate` holds the workflow to this section: the triggers, the jobs it
-names, the jobs' independence, the one job which may fail, the permissions and the summary line.
+names, the jobs' independence, the one job which may fail and no step of another job which could
+hide a failure, the native build reaching its integration test, the permissions and the summary
+line.
 
 ## Test coverage
 

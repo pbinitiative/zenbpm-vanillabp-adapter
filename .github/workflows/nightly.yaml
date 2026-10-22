@@ -2,22 +2,23 @@ name: Nightly
 # What no pull request should have to wait for: the full build against the pinned engine on a
 # quiet night, the same integration tests against the engine's newest build of its main, and
 # the native image. The jobs do not depend on one another, so one more is added without
-# touching the others. Each writes one line about its result into the run's summary and
-# nothing anywhere else: no job of this workflow may write to any repository, package or
-# issue tracker. The README describes the jobs in its section 'What CI runs', and
-# NightlyWorkflowTest in test-coverage-report/coverage-gate holds what the README says.
+# touching the others. Each writes its result into the run's summary and nothing anywhere
+# else: no job of this workflow may write to any repository, package or issue tracker. The
+# README describes the jobs in its section 'What CI runs', and NightlyWorkflowTest in
+# test-coverage-report/coverage-gate holds what the README says.
 "on":
   schedule:
     # 02:37 UTC every night: before the engine's own scheduled workflows, which run from 04:00
     # to 06:00 UTC, and off the full hour, at which GitHub delays the runs it starts
     - cron: "37 2 * * *"
   workflow_dispatch:
-  # A pull request which changes this file runs it, so a change of the nightly is seen working
-  # before it is merged. A dispatch or a schedule can only run the file on main. Any other
-  # pull request never starts it.
+  # A pull request which changes this file or the script it runs runs it, so a change of the
+  # nightly is seen working before it is merged. A dispatch or a schedule can only run the file
+  # on main. Any other pull request never starts it.
   pull_request:
     paths:
       - .github/workflows/nightly.yaml
+      - bin/resolve-latest-engine.sh
 permissions:
   contents: read
 concurrency:
@@ -70,9 +71,10 @@ jobs:
         if: always()
         env:
           RESULT: ${{ job.status }}
+        # the line is written also where the checkout failed and there is no pom.xml to read
         run: |
-          commit="$(sed -nE 's|.*<zenbpm\.commit>([0-9a-f]{40})</zenbpm\.commit>.*|\1|p' pom.xml)"
-          echo "Pinned engine: the build against commit \`$commit\` ended with \`$RESULT\`." >>"$GITHUB_STEP_SUMMARY"
+          commit="$(sed -nE 's|.*<zenbpm\.commit>([0-9a-f]{40})</zenbpm\.commit>.*|\1|p' pom.xml 2>/dev/null)" || true
+          echo "Pinned engine: the build against commit \`${commit:-unread}\` ended with \`$RESULT\`." >>"$GITHUB_STEP_SUMMARY"
 
   # The integration tests against the engine's newest build of its main, the moving tag
   # ghcr.io/pbinitiative/zenbpm:dev. A red run is the earliest warning that an engine change
@@ -188,6 +190,7 @@ jobs:
         if: always()
         env:
           RESULT: ${{ job.status }}
+        # the line is written also where the GraalVM could not be installed
         run: |
-          builder="$(native-image --version | head -n 1)"
-          echo "Native image: the build with \`$builder\` and the run of the binary against the pinned engine ended with \`$RESULT\`." >>"$GITHUB_STEP_SUMMARY"
+          builder="$(native-image --version 2>/dev/null | head -n 1)" || true
+          echo "Native image: the build with \`${builder:-no native-image on the runner}\` and the run of the binary against the pinned engine ended with \`$RESULT\`." >>"$GITHUB_STEP_SUMMARY"

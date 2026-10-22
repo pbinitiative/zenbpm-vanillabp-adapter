@@ -14,7 +14,9 @@
 # pulls of one build, and they hold the engine to the commit it reports, so both values come from
 # the same pulled image. The script then starts that image once and reads the commit the engine
 # itself reports, which has to be the start of the revision label: the line it writes names what
-# the engine said, not only what its label claims.
+# the engine said, not only what its label claims, and the version it reports. Every build of the
+# engine's main between two version bumps reports the same version, so the commit is what tells
+# two builds apart.
 #
 # On GitHub Actions the two values go to the step's outputs and the line to the job's summary.
 # Run by hand, everything is printed. The script needs Docker, curl and jq; it fails when the
@@ -60,9 +62,11 @@ port="${port##*:}"
 # The engine took six seconds to answer on a laptop; two minutes is where EngineUnderTest gives
 # up as well.
 reported=""
+version=""
 for _ in $(seq 120); do
   if status="$(curl --silent --fail --max-time 5 "http://127.0.0.1:$port/system/status")"; then
     reported="$(jq --raw-output '.git.commitId // empty' <<<"$status")"
+    version="$(jq --raw-output '.build.version // empty' <<<"$status")"
     break
   fi
   sleep 1
@@ -77,7 +81,7 @@ if [ "$commit" = "$pin" ]; then
 else
   against="not the pinned commit $pin"
 fi
-line="Latest engine: \`$tag\` is \`$image\`, built from commit \`$commit\`, which the engine reported as \`$reported\`; $against."
+line="Latest engine: \`$tag\` is \`$image\`, built from commit \`$commit\`, which the engine reported as \`$reported\` with version \`${version:-none}\`; $against."
 
 if [ -n "${GITHUB_OUTPUT:-}" ]; then
   echo "image=$image" >>"$GITHUB_OUTPUT"

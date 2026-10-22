@@ -44,12 +44,16 @@ class NightlyWorkflowTest {
 
     private static final String WORKFLOW = ".github/workflows/nightly.yaml";
 
+    private static final String RESOLVING_SCRIPT = "bin/resolve-latest-engine.sh";
+
     /** The jobs the plan asks of the nightly; a later one is added next to them. */
     private static final Set<String> REQUIRED_JOBS = Set.of("pinned-engine", "latest-engine", "native-image");
 
     private static final Pattern JOB_OF_THE_README = Pattern.compile("(?m)^- `([a-z0-9-]+)`:");
 
     private static final Pattern SECRET = Pattern.compile("secrets\\.([A-Za-z0-9_]+)");
+
+    private static final Pattern SKIPPED_TESTS = Pattern.compile("skipTests|skipITs|maven\\.test\\.skip|-Dit\\.test");
 
     private static final Pattern WRITTEN_SUMMARY = Pattern.compile(">>\\s*\"\\$GITHUB_STEP_SUMMARY\"");
 
@@ -68,10 +72,10 @@ class NightlyWorkflowTest {
                 The nightly runs on its schedule, on a dispatch and on a pull request which changes it, \
                 and on nothing else, as the README's section 'What CI runs' says.""");
 
-        assertEquals(Map.of("paths", List.of(WORKFLOW)), triggers.get("pull_request"), """
-                A pull request starts the nightly only where it changes the nightly itself: its native \
-                build takes too long for every pull request, and the README promises that no other pull \
-                request starts it.""");
+        assertEquals(Map.of("paths", List.of(WORKFLOW, RESOLVING_SCRIPT)), triggers.get("pull_request"), """
+                A pull request starts the nightly only where it changes the nightly itself or the script \
+                it runs: its native build takes too long for every pull request, and the README promises \
+                that no other pull request starts it.""");
 
         final var schedules = list(triggers.get("schedule"), "on.schedule");
         assertEquals(1, schedules.size(), "The nightly runs once a night: one schedule.");
@@ -119,9 +123,7 @@ class NightlyWorkflowTest {
                     .containsKey("needs")) {
                 waiting.add(job.getKey());
             }
-            if (Boolean.TRUE.equals(job
-                    .getValue()
-                    .get("continue-on-error"))) {
+            if (mayFail(job.getValue())) {
                 mayFail.add(job.getKey());
             }
         }
@@ -132,6 +134,34 @@ class NightlyWorkflowTest {
         assertEquals(Set.of("latest-engine"), mayFail, """
                 Only 'latest-engine' may fail without turning the nightly red ('continue-on-error'): it \
                 runs against an engine this repository does not pin. Every other job has to fail the run.""");
+    }
+
+    /**
+     * A job fails the run only where each of its steps does: a step which may fail, or a command
+     * whose failure is swallowed, turns a red build into a green job as well as a job's
+     * <code>continue-on-error</code> does. The steps which only report, run on <code>always()</code>
+     * or <code>failure()</code>, may swallow what they like.
+     */
+    @Test
+    @DisplayName("No step of a job which has to fail the run lets a failure pass")
+    void noStepOfAJobWhichHasToFailLetsAFailurePass() {
+        final var hiding = new TreeSet<String>();
+        for (final var job : jobs().keySet()) {
+            if ("latest-engine".equals(job)) {
+                continue;
+            }
+            for (final var step : steps(job)) {
+                final var run = String.valueOf(step.get("run"));
+                if (mayFail(step) || (!step.containsKey("if") && run.contains("||"))) {
+                    hiding.add("job '%s', step '%s'".formatted(job, step.getOrDefault("name", step.get("uses"))));
+                }
+            }
+        }
+
+        assertEquals(Set.of(), hiding, """
+                These steps let a failure pass, with 'continue-on-error' or with a command after '||', \
+                although their job has to fail the nightly when its build fails. Only 'latest-engine' may \
+                fail without turning the run red.""");
     }
 
     @Test
@@ -262,13 +292,27 @@ class NightlyWorkflowTest {
         assertEquals("mandrel", with.get("distribution"), "The README names Mandrel, the GraalVM Quarkus builds with.");
         assertEquals("25", with.get("java-version"), "The README names Mandrel for Java 25.");
 
-        assertTrue(steps
+        final var building = steps
                 .stream()
                 .map(step -> String.valueOf(step.get("run")))
-                .anyMatch(run -> run.contains("-Dnative") && run.contains("-Dquarkus.native.container-build=false")),
-                """
-                        'native-image' has to build the image with '-Dnative' and \
-                        '-Dquarkus.native.container-build=false', so that the GraalVM on the runner builds it.""");
+                .filter(run -> run.contains("-Dnative"))
+                .toList();
+        assertEquals(1, building.size(), "'native-image' builds the image in one step, with '-Dnative'.");
+        final var build = building
+                .getFirst()
+                .strip();
+        assertTrue(build.contains("-Dquarkus.native.container-build=false"), """
+                'native-image' has to build the image with '-Dquarkus.native.container-build=false', so \
+                that the GraalVM on the runner builds it.""");
+        assertTrue(
+                build.startsWith("mvn ") && build.contains("--projects quarkus/native-image-tests") && build.endsWith(
+                        " verify") && !SKIPPED_TESTS
+                                .matcher(build)
+                                .find(),
+                () -> """
+                        'native-image' has to run ZenBpmNativeImageIT against the binary it built: a Maven \
+                        call of 'quarkus/native-image-tests' up to 'verify', which runs failsafe, and without \
+                        skipping tests, but runs '%s'.""".formatted(build));
     }
 
     @Test
@@ -280,6 +324,14 @@ class NightlyWorkflowTest {
                         The README has to show the nightly's badge of 'main' in the line after the badge of \
                         the checks:
                         %s""".formatted(NIGHTLY_BADGE));
+    }
+
+    /**
+     * Whether a job or step may fail without failing what it stands in: a
+     * <code>continue-on-error</code> which is anything but <code>false</code>, an expression included.
+     */
+    private static boolean mayFail(final Map<String, Object> jobOrStep) {
+        return jobOrStep.containsKey("continue-on-error") && !Boolean.FALSE.equals(jobOrStep.get("continue-on-error"));
     }
 
     private static Map<String, Object> workflow() {

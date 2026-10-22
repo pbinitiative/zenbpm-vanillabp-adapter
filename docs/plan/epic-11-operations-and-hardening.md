@@ -810,10 +810,10 @@ the engine version it met; the native job runs the lifecycle flow.
 `pbinitiative/zenbpm` on its `main` (read only); `graalvm/setup-graalvm` v1.6.7 (`src/mandrel.ts`)
 and the releases of `graalvm/mandrel`; and the engine image `ghcr.io/pbinitiative/zenbpm:dev` as it
 stood on 2026-10-22 (digest `a847afe3...`, revision `1ee1fd663e340017725b9867c9db41c476f8d94a` of
-2026-10-19, eight commits after the pin; see the acceptance below for what it showed). The story touches CI and test fixtures only, so
-neither `ADAPTER-AUTHORS.md` nor the platform's code was concerned, and no claim about the engine's
-behaviour was needed beyond what the runs against both images show. What did not fit, and what
-was decided:
+2026-10-19, eight commits after the pin; see the acceptance below for what it showed). The story
+touches CI and test fixtures only, so neither `ADAPTER-AUTHORS.md` nor the platform's code was
+concerned, and no claim about the engine's behaviour was needed beyond what the runs against both
+images show. What did not fit, and what was decided:
 
 1. **Pointing the build at the newest engine** (open question 1). `-Dzenbpm.image=...:dev`, as the
    story writes it, is refused by `EngineUnderTest` ("is not pinned by its digest"). Decided as the
@@ -822,12 +822,15 @@ was decided:
    label, starts the image once and reads `git.commitId` of `/system/status`, and fails unless that
    is the start of the label's commit; it writes `image` and `commit` to the step's outputs and one
    line to the job's summary naming the tag, the digest, the commit, the commit the engine reported
-   and whether it is the pin. The build then runs with `-Dzenbpm.image` and `-Dzenbpm.commit` set to
-   them. A script in `bin/` rather than lines in the workflow, so it runs by hand the same way
-   (actionlint's image runs shellcheck over it). Every test which reads the engine follows the two
-   properties: `EngineUnderTest` reads its filtered resource, failsafe hands `zenbpm.image` to
-   `EngineUnderTestIT`, and the core filters `zenbpm.commit` into the adapter's descriptor, which
-   `ZenBpmEnvironmentInfo` and the tests of `pinnedCommit()` read. Two things did not follow:
+   and whether it is the pin (and, since the review fixes, the version the engine reported). The
+   build then runs with `-Dzenbpm.image` and `-Dzenbpm.commit` set to them. A script in `bin/`
+   rather than lines in the workflow, so it runs by hand the same way. actionlint does not read a
+   script a workflow calls; shellcheck passed it when run by hand, and since the review fixes the
+   job `workflow-lint` of `checks.yaml` runs shellcheck over every script of `bin/`. Every test
+   which reads the engine follows the two properties: `EngineUnderTest` reads its filtered
+   resource, failsafe hands `zenbpm.image` to `EngineUnderTestIT`, and the core filters
+   `zenbpm.commit` into the adapter's descriptor, which `ZenBpmEnvironmentInfo` and the tests of
+   `pinnedCommit()` read. Two things did not follow:
    - **The coverage gate's `EnginePinTest`** compares the README's table and the headers of the two
      copied engine files with the pin, which in this run is on purpose another engine. The job
      leaves out the whole gate (`--projects '!test-coverage-report/coverage-gate'`): its other
@@ -853,8 +856,9 @@ was decided:
    permissions are all `read` (`NightlyWorkflowTest#theNightlyWritesNothing`).
 3. **Proving the nightly before the merge** (open question 3). Taken as the brief decided: the
    workflow also runs on a `pull_request` whose changes include `.github/workflows/nightly.yaml`
-   (a `paths` filter), so the feature pull request runs all three jobs, and so does any later change
-   of the nightly; a pull request which does not touch it never starts it. The README's section
+   or, since the review fixes, `bin/resolve-latest-engine.sh` (a `paths` filter), so the feature
+   pull request runs all three jobs, and so does any later change of the nightly; a pull request
+   which does not touch them never starts it. The README's section
    "What CI runs" says so, `NightlyWorkflowTest#theNightlyRunsWhenTheReadmeSays` holds the triggers
    to exactly `schedule`, `workflow_dispatch` and that `pull_request`, and actionlint 1.7.12 accepts
    them. A pull request from a fork needs nothing but the read-only `GITHUB_TOKEN`, with which the
@@ -863,9 +867,9 @@ was decided:
    The nightly's jobs are not added to the required checks (no settings change).
 4. **The schedule** (open question 4). The engine's scheduled workflows run on Mondays at 04:00
    (`codeql-analysis.yml`), 05:00 (`go-static-analysis.yml`) and 06:00 UTC (`gosec.yml`), and every
-   day at 06:00 UTC (`trivy-scan.yml`); its image `:dev` is built on every push to its `main`. Taken:
-   `37 2 * * *`, every night at 02:37 UTC, before those and off the full hour. The test holds the
-   schedule to one fixed daily time off the full hour and to the time the README names.
+   day at 06:00 UTC (`trivy-scan.yml`); its image `:dev` is built on every push to its `main`.
+   Taken: `37 2 * * *`, every night at 02:37 UTC, before those and off the full hour. The test
+   holds the schedule to one fixed daily time off the full hour and to the time the README names.
 5. **The badge and what holds it** (open question 5). The badge `Nightly` of `nightly.yaml` on
    `main` stands in the line after `Checks`. No test read a workflow before:
    `PublicationSafetyTest` reads the README's coverage badges and the POMs only. So
@@ -938,8 +942,9 @@ makes run them all (fit-check point 3); those runs are added below after the pul
   with a local GraalVM (the note of S11.4.1). On GitHub: on the pull request, added after its
   checks.
 - [x] Every job writes a summary line, and the README describes the jobs in "What CI runs" with
-  the nightly's badge next to `Checks`: `NightlyWorkflowTest` (8 tests) holds both. actionlint 1.7.12
-  (with shellcheck, which its image carries) passes the workflows and the script.
+  the nightly's badge next to `Checks`: `NightlyWorkflowTest` (8 tests, 9 since the review fixes)
+  holds both. actionlint 1.7.12 passes the workflows; shellcheck, which its image carries, run by
+  hand, passes the script (actionlint itself does not read it; see the answers to the reviews).
 - Mutants, all killed: 17 changes of the workflow or the README, each failing `NightlyWorkflowTest`:
   `continue-on-error` removed from `latest-engine`, and added to `pinned-engine`; a `needs` between
   jobs; `packages: write`; the `paths` filter removed; the schedule on the full hour, and at another
@@ -964,8 +969,9 @@ makes run them all (fit-check point 3); those runs are added below after the pul
 
 - *Meters and health are documented and tested*: met. The README's sections "Metrics" and "Health"
   name their tests; S11.1.1's acceptance lists them (`ZenBpmMetricsIT`, `ZenBpmMetricsBootTest`,
-  `ZenBpmWithoutMicrometerTest`, `ZenBpmWorkflowLifecycleTest#theMetersOfTheAdapterIdMoveWithTheWork`,
-  the health tests of E3), all green in the clean build above.
+  `ZenBpmWithoutMicrometerTest`,
+  `ZenBpmWorkflowLifecycleTest#theMetersOfTheAdapterIdMoveWithTheWork`, the health tests of E3),
+  all green in the clean build above.
 - *The election ITs are green*: met. `election-integration-test`, 8 ITs of S11.3.1, green in the
   clean build above and against `:dev`.
 - *The native image runs the lifecycle flow*: met locally. S11.4.1's `ZenBpmNativeImageIT` with the
@@ -973,6 +979,62 @@ makes run them all (fit-check point 3); those runs are added below after the pul
   it; the job's first run on GitHub is added with the pull request's checks.
 - *Both coverage reports read above 90*: met. 100 % on both platforms in the clean build above, and
   both badges read 100 % since S11.5.1.
+
+**Answers to two reviews of e11-s11.6.1, 2026-10-22** (one by Claude, approve with minor fixes:
+3 Minor, 5 Nit; one by Copilot, approve: 1 Minor). Every claim was checked in the workflow, the
+script, the test and the engine's code at the pin, by the reviewers' probes and by probes of my
+own. All nine findings were valid, one of them in its effect though not in its mechanism; all are
+fixed. No decision and no GAPS row was needed.
+
+- **A step could let a job that has to fail the run pass** (Claude 1, Minor). The test read
+  `continue-on-error` at job level only, and only `true`, so a step's `continue-on-error`, an
+  `|| true` after the build, or `continue-on-error: ${{ true }}` on the job turned a red
+  `pinned-engine` or `native-image` green unnoticed. Now
+  `NightlyWorkflowTest#noStepOfAJobWhichHasToFailLetsAFailurePass` refuses, in every job but
+  `latest-engine`, a step with `continue-on-error` and a step without an `if` whose command
+  contains `||`. A `continue-on-error` which is anything but `false` counts, at job level too.
+- **The native job's run of the binary was not held** (Copilot 1, Minor). `verify` changed to
+  `package` kept every test green while `ZenBpmNativeImageIT` would never run.
+  `#theNativeImageIsBuiltOnTheRunner` now requires the one step with `-Dnative` to be a `mvn` call
+  of `--projects quarkus/native-image-tests` ending in `verify`, with no switch which skips tests.
+- **The resolve script was neither run nor linted by a pull request** (Claude 2, Minor). The
+  `paths` filter named the workflow only, and actionlint does not read a script a workflow calls,
+  which fit-check point 1 claimed it did. The script is in the filter now, and the job
+  `workflow-lint` of `checks.yaml` runs the shellcheck of the actionlint image over every script
+  of `bin/` (all four pass). Fit-check points 1 and 3, the acceptance line and the README say so.
+- **A summary step could lose its line** (Claude 3, Minor). The review said GitHub runs a step with
+  `pipefail`; it does so only with `shell: bash`, and these steps name no shell, so they run as
+  `bash -e`. Probed locally without `native-image` and without `pom.xml`: the native step wrote its
+  line with an empty builder, and the pinned step stopped at its `sed` (exit 2) before its line.
+  Both now fall back (`... || true`, "no native-image on the runner", commit "unread") and write
+  their line in either shell.
+- **Nits** (Claude 4 to 8). The README said each job writes one line; `latest-engine` writes its
+  script's line too, and the README says so now. The script's line names the version the engine
+  reports as well (`.build.version` of `/system/status`; `v1.9.0` for `:dev` today), which the
+  acceptance asks for; the commit still tells two builds apart. The roadmap's M6 row and row 57
+  and step 3 of S1.3.1 name `:dev` and "What CI runs"; `docs/open-questions.md` keeps "Contributing"
+  as the record of a question answered before. Five lines of this section and one of
+  `docs/README.md` are wrapped; the image digest of the acceptance stays one line. The README's
+  sentence that no workflow needs a secret and only the publication writes is held by the new
+  `WorkflowPermissionsTest` (every workflow: no secret but `GITHUB_TOKEN`, permissions named at the
+  top, a permission which writes in `publish-snapshots.yaml` only).
+- Mutants, all killed (10 of 10): the script dropped from `paths`; a step's `continue-on-error` on
+  the pinned build and on the native build; `|| true` after the pinned build;
+  `continue-on-error: ${{ true }}` on `pinned-engine`; `verify` to `package` and `-DskipITs` in the
+  native build; another secret, `packages: write` and no top-level permissions in `checks.yaml`.
+  Unmutated, `NightlyWorkflowTest` 9 and `WorkflowPermissionsTest` 2 pass.
+
+Builds after the fixes (OpenJDK 25.0.2, Docker ITs, none skipped):
+
+- `TZ=Etc/UTC mvn clean install`, 17:42 min, green: engine test support 12 + 5, core 1,275 + 104,
+  Spring Boot 14 + 95, smoke test 42 + 1, election integration test 8, Quarkus runtime 13,
+  deployment 60, integration tests 25, native-image tests 0 (the IT runs only with `-Dnative`),
+  gate 52 (49 before: one test of `NightlyWorkflowTest` and the two of `WorkflowPermissionsTest`
+  are new); coverage 100 % on both platforms (0 of 38,473 instructions missed on Spring Boot, 0 of
+  38,470 on Quarkus).
+- `bin/check-deploy-safety.sh`, green at the first run: 13 files deployed by the green build,
+  nothing by the red gate.
+- actionlint 1.7.12 and the new shellcheck step, run as `checks.yaml` runs them: both exit 0.
 
 ## S11.5.1 Coverage at the rule
 

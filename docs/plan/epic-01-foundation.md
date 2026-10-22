@@ -250,7 +250,8 @@ appear), E11 (nightly and native), E12 (release) and E13 (a trigger from the eng
    not prove that the dependencies run on 21. A second job `workflow-lint` runs `actionlint` over
    the workflows, which Spotless does not read.
 3. Branch protection on `main` requires the `build` check (documented in the README's "Contributing"
-   section; the setting itself is done in the repository settings by a maintainer).
+   section, called "What CI runs" since S11.6.1; the setting itself is done in the repository
+   settings by a maintainer).
 4. The README gets a build badge for `checks.yaml`.
 
 **Acceptance criteria**
