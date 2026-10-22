@@ -27,7 +27,7 @@
 | M3 "It works" | E6 | a service task runs a `@WorkflowTask`, a gateway behind it sees the shared values, a BPMN error routes a boundary event, an asynchronous task is completed later, a redelivery is skipped |
 | M4 "It talks" | E7, E8, and the start half of E9 (S9.1.1, S9.3.1) | messages correlate, a workflow started by message is found again, the aggregate is pushed, user tasks notify and complete |
 | M5 "It is complete against the SPI" | the rest of E9, E10 | `@WorkflowEnded`, multi-instance, versions, viewer; every row of the mapping is SUPPORTED or documented |
-| M6 "It ships" | E11, E12 | metrics, election ITs, nightly against the engine's newest `main` build (`:dev`), native image, coverage at the rule, wiki, the blueprints on ZenBPM through an overlay in the nightly, release workflow and first release |
+| M6 "It ships" | E11, E12 | metrics, election ITs, nightly against the engine's newest `main` build (`:dev`), native image, coverage at the rule, wiki, the blueprints on ZenBPM through an overlay in the nightly, release workflow and first release; the first release is left to the maintainer (see S12.4.1), so M6 is reached except for it |
 | E13 runs in parallel from M2 on; each engine change lands with its adapter twin | | |
 
 ## Dependency graph
@@ -112,6 +112,6 @@ where the dependency is not simply the previous one.
 | 58 | S12.1.1 Wiki and README | E12 | pages exist, every claim names its test |
 | 59 | S12.2.1 Blueprints profile `-Pzenbpm` (an overlay in this repository, built by the nightly) | E12 | the blueprints run on the pinned engine in the adapter's nightly |
 | 60 | S12.3.1 Renovate, local workspace notes, VanillaBP wiki row | E12 | `renovate.json` reviewed and held by `RenovateConfigurationTest`; local notes re-read and their corrections written down; left to the maintainer: applying the local notes, asking VanillaBP for the `BPMS-adapters` wiki row (text in the story), the engine's `customManagers` entry with the re-pin |
-| 61 | S12.4.1 Release workflow and first release | E12 | `v2.0.0` tag builds, publishes and creates the release |
+| 61 | S12.4.1 Release workflow and first release | E12 | `release.yaml` built and proven by its dry run, which publishes nothing (decisions 65, 66); the first release is NOT made: left to the maintainer after VanillaBP's 2.0.0 and the engine re-pin, then a pushed `v2.0.0` builds, publishes to GitHub Packages and creates the release |
 
 E13 stories are ordered by value in their own file and slot in wherever the engine work is done.

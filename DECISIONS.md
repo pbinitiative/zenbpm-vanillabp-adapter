@@ -1975,3 +1975,63 @@ same identifiers, and a twin must not find the workflows, timers and versions th
 left. The blueprints' models are written for Camunda 8, which gives a task without `retries` three
 attempts, so the script starts the engine with `JOBS_DEFAULT_RETRIES=3`, as the wiki page
 `Configuration` advises for such models.
+
+### 65. A release is published by the release workflow from a tag, to this repository's GitHub Packages
+
+Decided by the implementation pipeline in place of the maintainers, as their policy for the
+autonomous run asks.
+
+Where the releases go was open: Maven Central under `org.pbinitiative`, where the engine's Java
+client is published, or this repository's GitHub Packages, where the snapshots of `main` go. Central
+needs the organisation's namespace token and a signing key as secrets of this repository, and
+neither exists. So a release goes to GitHub Packages, under the same server `github` and with the
+workflow's own token, as the snapshots do: the root POM's `distributionManagement` names the
+registry as its `repository` beside the `snapshotRepository`. Publishing to Central as well is left
+to the maintainers; it adds a deploy with the signature and the Central plugin, and the secrets.
+
+`.github/workflows/release.yaml` is the only way a release is published. A pushed tag
+`v<major>.<minor>.<patch>` builds that version from the tag with `-Drevision`, with every test and
+the coverage gate, and deploys it into a local directory only; the job `build` which does that may
+only read. Before it builds, it refuses an engine pin which is no engine release (decision 66) and a
+tag which carries no notes; after it, a POM which names a snapshot, because a release which depends
+on a snapshot changes under the application which names it. Only then does the job `publish`, the
+only one which may write, upload exactly the files `build` staged and tested, with Maven's
+`deploy:deploy-file`, and create the GitHub release with the tag's message as its notes. It runs no
+build, so no plugin of the build ever holds a token which writes. `WorkflowPermissionsTest` names
+every job which may write and what.
+
+Every other run of the workflow is a dry run: a dispatch and a pull request which changes the
+release run every step of `build`, write each refusal into the run's summary instead of stopping,
+and rehearse the upload into a local directory with the same command. So the release is tested
+before a tag exists, and the summary says what a release of that commit would meet. The steps are
+the commands of `bin/release.sh`, which `ReleaseScriptTest` runs against stand-ins of git, curl, the
+GitHub CLI and Maven; `ReleaseWorkflowTest` holds the workflow to the README's section "Releasing".
+No other workflow publishes a release: `publish-snapshots.yaml` deploys the root POM's `revision`
+as it stands, and `ReleaseWorkflowTest` keeps that a snapshot.
+
+### 66. A release names an engine release, which the pin records in `zenbpm.version`, with the image still pinned by its digest
+
+Decided by the implementation pipeline in place of the maintainers, as their policy for the
+autonomous run asks.
+
+An adapter release supports the engine it was tested against (decision 15), and that has to be an
+engine release: a build of the engine's `main`, named by a digest of its `dev` image, is nothing an
+operator can install by its version. So before the adapter's first release the pin moves to an
+engine release, and the release refuses to start while it has not.
+
+The plan wrote the released pin as `zenbpm.image` = `ghcr.io/pbinitiative/zenbpm:${zenbpm.version}`.
+That cannot work here: `EngineUnderTest` refuses an image named by a tag, because a tag can move
+between two pulls of one build (decision 62), and the tests hold the engine to the commit it reports.
+So the image stays pinned by its digest, and the release is recorded in a third property of the root
+POM, `zenbpm.version`, the engine's release tag (for example `v1.9.0`). It exists only once the pin is
+a release; its absence is the state of a pin on `main`. `bin/release.sh engine` checks that the three
+belong together before a release builds: the tag is `v<major>.<minor>.<patch>` and no pre-release,
+the engine's repository has it and it points at `zenbpm.commit` (the commit an annotated tag points
+at, not the tag object), and the registry names `zenbpm.image`'s digest for the tag's image
+`ghcr.io/pbinitiative/zenbpm:<tag>`. Each refusal names the three properties and the fix, the steps
+of the README's section "Supported engine version".
+
+Renovate follows the engine's GitHub releases through `zenbpm.version` once it exists; the pull
+request it opens moves that property only, and a person completes it with the commit, the digest
+and the two copies of the engine's contract. Until then the check refuses a release of the half-moved
+pin.

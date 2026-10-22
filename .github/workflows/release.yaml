@@ -1,0 +1,204 @@
+name: Release
+# The only way a version of this adapter is released. A pushed tag v<major>.<minor>.<patch> builds
+# that version from the tag with every test and the coverage gate, and refuses before uploading
+# anything: an engine pin which is no engine release, a tag which carries no notes, and a POM which
+# names a snapshot. Only then does the job 'publish' upload the artifacts the build staged to this
+# repository's GitHub Packages and create the GitHub release with the tag's message as its notes.
+# See decision 65 in the repository's DECISIONS.md for the release, and see decision 66 in the
+# repository's DECISIONS.md for the engine it names.
+#
+# Every other run is a dry run which publishes nothing: it runs every step of the job 'build' up
+# to the upload, with the version of a tag it is given or the one the root POM's revision leads
+# to, writes each refusal into the run's summary instead of stopping, and uploads the staged files
+# into a local directory only. The README's section 'Releasing' describes the workflow, and
+# ReleaseWorkflowTest in test-coverage-report/coverage-gate holds it to what the README says.
+"on":
+  push:
+    tags:
+      - "v*"
+  # a dry run on main, from the Actions tab or with 'gh workflow run release.yaml'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "The tag whose release the dry run rehearses, for example v2.0.0; empty for the one of the root POM's revision. Nothing is published."
+        required: false
+        default: ""
+        type: string
+  # A pull request which changes this file or a script it runs runs the dry run, so a change of
+  # the release is seen working before it is merged. Any other pull request never starts it.
+  pull_request:
+    paths:
+      - .github/workflows/release.yaml
+      - .github/workflows/settings.xml
+      - bin/release.sh
+      - bin/published-artifacts.sh
+permissions:
+  contents: read
+concurrency:
+  # as in checks.yaml: on a pull request the newest run wins; a tag's run is never cancelled
+  group: release-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    # as in checks.yaml: well above a normal run
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      # the engine image the integration tests start is pulled from ghcr.io logged in as this
+      # workflow, as in checks.yaml
+      packages: read
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    env:
+      # the pushed tag, the tag a dispatch names, or none, which stands for the root POM's revision
+      TAG: ${{ github.event_name == 'push' && github.ref_name || inputs.tag }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Read the version from the tag
+        id: version
+        run: |
+          version="$(bin/release.sh version "$TAG")"
+          echo "version=$version" >>"$GITHUB_OUTPUT"
+      # The three refusals below stop a release before anything is built or uploaded. A dry run
+      # writes them into the summary and goes on, so it shows what a release of this commit would
+      # meet and still tests everything after them.
+      - name: Refuse an engine pin which is no engine release
+        id: engine
+        continue-on-error: ${{ github.event_name != 'push' }}
+        run: bin/release.sh engine
+      - name: Read the release's notes from the tag
+        id: notes
+        continue-on-error: ${{ github.event_name != 'push' }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/release"
+          bin/release.sh notes "v$VERSION" "$RUNNER_TEMP/release/notes.md"
+      # the JDK of the required check; settings.xml out of Maven's way, as in checks.yaml
+      - uses: actions/setup-java@v6
+        with:
+          java-version: 25.0.4+101.0.LTS
+          distribution: temurin
+          cache: maven
+          settings-path: ${{ runner.temp }}/setup-java
+      - name: Log in to the GitHub container registry
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build, test and stage the release
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: bin/release.sh stage "$VERSION" "$RUNNER_TEMP/release"
+      - name: Refuse a release which names a snapshot
+        id: dependencies
+        continue-on-error: ${{ github.event_name != 'push' }}
+        run: bin/release.sh dependencies "$RUNNER_TEMP/release"
+      - name: Rehearse the upload into a local repository
+        run: bin/release.sh rehearse "$RUNNER_TEMP/release"
+      # what the job 'publish' uploads; a dry run hands it over as well, so the handover is tested
+      - name: Hand the staged release to the job publish
+        uses: actions/upload-artifact@v7
+        with:
+          name: release
+          path: ${{ runner.temp }}/release
+          retention-days: 7
+          if-no-files-found: error
+      - name: Upload the reports of a failed build
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: release-reports
+          path: |
+            **/target/surefire-reports/**
+            **/target/failsafe-reports/**
+            **/target/site/jacoco*/**
+            test-coverage-report/*/report/**
+          retention-days: 7
+          if-no-files-found: warn
+      - name: Write the summary
+        if: always()
+        env:
+          RESULT: ${{ job.status }}
+          EVENT: ${{ github.event_name }}
+          VERSION: ${{ steps.version.outputs.version }}
+          ENGINE: ${{ steps.engine.outcome }}
+          NOTES: ${{ steps.notes.outcome }}
+          DEPENDENCIES: ${{ steps.dependencies.outcome }}
+        # the lines are written also where the version could not be read and nothing ran
+        run: |
+          if [ "$EVENT" = "push" ]; then
+            kind="The release"
+          else
+            kind="A dry run, which publishes nothing, of the release"
+          fi
+          {
+            echo "$kind of \`${VERSION:-no version}\` ended with \`$RESULT\`."
+            echo
+            echo "- the engine pin is an engine release: \`${ENGINE:-not checked}\`"
+            echo "- the tag carries the release's notes: \`${NOTES:-not checked}\`"
+            echo "- no POM of the release names a snapshot: \`${DEPENDENCIES:-not checked}\`"
+            echo
+            if [ -s "$RUNNER_TEMP/release/notes.md" ]; then
+              echo "The notes the release publishes:"
+              echo
+              cat "$RUNNER_TEMP/release/notes.md"
+              echo
+            fi
+            if [ -d "$RUNNER_TEMP/release/repository" ]; then
+              echo "The files it uploads:"
+              echo
+              find "$RUNNER_TEMP/release/repository" -type f ! -name 'maven-metadata*' \
+                ! -name '*.md5' ! -name '*.sha1' -printf '%f\n' | sort |
+                while read -r file; do echo "- \`$file\`"; done
+            fi
+          } >>"$GITHUB_STEP_SUMMARY"
+
+  # The only job which writes, and only for a pushed tag: it uploads exactly what the job 'build'
+  # staged and tested, and creates the GitHub release. It runs no build and no plugin of the build
+  # but the deploy plugin.
+  publish:
+    needs: build
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      # creates the GitHub release
+      contents: write
+      # uploads the artifacts
+      packages: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@v6
+        with:
+          java-version: 25.0.4+101.0.LTS
+          distribution: temurin
+          settings-path: ${{ runner.temp }}/setup-java
+      - uses: actions/download-artifact@v8
+        with:
+          name: release
+          path: ${{ runner.temp }}/release
+      # with the workflow's token, server 'github' of .github/workflows/settings.xml
+      - name: Upload the artifacts to GitHub Packages
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: bin/release.sh upload "$RUNNER_TEMP/release" https://maven.pkg.github.com/pbinitiative/zenbpm-vanillabp-adapter
+      - name: Create the GitHub release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --verify-tag
+          --title "$GITHUB_REF_NAME" --notes-file "$RUNNER_TEMP/release/notes.md"
+      - name: Write the summary line
+        if: always()
+        env:
+          RESULT: ${{ job.status }}
+          VERSION: ${{ needs.build.outputs.version }}
+        run: |
+          echo "Publish: the upload of \`$VERSION\` to GitHub Packages and the GitHub release \`$GITHUB_REF_NAME\` ended with \`$RESULT\`." >>"$GITHUB_STEP_SUMMARY"
