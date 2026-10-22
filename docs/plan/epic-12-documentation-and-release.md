@@ -375,9 +375,9 @@ runs showed is written here as well:
   replacing the placeholder `Home`. `Home`, `Configuration`, `Deviations`, `Engine-APIs` and
   `Native-images` answer HTTP 200 on github.com, and `Home` shows the engine command on port 18080.
 
-## S12.2.1 Blueprints profile `-Pzenbpm` (a pull request to the VanillaBP project)
+## S12.2.1 Blueprints profile `-Pzenbpm` (an overlay in this repository, built by the nightly)
 
-- [ ] **Depends on:** S12.1.1 (a released or snapshot artifact a foreign build can resolve).
+- [x] **Depends on:** S12.1.1 (a released or snapshot artifact a foreign build can resolve).
 
 `blueprints` belongs to `vanillabp-blueprints`, so this story is a pull request there, prepared and
 tested in the workspace checkout: a fourth profile next to `camunda7`, `camunda8`,
@@ -402,6 +402,288 @@ job) and for a last step with `if: always()` which appends a line to `$GITHUB_ST
 new job adds both, reads with the workflow's `GITHUB_TOKEN` only (the test refuses any other secret
 and any write permission), and must not set `continue-on-error`, which the test allows for
 `latest-engine` only, unless this story decides otherwise and changes the test with the README.
+
+*Fit check, 2026-10-22, decided by the Implementor where it says so.* Checked against `main` at
+`bcb3c8e`: the nightly workflow with `NightlyWorkflowTest` and `WorkflowPermissionsTest`, the
+README's "What CI runs", `EnginePinTest`, `DocumentationTest` and `BpmnDiagramTest`; the blueprints
+at their `main` HEAD `7acfef0`, cloned fresh into a scratch directory (the workspace submodule is
+at `a0c8e5f` and was only read): the root POM, the profiles of all 142 POMs which have one, the
+142 `application-camunda8.yaml`, the 86 models and 4 decisions under `processes/camunda8`, their
+`build.yaml` with `bin/camunda8_cluster.sh` as the model of the engine script, and the index
+`blueprints.yaml` of `vanillabp-blueprints/.github` which says which BPMS a blueprint runs on; the
+adapter's refusals of GAPS 13 and 14 and its reading of models of any namespace
+(`ZenBpmModelReader`); and the engine at the pin `bdd795a3`, exported from the checkout, for the
+decision results (point 6) and its boot (point 8). What did not fit, and what was decided:
+
+1. **No pull request to VanillaBP** (the policy). The plan asked for a pull request to
+   `vanillabp-blueprints`; the maintainers' policy for the autonomous run forbids it, because this
+   repository's maintainers are not VanillaBP's. So the profile `zenbpm`, the engine script and the
+   ZenBPM variants live in this repository as an overlay, `blueprints-overlay/`, and a new job
+   `blueprints` of the nightly clones the blueprints fresh, applies the overlay and builds them
+   with `-Pzenbpm` against the pinned engine. Decision 64, decided by the pipeline in place of the
+   maintainers. The story's heading, row 59 of the roadmap, the milestone M6 and the ownership
+   table of `docs/README.md` say so now. Nothing of the workspace's `blueprints` submodule was
+   changed or built. The script's first runs installed the overlaid blueprints into the local
+   Maven repository; since the reviews it builds a twin with `verify`, so it installs nothing of
+   VanillaBP (see the answers to the reviews below).
+2. **A generator, not a patch** (decided by the Implementor). A patch over the 142 POMs would stop
+   applying at every change of a line near a hunk, also one which changes nothing for ZenBPM, and
+   hand-edited copies would drift. `ZenBpmOverlay.java`, run with the build's Java as a source file,
+   derives what ZenBPM needs from what each blueprint has for Camunda 8: the profile `camunda8` of
+   every POM is copied as `zenbpm` (its comments and its activation by default dropped, the
+   Camunda 8 adapter replaced by `zenbpm-vanillabp-adapter-spring-boot` or
+   `zenbpm-vanillabp-adapter-quarkus`, `bpms` and `blueprint.bpms` set to `zenbpm`), the property
+   `zenbpm-vanillabp-adapter.version` is declared beside `camunda8-adapter.version` with the
+   adapter's `revision`, every `application-camunda8.yaml` gets an `application-zenbpm.yaml`, every
+   other file named for Camunda 8 a copy named for ZenBPM where it names no Camunda (the one there
+   is, `persistence-liquibase`'s Quarkus changelog `db/changelog-camunda8.xml` "for a build with a
+   REMOTE engine", which its `application.yaml` names as `db/changelog-@bpms@.xml`; without the
+   copy the twin's application did not start), and every `processes/camunda8` a
+   `processes/zenbpm`. The plan's `resources-location
+   <module>/processes/zenbpm` is the platform's conventional location, so nothing has to be
+   configured for it. What the generator does not know ends it with a message naming the file and
+   the fix (decision 64 lists the cases), so a change upstream it cannot follow turns the nightly
+   red instead of building less. The 142 profiles have six shapes, all of which it translates;
+   `module-bpms-migration`'s, which also names the Camunda 7 adapter, is the one it refuses.
+3. **Where the pieces live** (decided by the Implementor). The plan's `bin/zenbpm_engine.sh` of
+   the blueprints became this repository's `bin/zenbpm-engine.sh` (the dash of `bin/`, linted by
+   `workflow-lint` like every script there), and the job's steps are one script,
+   `bin/build-blueprints-on-zenbpm.sh`, which a person runs on a laptop as the job does. The pull
+   request trigger of the nightly names the two scripts and `blueprints-overlay/**` besides the
+   workflow, so a change of the overlay is seen working in its pull request;
+   `NightlyWorkflowTest` and the README changed together. The plan's "the READMEs name the
+   profile" and `blueprints-organisation-page/AGENTS.md` are VanillaBP's files; this adapter's
+   README (sections "What CI runs" and "The blueprints on ZenBPM") and a new wiki page `Blueprints`
+   say it instead.
+4. **Which blueprints run on ZenBPM** (decided by the Implementor). The blueprints' repository does
+   not say which blueprint runs on which BPMS; their CI reads the `bpms` lists of the index. The
+   overlay keeps its own list, `blueprints.txt`, one line per blueprint directory, and the page
+   `Blueprints` gives the reason of every blueprint which does not run;
+   `BlueprintsOverlayTest#theListAndThePageBlueprintsAgree` holds the two together. Of the 35
+   blueprints, 30 run (59 twins: `persistence-active-record` has a Quarkus twin only). Five do not,
+   each seen failing in the run of point 9 before it was listed: `bpmn-signals` (signals, GAPS 13),
+   `bpmn-bpms-initiated-start` (its signal start event is refused and its test broadcasts a signal,
+   GAPS 13; its timer half alone would not be the blueprint), `bpmn-error-escalation` (escalation
+   events, GAPS 14), `bpmn-adhoc-subprocess` (the ad-hoc sub-process, GAPS 14; its
+   `application-camunda8.yaml` also sets `retry-backoff`, which the generator refuses to guess) and
+   `module-bpms-migration` (a migration from Camunda 7 to Camunda 8, which needs both Camunda
+   adapters from registries behind a token). A ZenBPM variant would cost each of them its point, so
+   none was written.
+5. **Two variants and one translated convention** (decided by the Implementor). A variant carries
+   an XML comment saying why, and `variants.txt` the SHA-256 of the Camunda 8 model it was written
+   from, so a change of that model ends the generator instead of being lost. A variant is a copy of
+   a model of the blueprints, which are Apache-2.0, so its first comment names its origin and
+   `SPDX-License-Identifier: Apache-2.0`, and `NOTICE` names `vanillabp-blueprints/blueprints`, as
+   decision 17 has it for code. The convention: `bpmn-user-task`, `persistence-audited-aggregate`
+   and `persistence-parallel-branches` name their user tasks by the `externalReference` of
+   `zeebe:formDefinition` only, which the Camunda 8 adapter takes as the task definition
+   (`Camunda8TaskWiring`) and this adapter does not read, so their start ended with "Task wiring
+   ... is incomplete" for the task definition `user-task-type`. Instead of three more copied models,
+   the generator gives such a user task the reference as its `taskDefinition type`
+   (`BlueprintsOverlayTest#aUserTaskNamedByItsFormGetsItsTaskDefinition`), and `Configuration` now
+   says that a form names no user task here (`ZenBpmModelReaderTest#aFormNamesNoUserTask`, new). The
+   variants: `bpmn-business-rule-task`'s business rule task
+   sets `resultVariable="approval"` and nothing else, so on ZenBPM the result never reached the
+   process (GAPS 27) and the test waited for `approval` in vain; the variant adds
+   `<zeebe:output source="=approval.approval" target="approval" />` (`24d16d09...`).
+   `bpmn-multi-instance-subprocess`'s inner loop over the partners reads `=partnerIds`, a variable
+   of the workflow, inside an iteration of the outer loop over the regions, which on ZenBPM starts
+   with its item and what the element maps in only (GAPS 31): the inner loop ran no iteration, and
+   the region was summarised without offers. The variant maps
+   `<zeebe:input source="=partnerIds" target="partnerIds" />` into the sub-process (`174ad82f...`).
+6. **GAPS 34, new.** The first variant mapped `=approval` and the process got
+   `{"approval": "APPROVED"}`: at the pin a decision table whose one output has a name hands a
+   context of its outputs, and only a table whose one output has no name hands the bare value
+   (`pkg/dmn/dmn_hit_policy_evaluator.go`, `evaluateFirstRuleOutput`, `evaluateCollectOutput`,
+   `collectAggregationOutput`), where Camunda 8 hands the value. Entered as GAPS 34 with its
+   `Deviations` entry, measured by the new
+   `ZenBpmRestClientContractIT#aDecisionTableWithOneNamedOutputHandsAContext` (fixture
+   `contract-decided.bpmn` against the existing `contract-decision.dmn`). GAPS 27's entry on
+   `Deviations` and the paragraph of `Configuration` point at it, because their example
+   `source="=rating"` maps the whole context for such a table.
+7. **Three attempts for a task without `retries`** (decided by the Implementor). The blueprints'
+   models are Camunda 8 models, which give such a task three attempts; the engine's default is one,
+   so `bpmn-service-task`'s test of a provider which refuses once ended in an incident. The engine
+   script starts the engine with `JOBS_DEFAULT_RETRIES=3`, as `Configuration` advises for such
+   models (decision 38), instead of a variant per model; the page `Blueprints` says so and
+   `BlueprintsOverlayTest#theEngineGivesATaskWithoutRetriesThreeAttempts` holds the script to it.
+   The other settings are those of `EngineUnderTest`; the REST API is published on host port 18080
+   as on `Home`, the job stream on 9090.
+8. **The engine's boot gives up now and then** (decided by the Implementor). One start in about ten
+   ended with "failed to bootstrap cluster: boot timeout" after the node's first call to itself
+   timed out, and the container stopped. `bin/zenbpm-engine.sh start` notices a container which
+   ended and starts a fresh one, three attempts at most, as `camunda8_cluster.sh` does for its
+   exporter. Not entered as a gap: it is a race of a node starting, which a fresh container does not
+   meet, and the adapter's own tests have not met it.
+9. **One engine per twin, and the time it takes.** The twins of a blueprint deploy the same
+   processes under the same identifiers, so every twin gets an engine of its own (about five
+   seconds to ready). The 59 twins took 52 minutes one after the other on this machine (3,113 s,
+   OpenJDK 25, 14 cores, between 35 and 77 seconds a twin); GitHub's runner is slower, so the job
+   runs them in one job with `timeout-minutes: 150` rather than a matrix,
+   which would install the adapter and download every blueprint's dependencies once per matrix
+   job. A first full run was spoiled by a mutant of this story's build script, which built
+   twins on the same engine and ports at the same time; its results from that time were thrown
+   away and the run of the acceptance below was made with nothing else on the machine's engine.
+10. **No secret, no Camunda registry** (verified). With `-Pzenbpm`, Maven leaves every
+    `activeByDefault` profile of a POM which has the profile `zenbpm` off: `mvn help:active-profiles
+    -Pzenbpm` in `bpmn-service-task/springboot` lists `zenbpm` alone for both modules, besides the
+    profile of the settings. `blueprints-overlay/settings.xml` names Maven Central and its snapshot
+    repository and nothing else, so a build which still asked for a Camunda adapter would fail,
+    and none did. The adapter comes from the local repository, installed from the checkout by the
+    job, so open question 17 (where releases are published) does not touch the job; the job uses
+    the workflow's `GITHUB_TOKEN` to pull the engine image only, as the other jobs do.
+11. **The engine image is the pin.** `bin/zenbpm-engine.sh` reads `zenbpm.image` from the root POM
+    on every call and names no image of its own; `EnginePinTest#theBlueprintsEngineIsThePin` runs
+    `bin/zenbpm-engine.sh image` and compares it with the POM's pin, and fails on an image digest
+    written into the script.
+12. **The generator is formatted like the modules.** Spotless now includes
+    `blueprints-overlay/*.java`, and a last step removes the blank line the formatter puts above
+    the licence header of a source without a package (the source launcher of Java 25 wants the path
+    of a source to match its package, so the program has none). It compiles with
+    `--release 21`, the Java of the second check.
+
+**Acceptance evidence, 2026-10-22.** Everything here ran on this machine (OpenJDK 25.0.2, Maven
+3.9.12, Docker 29.1, 14 cores). The policy turns the plan's "`./mvnw install -Pzenbpm` green in the
+blueprints CI" into three proofs:
+
+- [x] The overlay applied to a fresh clone of `vanillabp-blueprints/blueprints` at its `main` HEAD
+  `7acfef0827cbd7d88022aef40a9bfcf7bf7eef9d`: `ZenBpmOverlay.java` listed 59 twins of the 30
+  blueprints which run and ended with 0; the five others are on the page `Blueprints` with their
+  reasons (fit-check point 4).
+- [x] Those twins built green with `-Pzenbpm` against the pinned engine
+  (`ghcr.io/pbinitiative/zenbpm@sha256:d7808e30...`, commit `bdd795a3`), one fresh engine each:
+  `bin/build-blueprints-on-zenbpm.sh` built all 59 green and ended with 0, "0 of 59 twins
+  failed.", in 54 minutes (3,210 s, between 26 and 92 seconds a twin); every engine answered ready
+  at its first start. The run before the last changes of the overlay (run 4: 52 minutes, 3,113 s) built 50
+  of the 59 green; its nine red twins were what fit-check points 5 and 2 (the changelog) fixed,
+  and the same nine built green with the final overlay before the final run.
+- [ ] The job `blueprints` of the nightly green on GitHub: the pull request's own nightly run,
+  which the workflow change starts, after the push (the orchestrator's step).
+- [x] A broken overlay makes the job fail. The job's step is `bin/build-blueprints-on-zenbpm.sh`,
+  which ends with 1 where the overlay does not fit or a twin fails. Shown on a copy of the
+  adapter whose `blueprints.txt` lacks `bpmn-timer`: against a fresh clone the script printed "The
+  blueprint 'blueprints-bpmn/bpmn-timer' is not in blueprints.txt. ..." and ended with 1 before
+  any engine started. And run 4 above, with nine red twins, ended "9 of 59 twins failed." with 1.
+  `NightlyWorkflowTest#noStepOfAJobWhichHasToFailLetsAFailurePass` holds the job to no
+  `continue-on-error` and no `||` (mutant killed).
+- Mutants, 29 applied: 28 killed, 1 equivalent. Of `ZenBpmOverlay.java` (18): each of the eight
+  ways a run ends switched off (an unlisted blueprint, a listed one gone, a variant without its
+  model, a POM choosing a BPMS without `camunda8`, no adapter version, a profile with more than
+  the adapter, a configuration with more, a changed model), the activation and `blueprint.bpms`
+  left in the copy, the address on 18081, the model copied over its variant, exit 0 for a run
+  which does not fit, the twins of a blueprint which does not run listed, the user-task rule
+  skipped and applied over a task definition, the other file of Camunda 8 not copied and copied
+  although it names Camunda. Of the scripts (4): `JOBS_DEFAULT_RETRIES` dropped, an image written
+  into `bin/zenbpm-engine.sh`, the commit read for the image, the refusal of an existing directory
+  dropped. Of the workflow and the README (4): `blueprints-overlay/**` dropped from the trigger,
+  the install step dropped, `|| true` after the script; `bin/zenbpm-engine.sh` dropped from the
+  README's list of scripts survived, equivalent, because the job's bullet names it as well, which
+  is what the test holds. Of the page `Blueprints` (3): a row renamed, a row's answer turned to
+  `runs`, a reason removed. One mutant of the first round, the refusal of an existing directory,
+  cloned and built twins on the engine of the full run going on at the time; that run was thrown
+  away (fit-check point 9), and the test now runs a command with a time limit.
+- Builds, both green at the first run: `TZ=Etc/UTC mvn clean install`, 18:17 min, Docker ITs
+  included and none skipped: engine test support 12 + 5, core 1,276 + 107 (new
+  `ZenBpmModelReaderTest#aFormNamesNoUserTask`, `ZenBpmRestClientContractIT` 35 with the new
+  `#aDecisionTableWithOneNamedOutputHandsAContext`), Spring Boot 14 + 97, smoke test 42 + 1,
+  election integration test 8, Quarkus runtime 13, deployment 60, integration tests 26, gate 85
+  (`BlueprintsOverlayTest` 19, new; `NightlyWorkflowTest` 10, `EnginePinTest` 5, `DocumentationTest`
+  11). The gate measured 100 %: 0 of 38,473 (Spring Boot) and 0 of 38,470 (Quarkus) instructions
+  missed; the story adds no production class. `bin/check-deploy-safety.sh`: green, the green build
+  deployed exactly the 13 published files and the red gate nothing. `actionlint` and `shellcheck bin/*.sh`
+  of `workflow-lint`: clean. `ZenBpmOverlay.java` compiles with `--release 21`.
+- [x] Decision 64 entered; GAPS 34 entered with its `Deviations` entry; the wiki page `Blueprints`
+  (new) and sentences on `Home`, `Configuration` and `Deviations`; the README's "Documentation",
+  "What CI runs" and "The blueprints on ZenBPM" (new); `NOTICE` names the blueprints; the plan's
+  heading, row 59, M6 and `docs/README.md`; a note under S12.4.1.
+
+**Answers to two reviews of e12-s12.2.1, 2026-10-22** (one by Claude, approve with minor changes:
+4 Minor, 2 Nit; one by Copilot, changes requested: 1 Major, 1 Minor). Every claim was checked in
+the scripts, in the generator and in the engine's source at the pin, and against a fresh clone of
+the blueprints at `7acfef0`. All eight are valid. No new decision and no new GAPS number; decision
+64 and GAPS 34 were corrected on this branch, before their first merge.
+
+- **A `docker run` which failed could pass as a ready engine** (Copilot 1, Major). `started` runs
+  as the condition of an `if`, where Bash does not apply errexit, so a failed `docker run` went on
+  to the readiness poll, and where another engine answered on port 18080 the start reported the
+  pinned engine ready and ended with 0. Now `docker run ... || return 1`, and a comment says why.
+  `BlueprintsOverlayTest#theEngineScriptEndsRedWhereItsContainerDoesNotStart` (new) runs the
+  script against stand-ins of `docker` (its `run` failing with "port is already allocated") and
+  `curl` (always ready): three attempts, exit 1.
+- **Decision 64 promised a check the generator did not make** (Claude 1, Minor). Claude's probe
+  holds: a `camunda7` profile activated by `<property><name>!bpms</name></property>` stayed on
+  next to `zenbpm` and the generator said "applied". Maven ends `activeByDefault` profiles only.
+  The generator now refuses a profile of a BPMS (`camunda7`, `camunda8`, `process-engine-api`)
+  whose activation, comments aside, is anything but `activeByDefault`, and names the POM and the
+  activation. `BlueprintsOverlayTest#aBpmsProfileActivatedByMoreThanItsDefaultEndsTheRun` (new);
+  the decision's sentence says what is checked, and the page `Blueprints` lists the refusal.
+- **Nothing held the script's exit code** (Claude 2, Minor). Three new tests run
+  `bin/build-blueprints-on-zenbpm.sh` of a copy of the adapter against stand-ins of `git` (cloning
+  the test's checkout), `docker`, `curl` and `mvn`:
+  `#theBuildScriptEndsRedWhereATwinFailed` (every twin built, a fresh engine for each, removed
+  after its build, the engine's log of the failed twin kept, exit 1),
+  `#theBuildScriptEndsGreenWhereEveryTwinPassed` and
+  `#theBuildScriptEndsRedWhereTheOverlayDoesNotFit` (exit 1, no twin built). The page `Blueprints`
+  names them.
+- **The script installed the blueprints into `~/.m2`** (Claude 3, Minor). True: 65 directories
+  under `io/vanillabp/blueprint` came from the first runs, against the brief. A twin is a reactor
+  of its own: in a fresh clone at `7acfef0` no POM of the 69 twin directories refers to a
+  blueprint artifact or parent outside its twin. So the script builds with `-Pzenbpm verify`, and
+  the page `Blueprints` says `verify` too. The stand-in Maven records its arguments, and
+  `#theBuildScriptEndsRedWhereATwinFailed` asserts every call ends with `-Pzenbpm verify`.
+  Fit-check point 1 no longer says nothing was installed.
+- **Two runs on one machine removed each other's engine** (Claude 4, Minor). This is what spoiled
+  the full run of fit-check point 9. `bin/zenbpm-engine.sh start` now ends with 1 where a container
+  of its name is running, names `bin/zenbpm-engine.sh stop`, and leaves it alone; a container
+  which stopped is still removed. `#theEngineScriptLeavesTheEngineOfAnotherRunAlone` (new). The
+  build script's exit trap removed the engine as well, so a refused start would still have removed
+  the other run's engine on the way out. The trap now removes only an engine this run started:
+  `#theBuildScriptLeavesTheEngineOfAnotherRunAlone` (new). A start which gives up after its three
+  attempts removes the container of its last attempt itself.
+- **A decision which collects hands a list of contexts** (Copilot 2, Minor). True at the pin:
+  `evaluateCollectOutput`, which `evaluateRuleOrderOutput` calls as well, builds a list of
+  contexts where the one output has a name. Camunda 8 hands a list of values there. New
+  `ZenBpmRestClientContractIT#aDecisionTableWhichCollectsHandsAListOfContexts` (a `COLLECT` table
+  in the new `contract-collected-decision.dmn`, a third task of `contract-decided.bpmn`, its diagram
+  regenerated): `=collected` is `[{"discount": 10}, {"discount": 5}]`, and `=collected.discount`
+  is `[10, 5]`, the list Camunda 8 hands. GAPS 34 (row and `Deviations`) and `Configuration` say
+  both shapes. The row also had no text in its last column, "Engine change which would close it";
+  it has one now.
+- **The artifact holds every twin's reports** (Claude 5, Nit). The step is now "Upload the logs
+  and the reports of the twins", and the README says what is in it.
+- **Wording and layout** (Claude 6, Nit). Decision 64 and the workflow's header comment are wrapped
+  at 100 columns, the comment of the job says 54 minutes (the final run), and
+  `withUserTasksNamedByTheirForm` is private.
+- Mutants, 12 applied, 11 killed and 1 equivalent:
+  - killed:
+    - `docker run` unchecked;
+    - the check for a running engine switched off;
+    - the exit trap removing the engine unconditionally;
+    - the trap's flag never cleared after a twin;
+    - a start which gives up leaving its last container;
+    - the script ending with 0 always;
+    - `install` in place of `verify`;
+    - the script ending at the first red twin;
+    - the engine not removed after a twin;
+    - the activation check dropped;
+    - comments kept in the activation read;
+  - equivalent: `|| true` after the overlay. A run which does not fit writes no
+    `zenbpm-twins.txt`, so the script ends with 1 at reading it and builds nothing, which is what
+    the test asserts.
+- `shellcheck` (koalaman/shellcheck:stable) is clean on both scripts. `ZenBpmRestClientContractIT`:
+  36 green against the pinned image.
+- Builds: `TZ=Etc/UTC mvn clean install` green in 18:11 min, Docker ITs included and none skipped:
+  - engine test support 12 + 5;
+  - core 1,276 + 108 (the new contract case);
+  - Spring Boot 14 + 97;
+  - smoke test 42 + 1;
+  - election integration test 8;
+  - Quarkus runtime 13, deployment 60, integration tests 26;
+  - gate 92 (`BlueprintsOverlayTest` 26, seven new).
+
+  The gate measured 100 %: 0 of 38,473 (Spring Boot) and 0 of 38,470 (Quarkus) instructions
+  missed. `bin/check-deploy-safety.sh` was green: the green build deployed exactly the 13 published
+  files, and the red gate deployed nothing.
 
 ## S12.3.1 Renovate, local workspace notes and the VanillaBP wiki row
 
@@ -438,3 +720,9 @@ it. A `UPGRADE.md` header says there is nothing to upgrade from.
 **Acceptance criteria**: an application depending on
 `org.pbinitiative.zenbpm:zenbpm-vanillabp-adapter-spring-boot:2.0.0` boots against the pinned
 engine RELEASE image; the release workflow is the only path a release takes.
+
+*Note from S12.2.1, 2026-10-22.* The blueprints get their `zenbpm-vanillabp-adapter.version` from
+the overlay, which writes the `revision` of this repository's root POM (decision 64), and the
+nightly installs the adapter from the checkout. So "the blueprints' version points at the release"
+needs no step of its own: the job builds the blueprints against whatever version the checkout
+carries, a release tag included.

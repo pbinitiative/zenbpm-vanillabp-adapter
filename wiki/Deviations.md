@@ -288,8 +288,10 @@ size beforehand, because a limit in the adapter would refuse what a fixed engine
 
 A business rule task hands the result of its decision to the process only through an output mapping,
 where Camunda 8 sets its `resultVariable`. Map it, for example
-`<zenbpm:output source="=rating" target="rating" />`. The adapter does not find a task without one
-while the application starts.
+`<zenbpm:output source="=rating" target="rating" />`, and where the decision is a table whose one
+output has a name, map that output out of the result, see
+[GAPS 34](#gaps-34-a-decision-with-one-named-output-hands-a-context). The adapter does not find a
+task without a mapping while the application starts.
 [README: Deployment](https://github.com/pbinitiative/zenbpm-vanillabp-adapter/blob/main/README.md#deployment)
 
 ### GAPS 28: A locked job holds a slot
@@ -344,6 +346,22 @@ the end of a workflow is the latest end of its elements
 (`ZenBpmWorkflowViewerTest#aMultiInstanceTaskAloneAndACancelledWorkflow`; the engine's side:
 `ZenBpmRestClientContractIT#aTerminatedElementEndsAsACompletedOneDoes`).
 [README: Viewing workflows](https://github.com/pbinitiative/zenbpm-vanillabp-adapter/blob/main/README.md#viewing-workflows)
+
+### GAPS 34: A decision with one named output hands a context
+
+A decision table whose one output has a name, such as `<output name="approval" />`, hands its
+business rule task a context holding that output, `{"approval": "APPROVED"}`, where Camunda 8 hands
+the value `"APPROVED"`; a table whose one output has no name hands the value itself
+(`ZenBpmRestClientContractIT#aDecisionTableWithOneNamedOutputHandsAContext`). A table which hands
+every matching rule, `COLLECT` without an aggregation or `RULE ORDER`, hands a list of such
+contexts, `[{"discount": 10}, {"discount": 5}]`, where Camunda 8 hands the list of values
+(`ZenBpmRestClientContractIT#aDecisionTableWhichCollectsHandsAListOfContexts`). So the output
+mapping a business rule task needs
+([GAPS 27](#gaps-27-a-decisions-result-needs-an-output-mapping)) reads the output out of the
+result: `<zenbpm:output source="=approval.approval" target="approval" />` reads the value of a
+single result, and the same path through a collected one reads its list of values, `[10, 5]`. The
+adapter does not detect a mapping which takes the whole context.
+[README: Deployment](https://github.com/pbinitiative/zenbpm-vanillabp-adapter/blob/main/README.md#deployment)
 
 <!-- /gaps -->
 

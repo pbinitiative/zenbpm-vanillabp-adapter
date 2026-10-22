@@ -1,0 +1,6 @@
+# The ZenBPM variants of models of the blueprints, below variants/ at the path of the model in a twin,
+# each with the SHA-256 of the Camunda 8 model it was written from. A variant replaces the copy of
+# that model in both twins; where the model changed since, the overlay ends naming it, see
+# ZenBpmOverlay.java.
+blueprints-bpmn/bpmn-business-rule-task/loan-approval/src/main/resources/loan-approval/processes/zenbpm/loan_approval.bpmn 24d16d0933a890f541a4aff0bb8c7c1e25e0d18beac5681579669c5fcb993186
+blueprints-bpmn/bpmn-multi-instance-subprocess/loan-approval/src/main/resources/loan-approval/processes/zenbpm/loan_approval.bpmn 174ad82f495d5758f51df2b0894a21e40762f7acc71049dee05e409b6686c682

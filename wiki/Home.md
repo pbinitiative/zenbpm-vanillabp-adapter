@@ -24,10 +24,12 @@ first. This wiki only adds what a user of THIS adapter has to know:
    proxy in front of the engine.
 5. [Native images](Native-images)<br>
    What it takes to build a Quarkus application with this adapter as a native image.
-6. [What a handler may assume about its thread](#what-a-handler-may-assume-about-its-thread)<br>
+6. [Blueprints](Blueprints)<br>
+   Which of the VanillaBP blueprints run on ZenBPM, why the others do not, and how to run one.
+7. [What a handler may assume about its thread](#what-a-handler-may-assume-about-its-thread)<br>
    How many handlers run at once, the lock the engine holds for each, and the one case in which a
    handler runs twice.
-7. [The engine this adapter is tested against](#the-engine-this-adapter-is-tested-against)<br>
+8. [The engine this adapter is tested against](#the-engine-this-adapter-is-tested-against)<br>
    Tested, not newer.
 
 ## Getting started

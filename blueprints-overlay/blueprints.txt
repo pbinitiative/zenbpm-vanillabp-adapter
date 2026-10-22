@@ -1,0 +1,41 @@
+# The blueprints of vanillabp-blueprints/blueprints and whether they run on ZenBPM, one line per
+# blueprint directory: 'runs', or 'not-runnable', with its reason in the table of the wiki page
+# 'Blueprints' (wiki/Blueprints.md), which BlueprintsOverlayTest holds to this list. The overlay
+# builds the twins of every blueprint which runs, and ends the run naming a blueprint of the
+# checkout which is not listed here, or one listed which is gone, see decision 64 in the
+# repository's DECISIONS.md.
+blueprints-bpmn/bpmn-adhoc-subprocess                not-runnable
+blueprints-bpmn/bpmn-aggregate-decoupling            runs
+blueprints-bpmn/bpmn-async-task                      runs
+blueprints-bpmn/bpmn-boundary-events                 runs
+blueprints-bpmn/bpmn-bpms-initiated-start            not-runnable
+blueprints-bpmn/bpmn-business-rule-task              runs
+blueprints-bpmn/bpmn-call-activity-decomposition     runs
+blueprints-bpmn/bpmn-error-escalation                not-runnable
+blueprints-bpmn/bpmn-gateways                        runs
+blueprints-bpmn/bpmn-history-and-diagram             runs
+blueprints-bpmn/bpmn-message-correlation             runs
+blueprints-bpmn/bpmn-message-start                   runs
+blueprints-bpmn/bpmn-multi-instance-subprocess       runs
+blueprints-bpmn/bpmn-multi-instance-task             runs
+blueprints-bpmn/bpmn-process-sections                runs
+blueprints-bpmn/bpmn-service-task                    runs
+blueprints-bpmn/bpmn-signals                         not-runnable
+blueprints-bpmn/bpmn-timer                           runs
+blueprints-bpmn/bpmn-user-task                       runs
+blueprints-bpmn/bpmn-versioning                      runs
+blueprints-bpmn/bpmn-workflow-ended                  runs
+blueprints-modules/module-bpms-migration             not-runnable
+blueprints-modules/module-idle-application           runs
+blueprints-modules/module-interaction                runs
+blueprints-modules/module-multi                      runs
+blueprints-modules/module-packaging                  runs
+blueprints-modules/module-single                     runs
+blueprints-modules/module-standalone                 runs
+blueprints-persistence/persistence-active-record     runs
+blueprints-persistence/persistence-audited-aggregate runs
+blueprints-persistence/persistence-custom            runs
+blueprints-persistence/persistence-flyway            runs
+blueprints-persistence/persistence-liquibase         runs
+blueprints-persistence/persistence-mongodb           runs
+blueprints-persistence/persistence-parallel-branches runs

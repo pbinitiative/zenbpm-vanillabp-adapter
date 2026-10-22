@@ -492,6 +492,9 @@
             <includes>
               <include>src/main/java/**/*.java</include>
               <include>src/test/java/**/*.java</include>
+              <!-- the generator of the blueprints' overlay, run as a source file, see decision 64
+                   in the repository's DECISIONS.md -->
+              <include>blueprints-overlay/*.java</include>
             </includes>
             <excludes>
               <!-- the gRPC stubs generated from the engine's proto -->
@@ -513,6 +516,13 @@
             <importOrder>
               <order>java,javax,org,com,at.phactum</order>
             </importOrder>
+            <!-- a source without a package, such as the generator of the blueprints' overlay,
+                 would otherwise get a blank line above its licence header -->
+            <replaceRegex>
+              <name>A source starts with its licence header</name>
+              <searchRegex>\A\n+</searchRegex>
+              <replacement/>
+            </replaceRegex>
           </java>
         </configuration>
         <executions>

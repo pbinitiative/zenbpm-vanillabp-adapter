@@ -65,7 +65,7 @@ class DocumentationTest {
     private static final Path WIKI = ROOT.resolve("wiki");
 
     private static final List<String> PAGES = List.of("Home", "Configuration", "Deviations", "Engine-APIs",
-            "Native-images", "_Footer");
+            "Native-images", "Blueprints", "_Footer");
 
     private static final String REPOSITORY = "https://github.com/pbinitiative/zenbpm-vanillabp-adapter/";
 

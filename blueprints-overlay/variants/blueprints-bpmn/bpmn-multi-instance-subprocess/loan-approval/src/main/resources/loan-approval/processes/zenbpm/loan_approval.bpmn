@@ -1,0 +1,169 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Adapted for zenbpm-vanillabp-adapter from vanillabp-blueprints/blueprints, see NOTICE.
+  SPDX-License-Identifier: Apache-2.0
+-->
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI" xmlns:dc="http://www.omg.org/spec/DD/20100524/DC" xmlns:zeebe="http://camunda.org/schema/zeebe/1.0" xmlns:di="http://www.omg.org/spec/DD/20100524/DI" xmlns:modeler="http://camunda.org/schema/modeler/1.0" id="Definitions_loan_approval" targetNamespace="http://bpmn.io/schema/bpmn" exporter="Camunda Modeler" exporterVersion="5.31.0" modeler:executionPlatform="Camunda Cloud" modeler:executionPlatformVersion="8.8.0">
+  <bpmn:process id="loan_approval" name="Loan approval" isExecutable="true">
+    <bpmn:startEvent id="StartEvent_LoanRequested" name="Loan requested">
+      <bpmn:outgoing>Flow_ToRetrieveCreditRating</bpmn:outgoing>
+    </bpmn:startEvent>
+    <bpmn:sequenceFlow id="Flow_ToRetrieveCreditRating" sourceRef="StartEvent_LoanRequested" targetRef="ServiceTask_RetrieveCreditRating" />
+    <!--
+      Rates the request and puts the regions and the partners onto the workflow aggregate.
+      Both collections have to exist before the subprocess is reached: the outer iteration
+      reads one of them, the inner one the other.
+    -->
+    <bpmn:serviceTask id="ServiceTask_RetrieveCreditRating" name="Retrieve credit rating">
+        <bpmn:extensionElements>
+          <zeebe:taskDefinition type="retrieveCreditRating" />
+        </bpmn:extensionElements>
+      <bpmn:incoming>Flow_ToRetrieveCreditRating</bpmn:incoming>
+      <bpmn:outgoing>Flow_ToAssessRegion</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:sequenceFlow id="Flow_ToAssessRegion" sourceRef="ServiceTask_RetrieveCreditRating" targetRef="SubProcess_AssessRegion" />
+    <!--
+      The multi-instance subprocess: everything inside runs once per region. A subprocess is
+      the way to repeat a SECTION of a process rather than a single task, and it costs no
+      Java at all - the tasks inside are wired like any other.
+
+      The tasks inside address this element by ID ('@MultiInstanceIndex("SubProcess_AssessRegion")'),
+      which is how a plain task can know which iteration it belongs to.
+    -->
+    <bpmn:subProcess id="SubProcess_AssessRegion" name="Assess region">
+      <!--
+        The ZenBPM variant of the blueprints' overlay: on ZenBPM an iteration starts with its
+        item and what its element maps in, and with nothing else of the workflow, so the
+        partners the inner iteration reads are mapped into every iteration of the subprocess.
+      -->
+      <bpmn:extensionElements>
+        <zeebe:ioMapping>
+          <zeebe:input source="=partnerIds" target="partnerIds" />
+        </zeebe:ioMapping>
+      </bpmn:extensionElements>
+      <bpmn:incoming>Flow_ToAssessRegion</bpmn:incoming>
+      <bpmn:outgoing>Flow_ToChooseBestOffer</bpmn:outgoing>
+      <bpmn:multiInstanceLoopCharacteristics isSequential="false">
+        <bpmn:extensionElements>
+          <zeebe:loopCharacteristics inputCollection="=regionIds" inputElement="regionId" />
+        </bpmn:extensionElements>
+      </bpmn:multiInstanceLoopCharacteristics>
+      <bpmn:startEvent id="StartEvent_RegionAssessment">
+        <bpmn:outgoing>Flow_ToRequestPartnerOffer</bpmn:outgoing>
+      </bpmn:startEvent>
+      <bpmn:sequenceFlow id="Flow_ToRequestPartnerOffer" sourceRef="StartEvent_RegionAssessment" targetRef="ServiceTask_RequestPartnerOffer" />
+      <!--
+        A multi-instance task INSIDE a multi-instance subprocess: two iterations are active
+        at the same time, and the handler is handed both - the region from the subprocess
+        and the partner from this task.
+      -->
+      <bpmn:serviceTask id="ServiceTask_RequestPartnerOffer" name="Request partner offer">
+        <bpmn:extensionElements>
+          <zeebe:taskDefinition type="requestPartnerOffer" />
+        </bpmn:extensionElements>
+        <bpmn:incoming>Flow_ToRequestPartnerOffer</bpmn:incoming>
+        <bpmn:outgoing>Flow_ToSummariseRegion</bpmn:outgoing>
+        <bpmn:multiInstanceLoopCharacteristics isSequential="false">
+          <bpmn:extensionElements>
+            <zeebe:loopCharacteristics inputCollection="=partnerIds" inputElement="partnerId" />
+          </bpmn:extensionElements>
+        </bpmn:multiInstanceLoopCharacteristics>
+      </bpmn:serviceTask>
+      <bpmn:sequenceFlow id="Flow_ToSummariseRegion" sourceRef="ServiceTask_RequestPartnerOffer" targetRef="ServiceTask_SummariseRegion" />
+      <!--
+        Not multi-instance itself, and still part of an iteration: it runs once per region,
+        after that region's offers are in. This is where a result over the INNER iteration
+        belongs.
+      -->
+      <bpmn:serviceTask id="ServiceTask_SummariseRegion" name="Summarise region">
+        <bpmn:extensionElements>
+          <zeebe:taskDefinition type="summariseRegion" />
+        </bpmn:extensionElements>
+        <bpmn:incoming>Flow_ToSummariseRegion</bpmn:incoming>
+        <bpmn:outgoing>Flow_ToRegionAssessed</bpmn:outgoing>
+      </bpmn:serviceTask>
+      <bpmn:sequenceFlow id="Flow_ToRegionAssessed" sourceRef="ServiceTask_SummariseRegion" targetRef="EndEvent_RegionAssessed" />
+      <bpmn:endEvent id="EndEvent_RegionAssessed">
+        <bpmn:incoming>Flow_ToRegionAssessed</bpmn:incoming>
+      </bpmn:endEvent>
+    </bpmn:subProcess>
+    <bpmn:sequenceFlow id="Flow_ToChooseBestOffer" sourceRef="SubProcess_AssessRegion" targetRef="ServiceTask_ChooseBestOffer" />
+    <!-- Runs once, when the last region has been assessed: the result over all iterations. -->
+    <bpmn:serviceTask id="ServiceTask_ChooseBestOffer" name="Choose best offer">
+        <bpmn:extensionElements>
+          <zeebe:taskDefinition type="chooseBestOffer" />
+        </bpmn:extensionElements>
+      <bpmn:incoming>Flow_ToChooseBestOffer</bpmn:incoming>
+      <bpmn:outgoing>Flow_ToLoanDecided</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:sequenceFlow id="Flow_ToLoanDecided" sourceRef="ServiceTask_ChooseBestOffer" targetRef="EndEvent_LoanDecided" />
+    <bpmn:endEvent id="EndEvent_LoanDecided" name="Loan decided">
+      <bpmn:incoming>Flow_ToLoanDecided</bpmn:incoming>
+    </bpmn:endEvent>
+  </bpmn:process>
+  <bpmndi:BPMNDiagram id="BPMNDiagram_1">
+    <bpmndi:BPMNPlane id="BPMNPlane_1" bpmnElement="loan_approval">
+      <bpmndi:BPMNShape id="StartEvent_LoanRequested_di" bpmnElement="StartEvent_LoanRequested">
+        <dc:Bounds x="152" y="222" width="36" height="36" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="134" y="265" width="76" height="14" />
+        </bpmndi:BPMNLabel>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="ServiceTask_RetrieveCreditRating_di" bpmnElement="ServiceTask_RetrieveCreditRating">
+        <dc:Bounds x="240" y="200" width="100" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="SubProcess_AssessRegion_di" bpmnElement="SubProcess_AssessRegion" isExpanded="true">
+        <dc:Bounds x="400" y="140" width="560" height="200" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="StartEvent_RegionAssessment_di" bpmnElement="StartEvent_RegionAssessment">
+        <dc:Bounds x="440" y="222" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="ServiceTask_RequestPartnerOffer_di" bpmnElement="ServiceTask_RequestPartnerOffer">
+        <dc:Bounds x="530" y="200" width="100" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="ServiceTask_SummariseRegion_di" bpmnElement="ServiceTask_SummariseRegion">
+        <dc:Bounds x="690" y="200" width="100" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="EndEvent_RegionAssessed_di" bpmnElement="EndEvent_RegionAssessed">
+        <dc:Bounds x="862" y="222" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="ServiceTask_ChooseBestOffer_di" bpmnElement="ServiceTask_ChooseBestOffer">
+        <dc:Bounds x="1010" y="200" width="100" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="EndEvent_LoanDecided_di" bpmnElement="EndEvent_LoanDecided">
+        <dc:Bounds x="1172" y="222" width="36" height="36" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="1158" y="265" width="66" height="14" />
+        </bpmndi:BPMNLabel>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNEdge id="Flow_ToRetrieveCreditRating_di" bpmnElement="Flow_ToRetrieveCreditRating">
+        <di:waypoint x="188" y="240" />
+        <di:waypoint x="240" y="240" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_ToAssessRegion_di" bpmnElement="Flow_ToAssessRegion">
+        <di:waypoint x="340" y="240" />
+        <di:waypoint x="400" y="240" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_ToRequestPartnerOffer_di" bpmnElement="Flow_ToRequestPartnerOffer">
+        <di:waypoint x="476" y="240" />
+        <di:waypoint x="530" y="240" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_ToSummariseRegion_di" bpmnElement="Flow_ToSummariseRegion">
+        <di:waypoint x="630" y="240" />
+        <di:waypoint x="690" y="240" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_ToRegionAssessed_di" bpmnElement="Flow_ToRegionAssessed">
+        <di:waypoint x="790" y="240" />
+        <di:waypoint x="862" y="240" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_ToChooseBestOffer_di" bpmnElement="Flow_ToChooseBestOffer">
+        <di:waypoint x="960" y="240" />
+        <di:waypoint x="1010" y="240" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_ToLoanDecided_di" bpmnElement="Flow_ToLoanDecided">
+        <di:waypoint x="1110" y="240" />
+        <di:waypoint x="1172" y="240" />
+      </bpmndi:BPMNEdge>
+    </bpmndi:BPMNPlane>
+  </bpmndi:BPMNDiagram>
+</bpmn:definitions>

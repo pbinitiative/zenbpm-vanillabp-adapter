@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<definitions xmlns="https://www.omg.org/spec/DMN/20191111/MODEL/" id="contract-collected-decisions" name="Contract decisions which collect every matching rule" namespace="http://zenbpm.pbinitiative.org/contract">
+  <decision id="contract-collected-discount" name="Discounts, every one which matches">
+    <decisionTable id="Table_CollectedDiscount" hitPolicy="COLLECT">
+      <input id="Input_Amount" label="Amount">
+        <inputExpression id="Expression_Amount" typeRef="number">
+          <text>amount</text>
+        </inputExpression>
+      </input>
+      <output id="Output_Discount" label="Discount" name="discount" typeRef="number" />
+      <rule id="Rule_Large">
+        <inputEntry id="Entry_Large">
+          <text>&gt;= 1000</text>
+        </inputEntry>
+        <outputEntry id="Output_Large">
+          <text>10</text>
+        </outputEntry>
+      </rule>
+      <rule id="Rule_Medium">
+        <inputEntry id="Entry_Medium">
+          <text>&gt;= 500</text>
+        </inputEntry>
+        <outputEntry id="Output_Medium">
+          <text>5</text>
+        </outputEntry>
+      </rule>
+      <rule id="Rule_Small">
+        <inputEntry id="Entry_Small">
+          <text>&lt; 500</text>
+        </inputEntry>
+        <outputEntry id="Output_Small">
+          <text>0</text>
+        </outputEntry>
+      </rule>
+    </decisionTable>
+  </decision>
+</definitions>

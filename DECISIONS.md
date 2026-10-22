@@ -1921,3 +1921,57 @@ heading, every row of `GAPS.md` has its entry on `Deviations`, every key the ada
 `Configuration`, and every call of the REST client and every endpoint of the engine on
 `Engine-APIs`. `EnginePinTest` holds the engine the page `Home` names to the pin. The README's
 section "The wiki" says who copies the pages.
+
+### 64. The blueprints run on ZenBPM through an overlay of this repository, built every night
+
+Decided by the implementation pipeline in place of the maintainers, as their policy for the
+autonomous run asks.
+
+The VanillaBP blueprints belong to the VanillaBP project, and this repository's maintainers are not
+its maintainers, so the blueprints get no profile `zenbpm` of their own. The overlay in
+`blueprints-overlay/` gives it to them from outside: `bin/build-blueprints-on-zenbpm.sh` clones the
+newest `main` of `vanillabp-blueprints/blueprints`, applies the overlay and builds every twin of a
+blueprint which runs on ZenBPM with `-Pzenbpm`, and the nightly's job `blueprints` runs the script.
+
+The overlay is a generator, `ZenBpmOverlay.java`, and not a patch or a set of edited files: what a
+blueprint needs for ZenBPM is what it has for Camunda 8, the other remote engine, with this adapter
+in its place. So every profile `camunda8` gets a profile `zenbpm` beside it, every
+`application-camunda8.yaml` an `application-zenbpm.yaml`, every other file named for Camunda 8 a
+copy named for ZenBPM, and every directory `processes/camunda8` a directory `processes/zenbpm` with
+the same models, which the engine reads as they are. A patch over about a hundred and forty POMs
+would stop applying at every change of a line near it, also one which changes nothing for ZenBPM.
+One convention the generator translates as well: the Camunda 8 adapter finds a user task by the
+external reference of its form, this adapter by its task definition, so a user task which names only
+the first gets it as its task definition. Where a model has to differ beyond that, the overlay holds
+its ZenBPM variant in `variants/`, with the SHA-256 of the model it was written from in
+`variants.txt`. A variant is a copy of a model of the blueprints, which are licensed under the
+Apache License 2.0, so it keeps that licence, names its origin in its first comment and is named in
+`NOTICE`, as decision 17 has it for code.
+
+What the generator does not know ends the run, naming it and the fix, so a change of the blueprints
+the overlay cannot follow turns the nightly red instead of quietly building less: a blueprint which
+is not in `blueprints.txt`, a listed one which is gone, a profile `camunda8` or an
+`application-camunda8.yaml` with more than the generator translates, another file named for Camunda
+8 which names Camunda, a POM which chooses a BPMS without a profile `camunda8`, a profile of a BPMS
+activated by anything but `activeByDefault`, and a model which changed since its variant was
+written. The job may not fail without turning the run red: the blueprints are what an application
+copies, and a blueprint which stops running on ZenBPM is a finding, whether the change came from
+here or from upstream. `blueprints.txt` says which blueprints run, and the wiki page `Blueprints`
+says why each of the others does not; `BlueprintsOverlayTest` holds the two together and applies the
+generator to a small checkout of the blueprints' shape in every build.
+
+The job needs no secret. The adapter is installed into the local Maven repository from the checkout
+the nightly runs on, so the blueprints are built against this commit and not against a published
+snapshot, and where the adapter's releases will be published does not matter to them. The blueprints
+read VanillaBP from the snapshot repository of Maven Central with the settings of
+`blueprints-overlay/settings.xml`, which name no registry of the Camunda adapters: naming `-Pzenbpm`
+switches off the profile a blueprint activates by default, because Maven leaves a POM's
+`activeByDefault` profiles off once another profile of the same POM is activated, so no Camunda
+adapter is resolved. A profile activated by a property, a JDK, a file or an operating system stays
+on next to `zenbpm`, so a POM which activates the profile of a BPMS that way ends the generator. The
+engine is the pin of the root POM, which `bin/zenbpm-engine.sh` reads from there on every start, and
+every twin gets an engine of its own: the twins of a blueprint deploy the same processes under the
+same identifiers, and a twin must not find the workflows, timers and versions the one before it
+left. The blueprints' models are written for Camunda 8, which gives a task without `retries` three
+attempts, so the script starts the engine with `JOBS_DEFAULT_RETRIES=3`, as the wiki page
+`Configuration` advises for such models.

@@ -48,6 +48,9 @@ The wiki is for users, this README for contributors:
 4. [Engine APIs](https://github.com/pbinitiative/zenbpm-vanillabp-adapter/wiki/Engine-APIs): every
    call the adapter makes against the engine, and those it never makes.
 5. [Native images](https://github.com/pbinitiative/zenbpm-vanillabp-adapter/wiki/Native-images).
+6. [Blueprints](https://github.com/pbinitiative/zenbpm-vanillabp-adapter/wiki/Blueprints): which
+   VanillaBP blueprints run on ZenBPM through the overlay in [`blueprints-overlay/`](blueprints-overlay),
+   and why the others do not.
 
 A change of behaviour changes the page which describes it in the same pull request. The analysis,
 the architecture and the implementation plan the adapter was built from are in
@@ -1001,9 +1004,10 @@ coverage". It deploys with the workflow's `GITHUB_TOKEN`.
 
 **Every night** at 02:37 UTC, `.github/workflows/nightly.yaml` runs what no pull request should
 wait for, in jobs which do not depend on one another. Its badge at the top shows the last run on
-`main`. A pull request which changes the workflow or `bin/resolve-latest-engine.sh`, the script it
-runs, runs it too, so a change of the nightly is seen working before it is merged; no other pull
-request starts it. A person can start it on `main` from the Actions tab. Its jobs:
+`main`. A pull request which changes the workflow, a script it runs (`bin/resolve-latest-engine.sh`,
+`bin/build-blueprints-on-zenbpm.sh`, `bin/zenbpm-engine.sh`) or the blueprints' overlay
+`blueprints-overlay/` runs it too, so a change of the nightly is seen working before it is merged;
+no other pull request starts it. A person can start it on `main` from the Actions tab. Its jobs:
 
 - `pinned-engine`: the build of `checks.yaml`'s job `build`, against the pinned engine. With nobody
   waiting for it, a test which fails now and then shows up here and not in somebody's pull request.
@@ -1022,6 +1026,17 @@ request starts it. A person can start it on `main` from the Actions tab. Its job
   installed on the runner by `graalvm/setup-graalvm` and `-Dquarkus.native.container-build=false`,
   so the image is built with a local GraalVM rather than in the builder container. When it fails,
   the binary's log and the test reports are attached as the artifact `native-image-reports`.
+- `blueprints`: the [VanillaBP blueprints](https://github.com/vanillabp-blueprints/blueprints) on
+  ZenBPM. It installs the adapter of this checkout without its tests and runs
+  `bin/build-blueprints-on-zenbpm.sh`, which clones the blueprints' newest `main`, applies the
+  overlay of `blueprints-overlay/` and builds every twin of a blueprint which runs on ZenBPM with
+  `-Pzenbpm` against an engine of its own, the pinned one, which `bin/zenbpm-engine.sh` starts.
+  The blueprints read VanillaBP from Maven Central's snapshots and the adapter from the local
+  repository, so the job needs no token. A blueprint which fails, or a change of the blueprints the
+  overlay cannot follow, turns the run red; the build logs and test reports of every twin, and the engine's log of
+  each failed one, are attached as the artifact `blueprints-reports`. The wiki page
+  [Blueprints](https://github.com/pbinitiative/zenbpm-vanillabp-adapter/wiki/Blueprints) lists the
+  blueprints and why some do not run on ZenBPM (decision 64 in [`DECISIONS.md`](./DECISIONS.md)).
 
 Each job ends with a line in the run's summary: what it ran against and how it ended, also where
 it failed before its build; `latest-engine` writes the line of its script before. A failed build
@@ -1029,8 +1044,10 @@ attaches its test reports (`pinned-engine-reports`, `latest-engine-reports`). Ev
 the workflow's token and writes nothing. `NightlyWorkflowTest` in
 `test-coverage-report/coverage-gate` holds the workflow to this section: the triggers, the jobs it
 names, the jobs' independence, the one job which may fail and no step of another job which could
-hide a failure, the native build reaching its integration test, the permissions and the summary
-line.
+hide a failure, the native build reaching its integration test, the blueprints built by the script
+after the adapter was installed, the permissions and the summary line. `BlueprintsOverlayTest`
+applies the overlay to a small checkout of the blueprints' shape in every build, and
+`EnginePinTest#theBlueprintsEngineIsThePin` holds the engine script to the pin.
 
 ## Test coverage
 
@@ -1108,6 +1125,34 @@ README and every page and fails when a test they name does not exist, a link lea
 heading, a row of `GAPS.md` has no entry on `Deviations`, the table on `Configuration` and the keys
 the code reads differ, or `Engine-APIs` misses a call of the REST client or an endpoint of the
 engine. What it cannot check is whether a sentence says what its test holds.
+
+## The blueprints on ZenBPM
+
+The [VanillaBP blueprints](https://github.com/vanillabp-blueprints/blueprints) have no profile for
+ZenBPM of their own; the overlay in [`blueprints-overlay/`](blueprints-overlay) gives them one, and
+the nightly's job `blueprints` builds them with it (decision 64 in [`DECISIONS.md`](./DECISIONS.md)).
+What a user reads about it is on the wiki page
+[Blueprints](https://github.com/pbinitiative/zenbpm-vanillabp-adapter/wiki/Blueprints). The overlay
+is:
+
+- `ZenBpmOverlay.java`, a program run as a source file, which adds the profile `zenbpm`, the
+  `application-zenbpm.yaml` and the models for ZenBPM beside what a blueprint has for Camunda 8,
+  and names a user task its form names by a task definition. Spotless formats it like the sources
+  of the modules.
+- `blueprints.txt`, one line per blueprint directory: `runs`, or `not-runnable` with its reason in
+  the table of the wiki page `Blueprints`, which `BlueprintsOverlayTest` holds to the list.
+- `variants/` and `variants.txt`: a model which has to differ on ZenBPM, at the path of the model
+  in a twin with `zenbpm` for `camunda8`, and the SHA-256 of the Camunda 8 model it was written
+  from, `sha256sum` of that file. Write it from the Camunda 8 model, say in an XML comment why it
+  differs, keep the comment which names its origin and licence (the blueprints are Apache-2.0, see
+  [`NOTICE`](NOTICE)), and give it a diagram if it has none (`bin/add-bpmn-diagram.py`, see [`AGENTS.md`](AGENTS.md#bpmn-files-carry-their-diagram)).
+- `settings.xml`, the Maven settings of the blueprints' build: Maven Central and its snapshots,
+  nothing else.
+
+When the nightly reports that the overlay no longer fits, its message names what changed and what
+to do: a new blueprint goes into `blueprints.txt` and the page's table, a changed model's variant
+gets the change and the new hash. `bin/build-blueprints-on-zenbpm.sh <directory> [<twin>...]` runs
+what the job runs, on a laptop with Docker, after the adapter was installed as the page says.
 
 ## Licence
 

@@ -1,24 +1,27 @@
 name: Nightly
 # What no pull request should have to wait for: the full build against the pinned engine on a
-# quiet night, the same integration tests against the engine's newest build of its main, and
-# the native image. The jobs do not depend on one another, so one more is added without
-# touching the others. Each writes its result into the run's summary and nothing anywhere
-# else: no job of this workflow may write to any repository, package or issue tracker. The
-# README describes the jobs in its section 'What CI runs', and NightlyWorkflowTest in
-# test-coverage-report/coverage-gate holds what the README says.
+# quiet night, the same integration tests against the engine's newest build of its main, the
+# native image, and the VanillaBP blueprints on ZenBPM. The jobs do not depend on one another,
+# so one more is added without touching the others. Each writes its result into the run's
+# summary and nothing anywhere else: no job of this workflow may write to any repository,
+# package or issue tracker. The README describes the jobs in its section 'What CI runs', and
+# NightlyWorkflowTest in test-coverage-report/coverage-gate holds what the README says.
 "on":
   schedule:
     # 02:37 UTC every night: before the engine's own scheduled workflows, which run from 04:00
     # to 06:00 UTC, and off the full hour, at which GitHub delays the runs it starts
     - cron: "37 2 * * *"
   workflow_dispatch:
-  # A pull request which changes this file or the script it runs runs it, so a change of the
-  # nightly is seen working before it is merged. A dispatch or a schedule can only run the file
-  # on main. Any other pull request never starts it.
+  # A pull request which changes this file, a script it runs or the blueprints' overlay runs it,
+  # so a change of the nightly is seen working before it is merged. A dispatch or a schedule can
+  # only run the file on main. Any other pull request never starts it.
   pull_request:
     paths:
       - .github/workflows/nightly.yaml
       - bin/resolve-latest-engine.sh
+      - bin/build-blueprints-on-zenbpm.sh
+      - bin/zenbpm-engine.sh
+      - blueprints-overlay/**
 permissions:
   contents: read
 concurrency:
@@ -194,3 +197,62 @@ jobs:
         run: |
           builder="$(native-image --version 2>/dev/null | head -n 1)" || true
           echo "Native image: the build with \`${builder:-no native-image on the runner}\` and the run of the binary against the pinned engine ended with \`$RESULT\`." >>"$GITHUB_STEP_SUMMARY"
+
+  # The VanillaBP blueprints of vanillabp-blueprints/blueprints, cloned fresh from their main,
+  # with the overlay of blueprints-overlay/ applied and built with '-Pzenbpm' against the pinned
+  # engine, one engine per twin. The adapter is installed from this checkout, so the job needs
+  # no package registry and no token; the blueprints read VanillaBP from Maven Central's
+  # snapshots. A change of the blueprints which the overlay cannot follow, or which breaks a
+  # blueprint on ZenBPM, turns the run red. See decision 64 in the repository's DECISIONS.md.
+  blueprints:
+    runs-on: ubuntu-latest
+    # the twins one after the other took 54 minutes on a laptop with 14 cores; GitHub's runner
+    # has four, and the first run of a night downloads what every blueprint needs
+    timeout-minutes: 150
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@v6
+        with:
+          java-version: 25.0.4+101.0.LTS
+          distribution: temurin
+          cache: maven
+          settings-path: ${{ runner.temp }}/setup-java
+      - name: Log in to the GitHub container registry
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      # what the blueprints' '-Pzenbpm' reads: the Spring Boot starter and the Quarkus extension
+      - name: Install the adapter
+        run: mvn --batch-mode --no-transfer-progress --update-snapshots -Dmaven.test.skip=true
+          --projects spring-boot,quarkus/deployment --also-make install
+      - name: Build the blueprints with -Pzenbpm against the pinned engine
+        run: bin/build-blueprints-on-zenbpm.sh "$RUNNER_TEMP/blueprints"
+      - name: Upload the logs and the reports of the twins
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: blueprints-reports
+          path: |
+            ${{ runner.temp }}/blueprints/zenbpm-logs/**
+            ${{ runner.temp }}/blueprints/**/target/surefire-reports/**
+            ${{ runner.temp }}/blueprints/**/target/failsafe-reports/**
+          retention-days: 7
+          if-no-files-found: warn
+      - name: Write the summary line
+        if: always()
+        env:
+          RESULT: ${{ job.status }}
+        # the line is written also where the clone or the overlay failed and no twin was built
+        run: |
+          checkout="$RUNNER_TEMP/blueprints"
+          commit="$(git -C "$checkout" rev-parse HEAD 2>/dev/null)" || true
+          passed="$(grep -c ' passed ' "$checkout/zenbpm-results.txt" 2>/dev/null)" || true
+          failed="$(awk '$2 == "failed" { printf "%s`%s`", sep, $1; sep = ", " }' "$checkout/zenbpm-results.txt" 2>/dev/null)" || true
+          echo "Blueprints: ${passed:-0} twins of vanillabp-blueprints/blueprints at \`${commit:-not cloned}\` built green with \`-Pzenbpm\` against the pinned engine, failed: ${failed:-none}; the job ended with \`$RESULT\`." >>"$GITHUB_STEP_SUMMARY"
