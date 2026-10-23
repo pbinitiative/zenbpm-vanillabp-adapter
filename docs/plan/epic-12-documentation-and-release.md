@@ -1114,3 +1114,46 @@ at the rule (100 % on both platforms), the wiki, the blueprints through the over
 the release workflow are done; the first release is not, so M6 is reached except for the first
 release, which is the maintainer's.
 
+
+**S12.3.1 and S12.4.1 done 2026-10-23**, merged to `main` as `3677c3d` (pull request #87: stories
+`a04858a` and `07f6a63`, review fixes `18aab2d`, CodeRabbit fixes `c1279ea`). GitHub keeps run logs
+for 90 days, so what the runs showed is written here as well:
+
+- The release's dry run of the pull request, run
+  [39873083880](https://github.com/pbinitiative/zenbpm-vanillabp-adapter/actions/runs/39873083880),
+  on the head `c1279ea`, and the dry run dispatched on `main` at `3677c3d`, run
+  [39880170805](https://github.com/pbinitiative/zenbpm-vanillabp-adapter/actions/runs/39880170805):
+  both green, the job `publish` skipped. Each refused the engine pin ("The engine pin is no engine
+  release: the root pom.xml names no 'zenbpm.version' ..."), the notes ("This repository has no tag
+  'v2.0.0' on GitHub ...") and the snapshots ("A release depends on releases only, but the POMs it
+  would publish name snapshots"), and went on: the build of `2.0.0` ran every test, the gate 140
+  among them, and measured 0 of 38,473 (Spring Boot) and 0 of 38,470 (Quarkus) instructions missed,
+  and "The upload carried the 13 staged files unchanged into a local repository." Afterwards the
+  repository had no release and no tag, and its GitHub Packages no version but `2.0.0-SNAPSHOT`.
+- `Checks` on `3677c3d`, run
+  [39877795383](https://github.com/pbinitiative/zenbpm-vanillabp-adapter/actions/runs/39877795383):
+  green on both JDKs. `bin/check-engine-copies.sh` reported both copies as the engine's files of
+  `bdd795a3...`. On both JDKs every module ran its tests, none skipped: engine test support 12 + 5,
+  core 1,276 + 108, Spring Boot 14 + 97, smoke test 42 + 1, election integration test 8, Quarkus
+  runtime 13, deployment 60, integration tests 26, gate 140 (`ReleaseScriptTest` 25,
+  `ReleaseWorkflowTest` 18, `RenovateConfigurationTest` 5, `WorkflowPermissionsTest` 2,
+  `DocumentationTest` 11). The gate measured 100 %: 0 of 38,473 (Spring Boot) and 0 of 38,470
+  (Quarkus) instructions missed on JDK 25, 0 of 38,461 and 0 of 38,458 on JDK 21. The pull
+  request's head needed one rerun of its job `build`:
+  `ZenBpmJobStreamTest#aParkedJobRaisesTheCapOfItsType` read nothing within 10 seconds once, a test
+  of the core this change does not touch, which passed on JDK 21 in the same run and in the rerun.
+- `Publish snapshots` on `3677c3d`, run
+  [39877795093](https://github.com/pbinitiative/zenbpm-vanillabp-adapter/actions/runs/39877795093):
+  green. The snapshot it published, `2.0.0-20261023.002319-83`, holds the core's 266 classes, the
+  Spring Boot starter's 13, the Quarkus runtime's 13 and the deployment's 4, as before (the stories
+  add no production class), and no test class, fake, fixture or BPMN file.
+- Both report pages (`spring-boot-report/index.html`, `quarkus-report/index.html`) answer HTTP 200
+  and show 0 of 38,473 (Spring Boot) and 0 of 38,470 (Quarkus) instructions missed.
+- The wiki: `wiki/` at `3677c3d` was copied into `pbinitiative/zenbpm-vanillabp-adapter.wiki` and
+  pushed as its commit `a27128e` (decision 63); `Home` (served at `/wiki`) answers HTTP 200 and
+  names `ReleaseScriptTest#aPinOnTheEnginesMainIsRefused`.
+- Left for the maintainers, as the policy of the pipeline asks: the first release and what it
+  needs (VanillaBP's 2.0.0, the engine re-pin with the custom manager for Renovate, the README and
+  the wiki switched to `2.0.0`, the tag `v2.0.0`, Maven Central if wanted), the tag ruleset and the
+  environment for the job `publish`, the row on VanillaBP's wiki page `BPMS-adapters`, and the
+  corrections of the local workspace notes (S12.3.1, item 8).
