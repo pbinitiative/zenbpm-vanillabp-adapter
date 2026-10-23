@@ -1,8 +1,25 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
   "extends": ["config:recommended"],
-  "enabledManagers": ["maven", "github-actions"],
+  "enabledManagers": ["maven", "github-actions", "custom.regex"],
   "dependencyDashboard": true,
+  "customManagers": [
+    {
+      "description": "The image of actionlint, which the job workflow-lint of checks.yaml runs in a 'run:' line, where the GitHub Actions manager does not look.",
+      "customType": "regex",
+      "managerFilePatterns": ["/^\\.github/workflows/[^/]+\\.ya?ml$/"],
+      "matchStrings": ["(?<depName>rhysd/actionlint):(?<currentValue>[0-9][^\\s]*)"],
+      "datasourceTemplate": "docker"
+    },
+    {
+      "description": "The JDK of the required check, which checks.yaml names in its matrix, where the GitHub Actions manager does not look; the other workflows name it in actions/setup-java.",
+      "customType": "regex",
+      "managerFilePatterns": ["/^\\.github/workflows/checks\\.yaml$/"],
+      "matchStrings": ["\\n\\s+java: (?<currentValue>\\d+\\.\\d+\\.\\d+\\+[0-9.]+\\.LTS)\\n"],
+      "depNameTemplate": "java-jdk",
+      "datasourceTemplate": "java-version"
+    }
+  ],
   "packageRules": [
     {
       "description": "VanillaBP and this adapter follow their own releases, not Renovate: while they are snapshots there is nothing to look up, and a VanillaBP release is taken by hand together with the two platform BOMs it was built with.",
@@ -10,12 +27,14 @@
       "enabled": false
     },
     {
-      "description": "The Spring Boot and Quarkus versions are the ones adapter-platform-integration imports. They move when the VanillaBP platform moves, never on their own, because the platform integrations are compiled against exactly them.",
+      "description": "The Spring Boot and Quarkus versions are the ones adapter-platform-integration imports. They move when the VanillaBP platform moves, never on their own, because the platform integrations are compiled against exactly them. Every artifact read in springboot.version or quarkus.version is listed, because an update of one of them rewrites the property for all.",
       "matchPackageNames": [
         "org.springframework.boot:spring-boot-dependencies",
+        "org.springframework.boot:spring-boot-configuration-processor",
         "io.quarkus:quarkus-bom",
         "io.quarkus:quarkus-extension-maven-plugin",
-        "io.quarkus:quarkus-extension-processor"
+        "io.quarkus:quarkus-extension-processor",
+        "io.quarkus:quarkus-maven-plugin"
       ],
       "enabled": false
     },
@@ -28,6 +47,12 @@
       "description": "Netty is pinned in the Quarkus modules to the version the Quarkus BOM manages, because Quarkus' Netty substitutions are written against exactly it. It moves with the Quarkus version, never on its own.",
       "matchPackageNames": ["io.netty{/,}**"],
       "enabled": false
+    },
+    {
+      "description": "Every workflow builds on the same JDK as the required check, so its version moves in all of them in one pull request.",
+      "matchDepNames": ["java-jdk"],
+      "matchCurrentValue": "/^\\d+\\.\\d+\\.\\d+\\+/",
+      "groupName": "the JDK of the workflows"
     }
   ]
 }

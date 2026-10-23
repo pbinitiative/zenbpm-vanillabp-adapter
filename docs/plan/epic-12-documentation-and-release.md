@@ -719,7 +719,7 @@ runs showed is written here as well:
 
 ## S12.3.1 Renovate, local workspace notes and the VanillaBP wiki row
 
-- [ ] **Depends on:** S12.1.1.
+- [x] **Depends on:** S12.1.1.
 
 `renovate.json` reviewed against the finished dependency tree (the VanillaBP platform version, the
 Spring Boot and Quarkus BOMs which have to move together with the platform). Once the engine pin is
@@ -731,9 +731,155 @@ superproject belongs to the VanillaBP project and no pull request to it is plann
 the VanillaBP project: a row for this adapter on the platform wiki's `BPMS-adapters` page linking
 `pbinitiative/zenbpm-vanillabp-adapter`.
 
+*Fit check, 2026-10-22, by the Implementor of the pipeline.* The pipeline's policy changes two parts
+of this story: the request for the wiki row is NOT made, and the local workspace notes are read but
+NOT edited (the superproject is VanillaBP's; the policy forbids changing, staging or reverting its
+local changes). Both are recorded below as left to the maintainer. What did not fit the merged code,
+and what was decided:
+
+1. **`renovate.json` let two artifacts move a platform version.** Renovate (44.178.1, run locally with
+   `--platform=local --dry-run=lookup` on a clone of `main` at `5d207f6`) extracts a version which
+   reads a property as an update of that property. The rule for the platform BOMs named the BOMs and
+   the Quarkus extension plugin and processor, but not `io.quarkus:quarkus-maven-plugin` (the native
+   build of `quarkus/native-image-tests`, added in S11.4.1) nor
+   `org.springframework.boot:spring-boot-configuration-processor` (the Spring Boot module's
+   annotation processor). Renovate would have opened `quarkus-maven-plugin` 3.40.1.1 and
+   `spring-boot-configuration-processor` 4.1.2, each rewriting `quarkus.version` or
+   `springboot.version` for the whole build, which is exactly what the rule's description forbids.
+   Both are named in the rule now, and its description says why every reader of the property is.
+   The same run after the change opens no branch for either.
+2. **The JDK would have split.** Renovate's GitHub Actions manager reads the JDK of
+   `actions/setup-java` (`25.0.4+101.0.LTS`) and proposed 25.0.5 for `nightly.yaml` and
+   `publish-snapshots.yaml`, but not for `checks.yaml`, whose job `build` names it in its matrix
+   (`${{ matrix.java }}` is no version it can read). The nightly and the publication would have
+   built on another JDK than the required check, against the comments of both workflows. Decided:
+   a regex custom manager reads the matrix entry, and one rule groups every full JDK version into
+   one pull request (`renovate/the-jdk-of-the-workflows`, five updates in the lookup run). The
+   Mandrel of the nightly's native build is named `25`, a line Renovate leaves alone; it stays
+   Renovate's.
+3. **The image of actionlint was nobody's.** `checks.yaml` runs `rhysd/actionlint:1.7.12` in a `run:`
+   line, which no manager reads. Decided: a regex custom manager with the `docker` datasource reads it.
+   `enabledManagers` gains `custom.regex`.
+4. **What else the tree holds, and stays as it was:** the VanillaBP rule's two regular expressions
+   match `io.vanillabp:*`, `io.vanillabp.adapter:migration-adapter` and this repository's own
+   artifacts; `io.grpc{/,}**` matches `grpc-bom` and `protoc-gen-grpc-java`, `com.google.protobuf{/,}**`
+   `protobuf-java`, `io.netty{/,}**` the `netty-bom` of the four Quarkus modules. Micrometer, Jackson,
+   SLF4J and SnakeYAML carry no version of their own (the platform BOMs manage them). Testcontainers,
+   Lombok, JaCoCo, `protobuf-maven-plugin` and Maven's plugins, and every action of the four
+   workflows (`nightly.yaml`'s `graalvm/setup-graalvm` included), are Renovate's. The blueprints'
+   overlay names no version: its generator writes this repository's `revision` into the blueprints
+   (decision 64), and its `settings.xml` names repositories only.
+5. **The test (docs are behaviour).** `RenovateConfigurationTest` in the gate holds `renovate.json` to
+   the README's new section "Dependency updates" and to the root POM: the versions whose comment says
+   "never on its own" (Spring Boot, Quarkus, gRPC, protobuf, Netty; the gRPC comment gained the
+   phrase, and Testcontainers a comment of its own so the Netty comment no longer stands above it) are
+   read only by artifacts a switched-off rule names; every rule has a description, and every name a
+   switched-off rule matches is still an artifact of a POM; the custom managers find every image a
+   workflow runs by its version and the JDK of the required check; every workflow names the same JDK
+   and one rule groups it. It judges Renovate's three pattern forms used here (regular expression,
+   `prefix{/,}**`, exact name) and fails on any other form. `renovate-config-validator` of the same
+   Renovate version accepts the file; the build does not depend on it.
+6. **The `customManagers` entry for engine releases is NOT added.** The pin is still the `main` commit
+   `bdd795a3` with a `dev` digest, and the policy forbids the re-pin. It is left to the step which
+   re-pins to a release (S12.4.1). The entry the maintainer adds then, to `customManagers` of
+   `renovate.json`, together with `zenbpm.version` in the root POM:
+
+   ```json
+   {
+     "description": "The engine's releases: the pin follows the GitHub releases of pbinitiative/zenbpm. The pull request moves zenbpm.version only and is completed by hand with zenbpm.commit, zenbpm.image and the two copies of the engine's contract, by the steps of the README's section 'Supported engine version'.",
+     "customType": "regex",
+     "managerFilePatterns": ["/^pom\\.xml$/"],
+     "matchStrings": ["<zenbpm\\.version>(?<currentValue>v[^<]+)</zenbpm\\.version>"],
+     "depNameTemplate": "pbinitiative/zenbpm",
+     "datasourceTemplate": "github-releases"
+   }
+   ```
+
+   Proven on a scratch clone only: with the entry added and `<zenbpm.version>v1.8.0</zenbpm.version>`
+   written into the root POM, the validator accepts the file and the lookup run proposes `v1.9.0` on
+   the branch `renovate/pbinitiative-zenbpm-1.x`. The release guard of S12.4.1 refuses an adapter
+   release whose `zenbpm.commit` and `zenbpm.image` the pull request left behind (decision 66,
+   entered by S12.4.1), so a half-completed pull request cannot reach a release.
+7. **The VanillaBP wiki row is NOT requested** (policy). Left to the maintainer, who asks the VanillaBP
+   project for it once the adapter is released (a row of a list of adapters "an application adds as
+   a dependency" should name a released version). The proposed text, in the two tables of the page
+   `BPMS-adapters` of `vanillabp/adapter-platform-integration`'s wiki:
+
+   ```markdown
+   | [ZenBPM](https://github.com/pbinitiative/zenbpm) | `zenbpm` | remote engine (REST and a gRPC job stream), eventually consistent; built and owned by the ZenBPM maintainers at pbinitiative; snapshots only, not released | [Wiki](https://github.com/pbinitiative/zenbpm-vanillabp-adapter/wiki) · [Repository](https://github.com/pbinitiative/zenbpm-vanillabp-adapter) |
+   ```
+
+   and in "The dependency to add": `org.pbinitiative.zenbpm:zenbpm-vanillabp-adapter-spring-boot` and
+   `org.pbinitiative.zenbpm:zenbpm-vanillabp-adapter-quarkus`, with the note that until the first
+   release they are `2.0.0-SNAPSHOT` in the GitHub Packages of `pbinitiative/zenbpm-vanillabp-adapter`.
+8. **The local workspace notes of S1.1.2, re-read against the finished adapter. Left for the
+   maintainer to apply locally** (the pipeline changes none of them):
+   - Root `AGENTS.md`, paragraph on `zenbpm-vanillabp-adapter`: "its integration tests will start the
+     engine image" → they do: they start the image `zenbpm.image` of the adapter's root POM names (by
+     its digest) and need Docker; without Docker they are skipped (the adapter's README, "Building").
+   - Root `AGENTS.md`, "Build & verify": the adapter is listed in the chain "downstream repos resolve
+     upstream from ~/.m2" → it resolves VanillaBP's snapshots from the snapshot repository of Maven
+     Central its root POM names, so nothing has to be built first (the adapter's README, "Building";
+     open question 16, answered 2026-10-15).
+   - Root `AGENTS.md`, "Their two skills (`zenbpm-*`)" and the section "Skills" → there are three
+     `zenbpm-*` skills: `zenbpm-code-review`, `zenbpm-e2e-tests` and the pipeline's
+     `zenbpm-adapter-review` (ignored through `.git/info/exclude` with `/.github/agents/`).
+   - Root `AGENTS.md`, the adapter paragraph could add: the user documentation is written in the
+     adapter's `wiki/` and copied into its wiki after each merge (decision 63).
+   - `vanillabp-bpms-characteristics`, the anchor "decision 17 of `zenbpm-vanillabp-adapter` ... engine
+     `main` at `ab85f922`" → decision 66 (entered by S12.4.1) and the pin `bdd795a3`.
+   - `vanillabp-bpms-characteristics`, ZenBPM "No retries (yet) ... in progress (pull request #862)" and
+     the cheat sheet's "incident at once (no retries yet)" → the engine counts retries and waits a
+     backoff since commit `bc3384b3` (inside the pin); the adapter fails a job without an error code
+     and the engine raises the incident at the last attempt (decision 27, GAPS 6 closed); the adapter
+     writes no default of retries into a model (decision 38).
+   - `vanillabp-bpms-characteristics`, "the adapter defaults to `use-prefix`" and the cheat sheet's
+     "prefixed identifiers (`use-prefix` default)" → wrong: `by-adapter` stays the default and is
+     refused while deploying, so every application chooses `use-prefix` or `none` (decision 24).
+   - `vanillabp-bpms-characteristics`, job outputs "process scope only" → the adapter writes the shared
+     values into every instance from the task's own up to its workflow's root (decision 35), repeating
+     an update which finds no instance yet (decision 34), before it completes the job (decision 7).
+   - `vanillabp-bpms-characteristics`, "Starting a workflow the BPMS decides on": "its decision 5, not
+     built yet" → built as marker service tasks after every start event and before every end event
+     (decisions 26, 44 and 52); the identity is the process instance key (decision 25).
+   - `vanillabp-bpms-characteristics`, "Signals": "plans to offer no `SEND_SIGNAL` and to refuse a model
+     with a signal event" → done (GAPS 13, `ZenBpmUnsupportedConstructs`).
+   - `vanillabp-bpms-characteristics`, "Versions": "a `main` commit plus image digest until a release
+     carries what it needs" → the engine release `v1.9.0` (2026-10-17) carries the pin (`bdd795a3` is
+     seven commits behind it); the pin stays on `main` until the maintainer re-pins, and an adapter
+     release refuses an unreleased engine (decision 66).
+   - `vanillabp-adapter-building`: "`ZenBpmBpmnModel`, planned for its deployment pipeline" → built
+     (`core/.../model/ZenBpmBpmnModel.java`, a record holding the DOM `Document`); its anchor could
+     name decision 66 of `zenbpm-vanillabp-adapter`; "All adapter artifacts are versioned
+     2.0.0-SNAPSHOT" stays true, and this adapter's release takes its version from the tag
+     (decision 65).
+
+**Acceptance criteria**
+
+- [x] `renovate.json` reviewed against the finished dependency tree: every artifact of every POM and
+  every action and image of the workflows is either Renovate's or named by a switched-off rule with
+  its reason, and `RenovateConfigurationTest` holds it (4 tests; 9 mutants applied to
+  `renovate.json`, the root POM and a workflow, 9 killed: a reader of `quarkus.version` dropped from
+  its rule, the "never on their own" of the gRPC comment dropped, a stale name, a rule without a
+  description, either custom manager dropped, another JDK in one workflow, the JDK group dropped, a
+  glob form the test cannot judge). Renovate's own lookup on a scratch clone opens no branch for
+  Quarkus or Spring Boot, and one for the JDK of all five places.
+- [x] The engine's `customManagers` entry is written down, ready and proven on a scratch clone, and
+  NOT added (left to the re-pin, item 6).
+- [x] The local workspace notes are re-read and their corrections listed (item 8); applying them is
+  left to the maintainer.
+- [ ] The `BPMS-adapters` wiki row: NOT requested (policy); the proposed text is in item 7, left to
+  the maintainer.
+
+*Evidence, 2026-10-22*, a clean `TZ=Etc/UTC mvn clean install` of the story's commit on JDK 25, green
+in 18:22, no test skipped: engine test support 12 + 5, core 1,276 + 108, Spring Boot 14 + 97, smoke
+test 42 + 1, election integration test 8, Quarkus runtime 13, deployment 60, integration tests 26,
+gate 96 (`RenovateConfigurationTest` 4 new). The gate measured 100 %: 0 of 38,473 (Spring Boot) and
+0 of 38,470 (Quarkus) instructions missed. `bin/check-deploy-safety.sh`: green in 36:46, the green deploy staged exactly the 13 published files and the red gate deployed nothing.
+
 ## S12.4.1 Release workflow and the first release
 
-- [ ] **Depends on:** S12.2.1, S12.3.1. **Open question 17** decides the target.
+- [x] **Depends on:** S12.2.1, S12.3.1. **Open question 17** decides the target.
 
 Before the first release the engine pin leaves `main`: the maintainers tag an engine release
 containing the pinned commit (or a newer one, re-pinned by the S1.2.1 steps), and the root POM gets
@@ -758,3 +904,213 @@ the overlay, which writes the `revision` of this repository's root POM (decision
 nightly installs the adapter from the checkout. So "the blueprints' version points at the release"
 needs no step of its own: the job builds the blueprints against whatever version the checkout
 carries, a release tag included.
+
+*Fit check, 2026-10-22, by the Implementor of the pipeline.* The pipeline's policy changes this
+story: the release workflow is built and proven by a dry run which publishes nothing, and the first
+release is NOT made (no `v*` tag, no GitHub release, no deploy of a release, no re-pin of the engine;
+the Maven Central secrets do not exist and the engine release is the ZenBPM maintainers' step). What
+did not fit, and what was decided:
+
+1. **Open question 17, the target (decision 65).** Central needs the organisation's namespace and a
+   signing key as secrets, which do not exist. Decided, as the question's fallback: releases go to
+   this repository's GitHub Packages, under the server `github` with the workflow's token, like the
+   snapshots; the root POM's `distributionManagement` gains the release `repository` beside the
+   `snapshotRepository`. Central is left to the maintainers. `docs/open-questions.md` keeps the
+   question; this note and decision 65 record the answer.
+2. **`zenbpm.image = ghcr.io/pbinitiative/zenbpm:${zenbpm.version}` contradicts the tests (decision
+   66).** `EngineUnderTest` refuses an image named by a tag (decision 62). Decided: the image stays
+   pinned by its digest, and the release tag is a third property, `zenbpm.version`, whose absence is
+   the state of a pin on `main`. `bin/release.sh engine` refuses a release unless `zenbpm.version` is
+   a release tag `v<major>.<minor>.<patch>` of the engine, the tag points at `zenbpm.commit` (the
+   commit, for an annotated tag) and the registry names `zenbpm.image`'s digest for
+   `ghcr.io/pbinitiative/zenbpm:<tag>`. Proven against GitHub and ghcr.io on scratch copies of the root
+   POM: `v1.9.0` with its commit `9b8a0f02` and digest `sha256:295ca2a2...` is accepted; the pinned
+   commit `bdd795a3` with `v1.9.0`, the pinned digest with `v1.9.0`, `v1.9.0-rc2` and `v9.9.9` are
+   refused, each with its message. Today's pin (no `zenbpm.version`) is refused before anything is
+   asked of GitHub.
+3. **A release would have depended on snapshots.** Not in the plan: the published POMs name
+   `io.vanillabp:*:2.0.0-SNAPSHOT`, because VanillaBP has released no 2.0.0 (Maven Central holds
+   `spi-for-java` up to 1.1.0 and no `vanillabp-adapter-spi`, checked 2026-10-22). A release which
+   names a snapshot changes under the application which uses it. Decided: `bin/release.sh
+   dependencies` refuses a staged POM which names a snapshot, naming the POM, the artifact and the
+   two properties to set. This is one more thing the first release waits for, and not the
+   maintainers' to do: VanillaBP's release.
+4. **The notes.** "The GitHub release with the tag's notes": the job `publish` creates it with
+   `gh release create --verify-tag --notes-file`, and the notes are read in `build`, before anything
+   is built, from the annotated tag on GitHub through the API (`bin/release.sh notes`), not from the
+   checkout, whose shallow fetch of a tag is not guaranteed to keep the tag object. A lightweight tag
+   or an empty message is refused; a signature at the end of a signed tag's message is cut off.
+   Proven against GitHub: `pbinitiative/zenbpm`'s `v1.9.0` is refused as lightweight, `git/git`'s
+   signed `v2.40.0` gives its message without the signature.
+5. **What is uploaded is what was tested.** The job `build` (`contents: read`, `packages: read` for
+   the engine image) runs the full build of the tag's version (`-Drevision`, every test, the Docker
+   ITs, the gate) as `mvn deploy` into a local directory only (`-DaltDeploymentRepository` with a
+   `file://` address, `-Dmaven.install.skip=true`, `deployAtEnd` keeps a red gate from staging
+   anything), checks that exactly the published files arrived (`bin/published-artifacts.sh`, the list
+   `bin/check-deploy-safety.sh` now reads too), refuses a snapshot, rehearses the upload into another
+   local directory with the command `publish` uses and compares every file byte for byte, and hands
+   the staged files over as the artifact `release`. The job `publish` (`contents: write`,
+   `packages: write`), only for a pushed tag and after `build`, runs no build: it uploads those files
+   with Maven's `deploy:deploy-file` (the deploy plugin of the root POM) and creates the release.
+   `WorkflowPermissionsTest#onlyThePublicationsWrite` names exactly the five permissions which write:
+   `publish-snapshots.yaml`'s job `publish` (`packages`) and job `deploy-coverage-reports` (`pages`,
+   `id-token`), and `release.yaml`'s job `publish` (`contents`, `packages`). Before, the whole of
+   `publish-snapshots.yaml` was exempt; now each of its writes is named as well.
+6. **The dry run.** `release.yaml` also runs on `workflow_dispatch` (input `tag`, empty for the version
+   the root POM's `revision` leads to) and on a `pull_request` whose `paths` are the workflow, the
+   Maven settings and the two scripts, as `nightly.yaml` does. The plan's suggested input `dry-run`
+   (default true) was not taken: a dispatch which could switch the dry run off would be a second way
+   to publish, and "the release workflow is the only path a release takes" means a pushed tag is.
+   The three refusals (`engine`, `notes`, `dependencies`) carry
+   `continue-on-error: ${{ github.event_name != 'push' }}`: a pushed tag stops at each, a dry run
+   writes it into the summary and goes on to build, stage and rehearse. With today's state a dry run
+   shows all three: the engine pin is no release, the tag `v2.0.0` does not exist, the POMs name
+   VanillaBP's snapshots.
+7. **The tests.** `ReleaseScriptTest` (24) runs every command of `bin/release.sh` against stand-ins
+   of git, curl, gh and Maven; `ReleaseWorkflowTest` (5) holds `release.yaml` to the README's new
+   section "Releasing", and checks what can be checked of "the release workflow is the only path a
+   release takes": no other workflow uploads, deploys a version of its own (`-Drevision`,
+   `altDeploymentRepository`, `deploy:deploy-file`) or creates a GitHub release; only
+   `publish-snapshots.yaml` runs a Maven deploy; and the root POM's `revision` is a snapshot, so the
+   publication of `main` cannot produce a release version. The README and the wiki's page `Home` keep
+   `2.0.0-SNAPSHOT` and say nothing is released; `Home` gains that a release comes from the release
+   workflow only and what it refuses today, naming the tests. The sentence of `Home` and the README
+   "no engine release carries the job lock" was no longer true (the engine's `v1.9.0`, 2026-10-17,
+   contains the pinned commit) and now says why the pin is still on `main`. `UPGRADE.md` already says
+   there is nothing to upgrade from: checked, unchanged.
+8. **The blueprints** need nothing (note from S12.2.1 above).
+
+**Acceptance criteria**
+
+- [ ] NOT MET, left to the maintainer: "an application depending on
+  `org.pbinitiative.zenbpm:zenbpm-vanillabp-adapter-spring-boot:2.0.0` boots against the pinned engine
+  RELEASE image". No release is made by the pipeline (policy), and the release itself refuses today
+  for three reasons a dry run shows. What the maintainer does, in this order: (1) once VanillaBP has
+  released `spi-for-java` and `adapter-platform-integration` 2.0.0 on Maven Central, set
+  `spi-for-java.version` and `adapter-platform.version` of the root POM to it; (2) re-pin the engine
+  to a release by the README's steps of "Supported engine version" with `zenbpm.version` (the engine's
+  `v1.9.0` of 2026-10-17 contains today's pin; its commit is `9b8a0f02`, its image digest
+  `sha256:295ca2a2...`) and add the `customManagers` entry of S12.3.1, item 6; (3) in the same
+  pull request, switch the README's sections "Dependencies", "Using the snapshots" and "Releasing"
+  and the wiki's `Home` from `2.0.0-SNAPSHOT` and "not released" to `2.0.0` and the engine release
+  (`ReleaseWorkflowTest#theReadmeNamesTodaysRefusalsWhileTheyHold` fails while "Releasing" names a
+  reason which no longer holds); (4) run `gh workflow run release.yaml` on `main` and check that its
+  summary refuses nothing but the missing tag; (5) push an annotated tag `v2.0.0` with the release's
+  notes on a commit of `main`; (6) optionally add Maven Central (namespace and signing secrets,
+  decision 65). Recommended, as repository settings the pipeline may
+  not change: a tag ruleset which lets only maintainers create `v*` tags, and an environment with
+  required reviewers for the job `publish`.
+- [x] Checked as far as it can be: "the release workflow is the only path a release takes".
+  `ReleaseWorkflowTest#noOtherWayPublishesARelease`: no other workflow uploads, deploys a version of
+  its own or creates a GitHub release, only `publish-snapshots.yaml` runs a Maven deploy, and the root
+  POM's `revision` is a snapshot, so the publication of `main` cannot produce a release;
+  `ReleaseWorkflowTest#onlyThePublishJobOfAPushedTagPublishes`: inside `release.yaml` only the job
+  `publish` uploads and creates the release, after `build`, for a pushed tag only;
+  `WorkflowPermissionsTest#onlyThePublicationsWrite` names every permission which writes. What no test
+  can hold is a person with a token deploying by hand; the tag ruleset above narrows that.
+- [x] `release.yaml` built and proven by a dry run which publishes nothing (below), and the guards
+  mutation-tested: 25 mutants of `bin/release.sh`, `release.yaml`, `publish-snapshots.yaml` and the
+  root POM, 25 killed by the test meant for each (the version form, the missing `zenbpm.version`, a
+  pre-release of the engine, the commit and the digest comparisons, a registry without the image, the
+  commit of an annotated tag, a lightweight tag, the signature, an empty message, the staged set, a
+  used directory, a snapshot, the rehearsal's set and contents, the parent first, the `if` and the
+  `needs` of `publish`, a refusal which may fail on a tag, a write permission in `build`, the install
+  skip, `-Drevision`, a release version deployed by `publish-snapshots.yaml` or standing in the root
+  POM, a job without its summary).
+
+*Evidence, 2026-10-22*, a clean `TZ=Etc/UTC mvn clean install` of the story's tree on JDK 25, green
+in 18:02, no test skipped: engine test support 12 + 5, core 1,276 + 108, Spring Boot 14 + 97, smoke
+test 42 + 1, election integration test 8, Quarkus runtime 13, deployment 60, integration tests 26,
+gate 125 (`ReleaseScriptTest` 24 and `ReleaseWorkflowTest` 5 new). The gate measured 100 %: 0 of
+38,473 (Spring Boot) and 0 of 38,470 (Quarkus) instructions missed. `bin/check-deploy-safety.sh`, now
+reading its list from `bin/published-artifacts.sh`, green in 36:30. actionlint 1.7.12 and shellcheck
+report nothing. The dry run of the job `build`, run locally command by command with a summary file:
+`version` gives `2.0.0` from the root POM's revision; `engine` refuses today's pin; `notes` refuses,
+as GitHub has no tag `v2.0.0`; `stage` builds `2.0.0` with every test and the gate in 23:28 and stages
+exactly the 13 published files; `dependencies` refuses six VanillaBP snapshot dependencies in four
+POMs; `rehearse` uploads the 13 files with Maven's `deploy:deploy-file` into a local repository,
+byte for byte unchanged. All three refusals stood in the summary file. Nothing of `2.0.0` reached the
+local Maven repository. The runs on GitHub, the pull request's own dry run and a dispatch on `main`
+after the merge, are left to the Orchestrator to record.
+
+**Answers to two reviews of e12-s12.3.1-s12.4.1, 2026-10-22** (one by Claude, approve with minor
+fixes: 4 Minor, 3 Nit; one by Copilot, request changes: 2 Major). Every claim was checked in the
+tests, the scripts and `renovate.json`, and the two Major ones by re-pinning a copy of the root POM
+to the engine's `v1.9.0`. All nine are valid. No new decision and no new GAPS number; decision 66
+was corrected on this branch, before its first merge.
+
+- **The test of the refused pin read the real root POM** (Copilot 1, Major). After the re-pin the
+  README asks for, `ReleaseScriptTest#todaysPinIsRefused` failed in every build, the release's own
+  `stage` included. Renamed `#aPinOnTheEnginesMainIsRefused`; it removes `zenbpm.version` from its
+  copy of the root POM, so it holds before and after the re-pin. With the root POM re-pinned to
+  `v1.9.0`, `9b8a0f02` and `sha256:295ca2a2...` it passes.
+- **The custom managers were matched against the workflows only** (Copilot 2, Major), so the entry
+  of S12.3.1 item 6, which reads `pom.xml`, would have failed the gate. Each manager is now matched
+  against the workflows and the POMs its `managerFilePatterns` select, and the new
+  `RenovateConfigurationTest#theEntryForTheEnginesReleasesFindsTheRelease` reads that entry from
+  this plan's `json` block and finds `v1.9.0`, and nothing else, in a re-pinned root POM. The
+  README's section "Dependency updates" names the test. With the re-pinned POM and the entry added
+  to `renovate.json` the whole class passes.
+- **The first release's list did not switch the documentation** (Claude 1, Minor). A step in both
+  lists (README "Releasing", the NOT MET item above): in the pull request of the re-pin, the
+  README's "Dependencies", "Using the snapshots" and "Releasing" and the wiki's `Home` name `2.0.0`
+  and the engine release. Partly enforced: the new
+  `ReleaseWorkflowTest#theReadmeNamesTodaysRefusalsWhileTheyHold` fails once the root POM names an
+  engine release while "Releasing" still says the pin is a build of the engine's `main`.
+- **Decision 66 promised more of `zenbpm.version` than it does** (Claude 2, Minor). The property
+  alone moves nothing; Renovate reads it only through the custom manager. The paragraph says so.
+- **A deploy on the second line of a `run:` was not seen** (Claude 3, Minor). The pattern of
+  `ReleaseWorkflowTest` anchored at the start of the whole command. It now finds `mvn` or a wrapper
+  on any line and after `&&`, `;`, `|` or `(`, with lines continued by a backslash joined first;
+  `#aMavenDeployIsSeenWhereverItStands` (7 forms) and `#aMavenCallWithoutDeployIsNoDeploy` (5) hold
+  it, and `publish-snapshots.yaml` is still the only workflow which deploys.
+- **A partly failed `publish` cannot be run again** (Claude 4, Minor). The README's "Releasing" says
+  what to do: delete the versions the failed run uploaded and run the job again, or create a missing
+  GitHub release by hand from the artifact `release`. That GitHub Packages keeps a release version
+  was not probed, because a probe would publish. No upload which skips an existing version: it could
+  hide a version of other content.
+- **"Both hold today" had no test** (Claude 5, Nit). `Home` drops it; the README names today's
+  reasons, and `#theReadmeNamesTodaysRefusalsWhileTheyHold` holds each to the root POM: the engine
+  reason while it names no `zenbpm.version`, the snapshot reason while a VanillaBP version is one.
+- **Any tag `v*` releases** (Claude 6, Nit). The fifth step of "Releasing" says the tag goes on a
+  commit of `main` and recommends the tag ruleset and the environment, settings of the repository.
+- **A change of the root POM alone runs no dry run** (Claude 7, Nit). On purpose: nearly every
+  dependency update changes the root POM. The README says so and how to rehearse such a change,
+  `gh workflow run release.yaml --ref <branch>`.
+- Mutants, 6 applied, 6 killed: the old deploy pattern; no joining of continued lines; the pin test
+  without removing `zenbpm.version`, against a re-pinned POM; the README without the snapshot
+  reason; the managers matched against the workflows only, with the entry and a re-pinned POM; the
+  plan's entry reading `zenbpm.commit`.
+- Build: a clean `TZ=Etc/UTC mvn clean install` on JDK 25, green in 18:18, no test skipped, with the
+  counts above except the gate: 139 (`ReleaseWorkflowTest` 18, `RenovateConfigurationTest` 5). The
+  gate measured 100 %: 0 of 38,473 (Spring Boot) and 0 of 38,470 (Quarkus) instructions missed.
+  `bin/check-deploy-safety.sh`: green, the green build deployed exactly the 13 published files and
+  the red gate nothing. Its first run ended red in an integration test of the Spring Boot module,
+  which the build before had passed and which this change does not touch; the script deletes its
+  directory, so the failing test is not known. The second run, of the same tree, was green.
+
+**CodeRabbit on the pull request, 2026-10-23**: two comments, both valid. `bin/release.sh rehearse`
+threw away the output of the upload, and Maven writes its errors there, so a failed rehearsal
+ended without its reason; the output now goes to the log
+(`ReleaseScriptTest#aFailedRehearsalSaysWhatMavenSaid`, red before the change). `Home`'s sentence
+that the pin moves to an engine release before the first release names
+`ReleaseScriptTest#aPinOnTheEnginesMainIsRefused`.
+
+**E12's goal, checked at its end** (E12 has no "Done when"; its goal stands in for it):
+
+- "A user finds everything on the wiki": MET. S12.1.1's pages, published from `wiki/`, held by
+  `DocumentationTest`; this story adds to `Home` what is true of releases now.
+- "a contributor everything in the README and the decision log": MET. The README gained "Dependency
+  updates" and "Releasing"; `DECISIONS.md` holds every decision the code cites, up to 66.
+- "the blueprints run on ZenBPM": MET. S12.2.1, the nightly's job `blueprints` (59 of 59 twins green).
+- "Renovate keeps the engine pin honest": NOT MET. While the pin is a `main` commit there is no
+  release for Renovate to follow; the `customManagers` entry is ready (S12.3.1, item 6) and goes in
+  with the re-pin, the maintainer's step. Until then the nightly's job `latest-engine` warns of an
+  engine change, and `bin/check-engine-copies.sh` keeps the copies honest.
+- "`2.0.0` is published": NOT MET, left to the maintainer as listed above.
+
+**M6 "It ships"**: metrics, the election ITs, the nightly against `:dev`, the native image, coverage
+at the rule (100 % on both platforms), the wiki, the blueprints through the overlay in the nightly and
+the release workflow are done; the first release is not, so M6 is reached except for the first
+release, which is the maintainer's.
+

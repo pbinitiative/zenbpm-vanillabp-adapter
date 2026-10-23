@@ -59,9 +59,11 @@ the architecture and the implementation plan the adapter was built from are in
 ## Supported engine version
 
 The adapter is tested against exactly one ZenBPM engine build, and supports that one: tested, not
-newer. Today it is a build of the engine's `main`, because no engine release carries the job lock the
-adapter's task delivery is built on (decision 15 in [`DECISIONS.md`](./DECISIONS.md)). The pin
-becomes a release tag once the engine tags a release containing that commit.
+newer. Today it is a build of the engine's `main`: it was pinned while no engine release carried the
+job lock the adapter's task delivery is built on (decision 15 in [`DECISIONS.md`](./DECISIONS.md)).
+The engine's release `v1.9.0` of 2026-10-17 contains the pinned commit. Moving the pin to an engine
+release is the maintainers' step before the adapter's first release, because a release refuses an
+engine pin which is no engine release, see [Releasing](#releasing).
 
 | Pinned |                                                 Value                                                 |
 |--------|-------------------------------------------------------------------------------------------------------|
@@ -94,6 +96,12 @@ Moving the pin is one commit with these steps:
    image, and keep the `java_package` line of the proto.
 5. Update the table above, and the commit and the image on the wiki's page `wiki/Home.md`.
 6. Run `bin/check-engine-copies.sh` and `mvn install`.
+
+A pin which is an engine release takes the release's tag instead of `ghcr.io/pbinitiative/zenbpm:dev`
+in step 1, and names it in a third property, `zenbpm.version` (for example `v1.9.0`), next to the
+commit the tag points at and the digest of `ghcr.io/pbinitiative/zenbpm:<tag>`. The image stays
+pinned by its digest, which the tests ask for. `bin/release.sh engine` checks that the three belong
+together, against GitHub and the engine's registry (decision 66 in [`DECISIONS.md`](./DECISIONS.md)).
 
 ## Dependencies
 
@@ -917,6 +925,33 @@ Working rules for this repository, for people and coding agents alike, are in
 [`DECISIONS.md`](./DECISIONS.md), what the engine cannot do and how the adapter answers it in
 [`GAPS.md`](./GAPS.md).
 
+## Dependency updates
+
+[Renovate](https://docs.renovatebot.com) opens the pull requests which move the dependencies, the
+Maven plugins, the actions of the workflows, the JDK they build on and the image of actionlint
+(`renovate.json`, on `config:recommended`). What moves with something else is switched off, each
+rule saying why: VanillaBP and this adapter, which follow their own releases; the Spring Boot and
+Quarkus versions, which move with the VanillaBP platform; gRPC and protobuf, which are raised by hand
+when a platform BOM moves; and Netty, which moves with Quarkus. Renovate moves a property of the POM
+with whichever of its artifacts has an update, so every artifact which reads such a version is named
+in its rule, the Quarkus Maven plugin and Spring Boot's configuration processor included. The JDK
+moves in every workflow in one pull request, the matrix of `checks.yaml` included.
+
+`RenovateConfigurationTest` in `test-coverage-report/coverage-gate` holds `renovate.json` to this:
+every version the root POM says never moves on its own is read only by artifacts a rule switches off,
+every rule says why and still matches an artifact of the build, the image a workflow runs by its
+version and the JDK of the required check are found by a custom manager, and every workflow builds on
+the same JDK.
+
+The engine pin is not Renovate's. While it is a build of the engine's `main`, it moves by hand
+together with the copies of the engine's contract, as the section
+[Supported engine version](#supported-engine-version) says. Once the pin is an engine release, an
+entry which follows the engine's GitHub releases is added to `renovate.json`, and the pull request it
+opens is completed by hand the same way. The plan holds that entry ready (story S12.3.1 in
+[`docs/plan/epic-12-documentation-and-release.md`](./docs/plan/epic-12-documentation-and-release.md)),
+and it finds the release a re-pinned root POM names
+(`RenovateConfigurationTest#theEntryForTheEnginesReleasesFindsTheRelease`).
+
 ## Using the snapshots
 
 Every push to `main` publishes the artifacts as `2.0.0-SNAPSHOT` to this repository's GitHub
@@ -981,8 +1016,10 @@ releases switched off, the way the root `pom.xml` of this repository does.
 ## What CI runs
 
 No workflow of this repository needs a secret of its own: each works with the workflow's
-`GITHUB_TOKEN`, and only the publication may write with it. `WorkflowPermissionsTest` in
-`test-coverage-report/coverage-gate` holds every workflow to this.
+`GITHUB_TOKEN`, and only the two publications may write with it: the jobs of
+`publish-snapshots.yaml`, and the job `publish` of `release.yaml`, which runs for a pushed tag only
+(see [Releasing](#releasing)). `WorkflowPermissionsTest` in `test-coverage-report/coverage-gate`
+holds every workflow to this and names the permissions each of those jobs may ask for.
 
 **Every pull request and every push to `main`** run `.github/workflows/checks.yaml`: one
 `mvn install`, which is Spotless, compile, javadoc, the tests, both coverage reports and the gate.
@@ -1048,6 +1085,85 @@ hide a failure, the native build reaching its integration test, the blueprints b
 after the adapter was installed, the permissions and the summary line. `BlueprintsOverlayTest`
 applies the overlay to a small checkout of the blueprints' shape in every build, and
 `EnginePinTest#theBlueprintsEngineIsThePin` holds the engine script to the pin.
+
+## Releasing
+
+No version of the adapter is released yet. The first release is the maintainers' step, and what it
+needs is listed at the end of this section. `.github/workflows/release.yaml` is the only way a release
+is published, to this repository's GitHub Packages (decision 65 in [`DECISIONS.md`](./DECISIONS.md)).
+
+**A pushed tag** `v<major>.<minor>.<patch>`, for example `v2.0.0`, runs the job `build`, which
+
+1. reads the version from the tag, `v2.0.0` gives `2.0.0`, and refuses a tag of another form;
+2. refuses an engine pin which is no engine release: `zenbpm.version` of the root POM has to name a
+   release tag of the engine, `zenbpm.commit` the commit that tag points at, and `zenbpm.image` the
+   digest of the tag's image, as the section [Supported engine version](#supported-engine-version)
+   says (decision 66 in [`DECISIONS.md`](./DECISIONS.md));
+3. reads the release's notes from the message of the annotated tag on GitHub, and refuses a
+   lightweight tag or an empty message;
+4. builds that version with `-Drevision`, with every test, the integration tests in Docker and the
+   coverage gate, deploys it into a local directory only, and checks that exactly the published files
+   arrived: the jar, the sources jar and the POM of the core, `spring-boot`, `quarkus` and
+   `quarkus-deployment`, and the parent's POM;
+5. refuses a POM of the release which names a snapshot;
+6. uploads the staged files into another local directory with the command the release uploads with,
+   and compares what arrived with what was staged.
+
+Each of these steps stops a release before anything is published. Then the job `publish`, the only
+job which may write (`contents: write` and `packages: write`), uploads exactly the files `build`
+staged and tested to this repository's GitHub Packages, with Maven's `deploy:deploy-file` and the
+workflow's token, and creates the GitHub release with the tag's message as its notes.
+
+**Every other run is a dry run**, which publishes nothing: a dispatch on `main`, from the Actions tab
+or with `gh workflow run release.yaml` (`-f tag=v2.0.0` rehearses that tag), and a pull request which
+changes `.github/workflows/release.yaml`, `.github/workflows/settings.xml`, `bin/release.sh` or
+`bin/published-artifacts.sh`. Without a tag it rehearses the version the root POM's `revision` leads
+to. It runs every step of `build`, writes each refusal into the run's summary instead of stopping, and
+goes on, so its summary shows what a release of that commit would meet. Today a release would be
+refused for these reasons: the engine pin is a build of the engine's `main`, the POMs name
+VanillaBP's `2.0.0-SNAPSHOT`, and the tag does not exist. The README names the first two exactly
+while the root POM gives them (`ReleaseWorkflowTest#theReadmeNamesTodaysRefusalsWhileTheyHold`).
+A pull request which changes only the root POM's publication settings (`distributionManagement`,
+`deployAtEnd`, the flatten plugin) does not run the dry run, because nearly every update of a
+dependency changes the root POM too; such a change is rehearsed by a dispatch of its branch,
+`gh workflow run release.yaml --ref <branch>`.
+
+`bin/release.sh` holds the steps, one command each, and a person runs them the same way, for example
+`bin/release.sh engine`. `ReleaseScriptTest` in `test-coverage-report/coverage-gate` runs every
+command against stand-ins for git, curl, the GitHub CLI and Maven, and checks that a pin on a build
+of the engine's `main` is refused (`ReleaseScriptTest#aPinOnTheEnginesMainIsRefused`).
+`ReleaseWorkflowTest` holds the workflow to this section: its triggers, the refusals before the
+build which stop a release and not a dry run, the job `publish` as the only one which uploads and
+only for a pushed tag, no other workflow which publishes a release, and the root POM's `revision`,
+which has to stay a snapshot, because `publish-snapshots.yaml` deploys it as it stands. Every job
+writes into the run's summary.
+
+What the first release needs, all of it the maintainers':
+
+1. VanillaBP releases `spi-for-java` and `adapter-platform-integration` `2.0.0` on Maven Central, and
+   `spi-for-java.version` and `adapter-platform.version` of the root POM name that release.
+2. The engine pin moves to an engine release, as the section
+   [Supported engine version](#supported-engine-version) says, and `renovate.json` gets the entry
+   which follows the engine's releases (section [Dependency updates](#dependency-updates)).
+3. In the same pull request, the README's sections [Dependencies](#dependencies),
+   [Using the snapshots](#using-the-snapshots) and this one, and the wiki's page `Home` in `wiki/`,
+   name `2.0.0` and the engine release instead of `2.0.0-SNAPSHOT` and "not released yet".
+   `ReleaseWorkflowTest#theReadmeNamesTodaysRefusalsWhileTheyHold` fails while this section still
+   names a reason which no longer holds.
+4. A dispatch of the dry run on `main` shows no refusal but the missing tag.
+5. An annotated tag `v2.0.0` with the release's notes is pushed on a commit of `main`. The workflow
+   releases the commit of any tag `v*`, so a tag ruleset which lets only maintainers create `v*`
+   tags, and an environment with required reviewers for the job `publish`, are recommended; both
+   are settings of the repository. `UPGRADE.md` already says that there is nothing to upgrade from.
+
+If the job `publish` fails after it uploaded a part of the release, running it again cannot
+upload that version once more, because GitHub Packages does not replace a version of a package it
+holds. Delete the versions the failed run uploaded in the repository's Packages and run the job
+again. Where only the GitHub release is missing, create it by hand from the run's artifact
+`release`, which holds the notes: `gh release create v2.0.0 --verify-tag --notes-file notes.md`.
+
+Publishing to Maven Central as well needs the organisation's namespace and signing secrets there,
+and is left open (decision 65).
 
 ## Test coverage
 

@@ -31,10 +31,12 @@ import io.vanillabp.integration.test.utils.SuppressOutputExtension;
 
 /**
  * The README's section "What CI runs" says that no workflow of this repository needs a secret of
- * its own and that only the publication may write with the workflow's token. This test holds every
- * workflow to it, the ones added later included: a pull request from a fork runs a workflow
- * without the repository's secrets, and a token which may write is one more thing a workflow
- * running on a pull request could misuse.
+ * its own and that only the two publications may write with the workflow's token: the jobs of
+ * <code>publish-snapshots.yaml</code> and the job <code>publish</code> of <code>release.yaml</code>,
+ * each with exactly the permissions named here. This test holds every workflow to it, the ones
+ * added later included: a pull request from a fork runs a workflow without the repository's
+ * secrets, and a token which may write is one more thing a workflow running on a pull request could
+ * misuse.
  */
 @ExtendWith(SuppressOutputExtension.class)
 class WorkflowPermissionsTest {
@@ -43,8 +45,14 @@ class WorkflowPermissionsTest {
 
     private static final Path WORKFLOWS = ROOT.resolve(".github/workflows");
 
-    /** The one workflow which may write with its token: it deploys the snapshots and the pages. */
-    private static final String PUBLICATION = "publish-snapshots.yaml";
+    /**
+     * Every permission which writes, by workflow and job: the snapshots and the coverage pages of
+     * <code>main</code>, and a release from a pushed tag.
+     */
+    private static final Set<String> WRITING = Set.of("publish-snapshots.yaml, job 'publish': packages: write",
+            "publish-snapshots.yaml, job 'deploy-coverage-reports': pages: write",
+            "publish-snapshots.yaml, job 'deploy-coverage-reports': id-token: write",
+            "release.yaml, job 'publish': contents: write", "release.yaml, job 'publish': packages: write");
 
     private static final Pattern SECRET = Pattern.compile("secrets\\.([A-Za-z0-9_]+)");
 
@@ -67,8 +75,8 @@ class WorkflowPermissionsTest {
     }
 
     @Test
-    @DisplayName("Only the publication asks for a permission which writes, and every workflow names its permissions")
-    void onlyThePublicationWrites() throws IOException {
+    @DisplayName("Only the jobs of the two publications ask for a permission which writes, each for its own, and every workflow names its permissions")
+    void onlyThePublicationsWrite() throws IOException {
         final var writing = new TreeSet<String>();
         final var unnamed = new TreeSet<String>();
         for (final var workflow : workflows()) {
@@ -83,9 +91,6 @@ class WorkflowPermissionsTest {
             for (final var job : map(content.get("jobs"), "%s: jobs".formatted(name)).entrySet()) {
                 asked.put("%s, job '%s'".formatted(name, job.getKey()), map(job.getValue(), "%s: job '%s'".formatted(
                         name, job.getKey())).get("permissions"));
-            }
-            if (PUBLICATION.equals(name)) {
-                continue;
             }
             for (final var permissions : asked.entrySet()) {
                 if ((permissions.getValue() != null) && !(permissions.getValue() instanceof Map<?, ?>)) {
@@ -106,10 +111,11 @@ class WorkflowPermissionsTest {
         assertEquals(Set.of(), unnamed, """
                 These workflows name no permissions at the top, so a job which names none gets the \
                 repository's default rather than what the workflow asks for.""");
-        assertEquals(Set.of(), writing, """
-                Only %s may write with the workflow's token, as the README's section 'What CI runs' \
-                says. List every permission of another workflow by its scope, as 'read' or 'none'."""
-                .formatted(PUBLICATION));
+        assertEquals(WRITING, writing, """
+                Only the jobs of publish-snapshots.yaml and the job 'publish' of release.yaml may write \
+                with the workflow's token, each with exactly the permissions this test names, as the \
+                README's section 'What CI runs' says. List every other permission by its scope, as \
+                'read' or 'none'.""");
     }
 
     private static List<Path> workflows() throws IOException {
@@ -122,9 +128,6 @@ class WorkflowPermissionsTest {
                     .sorted()
                     .toList();
             assertFalse(workflows.isEmpty(), () -> "%s holds no workflow.".formatted(WORKFLOWS));
-            assertTrue(workflows.contains(WORKFLOWS.resolve(PUBLICATION)), () -> """
-                    %s has no %s any more: name the workflow which may write in this test.""".formatted(WORKFLOWS,
-                    PUBLICATION));
             return workflows;
         }
     }

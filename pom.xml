@@ -61,11 +61,19 @@
     <url>https://github.com/pbinitiative/zenbpm-vanillabp-adapter/tree/main</url>
   </scm>
 
-  <!-- Where the snapshots of main go: this repository's GitHub Packages registry, written by
-       .github/workflows/publish-snapshots.yaml with the workflow's own token (server 'github' in
-       .github/workflows/settings.xml, the only thing that file holds). The flatten plugin takes
-       it out of the published POM, because where we deploy is nothing a consumer can act on. -->
+  <!-- Where the snapshots of main and the releases go: this repository's GitHub Packages
+       registry, written with the workflow's own token (server 'github' in
+       .github/workflows/settings.xml, the only thing that file holds). The snapshots are
+       deployed by .github/workflows/publish-snapshots.yaml; a release is uploaded by
+       .github/workflows/release.yaml only, from a pushed tag, see decision 65 in the repository's
+       DECISIONS.md. The flatten plugin takes both out of the published POM, because where we
+       deploy is nothing a consumer can act on. -->
   <distributionManagement>
+    <repository>
+      <id>github</id>
+      <name>GitHub Packages</name>
+      <url>https://maven.pkg.github.com/pbinitiative/zenbpm-vanillabp-adapter</url>
+    </repository>
     <snapshotRepository>
       <id>github</id>
       <name>GitHub Packages</name>
@@ -78,7 +86,8 @@
     <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
     <version.java>21</version.java>
     <!-- The version of every artifact, resolved into the published POMs by the flatten
-         plugin. A plain 'mvn install' builds 2.0.0-SNAPSHOT; a release sets -Drevision. -->
+         plugin. A plain 'mvn install' builds 2.0.0-SNAPSHOT; a release sets -Drevision from its
+         tag (bin/release.sh). -->
     <revision>2.0.0-SNAPSHOT</revision>
     <!-- where the build breaks, in PERCENT of covered instructions per platform, enforced
          by test-coverage-report/coverage-gate. The gate stands at 85, the same number in
@@ -103,7 +112,8 @@
          manages grpc 1.81.0 and protobuf 4.35.0. The adapter is compiled against the OLDER
          of the two, so nothing it uses is missing on either platform; protobuf in
          particular refuses a runtime older than the code generated against it. The entries
-         stand BEFORE the BOM imports below, because the first declaration wins. -->
+         stand BEFORE the BOM imports below, because the first declaration wins. They are
+         raised by hand when a platform BOM moves, never on their own. -->
     <grpc.version>1.81.0</grpc.version>
     <protobuf.version>4.35.0</protobuf.version>
     <!-- The Netty the Quarkus BOM above manages, which is the one a Quarkus application runs the
@@ -114,6 +124,7 @@
          module which has to see what a Quarkus application sees, so each Quarkus module imports
          the Netty BOM in this version. It moves with quarkus.version, never on its own. -->
     <netty.version.quarkus>4.1.138.Final</netty.version.quarkus>
+    <!-- the integration tests' containers, moved by Renovate like any other dependency -->
     <testcontainers.version>2.0.5</testcontainers.version>
     <!-- The ZenBPM engine this adapter is written and tested against, see decision 15 in the
          repository's DECISIONS.md: a commit of the engine's main and the digest of the image

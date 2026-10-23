@@ -1,10 +1,11 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!--
-  The credentials publish-snapshots.yaml deploys with, and nothing else.
+  The credentials publish-snapshots.yaml and release.yaml deploy with, and nothing else.
 
   The server 'github' is the one 'distributionManagement' of the root POM names:
-  publish-snapshots.yaml uploads this repository's own snapshots to pbinitiative's GitHub
-  Packages with the workflow's GITHUB_TOKEN, which needs no secret of ours.
+  publish-snapshots.yaml uploads this repository's own snapshots, and the job 'publish' of
+  release.yaml a release, to pbinitiative's GitHub Packages with the workflow's GITHUB_TOKEN,
+  which needs no secret of ours.
 
   Reading needs no settings. The VanillaBP snapshots this repository builds against come from
   the snapshot repository of Maven Central, which the root POM names and which asks for no

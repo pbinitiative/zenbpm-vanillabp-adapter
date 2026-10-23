@@ -40,16 +40,7 @@ deploy() {
 
 # The published files, with the snapshot timestamp of each upload replaced by SNAPSHOT. A library
 # module publishes its jar, its sources jar and its POM, the parent its POM alone.
-expected="$(
-  for module in zenbpm-vanillabp-adapter zenbpm-vanillabp-adapter-quarkus \
-    zenbpm-vanillabp-adapter-quarkus-deployment zenbpm-vanillabp-adapter-spring-boot; do
-    echo "$module/$module-2.0.0-SNAPSHOT.jar"
-    echo "$module/$module-2.0.0-SNAPSHOT-sources.jar"
-    echo "$module/$module-2.0.0-SNAPSHOT.pom"
-  done
-  echo "zenbpm-vanillabp-adapter-parent/zenbpm-vanillabp-adapter-parent-2.0.0-SNAPSHOT.pom"
-)"
-expected="$(echo "$expected" | sort)"
+expected="$("$root/bin/published-artifacts.sh" 2.0.0-SNAPSHOT)"
 
 # Every file a deploy wrote below the groupId, except what Maven adds to each upload itself
 # (maven-metadata.xml and the checksums), as <artifactId>/<file name> with the timestamp of the

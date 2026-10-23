@@ -39,6 +39,15 @@ Packages of the adapter's repository, which asks for a token even to read: the R
 [Using the snapshots](https://github.com/pbinitiative/zenbpm-vanillabp-adapter/blob/main/README.md#using-the-snapshots)
 says how to add it to your Maven settings. The adapter needs Java 21 or newer.
 
+A release will be published to the same GitHub Packages by the repository's release workflow, from
+a tag, and by nothing else (`ReleaseWorkflowTest#onlyThePublishJobOfAPushedTagPublishes`). It
+refuses to release while the adapter is tested against an engine which is no engine release
+(`ReleaseScriptTest#aPinOnTheEnginesMainIsRefused`), or while it depends on a snapshot
+(`ReleaseScriptTest#aSnapshotIsRefused`). The first release is the maintainers'
+step; the README's section
+[Releasing](https://github.com/pbinitiative/zenbpm-vanillabp-adapter/blob/main/README.md#releasing)
+says what it needs.
+
 ### Spring Boot
 
 One dependency. It brings the platform-neutral adapter core and VanillaBP's Spring Boot
@@ -204,8 +213,10 @@ cannot be reproduced by the adapter's tests, which run one node.
 ## The engine this adapter is tested against
 
 The adapter is tested against exactly one build of the engine, and supports that one: tested, not
-newer. No released engine version is supported yet, because no engine release carries the job lock
-the task delivery is built on. The build is one of the engine's `main`:
+newer. No released engine version is supported yet: the adapter was pinned while no engine release
+carried the job lock the task delivery is built on, and the pin moves to an engine release before
+the adapter's first release, which refuses a pin on the engine's `main`
+(`ReleaseScriptTest#aPinOnTheEnginesMainIsRefused`). The build is one of the engine's `main`:
 
 - commit `bdd795a399b6484d062d52ac90c0d0725cb0ad91`,
 - image `ghcr.io/pbinitiative/zenbpm@sha256:d7808e30821a7349e0f42476d8aaa21ff92fc752c0ccc432771764d307b87ed0`.
