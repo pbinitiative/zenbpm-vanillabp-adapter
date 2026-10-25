@@ -43,7 +43,12 @@ public class Order {
         /** The order is on its way. */
         SHIPPED,
         /** The deadline passed without a transfer. */
-        CANCELLED
+        CANCELLED,
+        /**
+         * The transfer arrived while the deadline cancelled the order, too late to stop it. The
+         * order is cancelled all the same, and accounting pays the money back.
+         */
+        REFUND_DUE
     }
 
     @Id
@@ -209,11 +214,21 @@ public class Order {
     }
 
     /**
-     * The order is cancelled, and its stock is back in the warehouse.
+     * The order is cancelled, and its stock is back in the warehouse. An order paid meanwhile owes
+     * the customer their money.
      */
     public void cancelled() {
         this.stockReleased = true;
-        this.status = Status.CANCELLED;
+        this.status = status == Status.PAID ? Status.REFUND_DUE : Status.CANCELLED;
+    }
+
+    /**
+     * Whether the deadline cancelled the order, paid or not.
+     *
+     * @return <code>true</code> once cancelled
+     */
+    public boolean isCancelled() {
+        return status == Status.CANCELLED || status == Status.REFUND_DUE;
     }
 
 }

@@ -16,6 +16,7 @@ import org.slf4j.LoggerFactory;
 
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
+import jakarta.persistence.LockModeType;
 import jakarta.transaction.Transactional;
 
 /**
@@ -72,11 +73,23 @@ public class Claims {
         final BigDecimal damageAmount,
         final String description
     ) {
-        if (!COVERAGES.contains(coverage)) {
+        if (isBlank(policyNumber)) {
+            throw new InvalidClaim("The policy number is missing");
+        }
+        if (isBlank(claimant)) {
+            throw new InvalidClaim("The claimant is missing");
+        }
+        // Set.of refuses to look for null
+        if (coverage == null || !COVERAGES.contains(coverage)) {
             throw new InvalidClaim("The coverage is one of %s, not '%s'".formatted(COVERAGES, coverage));
         }
         if (damageAmount == null || damageAmount.signum() <= 0) {
             throw new InvalidClaim("The damage amount has to be positive");
+        }
+        if (damageAmount
+                .stripTrailingZeros()
+                .scale() > 2) {
+            throw new InvalidClaim("The damage amount has at most two decimals, not %s".formatted(damageAmount));
         }
         final var claim = new Claim("CLM-%s".formatted(UUID
                 .randomUUID()
@@ -124,8 +137,9 @@ public class Claims {
         final boolean approved,
         final String comment
     ) {
+        // a second adjuster answering at the same moment waits here, and then finds no open review
         final var claim = claims
-                .findByIdOptional(claimId)
+                .findByIdOptional(claimId, LockModeType.PESSIMISTIC_WRITE)
                 .orElseThrow(() -> new UnknownClaim(claimId));
         final var taskId = claim.getReviewTaskId();
         if (taskId == null) {
@@ -154,7 +168,9 @@ public class Claims {
     public void rejectClaim(final Claim claim) {
         final var reason = claim.isReviewed()
                 ? "rejected by the adjuster: %s".formatted(claim.getAdjusterComment())
-                : "a %s policy does not cover damage to your own car".formatted(claim.getCoverage());
+                // the decision table knows why it rejected, but its answer stays in the engine, so the
+                // letter names no cause the table may not have had
+                : "the claim is not covered by the terms of policy %s".formatted(claim.getPolicyNumber());
         claim.rejected(reason);
         LOG.info("Letter to {}: we cannot pay claim {}, {}", claim.getClaimant(), claim.getClaimId(), reason);
     }
@@ -168,6 +184,10 @@ public class Claims {
     @Transactional
     public Optional<Claim> find(final String claimId) {
         return claims.findByIdOptional(claimId);
+    }
+
+    private static boolean isBlank(final String value) {
+        return value == null || value.isBlank();
     }
 
     /**

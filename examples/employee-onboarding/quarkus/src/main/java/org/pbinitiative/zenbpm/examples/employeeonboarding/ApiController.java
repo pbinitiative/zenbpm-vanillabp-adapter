@@ -4,10 +4,10 @@
  */
 package org.pbinitiative.zenbpm.examples.employeeonboarding;
 
-import java.net.URI;
 import java.time.LocalDate;
 
 import org.jboss.resteasy.reactive.server.ServerExceptionMapper;
+import org.pbinitiative.zenbpm.examples.employeeonboarding.Onboardings.InvalidNewHire;
 import org.pbinitiative.zenbpm.examples.employeeonboarding.Onboardings.NoWelcomeMeetingDue;
 import org.pbinitiative.zenbpm.examples.employeeonboarding.Onboardings.UnknownOnboarding;
 import org.pbinitiative.zenbpm.examples.employeeonboarding.model.Onboarding;
@@ -21,6 +21,7 @@ import jakarta.ws.rs.PathParam;
 import jakarta.ws.rs.Produces;
 import jakarta.ws.rs.core.MediaType;
 import jakarta.ws.rs.core.Response;
+import jakarta.ws.rs.core.UriBuilder;
 
 /**
  * The REST API of the onboardings, which HR uses. It talks to {@link Onboardings} only.
@@ -52,7 +53,9 @@ public class ApiController {
     public Response contractSigned(final NewHire hire) {
         final var onboarding = onboardings.contractSigned(hire.employeeName(), hire.position(), hire.startDate());
         return Response
-                .created(URI.create("/onboardings/%s".formatted(onboarding.getOnboardingId())))
+                .created(UriBuilder
+                        .fromPath("/onboardings/{onboardingId}")
+                        .build(onboarding.getOnboardingId()))
                 .entity(OnboardingView.of(onboarding))
                 .build();
     }
@@ -86,6 +89,17 @@ public class ApiController {
         final WelcomeMeeting meeting
     ) {
         return OnboardingView.of(onboardings.welcomeMeetingHeld(onboardingId, meeting.notes()));
+    }
+
+    /**
+     * A new hire reported without what the onboarding needs.
+     *
+     * @param exception What is missing
+     * @return 400
+     */
+    @ServerExceptionMapper
+    public Response invalid(final InvalidNewHire exception) {
+        return problem(Response.Status.BAD_REQUEST, exception);
     }
 
     /**

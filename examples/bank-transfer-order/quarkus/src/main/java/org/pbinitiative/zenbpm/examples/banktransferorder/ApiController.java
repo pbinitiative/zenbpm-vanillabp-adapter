@@ -5,9 +5,10 @@
 package org.pbinitiative.zenbpm.examples.banktransferorder;
 
 import java.math.BigDecimal;
-import java.net.URI;
 
 import org.jboss.resteasy.reactive.server.ServerExceptionMapper;
+import org.pbinitiative.zenbpm.examples.banktransferorder.BankTransferOrders.InvalidOrder;
+import org.pbinitiative.zenbpm.examples.banktransferorder.BankTransferOrders.InvalidTransfer;
 import org.pbinitiative.zenbpm.examples.banktransferorder.BankTransferOrders.OrderExists;
 import org.pbinitiative.zenbpm.examples.banktransferorder.BankTransferOrders.TransferNotMatched;
 import org.pbinitiative.zenbpm.examples.banktransferorder.BankTransferOrders.TransferTooLate;
@@ -22,6 +23,7 @@ import jakarta.ws.rs.PathParam;
 import jakarta.ws.rs.Produces;
 import jakarta.ws.rs.core.MediaType;
 import jakarta.ws.rs.core.Response;
+import jakarta.ws.rs.core.UriBuilder;
 
 /**
  * The REST API: the shop places and shows orders, and the bank reports the transfers to the
@@ -56,7 +58,9 @@ public class ApiController {
         final var order = orders.place(request.orderId(), request.customerEmail(), request.item(), request
                 .total());
         return Response
-                .created(URI.create("/orders/%s".formatted(order.getOrderId())))
+                .created(UriBuilder
+                        .fromPath("/orders/{orderId}")
+                        .build(order.getOrderId()))
                 .entity(OrderView.of(order))
                 .build();
     }
@@ -93,6 +97,28 @@ public class ApiController {
     }
 
     /**
+     * An order which cannot be placed as it is.
+     *
+     * @param exception What is wrong with it
+     * @return 400
+     */
+    @ServerExceptionMapper
+    public Response invalid(final InvalidOrder exception) {
+        return problem(400, "Bad Request", exception);
+    }
+
+    /**
+     * A report of the bank without the reference or the amount of the transfer.
+     *
+     * @param exception What is missing
+     * @return 400
+     */
+    @ServerExceptionMapper
+    public Response incomplete(final InvalidTransfer exception) {
+        return problem(400, "Bad Request", exception);
+    }
+
+    /**
      * An order of a number placed before.
      *
      * @param exception Which order
@@ -115,7 +141,7 @@ public class ApiController {
     }
 
     /**
-     * A transfer for a cancelled order.
+     * A transfer for a cancelled order, paid back.
      *
      * @param exception Which order
      * @return 409

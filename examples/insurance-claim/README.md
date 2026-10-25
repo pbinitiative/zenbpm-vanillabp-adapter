@@ -12,7 +12,7 @@ a decision table routes each claim by the policy's coverage and the damage amoun
 | anything else   | any           | `review`   | an adjuster looks at it                                         |
 
 An adjuster approves or rejects a claim sent for review. A paid claim gets a transfer, and a
-rejected one a letter which says why.
+rejected one a letter.
 
 ```
 (o) Claim reported --> [Route the claim] --> <Route?> --auto-pay----------------------------+--> [Pay out the damage] --> (o) Claim paid
@@ -33,8 +33,14 @@ the same files in both twins. The adapter deploys the decision with the process.
 ## What it shows
 
 - **A rule the business owns lives in a decision table.** Which claims are paid at once is no
-  `if` in Java. The claims department reads the table and changes it, and the change is a new
-  deployment of the table, not a new release of the code.
+  `if` in Java. The rule lives in the table, so the claims department reads and edits one file,
+  and no Java changes with it. The table is packaged with the application, and the adapter
+  deploys it with the process at startup.
+- **A route the gateway does not know goes to a person.** In the model, `review` is the default
+  flow of the gateway after the table. A route which an edited table answers and the gateway does
+  not name ends with an adjuster, not with a rejection nobody saw. For the same reason the letter
+  of a claim the table rejects names no cause: the table knows why it rejected, but its answer
+  stays in the engine.
 - **The engine evaluates the table.** The business rule task "Route the claim" needs no Java
   method: `zenbpm:calledDecision` names the decision, and the engine evaluates it with the
   shared members of the claim as its inputs.
@@ -96,13 +102,23 @@ curl -s localhost:8080/claims/$ID
 This is `InsuranceClaimIT#aLargeClaimIsPaidOnceTheAdjusterApprovesIt`. The other routes:
 
 - `comprehensive` with `480.00` is paid at once, and no adjuster sees it
-  (`InsuranceClaimIT#aSmallComprehensiveClaimIsPaidWithoutAReview`);
+  (`InsuranceClaimIT#aSmallComprehensiveClaimIsPaidWithoutAReview`), and so is `1000.00`, the
+  limit itself (`InsuranceClaimIT#aComprehensiveClaimOfExactlyTheLimitIsPaidWithoutAReview`);
+- `partial` with `450.00` is paid at once as well
+  (`InsuranceClaimIT#aSmallPartialClaimIsPaidWithoutAReview`);
 - `partial` with `900.00` goes to the adjuster, and `"approved": false` rejects it with the
   adjuster's comment (`InsuranceClaimIT#aClaimTheAdjusterRejectsIsNotPaid`);
-- `liability` is rejected at once: the letter says that such a policy does not cover damage to
-  your own car (`InsuranceClaimIT#aClaimALiabilityPolicyDoesNotCoverIsRejectedAtOnce`);
+- `liability` is rejected at once, with the letter "the claim is not covered by the terms of
+  policy MOT-2024-0815" (`InsuranceClaimIT#aClaimALiabilityPolicyDoesNotCoverIsRejectedAtOnce`);
 - a review of a claim which waits for none is `409 Conflict`, and a coverage the table does not
-  know is `400 Bad Request` (`InsuranceClaimIT#aReviewOfAClaimWhichWaitsForNoneIsRefused`).
+  know is `400 Bad Request` (`InsuranceClaimIT#aReviewOfAClaimWhichWaitsForNoneIsRefused`);
+- a claim without a policy number, a claimant or a coverage, or with a damage amount of more than
+  two decimals, is `400 Bad Request` too
+  (`InsuranceClaimIT#anIncompleteOrMisstatedClaimIsRefused`);
+- when several adjusters answer the same review at the same moment, one answer is accepted and
+  the others are `409 Conflict`, and the claim takes the path of the accepted answer: the review
+  loads the claim with a lock, so the second answer waits and then finds the review closed
+  (`InsuranceClaimIT#onlyOneOfTheAnswersGivenAtOnceIsAccepted`).
 
 In zenbpm-ui the instance of `insurance-claim__insurance_claim` shows the variables `coverage`,
 `damageAmount` and `approvedByAdjuster` the claim shares, the `route` the table answered, and the

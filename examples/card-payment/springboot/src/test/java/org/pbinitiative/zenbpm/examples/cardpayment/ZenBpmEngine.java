@@ -99,7 +99,7 @@ final class ZenBpmEngine {
         final String path
     ) {
         return send(engine, HttpRequest
-                .newBuilder(URI.create(restAddress(engine) + path))
+                .newBuilder(URI.create("%s%s".formatted(restAddress(engine), path)))
                 .GET()
                 .build());
     }

@@ -30,9 +30,9 @@ import io.vanillabp.integration.test.utils.SuppressOutputExtension;
  * The examples of <code>examples/</code> are applications of their own, built by
  * <code>examples/pom.xml</code> and not by this build, see decision 67 in the repository's
  * DECISIONS.md. Nothing in this build compiles them, so this test holds them to what they promise:
- * every example comes for both platforms, the two twins run the same models, each twin uses the
- * platform version and the adapter version of this build, and what an example's README says the
- * tests prove is a test both twins have.
+ * every example comes for both platforms, the two twins run the same models with the same VanillaBP
+ * configuration, each twin uses the platform versions and the adapter version of this build, and
+ * what an example's README says the tests prove is a test both twins have.
  */
 @ExtendWith(SuppressOutputExtension.class)
 class ExamplesTest {
@@ -44,6 +44,9 @@ class ExamplesTest {
     private static final List<String> PLATFORMS = List.of("springboot", "quarkus");
 
     private static final Pattern MODULE = Pattern.compile("<module>([^<]+)</module>");
+
+    /** The top-level key <code>vanillabp:</code> of a YAML file, up to the next top-level key. */
+    private static final Pattern VANILLABP_CONFIGURATION = Pattern.compile("(?ms)^vanillabp:$.*?(?=^[A-Za-z]|\\z)");
 
     /** A test the README cites, as <code>PurchaseApprovalIT#aSmallPurchaseIsOrdered</code>. */
     private static final Pattern CITED_TEST = Pattern.compile("\\b([A-Z]\\w*IT)#(\\w+)");
@@ -88,12 +91,26 @@ class ExamplesTest {
     }
 
     @Test
-    @DisplayName("Every twin uses the platform version and the adapter version of this build")
+    @DisplayName("The two twins of an example configure VanillaBP and the adapter alike")
+    void theTwinsConfigureVanillaBpAlike() throws IOException {
+        for (final var example : examples()) {
+            final var place = ROOT.relativize(example);
+
+            assertEquals(vanillaBpConfiguration(example.resolve("springboot")), vanillaBpConfiguration(example
+                    .resolve("quarkus")),
+                    () -> "the twins of %s differ under vanillabp: in application.yaml"
+                            .formatted(place));
+        }
+    }
+
+    @Test
+    @DisplayName("Every twin uses the platform versions and the adapter version of this build")
     void everyTwinUsesTheVersionsOfThisBuild() throws IOException {
         final var root = Files.readString(ROOT.resolve("pom.xml"));
         final var revision = property(root, "revision");
         final var springBootVersion = property(root, "springboot.version");
         final var quarkusVersion = property(root, "quarkus.version");
+        final var vanillaBpVersion = property(root, "adapter-platform.version");
         for (final var example : examples()) {
             final var springBoot = Files.readString(example.resolve("springboot/pom.xml"));
             final var quarkus = Files.readString(example.resolve("quarkus/pom.xml"));
@@ -112,6 +129,10 @@ class ExamplesTest {
                             .formatted(place, springBootVersion));
             assertEquals(quarkusVersion, property(quarkus, "quarkus.version"),
                     () -> "the Quarkus twin of %s uses another Quarkus".formatted(place));
+            // the twin names VanillaBP's Quarkus extension itself, and the version nearest to it wins
+            // over the one the adapter brings
+            assertEquals(vanillaBpVersion, property(quarkus, "vanillabp.version"),
+                    () -> "the Quarkus twin of %s uses another VanillaBP than the adapter".formatted(place));
         }
     }
 
@@ -151,6 +172,13 @@ class ExamplesTest {
                     .sorted()
                     .toList();
         }
+    }
+
+    private static String vanillaBpConfiguration(final Path twin) throws IOException {
+        final var yaml = twin.resolve("src/main/resources/application.yaml");
+        final var configuration = VANILLABP_CONFIGURATION.matcher(Files.readString(yaml));
+        assertTrue(configuration.find(), () -> "%s has no key vanillabp:".formatted(ROOT.relativize(yaml)));
+        return configuration.group();
     }
 
     private static Set<String> modulesOf(final Path pom) throws IOException {

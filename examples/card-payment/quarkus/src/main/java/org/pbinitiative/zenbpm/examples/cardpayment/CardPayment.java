@@ -6,7 +6,9 @@ package org.pbinitiative.zenbpm.examples.cardpayment;
 
 import java.math.BigDecimal;
 import java.util.Optional;
+import java.util.regex.Pattern;
 
+import org.hibernate.exception.ConstraintViolationException;
 import org.pbinitiative.zenbpm.examples.cardpayment.PaymentProvider.CardDeclined;
 import org.pbinitiative.zenbpm.examples.cardpayment.model.Payment;
 import org.pbinitiative.zenbpm.examples.cardpayment.model.PaymentRepository;
@@ -15,6 +17,8 @@ import org.slf4j.LoggerFactory;
 
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
+import jakarta.persistence.EntityExistsException;
+import jakarta.persistence.PersistenceException;
 import jakarta.transaction.Transactional;
 
 /**
@@ -30,6 +34,9 @@ import jakarta.transaction.Transactional;
 public class CardPayment {
 
     private static final Logger LOG = LoggerFactory.getLogger(CardPayment.class);
+
+    /** What an order number may look like: it names the payment in the address of the API. */
+    private static final Pattern ORDER_NUMBER = Pattern.compile("[A-Za-z0-9-]{1,40}");
 
     private final PaymentRepository payments;
 
@@ -56,7 +63,10 @@ public class CardPayment {
     }
 
     /**
-     * The customer placed an order and pays it by card.
+     * The customer placed an order and pays it by card. A payment which cannot be charged as it is
+     * is refused before anything is stored. The payment is inserted before its workflow starts, so
+     * of two payments of the same order sent at the same time only one gets in: the order's number
+     * is the primary key, and the database refuses the second row.
      *
      * @param orderId The number of the order
      * @param customerEmail Where the customer is told about the payment
@@ -71,10 +81,12 @@ public class CardPayment {
         final BigDecimal amount,
         final String cardToken
     ) {
+        validate(orderId, customerEmail, amount, cardToken);
         if (payments.findByIdOptional(orderId).isPresent()) {
             throw new PaymentExists(orderId);
         }
         final var payment = new Payment(orderId, customerEmail, amount, cardToken);
+        insert(payment);
         workflow.paymentRequested(payment);
         LOG.info("Payment of order {} requested: {}", orderId, amount);
         return payment;
@@ -128,6 +140,68 @@ public class CardPayment {
     @Transactional
     public Optional<Payment> find(final String orderId) {
         return payments.findByIdOptional(orderId);
+    }
+
+    private static void validate(
+        final String orderId,
+        final String customerEmail,
+        final BigDecimal amount,
+        final String cardToken
+    ) {
+        if (orderId == null || !ORDER_NUMBER
+                .matcher(orderId)
+                .matches()) {
+            throw new InvalidPayment("The order number is 1 to 40 letters, digits and dashes, not '%s'".formatted(
+                    orderId));
+        }
+        if (customerEmail == null || customerEmail.isBlank()) {
+            throw new InvalidPayment("The customer's e-mail address is missing");
+        }
+        if (cardToken == null || cardToken.isBlank()) {
+            throw new InvalidPayment("The card token is missing");
+        }
+        if (amount == null || amount.signum() <= 0) {
+            throw new InvalidPayment("The amount has to be positive");
+        }
+        if (amount
+                .stripTrailingZeros()
+                .scale() > 2) {
+            throw new InvalidPayment("The amount has at most two decimals, not %s".formatted(amount));
+        }
+    }
+
+    private void insert(final Payment payment) {
+        try {
+            payments.persistAndFlush(payment);
+        } catch (final PersistenceException failure) {
+            if (aSecondRowOfTheSameOrder(failure)) {
+                throw new PaymentExists(payment.getOrderId());
+            }
+            throw failure;
+        }
+    }
+
+    private static boolean aSecondRowOfTheSameOrder(final Throwable failure) {
+        for (var cause = failure; cause != null; cause = cause.getCause()) {
+            if (cause instanceof EntityExistsException || cause instanceof ConstraintViolationException) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * A payment which cannot be charged as it is: something is missing, or not what a payment
+     * needs.
+     */
+    public static class InvalidPayment extends RuntimeException {
+
+        private static final long serialVersionUID = 1L;
+
+        InvalidPayment(final String message) {
+            super(message);
+        }
+
     }
 
     /**

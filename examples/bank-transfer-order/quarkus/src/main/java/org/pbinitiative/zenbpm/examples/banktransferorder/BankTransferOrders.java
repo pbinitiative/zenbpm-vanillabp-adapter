@@ -6,7 +6,9 @@ package org.pbinitiative.zenbpm.examples.banktransferorder;
 
 import java.math.BigDecimal;
 import java.util.Optional;
+import java.util.regex.Pattern;
 
+import org.hibernate.exception.ConstraintViolationException;
 import org.pbinitiative.zenbpm.examples.banktransferorder.model.Order;
 import org.pbinitiative.zenbpm.examples.banktransferorder.model.Order.Status;
 import org.pbinitiative.zenbpm.examples.banktransferorder.model.OrderRepository;
@@ -15,6 +17,7 @@ import org.slf4j.LoggerFactory;
 
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
+import jakarta.persistence.LockModeType;
 import jakarta.transaction.Transactional;
 
 /**
@@ -29,6 +32,9 @@ public class BankTransferOrders {
 
     /** The account the customers transfer to. */
     private static final String IBAN = "DE02 1203 0000 0000 2020 51";
+
+    /** An order's number is a single segment of the order's address, and the transfer's reference. */
+    private static final Pattern ORDER_NUMBER = Pattern.compile("[A-Za-z0-9-]{1,40}");
 
     private final OrderRepository orders;
 
@@ -70,10 +76,32 @@ public class BankTransferOrders {
         final String item,
         final BigDecimal total
     ) {
+        if (orderId == null || !ORDER_NUMBER
+                .matcher(orderId)
+                .matches()) {
+            throw new InvalidOrder("The order's number is 1 to 40 letters, digits and dashes, not '%s'".formatted(
+                    orderId));
+        }
+        if (blank(customerEmail) || blank(item)) {
+            throw new InvalidOrder("An order names the customer's e-mail address and the item");
+        }
+        if (total == null || total.signum() <= 0 || total
+                .stripTrailingZeros()
+                .scale() > 2) {
+            throw new InvalidOrder("The total is a positive amount with at most two decimals, not %s".formatted(
+                    total));
+        }
         if (orders.findByIdOptional(orderId).isPresent()) {
             throw new OrderExists(orderId);
         }
         final var order = new Order(orderId, customerEmail, item, total);
+        try {
+            // flushed at once: an order of the same number placed at the same moment fails on the
+            // primary key here, and is answered as one placed before
+            orders.persistAndFlush(order);
+        } catch (final ConstraintViolationException exception) {
+            throw new OrderExists(orderId);
+        }
         warehouse.reserve(orderId, item);
         workflow.orderPlaced(order);
         return order;
@@ -91,11 +119,18 @@ public class BankTransferOrders {
     }
 
     /**
-     * Reminds the customer who has not paid yet.
+     * Reminds the customer who has not paid yet. A customer whose transfer arrived meanwhile is not
+     * reminded.
      *
      * @param order The order
      */
     public void sendReminder(final Order order) {
+        if (order.getStatus() != Status.AWAITING_PAYMENT) {
+            // the transfer arrived just before the reminder was due
+            LOG.info("Order {} waits for no transfer any more, so its customer is not reminded", order
+                    .getOrderId());
+            return;
+        }
         LOG.info("Mail to {}: we have not received your transfer of {} for order {} yet", order.getCustomerEmail(),
                 order.getTotal(), order.getOrderId());
         order.reminderSent();
@@ -114,10 +149,15 @@ public class BankTransferOrders {
         final String reference,
         final BigDecimal amount
     ) {
+        if (blank(reference) || amount == null || amount.signum() <= 0) {
+            throw new InvalidTransfer("A transfer names its reference and a positive amount");
+        }
+        // locked until the transaction ends: the bank may deliver the same transfer twice at once,
+        // and only one delivery may find the order waiting for its money
         final var order = orders
-                .findByIdOptional(reference)
+                .findByIdOptional(reference, LockModeType.PESSIMISTIC_WRITE)
                 .orElseThrow(() -> new TransferNotMatched("No order has the reference %s".formatted(reference)));
-        if (order.getStatus() == Status.CANCELLED) {
+        if (order.isCancelled()) {
             throw new TransferTooLate(reference);
         }
         if (order.getStatus() != Status.AWAITING_PAYMENT) {
@@ -145,13 +185,20 @@ public class BankTransferOrders {
     }
 
     /**
-     * Cancels an order which was not paid by the deadline, and puts its item back on the shelf.
+     * Cancels an order which was not paid by the deadline, and puts its item back on the shelf. A
+     * transfer accepted while the deadline passed came too late to ship the order, which the
+     * workflow left the wait for; the money is paid back.
      *
      * @param order The order
      */
     public void cancelOrder(final Order order) {
         warehouse.release(order.getOrderId());
         order.cancelled();
+        if (order.getStatus() == Status.REFUND_DUE) {
+            LOG.info("Mail to {}: order {} is cancelled, because your transfer came after the deadline; we pay it back",
+                    order.getCustomerEmail(), order.getOrderId());
+            return;
+        }
         LOG.info("Mail to {}: order {} is cancelled, because no transfer arrived", order.getCustomerEmail(), order
                 .getOrderId());
     }
@@ -165,6 +212,36 @@ public class BankTransferOrders {
     @Transactional
     public Optional<Order> find(final String orderId) {
         return orders.findByIdOptional(orderId);
+    }
+
+    private static boolean blank(final String value) {
+        return value == null || value.isBlank();
+    }
+
+    /**
+     * An order which cannot be placed as it is.
+     */
+    public static class InvalidOrder extends RuntimeException {
+
+        private static final long serialVersionUID = 1L;
+
+        InvalidOrder(final String message) {
+            super(message);
+        }
+
+    }
+
+    /**
+     * A report of the bank which lacks what identifies a transfer.
+     */
+    public static class InvalidTransfer extends RuntimeException {
+
+        private static final long serialVersionUID = 1L;
+
+        InvalidTransfer(final String message) {
+            super(message);
+        }
+
     }
 
     /**

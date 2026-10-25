@@ -109,7 +109,13 @@ other ways a request goes:
   (`PurchaseApprovalIT#aRequestTheClerkRejectsNeverReachesTheManager`);
 - an answer for a task which is not open, such as the manager's approval of a small purchase, is
   refused with `409 Conflict` (`PurchaseApprovalIT#anAnswerForATaskWhichIsNotOpenIsRefused`), and
-  an unknown id is `404 Not Found` (`PurchaseApprovalIT#anUnknownRequestIsNotFound`).
+  an unknown id is `404 Not Found` (`PurchaseApprovalIT#anUnknownRequestIsNotFound`);
+- answers to the same task which arrive at the same time decide once: an answer loads the request
+  with a write lock, so the others wait, find the task answered and get `409 Conflict`, and the
+  request ends the way the accepted answer said
+  (`PurchaseApprovalIT#answersGivenAtTheSameTimeDecideOnce`);
+- a request without a requester or an item, or with an amount which is not positive, is refused
+  with `400 Bad Request` (`PurchaseApprovalIT#anInvalidRequestIsRefused`).
 
 In zenbpm-ui the instances are those of `purchase-approval__purchase_approval`, each with the
 request's id as its business key: you see the token wait at the user task, and the path it took

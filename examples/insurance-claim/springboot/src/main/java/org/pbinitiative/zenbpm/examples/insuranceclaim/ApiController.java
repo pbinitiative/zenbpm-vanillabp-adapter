@@ -5,7 +5,6 @@
 package org.pbinitiative.zenbpm.examples.insuranceclaim;
 
 import java.math.BigDecimal;
-import java.net.URI;
 
 import org.pbinitiative.zenbpm.examples.insuranceclaim.Claims.InvalidClaim;
 import org.pbinitiative.zenbpm.examples.insuranceclaim.Claims.NoOpenReview;
@@ -21,6 +20,7 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.util.UriComponentsBuilder;
 
 /**
  * The REST API of the claims: the policyholder reports, the adjuster reviews. It talks to
@@ -52,7 +52,11 @@ public class ApiController {
         final var claim = claims.report(report.policyNumber(), report.claimant(), report.coverage(), report
                 .damageAmount(), report.description());
         return ResponseEntity
-                .created(URI.create("/claims/%s".formatted(claim.getClaimId())))
+                .created(UriComponentsBuilder
+                        .fromPath("/claims/{claimId}")
+                        .buildAndExpand(claim.getClaimId())
+                        .encode()
+                        .toUri())
                 .body(ClaimView.of(claim));
     }
 

@@ -9,6 +9,12 @@ import static org.awaitility.Awaitility.await;
 
 import java.io.UnsupportedEncodingException;
 import java.time.Duration;
+import java.util.List;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.stream.IntStream;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -74,11 +80,33 @@ class InsuranceClaimIT {
     }
 
     @Test
+    void aSmallPartialClaimIsPaidWithoutAReview() {
+        final var claimId = report("partial", "450.00");
+
+        awaitStatus(claimId, "PAID");
+        assertThat(show(claimId))
+                .bodyJson()
+                .extractingPath("$.reviewed")
+                .isEqualTo(false);
+    }
+
+    @Test
+    void aComprehensiveClaimOfExactlyTheLimitIsPaidWithoutAReview() {
+        final var claimId = report("comprehensive", "1000.00");
+
+        awaitStatus(claimId, "PAID");
+        assertThat(show(claimId))
+                .bodyJson()
+                .extractingPath("$.reviewed")
+                .isEqualTo(false);
+    }
+
+    @Test
     void aLargeClaimIsPaidOnceTheAdjusterApprovesIt() {
         final var claimId = report("comprehensive", "6400.00");
         awaitStatus(claimId, "IN_REVIEW");
 
-        assertThat(review(claimId, true)).hasStatusOk();
+        assertThat(review(claimId, true, "decided by the test")).hasStatusOk();
 
         awaitStatus(claimId, "PAID");
         assertThat(show(claimId))
@@ -92,7 +120,7 @@ class InsuranceClaimIT {
         final var claimId = report("partial", "900.00");
         awaitStatus(claimId, "IN_REVIEW");
 
-        assertThat(review(claimId, false)).hasStatusOk();
+        assertThat(review(claimId, false, "decided by the test")).hasStatusOk();
 
         awaitStatus(claimId, "REJECTED");
         assertThat(show(claimId))
@@ -111,6 +139,10 @@ class InsuranceClaimIT {
                 .bodyJson()
                 .extractingPath("$.reviewed")
                 .isEqualTo(false);
+        assertThat(show(claimId))
+                .bodyJson()
+                .extractingPath("$.rejectionReason")
+                .isEqualTo("the claim is not covered by the terms of policy MOT-2024-0815");
     }
 
     @Test
@@ -118,15 +150,49 @@ class InsuranceClaimIT {
         final var claimId = report("liability", "300.00");
         awaitStatus(claimId, "REJECTED");
 
-        assertThat(review(claimId, true)).hasStatus(409);
-        assertThat(api
-                .post()
-                .uri("/claims")
-                .contentType(MediaType.APPLICATION_JSON)
-                .content("""
-                        {"policyNumber": "MOT-1", "claimant": "Jane Doe", "coverage": "full", "damageAmount": 10}
-                        """))
-                .hasStatus(400);
+        assertThat(review(claimId, true, "decided by the test")).hasStatus(409);
+        assertThat(send("""
+                {"policyNumber": "MOT-1", "claimant": "Jane Doe", "coverage": "full", "damageAmount": 10}
+                """)).hasStatus(400);
+    }
+
+    @Test
+    void anIncompleteOrMisstatedClaimIsRefused() {
+        assertThat(send("""
+                {"claimant": "Jane Doe", "coverage": "partial", "damageAmount": 10}
+                """)).hasStatus(400);
+        assertThat(send("""
+                {"policyNumber": "MOT-1", "claimant": " ", "coverage": "partial", "damageAmount": 10}
+                """)).hasStatus(400);
+        assertThat(send("""
+                {"policyNumber": "MOT-1", "claimant": "Jane Doe", "damageAmount": 10}
+                """)).hasStatus(400);
+        assertThat(send("""
+                {"policyNumber": "MOT-1", "claimant": "Jane Doe", "coverage": "partial", "damageAmount": 10.005}
+                """)).hasStatus(400);
+    }
+
+    @Test
+    void onlyOneOfTheAnswersGivenAtOnceIsAccepted() {
+        final var claimId = report("comprehensive", "6400.00");
+        awaitStatus(claimId, "IN_REVIEW");
+
+        final var statuses = answerAtOnce(claimId, 8);
+
+        assertThat(statuses)
+                .filteredOn(status -> status == 200)
+                .hasSize(1);
+        assertThat(statuses)
+                .filteredOn(status -> status != 200)
+                .containsOnly(409);
+        // the even answers approve, the odd ones reject
+        final var accepted = statuses.indexOf(200);
+        final var approved = accepted % 2 == 0;
+        awaitStatus(claimId, approved ? "PAID" : "REJECTED");
+        assertThat(show(claimId))
+                .bodyJson()
+                .extractingPath("$.rejectionReason")
+                .isEqualTo(approved ? null : "rejected by the adjuster: answer %d".formatted(accepted));
     }
 
     @DynamicPropertySource
@@ -139,15 +205,10 @@ class InsuranceClaimIT {
         final String coverage,
         final String damageAmount
     ) {
-        final var result = api
-                .post()
-                .uri("/claims")
-                .contentType(MediaType.APPLICATION_JSON)
-                .content("""
-                        {"policyNumber": "MOT-2024-0815", "claimant": "Jane Doe", "coverage": "%s",
-                         "damageAmount": %s, "description": "a dent in the rear door"}
-                        """.formatted(coverage, damageAmount))
-                .exchange();
+        final var result = send("""
+                {"policyNumber": "MOT-2024-0815", "claimant": "Jane Doe", "coverage": "%s",
+                 "damageAmount": %s, "description": "a dent in the rear door"}
+                """.formatted(coverage, damageAmount));
         assertThat(result).hasStatus(201);
         try {
             return JsonPath.read(result
@@ -158,18 +219,57 @@ class InsuranceClaimIT {
         }
     }
 
+    private MvcTestResult send(final String claim) {
+        return api
+                .post()
+                .uri("/claims")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(claim)
+                .exchange();
+    }
+
     private MvcTestResult review(
         final String claimId,
-        final boolean approved
+        final boolean approved,
+        final String comment
     ) {
         return api
                 .post()
                 .uri("/claims/{claimId}/review", claimId)
                 .contentType(MediaType.APPLICATION_JSON)
                 .content("""
-                        {"approved": %s, "comment": "decided by the test"}
-                        """.formatted(approved))
+                        {"approved": %s, "comment": "%s"}
+                        """.formatted(approved, comment))
                 .exchange();
+    }
+
+    /**
+     * Several adjusters answer the same review at the same moment: the even ones approve, the odd
+     * ones reject, and each signs with its number.
+     *
+     * @return The HTTP status each adjuster got, in the order of their numbers
+     */
+    private List<Integer> answerAtOnce(
+        final String claimId,
+        final int adjusters
+    ) {
+        final var start = new CountDownLatch(1);
+        try (var threads = Executors.newFixedThreadPool(adjusters)) {
+            final var answers = IntStream
+                    .range(0, adjusters)
+                    .mapToObj(answer -> threads.submit(() -> {
+                        start.await();
+                        return review(claimId, answer % 2 == 0, "answer %d".formatted(answer))
+                                .getResponse()
+                                .getStatus();
+                    }))
+                    .toList();
+            start.countDown();
+            return answers
+                    .stream()
+                    .map(InsuranceClaimIT::statusOf)
+                    .toList();
+        }
     }
 
     private MvcTestResult show(final String claimId) {
@@ -177,6 +277,19 @@ class InsuranceClaimIT {
                 .get()
                 .uri("/claims/{claimId}", claimId)
                 .exchange();
+    }
+
+    private static int statusOf(final Future<Integer> answer) {
+        try {
+            return answer.get();
+        } catch (final InterruptedException e) {
+            Thread
+                    .currentThread()
+                    .interrupt();
+            throw new IllegalStateException(e);
+        } catch (final ExecutionException e) {
+            throw new IllegalStateException(e.getCause());
+        }
     }
 
     private void awaitStatus(

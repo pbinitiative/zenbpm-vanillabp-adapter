@@ -1292,9 +1292,9 @@ Spotless formats their Java, `BpmnDiagramTest` checks their models, and `MethodO
 because they are applications and not code of the adapter, and their tests use the platform's test
 support rather than `SuppressOutputExtension` of VanillaBP's test utilities, which an application
 copied out would not have. `ExamplesTest` checks that every example has both twins and is listed
-in `examples/pom.xml`, that the twins deploy the same models, that they use the Spring Boot,
-Quarkus and adapter versions of the root POM, and that every test an example's README cites exists
-in both twins. `EnginePinTest#theExamplesNameThePin` holds the engine image their POMs and READMEs
+in `examples/pom.xml`, that the twins deploy the same models and configure VanillaBP alike, that
+they use the Spring Boot, Quarkus, VanillaBP and adapter versions of the root POM, and that every
+test an example's README cites exists in both twins. `EnginePinTest#theExamplesNameThePin` holds the engine image their POMs and READMEs
 name to the pin, so moving the pin moves them as well. Renovate reads their POMs and leaves their
 platform versions to the root POM.
 

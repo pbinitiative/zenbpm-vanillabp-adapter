@@ -21,7 +21,7 @@
       <bpmn:incoming>Flow_ToRouteClaim</bpmn:incoming>
       <bpmn:outgoing>Flow_ToRoute</bpmn:outgoing>
     </bpmn:businessRuleTask>
-    <bpmn:exclusiveGateway id="Route" name="Route?" default="Flow_Reject">
+    <bpmn:exclusiveGateway id="Route" name="Route?" default="Flow_Review">
       <bpmn:incoming>Flow_ToRoute</bpmn:incoming>
       <bpmn:outgoing>Flow_AutoPay</bpmn:outgoing>
       <bpmn:outgoing>Flow_Review</bpmn:outgoing>
@@ -74,10 +74,10 @@
     <bpmn:sequenceFlow id="Flow_AutoPay" name="auto-pay" sourceRef="Route" targetRef="ToBePaid">
       <bpmn:conditionExpression xsi:type="bpmn:tFormalExpression">=route = "auto-pay"</bpmn:conditionExpression>
     </bpmn:sequenceFlow>
-    <bpmn:sequenceFlow id="Flow_Review" name="review" sourceRef="Route" targetRef="ReviewClaim">
-      <bpmn:conditionExpression xsi:type="bpmn:tFormalExpression">=route = "review"</bpmn:conditionExpression>
+    <bpmn:sequenceFlow id="Flow_Review" name="review" sourceRef="Route" targetRef="ReviewClaim" />
+    <bpmn:sequenceFlow id="Flow_Reject" name="reject" sourceRef="Route" targetRef="ToBeRejected">
+      <bpmn:conditionExpression xsi:type="bpmn:tFormalExpression">=route = "reject"</bpmn:conditionExpression>
     </bpmn:sequenceFlow>
-    <bpmn:sequenceFlow id="Flow_Reject" name="reject" sourceRef="Route" targetRef="ToBeRejected" />
     <bpmn:sequenceFlow id="Flow_ToApproved" sourceRef="ReviewClaim" targetRef="Approved" />
     <bpmn:sequenceFlow id="Flow_IsApproved" name="Yes" sourceRef="Approved" targetRef="ToBePaid">
       <bpmn:conditionExpression xsi:type="bpmn:tFormalExpression">=approvedByAdjuster</bpmn:conditionExpression>

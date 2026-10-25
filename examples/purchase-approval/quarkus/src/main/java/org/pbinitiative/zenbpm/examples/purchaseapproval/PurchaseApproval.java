@@ -15,6 +15,7 @@ import org.slf4j.LoggerFactory;
 
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
+import jakarta.persistence.LockModeType;
 import jakarta.transaction.Transactional;
 
 /**
@@ -22,8 +23,13 @@ import jakarta.transaction.Transactional;
  * request moves on, this class tells {@link Workflow} what happened; when the process reaches a
  * task, {@link WorkflowTaskHandler} calls in here.
  * <p>
- * <code>@Transactional</code> sits on the methods the API calls only. VanillaBP runs the methods a
- * task handler calls in a transaction of its own, and refuses one the application declares.
+ * <code>@Transactional</code> sits on the methods the API calls only. VanillaBP runs a task handler
+ * in a transaction of its own, which the methods it calls here join. A <code>@Transactional</code>
+ * on them would mark that transaction rollback-only when a <code>TaskException</code> passes it,
+ * so they carry none.
+ * <p>
+ * An answer loads the request with a write lock. Two answers to the same task then wait for each
+ * other, and the second finds the task answered, instead of both deciding.
  */
 @ApplicationScoped
 public class PurchaseApproval {
@@ -68,6 +74,15 @@ public class PurchaseApproval {
         final String item,
         final int amount
     ) {
+        if (requester == null || requester.isBlank()) {
+            throw new InvalidPurchaseRequest("A purchase request names its requester");
+        }
+        if (item == null || item.isBlank()) {
+            throw new InvalidPurchaseRequest("A purchase request names the item to be bought");
+        }
+        if (amount <= 0) {
+            throw new InvalidPurchaseRequest("The amount has to be positive, not %d".formatted(amount));
+        }
         final var purchaseRequest = new PurchaseRequest(UUID.randomUUID().toString(), requester, item, amount);
         workflow.purchaseRequested(purchaseRequest);
         LOG.info("Purchase request {} submitted by {} for '{}' at {}", purchaseRequest.getId(), requester, item,
@@ -114,7 +129,7 @@ public class PurchaseApproval {
         final boolean inOrder,
         final String comment
     ) {
-        final var purchaseRequest = purchaseRequest(id);
+        final var purchaseRequest = purchaseRequestToAnswer(id);
         final var taskId = openTask(purchaseRequest.getCheckTaskId(), id, "check");
         purchaseRequest.setRequestInOrder(inOrder);
         purchaseRequest.setComment(comment);
@@ -163,7 +178,7 @@ public class PurchaseApproval {
         final boolean approved,
         final String comment
     ) {
-        final var purchaseRequest = purchaseRequest(id);
+        final var purchaseRequest = purchaseRequestToAnswer(id);
         final var taskId = openTask(purchaseRequest.getHighValueApprovalTaskId(), id, "high-value approval");
         purchaseRequest.setApprovedByManager(approved);
         purchaseRequest.setComment(comment);
@@ -209,9 +224,9 @@ public class PurchaseApproval {
         return purchaseRequests.findByIdOptional(id);
     }
 
-    private PurchaseRequest purchaseRequest(final String id) {
+    private PurchaseRequest purchaseRequestToAnswer(final String id) {
         return purchaseRequests
-                .findByIdOptional(id)
+                .findByIdOptional(id, LockModeType.PESSIMISTIC_WRITE)
                 .orElseThrow(() -> new UnknownPurchaseRequest(id));
     }
 
@@ -224,6 +239,19 @@ public class PurchaseApproval {
             throw new NoOpenTask("Purchase request %s has no open %s".formatted(id, task));
         }
         return taskId;
+    }
+
+    /**
+     * A purchase request which cannot be submitted as it is.
+     */
+    public static class InvalidPurchaseRequest extends RuntimeException {
+
+        private static final long serialVersionUID = 1L;
+
+        InvalidPurchaseRequest(final String message) {
+            super(message);
+        }
+
     }
 
     /**

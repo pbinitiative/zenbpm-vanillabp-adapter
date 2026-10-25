@@ -4,9 +4,8 @@
  */
 package org.pbinitiative.zenbpm.examples.purchaseapproval;
 
-import java.net.URI;
-
 import org.jboss.resteasy.reactive.server.ServerExceptionMapper;
+import org.pbinitiative.zenbpm.examples.purchaseapproval.PurchaseApproval.InvalidPurchaseRequest;
 import org.pbinitiative.zenbpm.examples.purchaseapproval.PurchaseApproval.NoOpenTask;
 import org.pbinitiative.zenbpm.examples.purchaseapproval.PurchaseApproval.UnknownPurchaseRequest;
 import org.pbinitiative.zenbpm.examples.purchaseapproval.model.PurchaseRequest;
@@ -20,6 +19,7 @@ import jakarta.ws.rs.PathParam;
 import jakarta.ws.rs.Produces;
 import jakarta.ws.rs.core.MediaType;
 import jakarta.ws.rs.core.Response;
+import jakarta.ws.rs.core.UriBuilder;
 
 /**
  * The REST API of the purchase requests, the one the README walks through with curl. It talks to
@@ -52,7 +52,9 @@ public class ApiController {
     public Response submit(final NewPurchaseRequest request) {
         final var purchaseRequest = purchaseApproval.submit(request.requester(), request.item(), request.amount());
         return Response
-                .created(URI.create("/purchase-requests/%s".formatted(purchaseRequest.getId())))
+                .created(UriBuilder
+                        .fromPath("/purchase-requests/{id}")
+                        .build(purchaseRequest.getId()))
                 .entity(PurchaseRequestView.of(purchaseRequest))
                 .build();
     }
@@ -103,6 +105,17 @@ public class ApiController {
     ) {
         return PurchaseRequestView.of(purchaseApproval.decideHighValuePurchase(id, answer.approved(), answer
                 .comment()));
+    }
+
+    /**
+     * A purchase request which cannot be submitted as it is.
+     *
+     * @param exception What is wrong with it
+     * @return 400
+     */
+    @ServerExceptionMapper
+    public Response invalid(final InvalidPurchaseRequest exception) {
+        return problem(Response.Status.BAD_REQUEST, exception);
     }
 
     /**

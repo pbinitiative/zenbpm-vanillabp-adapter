@@ -8,7 +8,8 @@ can get in the way, and the shop answers each of them differently:
   That is an answer about the card, and charging it again would not change it. The shop asks the
   customer to pay with another card.
 - **The provider does not answer once**, a timeout or a hiccup in its network. That says nothing
-  about the card. The shop tries again two seconds later, and the customer never notices.
+  about the card. The shop tries again two seconds later, and the customer never notices
+  (`CardPaymentIT#aProviderWhichDoesNotAnswerOnceIsTriedAgain`).
 - **The provider is down** for longer than the attempts last. The process stops at the charge
   with an incident, an operator sees it in zenbpm-ui, and once the provider is back the operator
   resolves the incident and the payment goes through.
@@ -34,7 +35,8 @@ the same file in both twins.
 - **Any other exception is a failure, and the engine retries it.** The model gives the task three
   attempts (`zenbpm:taskDefinition retries="3"`). On a failure VanillaBP rolls back what the task
   wrote, and the engine hands the task out again after the `retry-backoff` of `application.yaml`,
-  two seconds. After the last attempt the engine raises an incident.
+  two seconds (`CardPaymentIT#aProviderWhichDoesNotAnswerOnceIsTriedAgain` measures the gap). After
+  the last attempt the engine raises an incident.
 - **An incident is for an operator.** Resolving it gives the task a fresh series of three attempts.
 - **Nothing of the payment leaves the application.** The model decides nothing on data, so the
   aggregate is `@NoSyncWithBPMS` without a single shared member. The engine knows the order's
@@ -82,9 +84,18 @@ curl -s localhost:8080/payments/ORD-1001
 This is `CardPaymentIT#aValidCardIsChargedAndTheOrderConfirmed`. With `tok_chargeDeclined` the
 payment ends `DECLINED` with the reason, and the application logs the mail which asks for another
 card (`CardPaymentIT#aDeclinedCardMakesTheShopAskForAnotherOne`). With `tok_processingError` the
-log shows two attempts, and the payment ends `PAID` all the same
+log shows two attempts two seconds apart, and the payment ends `PAID` all the same
 (`CardPaymentIT#aProviderWhichDoesNotAnswerOnceIsTriedAgain`). Paying the same order twice is
-refused with `409 Conflict` (`CardPaymentIT#aSecondPaymentOfTheSameOrderIsRefused`).
+refused with `409 Conflict` (`CardPaymentIT#aSecondPaymentOfTheSameOrderIsRefused`). That holds
+for two payments sent at the same moment too: the payment is inserted before its workflow starts,
+the order's number is its primary key, and the database lets one of them in, so the card is
+charged once (`CardPaymentIT#paymentsOfTheSameOrderAtTheSameTimeChargeOnce`).
+
+A payment which cannot be charged as it is gets `400 Bad Request`, and nothing is stored: an
+amount which is not positive or has more than two decimals, a missing e-mail address or card
+token, or an order number which is not 1 to 40 letters, digits and dashes. The order number is
+part of the payment's address, `/payments/{orderId}`
+(`CardPaymentIT#anInvalidPaymentIsRefused`).
 
 ### An outage
 
@@ -96,7 +107,8 @@ curl -s -X POST localhost:8080/payments -H 'Content-Type: application/json' \
   -d '{"orderId": "ORD-1002", "customerEmail": "jane.doe@example.com", "amount": 129.00, "cardToken": "tok_visa"}'
 ```
 
-The log shows three attempts two seconds apart, and the payment stays `PENDING`. In zenbpm-ui the
+The log shows three attempts two seconds apart, and the payment stays `PENDING`
+(`CardPaymentIT#anOutageLongerThanTheAttemptsIsAnIncidentAnOperatorResolves`). In zenbpm-ui the
 instance of `card-payment__card_payment` with the business key `ORD-1002` has an incident at
 "Charge the card", whose message names the attempts and the exception. Bring the provider back:
 

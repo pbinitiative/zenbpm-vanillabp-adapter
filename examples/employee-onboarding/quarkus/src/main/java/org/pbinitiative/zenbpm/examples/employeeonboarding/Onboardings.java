@@ -15,6 +15,7 @@ import org.slf4j.LoggerFactory;
 
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
+import jakarta.persistence.LockModeType;
 import jakarta.transaction.Transactional;
 
 /**
@@ -69,6 +70,15 @@ public class Onboardings {
         final String position,
         final LocalDate startDate
     ) {
+        if (employeeName == null || employeeName.isBlank()) {
+            throw new InvalidNewHire("The name of the new employee is missing");
+        }
+        if (position == null || position.isBlank()) {
+            throw new InvalidNewHire("The position of the new employee is missing");
+        }
+        if (startDate == null) {
+            throw new InvalidNewHire("The first working day of the new employee is missing");
+        }
         final var onboarding = new Onboarding("ONB-%s".formatted(UUID
                 .randomUUID()
                 .toString()
@@ -133,7 +143,9 @@ public class Onboardings {
     }
 
     /**
-     * HR held the welcome meeting.
+     * HR held the welcome meeting. The onboarding is locked while it is read, so a second report of
+     * the same meeting waits for the first to commit and then finds no meeting due: without the
+     * lock both would read the open task and both would answer it.
      *
      * @param onboardingId The id of the onboarding
      * @param notes What HR noted
@@ -145,7 +157,7 @@ public class Onboardings {
         final String notes
     ) {
         final var onboarding = onboardings
-                .findByIdOptional(onboardingId)
+                .findByIdOptional(onboardingId, LockModeType.PESSIMISTIC_WRITE)
                 .orElseThrow(() -> new UnknownOnboarding(onboardingId));
         final var taskId = onboarding.getWelcomeMeetingTaskId();
         if (taskId == null) {
@@ -175,6 +187,19 @@ public class Onboardings {
     @Transactional
     public Optional<Onboarding> find(final String onboardingId) {
         return onboardings.findByIdOptional(onboardingId);
+    }
+
+    /**
+     * A new hire which cannot be onboarded as it is reported.
+     */
+    public static class InvalidNewHire extends RuntimeException {
+
+        private static final long serialVersionUID = 1L;
+
+        InvalidNewHire(final String message) {
+            super(message);
+        }
+
     }
 
     /**

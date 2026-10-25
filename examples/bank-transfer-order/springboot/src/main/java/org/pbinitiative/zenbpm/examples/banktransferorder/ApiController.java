@@ -5,8 +5,9 @@
 package org.pbinitiative.zenbpm.examples.banktransferorder;
 
 import java.math.BigDecimal;
-import java.net.URI;
 
+import org.pbinitiative.zenbpm.examples.banktransferorder.BankTransferOrders.InvalidOrder;
+import org.pbinitiative.zenbpm.examples.banktransferorder.BankTransferOrders.InvalidTransfer;
 import org.pbinitiative.zenbpm.examples.banktransferorder.BankTransferOrders.OrderExists;
 import org.pbinitiative.zenbpm.examples.banktransferorder.BankTransferOrders.TransferNotMatched;
 import org.pbinitiative.zenbpm.examples.banktransferorder.BankTransferOrders.TransferTooLate;
@@ -20,6 +21,7 @@ import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.util.UriComponentsBuilder;
 
 /**
  * The REST API: the shop places and shows orders, and the bank reports the transfers to the
@@ -50,7 +52,11 @@ public class ApiController {
         final var order = orders.place(request.orderId(), request.customerEmail(), request.item(), request
                 .total());
         return ResponseEntity
-                .created(URI.create("/orders/%s".formatted(order.getOrderId())))
+                .created(UriComponentsBuilder
+                        .fromPath("/orders/{orderId}")
+                        .buildAndExpand(order.getOrderId())
+                        .encode()
+                        .toUri())
                 .body(OrderView.of(order));
     }
 
@@ -79,6 +85,28 @@ public class ApiController {
     }
 
     /**
+     * An order which cannot be placed as it is.
+     *
+     * @param exception What is wrong with it
+     * @return 400
+     */
+    @ExceptionHandler
+    public ProblemDetail invalid(final InvalidOrder exception) {
+        return ProblemDetail.forStatusAndDetail(HttpStatus.BAD_REQUEST, exception.getMessage());
+    }
+
+    /**
+     * A report of the bank without the reference or the amount of the transfer.
+     *
+     * @param exception What is missing
+     * @return 400
+     */
+    @ExceptionHandler
+    public ProblemDetail incomplete(final InvalidTransfer exception) {
+        return ProblemDetail.forStatusAndDetail(HttpStatus.BAD_REQUEST, exception.getMessage());
+    }
+
+    /**
      * An order of a number placed before.
      *
      * @param exception Which order
@@ -101,7 +129,7 @@ public class ApiController {
     }
 
     /**
-     * A transfer for a cancelled order.
+     * A transfer for a cancelled order, paid back.
      *
      * @param exception Which order
      * @return 409

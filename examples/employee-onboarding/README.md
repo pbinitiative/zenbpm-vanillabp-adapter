@@ -46,7 +46,11 @@ the same files in both twins. They are two files because the engine takes one pr
   onboarding is done. The engine reports no end of a workflow, so the adapter puts a marker task
   in front of the end event of the onboarding when it deploys the model. The called process gets
   no marker: its end is not the end of the workflow.
-- **A user task for HR**, answered through the REST API, as in the purchase approval.
+- **A user task for HR**, answered through the REST API, as in the purchase approval. The answer
+  locks the onboarding while it reads it. So when two people of HR report the same meeting at
+  once, the second waits for the first, finds no meeting due and gets `409 Conflict`: one report
+  answers the task, and its notes are the ones kept
+  (`EmployeeOnboardingIT#aWelcomeMeetingReportedSeveralTimesAtOnceIsAcceptedOnce`).
 
 ## Run it
 
@@ -88,7 +92,9 @@ curl -s localhost:8080/onboardings/$ID
 The status is `ONBOARDED`, set by the `@WorkflowEnded` method, and the application logs
 "welcome aboard" (`EmployeeOnboardingIT#aNewEmployeeIsOnboardedOnceTheWelcomeMeetingIsHeld`). A
 welcome meeting reported a second time is `409 Conflict`, and an unknown id `404 Not Found`
-(`EmployeeOnboardingIT#aWelcomeMeetingWhichIsNotDueIsRefused`).
+(`EmployeeOnboardingIT#aWelcomeMeetingWhichIsNotDueIsRefused`). A new hire without a name, a
+position or a first working day is `400 Bad Request`
+(`EmployeeOnboardingIT#anIncompleteNewHireIsRefused`).
 
 In zenbpm-ui the onboarding is an instance of `employee-onboarding__employee_onboarding` with the
 onboarding's id as its business key. The provisioning is an instance of

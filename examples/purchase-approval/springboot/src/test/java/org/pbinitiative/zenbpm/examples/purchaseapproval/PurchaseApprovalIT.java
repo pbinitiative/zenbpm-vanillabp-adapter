@@ -9,6 +9,11 @@ import static org.awaitility.Awaitility.await;
 
 import java.io.UnsupportedEncodingException;
 import java.time.Duration;
+import java.util.List;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.Executors;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -43,6 +48,9 @@ class PurchaseApprovalIT {
      * one second, so the limit only turns a step which never comes into a failure.
      */
     private static final Duration STEP = Duration.ofSeconds(60);
+
+    /** How many answers to the same check arrive at the same time. */
+    private static final int ANSWERS = 8;
 
     @Container
     private static final GenericContainer<?> ENGINE = ZenBpmEngine.container();
@@ -130,6 +138,58 @@ class PurchaseApprovalIT {
     }
 
     @Test
+    void answersGivenAtTheSameTimeDecideOnce() {
+        final var id = submit(1_200);
+        awaitStatus(id, "IN_CHECK");
+
+        final var statuses = answerTheCheckAtTheSameTime(id);
+
+        assertThat(statuses).hasSize(ANSWERS);
+        assertThat(statuses.values()).containsOnly(200, 409);
+        final var accepted = statuses
+                .entrySet()
+                .stream()
+                .filter(answer -> answer.getValue() == 200)
+                .map(Map.Entry::getKey)
+                .toList();
+        assertThat(accepted).hasSize(1);
+        final var winner = accepted.getFirst();
+        if (approves(winner)) {
+            awaitStatus(id, "ORDERED");
+        } else {
+            awaitRequesterNotified(id);
+            assertThat(show(id))
+                    .bodyJson()
+                    .extractingPath("$.status")
+                    .isEqualTo("REJECTED");
+        }
+        assertThat(show(id))
+                .bodyJson()
+                .extractingPath("$.comment")
+                .isEqualTo("answer %d".formatted(winner));
+    }
+
+    @Test
+    void anInvalidRequestIsRefused() {
+        List
+                .of("""
+                        {"item": "laptop", "amount": 1200}
+                        """, """
+                        {"requester": "Jane Doe", "item": " ", "amount": 1200}
+                        """, """
+                        {"requester": "Jane Doe", "item": "laptop", "amount": -100}
+                        """, """
+                        {"requester": "Jane Doe", "item": "laptop"}
+                        """)
+                .forEach(request -> assertThat(api
+                        .post()
+                        .uri("/purchase-requests")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(request))
+                        .hasStatus(400));
+    }
+
+    @Test
     void anUnknownRequestIsNotFound() {
         assertThat(show("no-such-request")).hasStatus(404);
     }
@@ -172,6 +232,42 @@ class PurchaseApprovalIT {
                         {"approved": %s, "comment": "decided by the test"}
                         """.formatted(approved)))
                 .hasStatusOk();
+    }
+
+    /**
+     * Gives every answer to the open check at the same moment, on a thread of its own, alternating
+     * approvals and rejections.
+     *
+     * @return The HTTP status each answer got, by its number
+     */
+    private Map<Integer, Integer> answerTheCheckAtTheSameTime(final String id) {
+        final var start = new CountDownLatch(1);
+        final var statuses = new ConcurrentHashMap<Integer, Integer>();
+        try (var threads = Executors.newFixedThreadPool(ANSWERS)) {
+            for (var answer = 0; answer < ANSWERS; answer++) {
+                final var number = answer;
+                threads.submit(() -> {
+                    start.await();
+                    statuses.put(number, api
+                            .post()
+                            .uri("/purchase-requests/{id}/check", id)
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content("""
+                                    {"approved": %s, "comment": "answer %d"}
+                                    """.formatted(approves(number), number))
+                            .exchange()
+                            .getResponse()
+                            .getStatus());
+                    return null;
+                });
+            }
+            start.countDown();
+        }
+        return statuses;
+    }
+
+    private static boolean approves(final int answer) {
+        return answer % 2 == 0;
     }
 
     private MvcTestResult show(final String id) {

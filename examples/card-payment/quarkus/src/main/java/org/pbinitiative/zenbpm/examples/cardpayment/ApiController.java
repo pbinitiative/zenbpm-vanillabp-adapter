@@ -5,9 +5,9 @@
 package org.pbinitiative.zenbpm.examples.cardpayment;
 
 import java.math.BigDecimal;
-import java.net.URI;
 
 import org.jboss.resteasy.reactive.server.ServerExceptionMapper;
+import org.pbinitiative.zenbpm.examples.cardpayment.CardPayment.InvalidPayment;
 import org.pbinitiative.zenbpm.examples.cardpayment.CardPayment.PaymentExists;
 import org.pbinitiative.zenbpm.examples.cardpayment.model.Payment;
 
@@ -20,6 +20,7 @@ import jakarta.ws.rs.PathParam;
 import jakarta.ws.rs.Produces;
 import jakarta.ws.rs.core.MediaType;
 import jakarta.ws.rs.core.Response;
+import jakarta.ws.rs.core.UriBuilder;
 
 /**
  * The REST API of the payments, which the checkout of the web shop calls. It talks to
@@ -54,7 +55,9 @@ public class ApiController {
         final var payment = cardPayment.pay(request.orderId(), request.customerEmail(), request.amount(), request
                 .cardToken());
         return Response
-                .created(URI.create("/payments/%s".formatted(payment.getOrderId())))
+                .created(UriBuilder
+                        .fromPath("/payments/{orderId}")
+                        .build(payment.getOrderId()))
                 .entity(PaymentView.of(payment))
                 .build();
     }
@@ -79,6 +82,17 @@ public class ApiController {
     }
 
     /**
+     * A payment which cannot be charged as it is.
+     *
+     * @param exception What is wrong with it
+     * @return 400
+     */
+    @ServerExceptionMapper
+    public Response invalid(final InvalidPayment exception) {
+        return problem(Response.Status.BAD_REQUEST, exception.getMessage());
+    }
+
+    /**
      * A second payment of the same order.
      *
      * @param exception Which order
@@ -86,11 +100,17 @@ public class ApiController {
      */
     @ServerExceptionMapper
     public Response paidAlready(final PaymentExists exception) {
+        return problem(Response.Status.CONFLICT, exception.getMessage());
+    }
+
+    private static Response problem(
+        final Response.Status status,
+        final String detail
+    ) {
         return Response
-                .status(Response.Status.CONFLICT)
+                .status(status)
                 .type("application/problem+json")
-                .entity(new Problem(Response.Status.CONFLICT.getReasonPhrase(), Response.Status.CONFLICT
-                        .getStatusCode(), exception.getMessage()))
+                .entity(new Problem(status.getReasonPhrase(), status.getStatusCode(), detail))
                 .build();
     }
 

@@ -6,11 +6,21 @@ package org.pbinitiative.zenbpm.examples.purchaseapproval;
 
 import static io.restassured.RestAssured.given;
 import static org.awaitility.Awaitility.await;
+import static org.hamcrest.MatcherAssert.assertThat;
+import static org.hamcrest.Matchers.aMapWithSize;
 import static org.hamcrest.Matchers.equalTo;
+import static org.hamcrest.Matchers.everyItem;
+import static org.hamcrest.Matchers.hasSize;
+import static org.hamcrest.Matchers.in;
 import static org.hamcrest.Matchers.nullValue;
 import static org.hamcrest.Matchers.startsWith;
 
 import java.time.Duration;
+import java.util.List;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.Executors;
 
 import org.junit.jupiter.api.Test;
 
@@ -32,6 +42,9 @@ class PurchaseApprovalIT {
      * one second, so the limit only turns a step which never comes into a failure.
      */
     private static final Duration STEP = Duration.ofSeconds(60);
+
+    /** How many answers to the same check arrive at the same time. */
+    private static final int ANSWERS = 8;
 
     @Test
     void aSmallPurchaseTheClerkFindsInOrderIsOrdered() {
@@ -96,6 +109,52 @@ class PurchaseApprovalIT {
     }
 
     @Test
+    void answersGivenAtTheSameTimeDecideOnce() {
+        final var id = submit(1_200);
+        awaitStatus(id, "IN_CHECK");
+
+        final var statuses = answerTheCheckAtTheSameTime(id);
+
+        assertThat(statuses, aMapWithSize(ANSWERS));
+        assertThat(statuses.values(), everyItem(in(List.of(200, 409))));
+        final var accepted = statuses
+                .entrySet()
+                .stream()
+                .filter(answer -> answer.getValue() == 200)
+                .map(Map.Entry::getKey)
+                .toList();
+        assertThat(accepted, hasSize(1));
+        final var winner = accepted.getFirst();
+        if (approves(winner)) {
+            awaitStatus(id, "ORDERED");
+        } else {
+            awaitRequesterNotified(id);
+            show(id).body("status", equalTo("REJECTED"));
+        }
+        show(id).body("comment", equalTo("answer %d".formatted(winner)));
+    }
+
+    @Test
+    void anInvalidRequestIsRefused() {
+        List
+                .of("""
+                        {"item": "laptop", "amount": 1200}
+                        """, """
+                        {"requester": "Jane Doe", "item": " ", "amount": 1200}
+                        """, """
+                        {"requester": "Jane Doe", "item": "laptop", "amount": -100}
+                        """, """
+                        {"requester": "Jane Doe", "item": "laptop"}
+                        """)
+                .forEach(request -> given()
+                        .contentType(ContentType.JSON)
+                        .body(request)
+                        .post("/purchase-requests")
+                        .then()
+                        .statusCode(400));
+    }
+
+    @Test
     void anUnknownRequestIsNotFound() {
         given()
                 .get("/purchase-requests/{id}", "no-such-request")
@@ -131,6 +190,39 @@ class PurchaseApprovalIT {
                 .statusCode(200);
     }
 
+    /**
+     * Gives every answer to the open check at the same moment, on a thread of its own, alternating
+     * approvals and rejections.
+     *
+     * @return The HTTP status each answer got, by its number
+     */
+    private static Map<Integer, Integer> answerTheCheckAtTheSameTime(final String id) {
+        final var start = new CountDownLatch(1);
+        final var statuses = new ConcurrentHashMap<Integer, Integer>();
+        try (var threads = Executors.newFixedThreadPool(ANSWERS)) {
+            for (var answer = 0; answer < ANSWERS; answer++) {
+                final var number = answer;
+                threads.submit(() -> {
+                    start.await();
+                    statuses.put(number, given()
+                            .contentType(ContentType.JSON)
+                            .body("""
+                                    {"approved": %s, "comment": "answer %d"}
+                                    """.formatted(approves(number), number))
+                            .post("/purchase-requests/{id}/check", id)
+                            .statusCode());
+                    return null;
+                });
+            }
+            start.countDown();
+        }
+        return statuses;
+    }
+
+    private static boolean approves(final int answer) {
+        return answer % 2 == 0;
+    }
+
     private static ValidatableResponse show(final String id) {
         return given()
                 .get("/purchase-requests/{id}", id)
@@ -139,8 +231,8 @@ class PurchaseApprovalIT {
     }
 
     /**
-     * Reads one field without asserting anything, so the polls of a wait log nothing: RestAssured
-     * logs the request and the response of every assertion which fails.
+     * Reads one field instead of asserting its value, so a poll which still sees the old value logs
+     * nothing: RestAssured logs the request and the response of every assertion which fails.
      */
     private static <T> T field(
         final String id,

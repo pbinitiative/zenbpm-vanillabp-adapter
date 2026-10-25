@@ -29,7 +29,16 @@ the order, so the numbers are in the model.
   every transfer. Only a transfer whose reference is an order waiting for its money, and whose
   amount matches, becomes `ProcessService#correlateMessage(order, "PaymentReceived")`. Anything
   else is answered `422` and left to accounting. A transfer for a cancelled order is `409`: it
-  is paid back.
+  is paid back. A report without a reference or a positive amount is `400`
+  (`BankTransferOrderIT#anIncompleteTransferIsRefused`).
+- **The deadline and the transfer can meet.** The engine fires the deadline on its own clock, so a
+  transfer can be accepted after the deadline fired and before the cancellation is saved. The
+  wait is over then, and the order cannot be shipped any more. The cancellation sees that the order
+  is paid: the order ends `REFUND_DUE` instead of `CANCELLED`, the stock goes back, and the mail
+  tells the customer that the money is paid back
+  (`BankTransferOrderIT#aTransferWhichArrivesWithTheDeadlineIsPaidBack`). In the same way the
+  reminder is not sent to a customer whose transfer arrived just before it was due
+  (`BankTransferOrderIT#aCustomerWhoHasJustPaidIsNotReminded`).
 - **No correlation key in the model.** The message names no `zenbpm:subscription`. The adapter
   gives every message a workflow waits for the id of its aggregate, the order's number, as its
   correlation key. So the message reaches the one order it is for.
@@ -40,7 +49,20 @@ the order, so the numbers are in the model.
   arrive, and two transactions write the same order. `Order` has a version attribute
   (`@Version`), so the transaction committing second fails instead of putting back what it read
   before the other one committed. A task which fails like that is handed out again by the engine,
-  and it reads the order anew.
+  and it reads the order anew. When the transaction of the bank's webhook is the one which fails,
+  the bank gets an error back and sends the transfer again, as banks do with a webhook which
+  fails.
+- **A task can run twice, the warehouse ships once.** A task handed out again calls the warehouse
+  again, so the order's number is the idempotency key of the warehouse: shipping an order a second
+  time answers the parcel of the first
+  (`BankTransferOrderIT#aShipmentRepeatedAfterAFailureSendsOneParcel`).
+- **Two deliveries, one payment.** Banks deliver a webhook twice now and then. The order is locked
+  while a transfer is checked against it, so of two deliveries of the same transfer at once one is
+  accepted and the other answered `422`, because the order is paid already
+  (`BankTransferOrderIT#aTransferReportedTwiceAtOnceIsAcceptedOnce`). Two orders of the same
+  number placed at once are one order and one `409 Conflict`: the order is written before its
+  workflow starts, and the second one fails on the order's number
+  (`BankTransferOrderIT#anOrderPlacedTwiceAtOnceIsTakenOnce`).
 - **Nothing of the order leaves the application.** The model decides nothing on data, so the
   aggregate is `@NoSyncWithBPMS` without a shared member.
 
@@ -84,7 +106,10 @@ order goes:
   and a transfer reported after that is refused with `409 Conflict`
   (`BankTransferOrderIT#anOrderNotPaidByTheDeadlineIsCancelledAndALateTransferRefused`);
 - report a wrong amount, or a reference no order has: `422 Unprocessable Content`, and the order
-  keeps waiting (`BankTransferOrderIT#aTransferWhichMatchesNoWaitingOrderIsLeftToAccounting`).
+  keeps waiting (`BankTransferOrderIT#aTransferWhichMatchesNoWaitingOrderIsLeftToAccounting`);
+- place an order whose number is not 1 to 40 letters, digits and dashes, which lacks the e-mail
+  address or the item, or whose total is not positive or has more than two decimals: `400 Bad
+  Request`, and no order exists (`BankTransferOrderIT#anInvalidOrderIsRefused`).
 
 In zenbpm-ui an order still waiting is an instance of `bank-transfer-order__bank_transfer_order`
 with the order's number as its business key, its token at the receive task, and the path it took

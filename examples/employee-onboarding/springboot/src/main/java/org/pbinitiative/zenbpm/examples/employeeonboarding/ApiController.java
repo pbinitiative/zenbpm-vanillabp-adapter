@@ -4,9 +4,9 @@
  */
 package org.pbinitiative.zenbpm.examples.employeeonboarding;
 
-import java.net.URI;
 import java.time.LocalDate;
 
+import org.pbinitiative.zenbpm.examples.employeeonboarding.Onboardings.InvalidNewHire;
 import org.pbinitiative.zenbpm.examples.employeeonboarding.Onboardings.NoWelcomeMeetingDue;
 import org.pbinitiative.zenbpm.examples.employeeonboarding.Onboardings.UnknownOnboarding;
 import org.pbinitiative.zenbpm.examples.employeeonboarding.model.Onboarding;
@@ -20,6 +20,7 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.util.UriComponentsBuilder;
 
 /**
  * The REST API of the onboardings, which HR uses. It talks to {@link Onboardings} only.
@@ -49,7 +50,11 @@ public class ApiController {
     public ResponseEntity<OnboardingView> contractSigned(@RequestBody final NewHire hire) {
         final var onboarding = onboardings.contractSigned(hire.employeeName(), hire.position(), hire.startDate());
         return ResponseEntity
-                .created(URI.create("/onboardings/%s".formatted(onboarding.getOnboardingId())))
+                .created(UriComponentsBuilder
+                        .fromPath("/onboardings/{onboardingId}")
+                        .buildAndExpand(onboarding.getOnboardingId())
+                        .encode()
+                        .toUri())
                 .body(OnboardingView.of(onboarding));
     }
 
@@ -80,6 +85,17 @@ public class ApiController {
         @RequestBody final WelcomeMeeting meeting
     ) {
         return OnboardingView.of(onboardings.welcomeMeetingHeld(onboardingId, meeting.notes()));
+    }
+
+    /**
+     * A new hire reported without what the onboarding needs.
+     *
+     * @param exception What is missing
+     * @return 400
+     */
+    @ExceptionHandler
+    public ProblemDetail invalid(final InvalidNewHire exception) {
+        return ProblemDetail.forStatusAndDetail(HttpStatus.BAD_REQUEST, exception.getMessage());
     }
 
     /**

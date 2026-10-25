@@ -23,6 +23,8 @@ public class LocalWarehouse implements Warehouse {
 
     private final Map<String, String> reserved = new ConcurrentHashMap<>();
 
+    private final Map<String, String> shipped = new ConcurrentHashMap<>();
+
     private final AtomicInteger lastParcel = new AtomicInteger(100_000);
 
     @Override
@@ -36,16 +38,20 @@ public class LocalWarehouse implements Warehouse {
 
     @Override
     public String ship(final String orderId) {
-        final var item = reserved.remove(orderId);
-        final var trackingNumber = "PARCEL-%d".formatted(lastParcel.incrementAndGet());
-        LOG.info("'{}' of order {} shipped as {}", item, orderId, trackingNumber);
-        return trackingNumber;
+        return shipped.computeIfAbsent(orderId, id -> {
+            final var item = reserved.remove(id);
+            final var trackingNumber = "PARCEL-%d".formatted(lastParcel.incrementAndGet());
+            LOG.info("'{}' of order {} shipped as {}", item, id, trackingNumber);
+            return trackingNumber;
+        });
     }
 
     @Override
     public void release(final String orderId) {
         final var item = reserved.remove(orderId);
-        LOG.info("'{}' of order {} is back on the shelf", item, orderId);
+        if (item != null) {
+            LOG.info("'{}' of order {} is back on the shelf", item, orderId);
+        }
     }
 
 }

@@ -5,8 +5,8 @@
 package org.pbinitiative.zenbpm.examples.cardpayment;
 
 import java.math.BigDecimal;
-import java.net.URI;
 
+import org.pbinitiative.zenbpm.examples.cardpayment.CardPayment.InvalidPayment;
 import org.pbinitiative.zenbpm.examples.cardpayment.CardPayment.PaymentExists;
 import org.pbinitiative.zenbpm.examples.cardpayment.model.Payment;
 import org.springframework.http.HttpStatus;
@@ -19,6 +19,7 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.util.UriComponentsBuilder;
 
 /**
  * The REST API of the payments, which the checkout of the web shop calls. It talks to
@@ -51,7 +52,11 @@ public class ApiController {
         final var payment = cardPayment.pay(request.orderId(), request.customerEmail(), request.amount(), request
                 .cardToken());
         return ResponseEntity
-                .created(URI.create("/payments/%s".formatted(payment.getOrderId())))
+                .created(UriComponentsBuilder
+                        .fromPath("/payments/{orderId}")
+                        .buildAndExpand(payment.getOrderId())
+                        .encode()
+                        .toUri())
                 .body(PaymentView.of(payment));
     }
 
@@ -66,6 +71,17 @@ public class ApiController {
         return ResponseEntity.of(cardPayment
                 .find(orderId)
                 .map(PaymentView::of));
+    }
+
+    /**
+     * A payment which cannot be charged as it is.
+     *
+     * @param exception What is wrong with it
+     * @return 400
+     */
+    @ExceptionHandler
+    public ProblemDetail invalid(final InvalidPayment exception) {
+        return ProblemDetail.forStatusAndDetail(HttpStatus.BAD_REQUEST, exception.getMessage());
     }
 
     /**

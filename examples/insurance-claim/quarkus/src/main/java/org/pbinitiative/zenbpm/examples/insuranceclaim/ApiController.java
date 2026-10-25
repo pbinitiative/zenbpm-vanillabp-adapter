@@ -5,7 +5,6 @@
 package org.pbinitiative.zenbpm.examples.insuranceclaim;
 
 import java.math.BigDecimal;
-import java.net.URI;
 
 import org.jboss.resteasy.reactive.server.ServerExceptionMapper;
 import org.pbinitiative.zenbpm.examples.insuranceclaim.Claims.InvalidClaim;
@@ -22,6 +21,7 @@ import jakarta.ws.rs.PathParam;
 import jakarta.ws.rs.Produces;
 import jakarta.ws.rs.core.MediaType;
 import jakarta.ws.rs.core.Response;
+import jakarta.ws.rs.core.UriBuilder;
 
 /**
  * The REST API of the claims: the policyholder reports, the adjuster reviews. It talks to
@@ -55,7 +55,9 @@ public class ApiController {
         final var claim = claims.report(report.policyNumber(), report.claimant(), report.coverage(), report
                 .damageAmount(), report.description());
         return Response
-                .created(URI.create("/claims/%s".formatted(claim.getClaimId())))
+                .created(UriBuilder
+                        .fromPath("/claims/{claimId}")
+                        .build(claim.getClaimId()))
                 .entity(ClaimView.of(claim))
                 .build();
     }

@@ -23,10 +23,12 @@ its tests, all of them written for this adapter.
 
 - **An application of its own.** It has no parent of the adapter's build, so its directory can be
   copied out and still builds. The Spring Boot twin inherits `spring-boot-starter-parent`, the
-  Quarkus twin imports `quarkus-bom`, both in the versions the adapter is built with
-  (`ExamplesTest#everyTwinUsesTheVersionsOfThisBuild`).
+  Quarkus twin imports `quarkus-bom` and names VanillaBP's Quarkus extension, all in the versions
+  the adapter is built with (`ExamplesTest#everyTwinUsesTheVersionsOfThisBuild`).
 - **The same process twice.** Both twins deploy the same model files and workflow module
-  (`ExamplesTest#theTwinsRunTheSameModels`), and the README of an example walks through both.
+  (`ExamplesTest#theTwinsRunTheSameModels`) with the same configuration under `vanillabp:`
+  (`ExamplesTest#theTwinsConfigureVanillaBpAlike`), and the README of an example walks through
+  both.
 - **Configured as the page [Home](Home#minimal-configuration) says**, with `rest-address`,
   `name-clash-avoidance: use-prefix`, and `user-task-poll-interval: PT1S` where the example has
   user tasks, so a new user task reaches the application within a second.
