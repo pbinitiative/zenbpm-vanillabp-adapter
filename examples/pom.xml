@@ -18,6 +18,8 @@
     <module>card-payment/quarkus</module>
     <module>bank-transfer-order/springboot</module>
     <module>bank-transfer-order/quarkus</module>
+    <module>insurance-claim/springboot</module>
+    <module>insurance-claim/quarkus</module>
   </modules>
 
   <properties>

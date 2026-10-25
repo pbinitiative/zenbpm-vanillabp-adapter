@@ -1,0 +1,66 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<definitions xmlns="https://www.omg.org/spec/DMN/20191111/MODEL/" id="insurance-claim-routing" name="Claim routing" namespace="http://zenbpm.pbinitiative.org/examples/insurance-claim">
+  <decision id="claim_routing" name="Route a motor claim">
+    <decisionTable id="ClaimRoutingTable" hitPolicy="FIRST">
+      <input id="Input_Coverage" label="Coverage of the policy">
+        <inputExpression id="Expression_Coverage" typeRef="string">
+          <text>coverage</text>
+        </inputExpression>
+      </input>
+      <input id="Input_DamageAmount" label="Damage amount">
+        <inputExpression id="Expression_DamageAmount" typeRef="number">
+          <text>damageAmount</text>
+        </inputExpression>
+      </input>
+      <output id="Output_Route" label="Route" name="route" typeRef="string" />
+      <rule id="Rule_LiabilityOnly">
+        <description>A liability policy pays the damage done to others, never the policyholder's own car.</description>
+        <inputEntry id="Rule_LiabilityOnly_Coverage">
+          <text>"liability"</text>
+        </inputEntry>
+        <inputEntry id="Rule_LiabilityOnly_Amount">
+          <text>-</text>
+        </inputEntry>
+        <outputEntry id="Rule_LiabilityOnly_Route">
+          <text>"reject"</text>
+        </outputEntry>
+      </rule>
+      <rule id="Rule_SmallComprehensive">
+        <description>Small damage under a comprehensive policy is paid without anybody looking at it.</description>
+        <inputEntry id="Rule_SmallComprehensive_Coverage">
+          <text>"comprehensive"</text>
+        </inputEntry>
+        <inputEntry id="Rule_SmallComprehensive_Amount">
+          <text>&lt;= 1000</text>
+        </inputEntry>
+        <outputEntry id="Rule_SmallComprehensive_Route">
+          <text>"auto-pay"</text>
+        </outputEntry>
+      </rule>
+      <rule id="Rule_SmallPartial">
+        <description>Under a partial policy only very small damage is paid at once.</description>
+        <inputEntry id="Rule_SmallPartial_Coverage">
+          <text>"partial"</text>
+        </inputEntry>
+        <inputEntry id="Rule_SmallPartial_Amount">
+          <text>&lt;= 500</text>
+        </inputEntry>
+        <outputEntry id="Rule_SmallPartial_Route">
+          <text>"auto-pay"</text>
+        </outputEntry>
+      </rule>
+      <rule id="Rule_Everything_Else">
+        <description>Everything else is looked at by an adjuster.</description>
+        <inputEntry id="Rule_Everything_Else_Coverage">
+          <text>-</text>
+        </inputEntry>
+        <inputEntry id="Rule_Everything_Else_Amount">
+          <text>-</text>
+        </inputEntry>
+        <outputEntry id="Rule_Everything_Else_Route">
+          <text>"review"</text>
+        </outputEntry>
+      </rule>
+    </decisionTable>
+  </decision>
+</definitions>

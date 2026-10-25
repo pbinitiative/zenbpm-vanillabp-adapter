@@ -10,6 +10,7 @@ and the same REST API, so the difference between them is only what the platform 
 | [`purchase-approval`](purchase-approval)     | A clerk checks a purchase request; above 50 000 a manager has to approve it as well.                    | User tasks completed through the REST API, gateways deciding on the aggregate      |
 | [`card-payment`](card-payment)               | A web shop charges a card: declined, retried, or stopped by an outage an operator resolves.             | A BPMN error on a boundary event, retries with a backoff, an incident              |
 | [`bank-transfer-order`](bank-transfer-order) | An order paid by bank transfer: shipped when the money arrives, reminded, or cancelled at the deadline. | A message the application correlates, an interrupting and a non-interrupting timer |
+| [`insurance-claim`](insurance-claim)         | A decision table routes a motor claim to an immediate payout, an adjuster or a rejection.               | A business rule task with a DMN table, a declared number, a user task              |
 
 Each example directory is an application of its own, with no parent of the adapter's build: copy
 it out and it still builds. Its README tells the story, draws the process, and walks through it

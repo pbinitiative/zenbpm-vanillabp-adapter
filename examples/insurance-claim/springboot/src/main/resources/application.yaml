@@ -1,0 +1,31 @@
+# The claims live in an in-memory database, which is enough for an example: a restart starts
+# empty, on both sides, as long as the engine is restarted too.
+spring:
+  application:
+    name: insurance-claim
+  datasource:
+    url: jdbc:h2:mem:insurance-claim;DB_CLOSE_DELAY=-1
+  jpa:
+    hibernate:
+      ddl-auto: create-drop
+vanillabp:
+  adapters:
+    zenbpm:
+      # The engine started as the README says. ZENBPM_REST_ADDRESS points the application at
+      # another one; the gRPC address defaults to the same host on port 9090.
+      rest-address: ${ZENBPM_REST_ADDRESS:http://localhost:18080}
+      # The identifiers of the workflow module are prefixed in the engine, so the process runs
+      # there as insurance-claim__insurance_claim and the decision as
+      # insurance-claim__claim_routing. Required by the adapter.
+      name-clash-avoidance: use-prefix
+      # How often the adapter looks for new user tasks; the default is five seconds.
+      user-task-poll-interval: PT1S
+  workflow-modules:
+    insurance-claim:
+      workflows:
+        insurance_claim:
+          # The damage amount is a number, which VanillaBP hands to the engine only when it is
+          # declared: every expression language compares numbers in its own way. The decision
+          # table is what compares it, which is the ordinary reason to declare a value.
+          declared-aggregate-values:
+            - damageAmount
