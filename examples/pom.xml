@@ -16,6 +16,8 @@
     <module>purchase-approval/quarkus</module>
     <module>card-payment/springboot</module>
     <module>card-payment/quarkus</module>
+    <module>bank-transfer-order/springboot</module>
+    <module>bank-transfer-order/quarkus</module>
   </modules>
 
   <properties>

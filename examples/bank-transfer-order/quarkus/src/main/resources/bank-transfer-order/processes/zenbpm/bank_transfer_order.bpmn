@@ -1,0 +1,148 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL"
+    xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI"
+    xmlns:dc="http://www.omg.org/spec/DD/20100524/DC"
+    xmlns:di="http://www.omg.org/spec/DD/20100524/DI"
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    xmlns:zenbpm="http://zenbpm.pbinitiative.org/1.0"
+    id="bank-transfer-order" targetNamespace="http://bpmn.io/schema/bpmn">
+  <bpmn:message id="Message_PaymentReceived" name="PaymentReceived" />
+  <bpmn:process id="bank_transfer_order" name="Order paid by bank transfer" isExecutable="true">
+    <bpmn:documentation>A customer orders and pays by bank transfer. The shop sends the payment instructions and waits for the bank to report the transfer. A customer who has not paid after a while gets a reminder; an order still unpaid at the deadline is cancelled and its stock released. The model waits seconds where a real shop waits days, because the engine takes a timer's duration only as a literal value: a shop would write P7D and P14D.</bpmn:documentation>
+    <bpmn:startEvent id="OrderPlaced" name="Order placed">
+      <bpmn:outgoing>Flow_ToSendPaymentInstructions</bpmn:outgoing>
+    </bpmn:startEvent>
+    <bpmn:serviceTask id="SendPaymentInstructions" name="Send the payment instructions">
+      <bpmn:extensionElements>
+        <zenbpm:taskDefinition type="sendPaymentInstructions" retries="3" />
+      </bpmn:extensionElements>
+      <bpmn:incoming>Flow_ToSendPaymentInstructions</bpmn:incoming>
+      <bpmn:outgoing>Flow_ToWaitForTransfer</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:receiveTask id="WaitForTransfer" name="Wait for the bank transfer" messageRef="Message_PaymentReceived">
+      <bpmn:incoming>Flow_ToWaitForTransfer</bpmn:incoming>
+      <bpmn:outgoing>Flow_ToShipOrder</bpmn:outgoing>
+    </bpmn:receiveTask>
+    <bpmn:boundaryEvent id="ReminderDue" name="Reminder due (P7D in a shop)" cancelActivity="false" attachedToRef="WaitForTransfer">
+      <bpmn:outgoing>Flow_ToSendReminder</bpmn:outgoing>
+      <bpmn:timerEventDefinition id="ReminderDue_Definition">
+        <bpmn:timeDuration xsi:type="bpmn:tFormalExpression">PT10S</bpmn:timeDuration>
+      </bpmn:timerEventDefinition>
+    </bpmn:boundaryEvent>
+    <bpmn:boundaryEvent id="PaymentDeadline" name="Deadline passed (P14D in a shop)" attachedToRef="WaitForTransfer">
+      <bpmn:outgoing>Flow_ToCancelOrder</bpmn:outgoing>
+      <bpmn:timerEventDefinition id="PaymentDeadline_Definition">
+        <bpmn:timeDuration xsi:type="bpmn:tFormalExpression">PT25S</bpmn:timeDuration>
+      </bpmn:timerEventDefinition>
+    </bpmn:boundaryEvent>
+    <bpmn:serviceTask id="ShipOrder" name="Ship the order">
+      <bpmn:extensionElements>
+        <zenbpm:taskDefinition type="shipOrder" retries="3" />
+      </bpmn:extensionElements>
+      <bpmn:incoming>Flow_ToShipOrder</bpmn:incoming>
+      <bpmn:outgoing>Flow_ToOrderShipped</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:endEvent id="OrderShipped" name="Order shipped">
+      <bpmn:incoming>Flow_ToOrderShipped</bpmn:incoming>
+    </bpmn:endEvent>
+    <bpmn:serviceTask id="SendReminder" name="Send a payment reminder">
+      <bpmn:extensionElements>
+        <zenbpm:taskDefinition type="sendReminder" retries="3" />
+      </bpmn:extensionElements>
+      <bpmn:incoming>Flow_ToSendReminder</bpmn:incoming>
+      <bpmn:outgoing>Flow_ToReminderSent</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:endEvent id="ReminderSent" name="Reminder sent">
+      <bpmn:incoming>Flow_ToReminderSent</bpmn:incoming>
+    </bpmn:endEvent>
+    <bpmn:serviceTask id="CancelOrder" name="Cancel the order">
+      <bpmn:extensionElements>
+        <zenbpm:taskDefinition type="cancelOrder" retries="3" />
+      </bpmn:extensionElements>
+      <bpmn:incoming>Flow_ToCancelOrder</bpmn:incoming>
+      <bpmn:outgoing>Flow_ToOrderCancelled</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:endEvent id="OrderCancelled" name="Order cancelled">
+      <bpmn:incoming>Flow_ToOrderCancelled</bpmn:incoming>
+    </bpmn:endEvent>
+    <bpmn:sequenceFlow id="Flow_ToSendPaymentInstructions" sourceRef="OrderPlaced" targetRef="SendPaymentInstructions" />
+    <bpmn:sequenceFlow id="Flow_ToWaitForTransfer" sourceRef="SendPaymentInstructions" targetRef="WaitForTransfer" />
+    <bpmn:sequenceFlow id="Flow_ToShipOrder" sourceRef="WaitForTransfer" targetRef="ShipOrder" />
+    <bpmn:sequenceFlow id="Flow_ToOrderShipped" sourceRef="ShipOrder" targetRef="OrderShipped" />
+    <bpmn:sequenceFlow id="Flow_ToSendReminder" sourceRef="ReminderDue" targetRef="SendReminder" />
+    <bpmn:sequenceFlow id="Flow_ToReminderSent" sourceRef="SendReminder" targetRef="ReminderSent" />
+    <bpmn:sequenceFlow id="Flow_ToCancelOrder" sourceRef="PaymentDeadline" targetRef="CancelOrder" />
+    <bpmn:sequenceFlow id="Flow_ToOrderCancelled" sourceRef="CancelOrder" targetRef="OrderCancelled" />
+  </bpmn:process>
+  <bpmndi:BPMNDiagram id="BankTransferOrderDiagram">
+    <bpmndi:BPMNPlane id="BankTransferOrderPlane" bpmnElement="bank_transfer_order">
+      <bpmndi:BPMNShape id="OrderPlaced_di" bpmnElement="OrderPlaced">
+        <dc:Bounds x="172" y="102" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="SendPaymentInstructions_di" bpmnElement="SendPaymentInstructions">
+        <dc:Bounds x="260" y="80" width="100" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="WaitForTransfer_di" bpmnElement="WaitForTransfer">
+        <dc:Bounds x="420" y="80" width="100" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="ReminderDue_di" bpmnElement="ReminderDue">
+        <dc:Bounds x="432" y="142" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="PaymentDeadline_di" bpmnElement="PaymentDeadline">
+        <dc:Bounds x="482" y="142" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="ShipOrder_di" bpmnElement="ShipOrder">
+        <dc:Bounds x="580" y="80" width="100" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="OrderShipped_di" bpmnElement="OrderShipped">
+        <dc:Bounds x="742" y="102" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="SendReminder_di" bpmnElement="SendReminder">
+        <dc:Bounds x="580" y="200" width="100" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="ReminderSent_di" bpmnElement="ReminderSent">
+        <dc:Bounds x="742" y="222" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="CancelOrder_di" bpmnElement="CancelOrder">
+        <dc:Bounds x="580" y="320" width="100" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="OrderCancelled_di" bpmnElement="OrderCancelled">
+        <dc:Bounds x="742" y="342" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNEdge id="Flow_ToSendPaymentInstructions_di" bpmnElement="Flow_ToSendPaymentInstructions">
+        <di:waypoint x="208" y="120" />
+        <di:waypoint x="260" y="120" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_ToWaitForTransfer_di" bpmnElement="Flow_ToWaitForTransfer">
+        <di:waypoint x="360" y="120" />
+        <di:waypoint x="420" y="120" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_ToShipOrder_di" bpmnElement="Flow_ToShipOrder">
+        <di:waypoint x="520" y="120" />
+        <di:waypoint x="580" y="120" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_ToOrderShipped_di" bpmnElement="Flow_ToOrderShipped">
+        <di:waypoint x="680" y="120" />
+        <di:waypoint x="742" y="120" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_ToSendReminder_di" bpmnElement="Flow_ToSendReminder">
+        <di:waypoint x="450" y="178" />
+        <di:waypoint x="450" y="240" />
+        <di:waypoint x="580" y="240" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_ToReminderSent_di" bpmnElement="Flow_ToReminderSent">
+        <di:waypoint x="680" y="240" />
+        <di:waypoint x="742" y="240" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_ToCancelOrder_di" bpmnElement="Flow_ToCancelOrder">
+        <di:waypoint x="500" y="178" />
+        <di:waypoint x="500" y="360" />
+        <di:waypoint x="580" y="360" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_ToOrderCancelled_di" bpmnElement="Flow_ToOrderCancelled">
+        <di:waypoint x="680" y="360" />
+        <di:waypoint x="742" y="360" />
+      </bpmndi:BPMNEdge>
+    </bpmndi:BPMNPlane>
+  </bpmndi:BPMNDiagram>
+</bpmn:definitions>

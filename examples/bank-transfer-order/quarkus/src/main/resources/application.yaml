@@ -1,0 +1,21 @@
+# The orders live in an in-memory database, which is enough for an example: a restart starts
+# empty, on both sides, as long as the engine is restarted too.
+quarkus:
+  application:
+    name: bank-transfer-order
+  datasource:
+    db-kind: h2
+    jdbc:
+      url: jdbc:h2:mem:bank-transfer-order;DB_CLOSE_DELAY=-1
+  hibernate-orm:
+    schema-management:
+      strategy: drop-and-create
+vanillabp:
+  adapters:
+    zenbpm:
+      # The engine started as the README says. ZENBPM_REST_ADDRESS points the application at
+      # another one; the gRPC address defaults to the same host on port 9090.
+      rest-address: ${ZENBPM_REST_ADDRESS:http://localhost:18080}
+      # The identifiers of the workflow module are prefixed in the engine, so the process runs
+      # there as bank-transfer-order__bank_transfer_order. Required by the adapter.
+      name-clash-avoidance: use-prefix

@@ -11,10 +11,11 @@ its tests, all of them written for this adapter.
 
 ## The examples
 
-|                                                      Example                                                       |                                          The story                                          |                         What it shows                          |
-|--------------------------------------------------------------------------------------------------------------------|---------------------------------------------------------------------------------------------|----------------------------------------------------------------|
-| [Purchase approval](https://github.com/pbinitiative/zenbpm-vanillabp-adapter/tree/main/examples/purchase-approval) | A clerk checks a purchase request; above 50 000 a manager has to approve it too.            | user tasks answered through the REST API, gateways on booleans |
-| [Card payment](https://github.com/pbinitiative/zenbpm-vanillabp-adapter/tree/main/examples/card-payment)           | A web shop charges a card: declined, retried, or stopped by an outage an operator resolves. | a BPMN error, retries, an incident resolved                    |
+|                                                        Example                                                         |                                                The story                                                |                         What it shows                          |
+|------------------------------------------------------------------------------------------------------------------------|---------------------------------------------------------------------------------------------------------|----------------------------------------------------------------|
+| [Purchase approval](https://github.com/pbinitiative/zenbpm-vanillabp-adapter/tree/main/examples/purchase-approval)     | A clerk checks a purchase request; above 50 000 a manager has to approve it too.                        | user tasks answered through the REST API, gateways on booleans |
+| [Card payment](https://github.com/pbinitiative/zenbpm-vanillabp-adapter/tree/main/examples/card-payment)               | A web shop charges a card: declined, retried, or stopped by an outage an operator resolves.             | a BPMN error, retries, an incident resolved                    |
+| [Bank transfer order](https://github.com/pbinitiative/zenbpm-vanillabp-adapter/tree/main/examples/bank-transfer-order) | An order paid by bank transfer: shipped when the money arrives, reminded, or cancelled at the deadline. | a message correlated by the application, timers                |
 
 ## What every example is
 
