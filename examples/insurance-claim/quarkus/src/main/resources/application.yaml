@@ -31,3 +31,8 @@ vanillabp:
           # table is what compares it, which is the ordinary reason to declare a value.
           declared-aggregate-values:
             - damageAmount
+          # The model reads the decision table's answer by a path, routing.route, because the engine
+          # answers a table with a context, and the gateway compares the route with the three the
+          # table knows. Both expressions are about the table's answer, not about the claim, so
+          # they are meant as they are.
+          accept-expressions-in-the-model: true

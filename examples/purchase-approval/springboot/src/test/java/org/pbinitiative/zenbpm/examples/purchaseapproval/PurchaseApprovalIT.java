@@ -15,6 +15,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.http.MediaType;
+import org.springframework.test.annotation.DirtiesContext;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.web.servlet.assertj.MockMvcTester;
@@ -32,6 +33,9 @@ import com.jayway.jsonpath.JsonPath;
  */
 @Testcontainers(disabledWithoutDocker = true)
 @SpringBootTest
+// the application is closed after the tests, before the engine stops; otherwise it runs until the
+// JVM ends and reports the engine gone
+@DirtiesContext
 class PurchaseApprovalIT {
 
     /**

@@ -12,6 +12,7 @@ import jakarta.persistence.EnumType;
 import jakarta.persistence.Enumerated;
 import jakarta.persistence.Id;
 import jakarta.persistence.Table;
+import jakarta.persistence.Version;
 
 /**
  * The workflow aggregate: one order of the web shop, paid by bank transfer.
@@ -20,6 +21,11 @@ import jakarta.persistence.Table;
  * engine: the class is <code>@NoSyncWithBPMS</code> without a shared member. The message the bank's
  * transfer correlates finds the workflow by the order's number all the same, because the adapter
  * gives every message the workflow waits for the aggregate's id as its correlation key.
+ * <p>
+ * The reminder runs on a branch of its own while the order waits, so two transactions can write the
+ * order at the same time: the reminder and the transfer, or the reminder and the deadline. The
+ * version attribute makes the transaction committing second fail instead of putting back what it
+ * read. A task which fails so is handed out again by the engine, and reads the order anew.
  */
 @Entity
 @Table(name = "CUSTOMER_ORDER")
@@ -42,6 +48,9 @@ public class Order {
 
     @Id
     private String orderId;
+
+    @Version
+    private long version;
 
     private String customerEmail;
 

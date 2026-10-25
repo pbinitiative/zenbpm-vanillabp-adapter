@@ -125,13 +125,26 @@ class InsuranceClaimIT {
                 .statusCode(200);
     }
 
+    /**
+     * Reads one field without asserting anything, so the polls of a wait log nothing: RestAssured
+     * logs the request and the response of every assertion which fails.
+     */
+    private static <T> T field(
+        final String claimId,
+        final String name
+    ) {
+        return show(claimId)
+                .extract()
+                .path(name);
+    }
+
     private static void awaitStatus(
         final String claimId,
         final String status
     ) {
         await()
                 .atMost(STEP)
-                .untilAsserted(() -> show(claimId).body("status", equalTo(status)));
+                .until(() -> field(claimId, "status"), equalTo(status));
     }
 
 }

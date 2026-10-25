@@ -100,13 +100,26 @@ class EmployeeOnboardingIT {
                 .statusCode(200);
     }
 
+    /**
+     * Reads one field without asserting anything, so the polls of a wait log nothing: RestAssured
+     * logs the request and the response of every assertion which fails.
+     */
+    private static <T> T field(
+        final String onboardingId,
+        final String name
+    ) {
+        return show(onboardingId)
+                .extract()
+                .path(name);
+    }
+
     private static void awaitStatus(
         final String onboardingId,
         final String status
     ) {
         await()
                 .atMost(STEP)
-                .untilAsserted(() -> show(onboardingId).body("status", equalTo(status)));
+                .until(() -> field(onboardingId, "status"), equalTo(status));
     }
 
 }

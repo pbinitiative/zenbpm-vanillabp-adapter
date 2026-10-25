@@ -36,7 +36,7 @@ class BankTransferOrderIT {
         final var orderId = place();
         await()
                 .atMost(STEP)
-                .untilAsserted(() -> show(orderId).body("paymentInstructionsSent", equalTo(true)));
+                .until(() -> field(orderId, "paymentInstructionsSent"), equalTo(true));
 
         transfer(orderId, "89.90").statusCode(200);
 
@@ -51,7 +51,7 @@ class BankTransferOrderIT {
         final var orderId = place();
         await()
                 .atMost(STEP)
-                .untilAsserted(() -> show(orderId).body("reminderSent", equalTo(true)));
+                .until(() -> field(orderId, "reminderSent"), equalTo(true));
 
         transfer(orderId, "89.90").statusCode(200);
 
@@ -113,13 +113,26 @@ class BankTransferOrderIT {
                 .statusCode(200);
     }
 
+    /**
+     * Reads one field without asserting anything, so the polls of a wait log nothing: RestAssured
+     * logs the request and the response of every assertion which fails.
+     */
+    private static <T> T field(
+        final String orderId,
+        final String name
+    ) {
+        return show(orderId)
+                .extract()
+                .path(name);
+    }
+
     private static void awaitStatus(
         final String orderId,
         final String status
     ) {
         await()
                 .atMost(STEP)
-                .untilAsserted(() -> show(orderId).body("status", equalTo(status)));
+                .until(() -> field(orderId, "status"), equalTo(status));
     }
 
 }

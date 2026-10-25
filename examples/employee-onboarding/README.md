@@ -38,7 +38,10 @@ the same files in both twins. They are two files because the engine takes one pr
   writes every column. Then the transaction which commits second puts back the empty column of
   the first, and the laptop or the badge is lost, on every run against the engine
   (`EmployeeOnboardingIT#theCalledProcessPreparesTheWorkplaceWithBothBranchesKept`). With it each
-  transaction writes only what it changed.
+  transaction writes only what it changed. VanillaBP's report at startup still names the
+  aggregate, because it looks only for a version attribute (`@Version`). That is the other way
+  out: here it would make one of the two branches fail and run again in every onboarding,
+  because they always write at the same moment.
 - **The end of the workflow.** A `@WorkflowEnded` method tells the application that the
   onboarding is done. The engine reports no end of a workflow, so the adapter puts a marker task
   in front of the end event of the onboarding when it deploys the model. The called process gets

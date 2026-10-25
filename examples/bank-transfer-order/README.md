@@ -36,6 +36,11 @@ the order, so the numbers are in the model.
 - **Two timers on one wait.** The reminder is non-interrupting (`cancelActivity="false"`): it sends
   the reminder on a branch of its own, and the order keeps waiting. The deadline interrupts: it
   ends the waiting and cancels the order.
+- **Two branches, one order.** While the reminder is sent, the transfer or the deadline can
+  arrive, and two transactions write the same order. `Order` has a version attribute
+  (`@Version`), so the transaction committing second fails instead of putting back what it read
+  before the other one committed. A task which fails like that is handed out again by the engine,
+  and it reads the order anew.
 - **Nothing of the order leaves the application.** The model decides nothing on data, so the
   aggregate is `@NoSyncWithBPMS` without a shared member.
 

@@ -8,6 +8,9 @@ spring:
   jpa:
     hibernate:
       ddl-auto: create-drop
+    # The controllers answer with views of plain values, so no database session has to stay open
+    # while a response is written.
+    open-in-view: false
 vanillabp:
   adapters:
     zenbpm:

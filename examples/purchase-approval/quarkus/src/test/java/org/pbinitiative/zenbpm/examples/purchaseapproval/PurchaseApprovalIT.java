@@ -138,19 +138,32 @@ class PurchaseApprovalIT {
                 .statusCode(200);
     }
 
+    /**
+     * Reads one field without asserting anything, so the polls of a wait log nothing: RestAssured
+     * logs the request and the response of every assertion which fails.
+     */
+    private static <T> T field(
+        final String id,
+        final String name
+    ) {
+        return show(id)
+                .extract()
+                .path(name);
+    }
+
     private static void awaitStatus(
         final String id,
         final String status
     ) {
         await()
                 .atMost(STEP)
-                .untilAsserted(() -> show(id).body("status", equalTo(status)));
+                .until(() -> field(id, "status"), equalTo(status));
     }
 
     private static void awaitRequesterNotified(final String id) {
         await()
                 .atMost(STEP)
-                .untilAsserted(() -> show(id).body("requesterNotified", equalTo(true)));
+                .until(() -> field(id, "requesterNotified"), equalTo(true));
     }
 
 }

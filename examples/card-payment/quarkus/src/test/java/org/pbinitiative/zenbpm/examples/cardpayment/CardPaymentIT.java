@@ -59,7 +59,7 @@ class CardPaymentIT {
 
         await()
                 .atMost(STEP)
-                .untilAsserted(() -> show(orderId).body("customerAskedForAnotherCard", equalTo(true)));
+                .until(() -> field(orderId, "customerAskedForAnotherCard"), equalTo(true));
         show(orderId).body("status", equalTo("DECLINED"));
         assertThat(provider.attemptsFor(orderId), equalTo(1));
     }
@@ -143,13 +143,26 @@ class CardPaymentIT {
                 .statusCode(200);
     }
 
+    /**
+     * Reads one field without asserting anything, so the polls of a wait log nothing: RestAssured
+     * logs the request and the response of every assertion which fails.
+     */
+    private static <T> T field(
+        final String orderId,
+        final String name
+    ) {
+        return show(orderId)
+                .extract()
+                .path(name);
+    }
+
     private static void awaitStatus(
         final String orderId,
         final String status
     ) {
         await()
                 .atMost(STEP)
-                .untilAsserted(() -> show(orderId).body("status", equalTo(status)));
+                .until(() -> field(orderId, "status"), equalTo(status));
     }
 
 }
