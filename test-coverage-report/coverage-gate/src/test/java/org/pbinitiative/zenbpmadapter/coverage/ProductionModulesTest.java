@@ -129,6 +129,21 @@ class ProductionModulesTest {
     }
 
     @Test
+    @DisplayName("An example application below examples/ is no module of the adapter and is not asked for")
+    void theExamplesAreNotAskedFor() throws IOException {
+        module("examples/purchase-approval/springboot", "purchase-approval-springboot", true);
+        module("spring-boot/examples/a-module", "a-module-named-examples-elsewhere", true);
+        final var springBoot = report("spring-boot", "a-module-named-examples-elsewhere");
+        final var quarkus = report("quarkus");
+
+        assertEquals(
+                List.of(),
+                ProductionModules.missingFromTheReportOfTheirPlatform(root, springBoot, quarkus, Set.of()));
+        assertEquals(List.of("a-module-named-examples-elsewhere"), ProductionModules.artifactIdsWithProductionSources(
+                root));
+    }
+
+    @Test
     @DisplayName("Modules without production sources and anything under target are not asked for")
     void testOnlyModulesAndBuildOutputAreNotAskedFor() throws IOException {
         module("smoke-test", "zenbpm-vanillabp-adapter-smoke-test", false);

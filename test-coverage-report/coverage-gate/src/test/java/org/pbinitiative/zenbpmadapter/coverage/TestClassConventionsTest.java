@@ -7,6 +7,9 @@ package org.pbinitiative.zenbpmadapter.coverage;
 
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.nio.file.Path;
+import java.util.List;
+
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -29,6 +32,10 @@ import io.vanillabp.integration.test.utils.TestClassConventions;
  * reads in the moment something goes wrong, so a sentence which fell apart in the source
  * takes away the one explanation they get. The check reads the main sources, and one run
  * of it covers every module.
+ * <p>
+ * The test classes of <code>examples/</code> are left out of the suppression: an example is an
+ * application somebody copies, and its tests use what the platform brings, not this repository's
+ * test utilities, see decision 67 in the repository's DECISIONS.md.
  */
 @ExtendWith(SuppressOutputExtension.class)
 class TestClassConventionsTest {
@@ -38,7 +45,7 @@ class TestClassConventionsTest {
     void everyTestClassSuppressesItsOutput() {
         final var root = CoverageGate.repositoryRoot("coverage.repository.root");
 
-        final var offenders = TestClassConventions.testClassesWithoutOutputSuppression(root);
+        final var offenders = outsideTheExamples(root, TestClassConventions.testClassesWithoutOutputSuppression(root));
 
         assertTrue(
                 offenders.isEmpty(),
@@ -50,7 +57,7 @@ class TestClassConventionsTest {
     void noTestClassSuppressesTooLate() {
         final var root = CoverageGate.repositoryRoot("coverage.repository.root");
 
-        final var offenders = TestClassConventions.testClassesSuppressingTooLate(root);
+        final var offenders = outsideTheExamples(root, TestClassConventions.testClassesSuppressingTooLate(root));
 
         assertTrue(
                 offenders.isEmpty(),
@@ -79,6 +86,25 @@ class TestClassConventionsTest {
         assertTrue(
                 offenders.isEmpty(),
                 () -> MessageConventions.describeMessagesGluedTogether(offenders));
+    }
+
+    private static List<Path> outsideTheExamples(
+        final Path root,
+        final List<Path> testClasses
+    ) {
+        final var examples = root
+                .toAbsolutePath()
+                .normalize()
+                .resolve("examples");
+        return testClasses
+                .stream()
+                .filter(testClass -> !root
+                        .toAbsolutePath()
+                        .normalize()
+                        .resolve(testClass)
+                        .normalize()
+                        .startsWith(examples))
+                .toList();
     }
 
 }

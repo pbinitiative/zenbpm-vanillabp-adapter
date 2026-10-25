@@ -490,6 +490,9 @@
               <!-- copies of the engine's API contract, kept byte for byte as the engine
                    wrote them -->
               <exclude>**/src/main/zenbpm/**</exclude>
+              <!-- the configuration of an example explains itself in comments, which the
+                   formatter would drop -->
+              <exclude>examples/**</exclude>
             </excludes>
             <jackson>
               <yamlFeatures>
@@ -506,6 +509,10 @@
               <!-- the generator of the blueprints' overlay, run as a source file, see decision 64
                    in the repository's DECISIONS.md -->
               <include>blueprints-overlay/*.java</include>
+              <!-- the examples, which are no modules of this build, see decision 67 in the
+                   repository's DECISIONS.md -->
+              <include>examples/*/*/src/main/java/**/*.java</include>
+              <include>examples/*/*/src/test/java/**/*.java</include>
             </includes>
             <excludes>
               <!-- the gRPC stubs generated from the engine's proto -->

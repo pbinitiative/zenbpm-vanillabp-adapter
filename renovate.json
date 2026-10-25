@@ -3,6 +3,7 @@
   "extends": ["config:recommended"],
   "enabledManagers": ["maven", "github-actions", "custom.regex"],
   "dependencyDashboard": true,
+  "ignorePaths": ["**/node_modules/**", "**/bower_components/**", "**/vendor/**", "**/__tests__/**", "**/test/**", "**/tests/**", "**/__fixtures__/**"],
   "customManagers": [
     {
       "description": "The image of actionlint, which the job workflow-lint of checks.yaml runs in a 'run:' line, where the GitHub Actions manager does not look.",
@@ -27,9 +28,10 @@
       "enabled": false
     },
     {
-      "description": "The Spring Boot and Quarkus versions are the ones adapter-platform-integration imports. They move when the VanillaBP platform moves, never on their own, because the platform integrations are compiled against exactly them. Every artifact read in springboot.version or quarkus.version is listed, because an update of one of them rewrites the property for all.",
+      "description": "The Spring Boot and Quarkus versions are the ones adapter-platform-integration imports. They move when the VanillaBP platform moves, never on their own, because the platform integrations are compiled against exactly them. Every artifact read in springboot.version or quarkus.version is listed, because an update of one of them rewrites the property for all. The examples inherit or import the same versions, which ExamplesTest holds to the root POM, so their parent moves with the adapter as well.",
       "matchPackageNames": [
         "org.springframework.boot:spring-boot-dependencies",
+        "org.springframework.boot:spring-boot-starter-parent",
         "org.springframework.boot:spring-boot-configuration-processor",
         "io.quarkus:quarkus-bom",
         "io.quarkus:quarkus-extension-maven-plugin",

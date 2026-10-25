@@ -134,6 +134,21 @@ class RenovateConfigurationTest {
     }
 
     @Test
+    @DisplayName("Renovate reads the POMs of the examples, which its recommended configuration leaves out")
+    void renovateReadsTheExamples() {
+        final var ignored = strings(configuration().get("ignorePaths"));
+
+        assertFalse(ignored.isEmpty(), """
+                renovate.json names no 'ignorePaths', so Renovate keeps the default of config:recommended, \
+                which ignores every directory named 'examples'. The POMs of examples/ would never be \
+                updated; name the default without it.""");
+        assertEquals(List.of(), ignored
+                .stream()
+                .filter(path -> path.contains("examples"))
+                .toList(), "renovate.json ignores the examples, whose POMs Renovate has to read");
+    }
+
+    @Test
     @DisplayName("The custom managers find every image a workflow runs by a version and the JDK of the required check")
     void theCustomManagersFindWhatTheirDescriptionsSay() throws IOException {
         final var files = new ArrayList<Path>(workflows());
@@ -328,7 +343,7 @@ class RenovateConfigurationTest {
         final var artifacts = new ArrayList<Artifact>();
         for (final var pom : poms()) {
             final var document = parse(pom);
-            for (final var kind : List.of("dependency", "plugin", "path", "extension")) {
+            for (final var kind : List.of("parent", "dependency", "plugin", "path", "extension")) {
                 final var elements = document.getElementsByTagName(kind);
                 for (var index = 0; index < elements.getLength(); index++) {
                     final var element = (Element) elements.item(index);

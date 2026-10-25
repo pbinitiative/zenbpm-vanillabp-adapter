@@ -2037,3 +2037,32 @@ plan holds ready (story S12.3.1), Renovate follows the engine's GitHub releases 
 property only, and a person completes it with the commit, the digest and the two copies of the
 engine's contract. Until then the check refuses a release of the half-moved
 pin.
+
+### 67. The examples are standalone applications in `examples/`, each on both platforms, built and tested on every pull request
+
+The owners of this repository asked for example applications of their own, written for this
+adapter and kept here, beside the blueprints of decision 64, which belong to the VanillaBP project
+and are only adapted from outside. An example tells a realistic business story, and its model,
+code, configuration and tests are all of this repository; it runs against a standalone engine and
+is driven through its own REST API, which calls VanillaBP and through it the adapter, as a real
+application does.
+
+Each example lives in `examples/<name>/` and comes twice, `springboot/` and `quarkus/`, because the
+adapter promises both platforms and an example on one of them would show half of it. A twin is a
+Maven project of its own and no module of the root POM: it inherits `spring-boot-starter-parent` or
+imports `quarkus-bom` and names the adapter by its version, so a reader can copy the directory out
+and build it. That it is outside the reactor costs a second build, which the job `examples` of
+`checks.yaml` runs on every pull request after installing the adapter of the same commit, so a
+change of the adapter which breaks an example is red in the pull request which made it. The root
+build cannot see that an example drifted from it, so `ExamplesTest` holds the twins to one
+another and to the versions of the root POM, and `EnginePinTest` holds the engine they test against
+to the pin.
+
+What is a rule of this repository's own code applies to an example where an application would
+follow it too: Spotless, the diagram of every model (decision 29), the order of methods (decision
+19) and package-private test classes (decision 21). Two rules do not: an example's code is not the
+adapter's, so no coverage report reads it, and its tests use what the platform brings rather than
+VanillaBP's `test-utils` and its `SuppressOutputExtension`, which an application copied out would
+not have. Each twin's integration test starts the pinned engine itself from the image its POM names
+and walks through the story its README tells, so the README's promises are tested, on both
+platforms.

@@ -1,0 +1,23 @@
+# The purchase requests live in an in-memory database, which is enough for an example: a restart
+# starts empty, on both sides, as long as the engine is restarted too.
+quarkus:
+  application:
+    name: purchase-approval
+  datasource:
+    db-kind: h2
+    jdbc:
+      url: jdbc:h2:mem:purchase-approval;DB_CLOSE_DELAY=-1
+  hibernate-orm:
+    schema-management:
+      strategy: drop-and-create
+vanillabp:
+  adapters:
+    zenbpm:
+      # The engine started as the README says. ZENBPM_REST_ADDRESS points the application at
+      # another one; the gRPC address defaults to the same host on port 9090.
+      rest-address: ${ZENBPM_REST_ADDRESS:http://localhost:18080}
+      # The identifiers of the workflow module are prefixed in the engine, so the process runs
+      # there as purchase-approval__purchase_approval. Required by the adapter.
+      name-clash-avoidance: use-prefix
+      # How often the adapter looks for new user tasks; the default is five seconds.
+      user-task-poll-interval: PT1S

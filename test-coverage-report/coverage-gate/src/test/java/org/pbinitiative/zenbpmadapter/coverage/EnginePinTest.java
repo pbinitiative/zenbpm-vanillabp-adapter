@@ -30,7 +30,8 @@ import io.vanillabp.integration.test.utils.SuppressOutputExtension;
  * the table of the README and the wiki's page {@code Home}. This test holds each of them to the
  * POM, so moving the pin cannot leave one of them naming an engine the tests no longer run, and
  * it holds {@code bin/zenbpm-engine.sh}, which starts the engine for the blueprints, to reading
- * the pin from the POM.
+ * the pin from the POM. The examples of {@code examples/} name the pin in their POMs, because each
+ * of them is built on its own, and their READMEs start it; both are held to the root POM as well.
  * <p>
  * It checks what the copies say they are, not their content. The content is checked by
  * {@code bin/check-engine-copies.sh} in the pull-request check, see decision 18 in the
@@ -48,7 +49,8 @@ class EnginePinTest {
 
     private static final Pattern ANY_COMMIT = Pattern.compile("\\b[0-9a-f]{40}\\b");
 
-    private static final Pattern ANY_IMAGE = Pattern.compile("[^\\s`|(]+@sha256:[0-9a-f]{64}");
+    /** An image by digest, in a table, a link, code or the element of a POM. */
+    private static final Pattern ANY_IMAGE = Pattern.compile("[^\\s`|(<>]+@sha256:[0-9a-f]{64}");
 
     /** The image a <code>docker run</code> starts: the last word of the command. */
     private static final Pattern IMAGE_OF_A_COMMAND = Pattern.compile("(?m)^docker run [^\\n]*[ \\t](\\S+)[ \\t]*$");
@@ -101,6 +103,46 @@ class EnginePinTest {
                                 .containsAll(images),
                         () -> "%s names the commits %s and the images %s, but the pin is '%s' and '%s'."
                                 .formatted(ROOT.relativize(page), commits, images, COMMIT, IMAGE));
+            }
+        }
+    }
+
+    @Test
+    @DisplayName("Every example tests against the pinned image, and its documentation starts no other engine")
+    void theExamplesNameThePin() throws IOException {
+        final var aggregator = ROOT.resolve("examples/pom.xml");
+        final List<Path> files;
+        try (var walk = Files.walk(ROOT.resolve("examples"))) {
+            files = walk
+                    .filter(Files::isRegularFile)
+                    .filter(file -> !ROOT
+                            .relativize(file)
+                            .toString()
+                            .contains("target"))
+                    .filter(file -> file
+                            .toString()
+                            .endsWith(".md") || file.endsWith("pom.xml"))
+                    .sorted()
+                    .toList();
+        }
+        for (final var file : files) {
+            final var text = Files.readString(file);
+            final var place = ROOT.relativize(file);
+            final var images = everyMatch(ANY_IMAGE, text);
+            assertTrue(Set
+                    .of(IMAGE)
+                    .containsAll(images),
+                    () -> "%s names the images %s, but the pin of the root POM is '%s'."
+                            .formatted(place, images, IMAGE));
+            IMAGE_OF_A_COMMAND
+                    .matcher(text)
+                    .results()
+                    .forEach(command -> assertEquals(IMAGE, command.group(1),
+                            () -> "a 'docker run' of %s has to start the pinned image".formatted(place)));
+            if (file.endsWith("pom.xml") && !file.equals(aggregator)) {
+                assertTrue(text.contains("<zenbpm.image>%s</zenbpm.image>".formatted(IMAGE)), () -> """
+                        %s does not hand its integration test the pinned image in the property zenbpm.image; \
+                        moving the pin moves the examples with it.""".formatted(place));
             }
         }
     }

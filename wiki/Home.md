@@ -26,10 +26,13 @@ first. This wiki only adds what a user of THIS adapter has to know:
    What it takes to build a Quarkus application with this adapter as a native image.
 6. [Blueprints](Blueprints)<br>
    Which of the VanillaBP blueprints run on ZenBPM, why the others do not, and how to run one.
-7. [What a handler may assume about its thread](#what-a-handler-may-assume-about-its-thread)<br>
+7. [Examples](Examples)<br>
+   Complete applications of this repository, each a business story on Spring Boot and on Quarkus,
+   which run against a standalone engine.
+8. [What a handler may assume about its thread](#what-a-handler-may-assume-about-its-thread)<br>
    How many handlers run at once, the lock the engine holds for each, and the one case in which a
    handler runs twice.
-8. [The engine this adapter is tested against](#the-engine-this-adapter-is-tested-against)<br>
+9. [The engine this adapter is tested against](#the-engine-this-adapter-is-tested-against)<br>
    Tested, not newer.
 
 ## Getting started
