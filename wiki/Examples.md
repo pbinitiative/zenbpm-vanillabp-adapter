@@ -11,9 +11,10 @@ its tests, all of them written for this adapter.
 
 ## The examples
 
-|                                                      Example                                                       |                                    The story                                     |                         What it shows                          |
-|--------------------------------------------------------------------------------------------------------------------|----------------------------------------------------------------------------------|----------------------------------------------------------------|
-| [Purchase approval](https://github.com/pbinitiative/zenbpm-vanillabp-adapter/tree/main/examples/purchase-approval) | A clerk checks a purchase request; above 50 000 a manager has to approve it too. | user tasks answered through the REST API, gateways on booleans |
+|                                                      Example                                                       |                                          The story                                          |                         What it shows                          |
+|--------------------------------------------------------------------------------------------------------------------|---------------------------------------------------------------------------------------------|----------------------------------------------------------------|
+| [Purchase approval](https://github.com/pbinitiative/zenbpm-vanillabp-adapter/tree/main/examples/purchase-approval) | A clerk checks a purchase request; above 50 000 a manager has to approve it too.            | user tasks answered through the REST API, gateways on booleans |
+| [Card payment](https://github.com/pbinitiative/zenbpm-vanillabp-adapter/tree/main/examples/card-payment)           | A web shop charges a card: declined, retried, or stopped by an outage an operator resolves. | a BPMN error, retries, an incident resolved                    |
 
 ## What every example is
 

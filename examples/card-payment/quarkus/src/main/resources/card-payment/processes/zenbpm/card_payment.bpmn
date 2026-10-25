@@ -1,0 +1,97 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL"
+    xmlns:zenbpm="http://zenbpm.pbinitiative.org/1.0"
+    id="card-payment" targetNamespace="http://bpmn.io/schema/bpmn"
+    xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI"
+    xmlns:dc="http://www.omg.org/spec/DD/20100524/DC"
+    xmlns:di="http://www.omg.org/spec/DD/20100524/DI">
+  <bpmn:error id="Error_CardDeclined" name="Card declined" errorCode="card-declined" />
+  <bpmn:process id="card_payment" name="Card payment" isExecutable="true">
+    <bpmn:documentation>A customer pays an order of the web shop by card. The payment provider charges the card; a card it declines makes the shop ask the customer for another one, while a provider which does not answer is tried again, and an outage which outlasts the attempts becomes an incident for an operator.</bpmn:documentation>
+    <bpmn:startEvent id="OrderPlaced" name="Order placed">
+      <bpmn:outgoing>Flow_ToChargeCard</bpmn:outgoing>
+    </bpmn:startEvent>
+    <bpmn:serviceTask id="ChargeCard" name="Charge the card">
+      <bpmn:extensionElements>
+        <zenbpm:taskDefinition type="chargeCard" retries="3" />
+      </bpmn:extensionElements>
+      <bpmn:incoming>Flow_ToChargeCard</bpmn:incoming>
+      <bpmn:outgoing>Flow_ToConfirmOrder</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:boundaryEvent id="CardDeclined" name="Card declined" attachedToRef="ChargeCard">
+      <bpmn:outgoing>Flow_ToAskForAnotherCard</bpmn:outgoing>
+      <bpmn:errorEventDefinition id="CardDeclined_Definition" errorRef="Error_CardDeclined" />
+    </bpmn:boundaryEvent>
+    <bpmn:serviceTask id="ConfirmOrder" name="Confirm the order">
+      <bpmn:extensionElements>
+        <zenbpm:taskDefinition type="confirmOrder" retries="3" />
+      </bpmn:extensionElements>
+      <bpmn:incoming>Flow_ToConfirmOrder</bpmn:incoming>
+      <bpmn:outgoing>Flow_ToOrderPaid</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:endEvent id="OrderPaid" name="Order paid">
+      <bpmn:incoming>Flow_ToOrderPaid</bpmn:incoming>
+    </bpmn:endEvent>
+    <bpmn:serviceTask id="AskForAnotherCard" name="Ask the customer for another card">
+      <bpmn:extensionElements>
+        <zenbpm:taskDefinition type="askForAnotherCard" retries="3" />
+      </bpmn:extensionElements>
+      <bpmn:incoming>Flow_ToAskForAnotherCard</bpmn:incoming>
+      <bpmn:outgoing>Flow_ToPaymentDeclined</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:endEvent id="PaymentDeclined" name="Payment declined">
+      <bpmn:incoming>Flow_ToPaymentDeclined</bpmn:incoming>
+    </bpmn:endEvent>
+    <bpmn:sequenceFlow id="Flow_ToChargeCard" sourceRef="OrderPlaced" targetRef="ChargeCard" />
+    <bpmn:sequenceFlow id="Flow_ToConfirmOrder" sourceRef="ChargeCard" targetRef="ConfirmOrder" />
+    <bpmn:sequenceFlow id="Flow_ToOrderPaid" sourceRef="ConfirmOrder" targetRef="OrderPaid" />
+    <bpmn:sequenceFlow id="Flow_ToAskForAnotherCard" sourceRef="CardDeclined" targetRef="AskForAnotherCard" />
+    <bpmn:sequenceFlow id="Flow_ToPaymentDeclined" sourceRef="AskForAnotherCard" targetRef="PaymentDeclined" />
+  </bpmn:process>
+  <bpmndi:BPMNDiagram id="CardPaymentDiagram">
+    <bpmndi:BPMNPlane id="CardPaymentPlane" bpmnElement="card_payment">
+      <bpmndi:BPMNShape id="OrderPlaced_di" bpmnElement="OrderPlaced">
+        <dc:Bounds x="172" y="102" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="ChargeCard_di" bpmnElement="ChargeCard">
+        <dc:Bounds x="260" y="80" width="100" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="CardDeclined_di" bpmnElement="CardDeclined">
+        <dc:Bounds x="292" y="142" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="ConfirmOrder_di" bpmnElement="ConfirmOrder">
+        <dc:Bounds x="420" y="80" width="100" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="OrderPaid_di" bpmnElement="OrderPaid">
+        <dc:Bounds x="582" y="102" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="AskForAnotherCard_di" bpmnElement="AskForAnotherCard">
+        <dc:Bounds x="420" y="200" width="100" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="PaymentDeclined_di" bpmnElement="PaymentDeclined">
+        <dc:Bounds x="582" y="222" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNEdge id="Flow_ToChargeCard_di" bpmnElement="Flow_ToChargeCard">
+        <di:waypoint x="208" y="120" />
+        <di:waypoint x="260" y="120" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_ToConfirmOrder_di" bpmnElement="Flow_ToConfirmOrder">
+        <di:waypoint x="360" y="120" />
+        <di:waypoint x="420" y="120" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_ToOrderPaid_di" bpmnElement="Flow_ToOrderPaid">
+        <di:waypoint x="520" y="120" />
+        <di:waypoint x="582" y="120" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_ToAskForAnotherCard_di" bpmnElement="Flow_ToAskForAnotherCard">
+        <di:waypoint x="310" y="178" />
+        <di:waypoint x="310" y="240" />
+        <di:waypoint x="420" y="240" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_ToPaymentDeclined_di" bpmnElement="Flow_ToPaymentDeclined">
+        <di:waypoint x="520" y="240" />
+        <di:waypoint x="582" y="240" />
+      </bpmndi:BPMNEdge>
+    </bpmndi:BPMNPlane>
+  </bpmndi:BPMNDiagram>
+</bpmn:definitions>

@@ -1,0 +1,29 @@
+# The payments live in an in-memory database, which is enough for an example: a restart starts
+# empty, on both sides, as long as the engine is restarted too.
+spring:
+  application:
+    name: card-payment
+  datasource:
+    url: jdbc:h2:mem:card-payment;DB_CLOSE_DELAY=-1
+  jpa:
+    hibernate:
+      ddl-auto: create-drop
+vanillabp:
+  adapters:
+    zenbpm:
+      # The engine started as the README says. ZENBPM_REST_ADDRESS points the application at
+      # another one; the gRPC address defaults to the same host on port 9090.
+      rest-address: ${ZENBPM_REST_ADDRESS:http://localhost:18080}
+      # The identifiers of the workflow module are prefixed in the engine, so the process runs
+      # there as card-payment__card_payment. Required by the adapter.
+      name-clash-avoidance: use-prefix
+  workflow-modules:
+    card-payment:
+      workflows:
+        card_payment:
+          adapters:
+            zenbpm:
+              # How long the engine waits before it hands a failed task out again. The model
+              # gives every task three attempts, so a provider which is away for less than about
+              # four seconds costs a short delay and nothing else.
+              retry-backoff: PT2S
