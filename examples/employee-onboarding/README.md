@@ -62,16 +62,19 @@ cd examples/employee-onboarding/springboot && mvn spring-boot:run
 cd examples/employee-onboarding/quarkus && mvn quarkus:dev
 ```
 
-Both answer on `http://localhost:8080`.
+Both answer on `http://localhost:8105`.
 
 ## Walk through it
+
+The same steps, and those of the other ways listed below, are in
+[`requests.http`](requests.http), to run one by one from the HTTP client of IntelliJ IDEA.
 
 The contract is signed (`jq` only extracts the id):
 
 ```bash
-ID=$(curl -s -X POST localhost:8080/onboardings -H 'Content-Type: application/json' \
+ID=$(curl -s -X POST localhost:8105/onboardings -H 'Content-Type: application/json' \
   -d '{"employeeName": "Jane Doe", "position": "backend developer", "startDate": "2026-11-02"}' | jq -r .onboardingId)
-curl -s localhost:8080/onboardings/$ID
+curl -s localhost:8105/onboardings/$ID
 ```
 
 A few seconds later the accounts exist, the workplace is ready, and HR has to hold the welcome
@@ -84,9 +87,9 @@ meeting:
 HR holds it:
 
 ```bash
-curl -s -X POST localhost:8080/onboardings/$ID/welcome-meeting -H 'Content-Type: application/json' \
+curl -s -X POST localhost:8105/onboardings/$ID/welcome-meeting -H 'Content-Type: application/json' \
   -d '{"notes": "met the team, got the keys"}'
-curl -s localhost:8080/onboardings/$ID
+curl -s localhost:8105/onboardings/$ID
 ```
 
 The status is `ONBOARDED`, set by the `@WorkflowEnded` method, and the application logs

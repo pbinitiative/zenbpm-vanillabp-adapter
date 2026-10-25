@@ -94,7 +94,9 @@ POM: each twin is a standalone Maven project which uses the installed adapter, s
 the root does not compile them. After changing the adapter's behaviour, install it and run
 `mvn -f examples/pom.xml verify`, which needs Docker. Write an example as an application would be
 written, following the class roles of the VanillaBP blueprints, and keep both twins alike: the
-same model files, the same REST API, the same test names, which the README of the example cites.
+same model files, the same REST API on the example's own port, the same test names, which the
+README of the example cites. Its `requests.http` walks the same scenarios for the HTTP client of
+IntelliJ IDEA, each named after the integration test it follows; change it with the API.
 Their tests use the platform's test support, not VanillaBP's `test-utils`.
 
 ## The wiki is written here

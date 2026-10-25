@@ -65,16 +65,19 @@ cd examples/card-payment/springboot && mvn spring-boot:run
 cd examples/card-payment/quarkus && mvn quarkus:dev
 ```
 
-Both answer on `http://localhost:8080`.
+Both answer on `http://localhost:8102`.
 
 ## Walk through it
+
+The same steps, and those of the other ways listed below, are in
+[`requests.http`](requests.http), to run one by one from the HTTP client of IntelliJ IDEA.
 
 Pay an order with a valid card:
 
 ```bash
-curl -s -X POST localhost:8080/payments -H 'Content-Type: application/json' \
+curl -s -X POST localhost:8102/payments -H 'Content-Type: application/json' \
   -d '{"orderId": "ORD-1001", "customerEmail": "jane.doe@example.com", "amount": 49.90, "cardToken": "tok_visa"}'
-curl -s localhost:8080/payments/ORD-1001
+curl -s localhost:8102/payments/ORD-1001
 ```
 
 ```json
@@ -102,8 +105,8 @@ part of the payment's address, `/payments/{orderId}`
 Take the provider down and pay an order:
 
 ```bash
-curl -s -X PUT localhost:8080/simulation/payment-provider -H 'Content-Type: application/json' -d '{"available": false}'
-curl -s -X POST localhost:8080/payments -H 'Content-Type: application/json' \
+curl -s -X PUT localhost:8102/simulation/payment-provider -H 'Content-Type: application/json' -d '{"available": false}'
+curl -s -X POST localhost:8102/payments -H 'Content-Type: application/json' \
   -d '{"orderId": "ORD-1002", "customerEmail": "jane.doe@example.com", "amount": 129.00, "cardToken": "tok_visa"}'
 ```
 
@@ -113,7 +116,7 @@ instance of `card-payment__card_payment` with the business key `ORD-1002` has an
 "Charge the card", whose message names the attempts and the exception. Bring the provider back:
 
 ```bash
-curl -s -X PUT localhost:8080/simulation/payment-provider -H 'Content-Type: application/json' -d '{"available": true}'
+curl -s -X PUT localhost:8102/simulation/payment-provider -H 'Content-Type: application/json' -d '{"available": true}'
 ```
 
 Nothing happens yet: the engine does not try again on its own once the attempts are spent.
@@ -121,10 +124,10 @@ Resolve the incident in zenbpm-ui, or with the engine's REST API (`jq` 1.7 or ne
 engine's 64-bit keys exact):
 
 ```bash
-INSTANCE=$(curl -s 'localhost:18080/v1/process-instances?businessKey=ORD-1002' | jq -r '.partitions[].items[].key')
-INCIDENT=$(curl -s "localhost:18080/v1/process-instances/$INSTANCE/incidents?state=unresolved" | jq -r '.items[].key')
-curl -s -X POST localhost:18080/v1/incidents/$INCIDENT/resolve
-curl -s localhost:8080/payments/ORD-1002
+INSTANCE=$(curl -s 'localhost:8080/v1/process-instances?businessKey=ORD-1002' | jq -r '.partitions[].items[].key')
+INCIDENT=$(curl -s "localhost:8080/v1/process-instances/$INSTANCE/incidents?state=unresolved" | jq -r '.items[].key')
+curl -s -X POST localhost:8080/v1/incidents/$INCIDENT/resolve
+curl -s localhost:8102/payments/ORD-1002
 ```
 
 The task gets a fresh series of attempts, the first one charges the card, and the payment ends

@@ -74,25 +74,28 @@ cd examples/insurance-claim/springboot && mvn spring-boot:run
 cd examples/insurance-claim/quarkus && mvn quarkus:dev
 ```
 
-Both answer on `http://localhost:8080`.
+Both answer on `http://localhost:8104`.
 
 ## Walk through it
+
+The same steps, and those of the other ways listed below, are in
+[`requests.http`](requests.http), to run one by one from the HTTP client of IntelliJ IDEA.
 
 Report a large claim under a comprehensive policy and keep its id (`jq` only extracts it):
 
 ```bash
-ID=$(curl -s -X POST localhost:8080/claims -H 'Content-Type: application/json' \
+ID=$(curl -s -X POST localhost:8104/claims -H 'Content-Type: application/json' \
   -d '{"policyNumber": "MOT-2024-0815", "claimant": "Jane Doe", "coverage": "comprehensive", "damageAmount": 6400.00, "description": "rear-ended at a traffic light"}' | jq -r .claimId)
-curl -s localhost:8080/claims/$ID
+curl -s localhost:8104/claims/$ID
 ```
 
 The table routes it to an adjuster, so the claim is `IN_REVIEW` once the user task reached the
 application. The adjuster approves it:
 
 ```bash
-curl -s -X POST localhost:8080/claims/$ID/review -H 'Content-Type: application/json' \
+curl -s -X POST localhost:8104/claims/$ID/review -H 'Content-Type: application/json' \
   -d '{"approved": true, "comment": "the repair estimate is plausible"}'
-curl -s localhost:8080/claims/$ID
+curl -s localhost:8104/claims/$ID
 ```
 
 ```json

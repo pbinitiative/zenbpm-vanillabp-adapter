@@ -1293,13 +1293,15 @@ because they are applications and not code of the adapter, and their tests use t
 support rather than `SuppressOutputExtension` of VanillaBP's test utilities, which an application
 copied out would not have. `ExamplesTest` checks that every example has both twins and is listed
 in `examples/pom.xml`, that the twins deploy the same models and configure VanillaBP alike, that
-they use the Spring Boot, Quarkus, VanillaBP and adapter versions of the root POM, and that every
-test an example's README cites exists in both twins. `EnginePinTest#theExamplesNameThePin` holds the engine image their POMs and READMEs
+they use the Spring Boot, Quarkus, VanillaBP and adapter versions of the root POM, that both answer
+on the port the example's `requests.http` sends to, and that every test an example's README or
+`requests.http` cites exists in both twins. `EnginePinTest#theExamplesNameThePin` holds the engine image their POMs and READMEs
 name to the pin, so moving the pin moves them as well. Renovate reads their POMs and leaves their
 platform versions to the root POM.
 
-A new example is a directory `examples/<name>/` with a `README.md`, the twins `springboot/` and
-`quarkus/` and their modules in `examples/pom.xml`. Write the model once and copy it into both
+A new example is a directory `examples/<name>/` with a `README.md`, a `requests.http`, the twins
+`springboot/` and `quarkus/` on a port of the example's own, and their modules in
+`examples/pom.xml`. Write the model once and copy it into both
 twins, and give each twin an integration test which starts the engine of the property
 `zenbpm.image` and walks through the README. The job `examples` of `checks.yaml` builds it on
 every pull request.

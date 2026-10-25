@@ -1,0 +1,200 @@
+# Insurance claim, step by step, for the HTTP client of IntelliJ IDEA.
+#
+# Start the engine on port 8080 and zenbpm-ui as examples/README.md says, then either twin of this
+# example (README "Run it"); both answer on port 8104. Run the requests of a scenario one after the
+# other. A user task reaches the application within a second, so wait a moment before a step which
+# expects one. A step which reads the claim checks where it stands: a red check means "not yet",
+# run it again. zenbpm-ui shows each claim as an instance of insurance-claim__insurance_claim whose
+# business key is the claim's id, with the route the decision table answered among its variables.
+
+@app = http://localhost:8104
+
+### InsuranceClaimIT#aLargeClaimIsPaidOnceTheAdjusterApprovesIt: 1. a large claim under a comprehensive policy
+POST {{app}}/claims
+Content-Type: application/json
+
+{"policyNumber": "MOT-2024-0815", "claimant": "Jane Doe", "coverage": "comprehensive", "damageAmount": 6400.00, "description": "rear-ended at a traffic light"}
+
+> {%
+    client.global.set("largeClaim", response.body.claimId);
+%}
+
+### 2. the table routes it to an adjuster (zenbpm-ui: route is "review", the token waits at "Review the claim")
+GET {{app}}/claims/{{largeClaim}}
+
+> {%
+    client.test("an adjuster reviews it", function () {
+        client.assert(response.body.status === "IN_REVIEW", "status is " + response.body.status);
+    });
+%}
+
+### 3. the adjuster approves
+POST {{app}}/claims/{{largeClaim}}/review
+Content-Type: application/json
+
+{"approved": true, "comment": "the repair estimate is plausible"}
+
+### 4. paid
+GET {{app}}/claims/{{largeClaim}}
+
+> {%
+    client.test("paid after the review", function () {
+        client.assert(response.body.status === "PAID", "status is " + response.body.status);
+        client.assert(response.body.reviewed === true, "not reviewed");
+        client.assert(response.body.payoutReference.startsWith("PAY-"), "no payout");
+    });
+%}
+
+### InsuranceClaimIT#aSmallComprehensiveClaimIsPaidWithoutAReview: 1. a small claim under a comprehensive policy
+POST {{app}}/claims
+Content-Type: application/json
+
+{"policyNumber": "MOT-2024-0815", "claimant": "Jane Doe", "coverage": "comprehensive", "damageAmount": 480.00, "description": "a dent in the door"}
+
+> {%
+    client.global.set("smallComprehensive", response.body.claimId);
+%}
+
+### 2. paid at once, and no adjuster saw it (zenbpm-ui: route is "auto-pay")
+GET {{app}}/claims/{{smallComprehensive}}
+
+> {%
+    client.test("paid without a review", function () {
+        client.assert(response.body.status === "PAID", "status is " + response.body.status);
+        client.assert(response.body.reviewed === false, "an adjuster saw it");
+    });
+%}
+
+### InsuranceClaimIT#aSmallPartialClaimIsPaidWithoutAReview: 1. a very small claim under a partial policy
+POST {{app}}/claims
+Content-Type: application/json
+
+{"policyNumber": "MOT-2023-4711", "claimant": "John Roe", "coverage": "partial", "damageAmount": 450.00, "description": "a cracked windscreen"}
+
+> {%
+    client.global.set("smallPartial", response.body.claimId);
+%}
+
+### 2. paid at once
+GET {{app}}/claims/{{smallPartial}}
+
+> {%
+    client.test("paid without a review", function () {
+        client.assert(response.body.status === "PAID", "status is " + response.body.status);
+        client.assert(response.body.reviewed === false, "an adjuster saw it");
+    });
+%}
+
+### InsuranceClaimIT#aComprehensiveClaimOfExactlyTheLimitIsPaidWithoutAReview: 1. a comprehensive claim of exactly 1 000
+POST {{app}}/claims
+Content-Type: application/json
+
+{"policyNumber": "MOT-2024-0815", "claimant": "Jane Doe", "coverage": "comprehensive", "damageAmount": 1000.00, "description": "a scratched bumper"}
+
+> {%
+    client.global.set("atTheLimit", response.body.claimId);
+%}
+
+### 2. "up to 1 000" includes 1 000: paid at once
+GET {{app}}/claims/{{atTheLimit}}
+
+> {%
+    client.test("paid without a review", function () {
+        client.assert(response.body.status === "PAID", "status is " + response.body.status);
+        client.assert(response.body.reviewed === false, "an adjuster saw it");
+    });
+%}
+
+### InsuranceClaimIT#aClaimTheAdjusterRejectsIsNotPaid: 1. a claim above the limit of a partial policy
+POST {{app}}/claims
+Content-Type: application/json
+
+{"policyNumber": "MOT-2023-4711", "claimant": "John Roe", "coverage": "partial", "damageAmount": 900.00, "description": "a broken side mirror"}
+
+> {%
+    client.global.set("rejectedByTheAdjuster", response.body.claimId);
+%}
+
+### 2. an adjuster reviews it
+GET {{app}}/claims/{{rejectedByTheAdjuster}}
+
+> {%
+    client.test("an adjuster reviews it", function () {
+        client.assert(response.body.status === "IN_REVIEW", "status is " + response.body.status);
+    });
+%}
+
+### 3. the adjuster rejects
+POST {{app}}/claims/{{rejectedByTheAdjuster}}/review
+Content-Type: application/json
+
+{"approved": false, "comment": "the damage was there before the policy began"}
+
+### 4. rejected, and the letter gives the adjuster's reason (the application logs it)
+GET {{app}}/claims/{{rejectedByTheAdjuster}}
+
+> {%
+    client.test("rejected by the adjuster", function () {
+        client.assert(response.body.status === "REJECTED", "status is " + response.body.status);
+        client.assert(response.body.rejectionReason.startsWith("rejected by the adjuster"), "reason is " + response.body.rejectionReason);
+    });
+%}
+
+### InsuranceClaimIT#aClaimALiabilityPolicyDoesNotCoverIsRejectedAtOnce: 1. a claim under a liability policy
+POST {{app}}/claims
+Content-Type: application/json
+
+{"policyNumber": "MOT-2022-1234", "claimant": "Jane Doe", "coverage": "liability", "damageAmount": 300.00, "description": "a bumper after a parking accident"}
+
+> {%
+    client.global.set("liability", response.body.claimId);
+%}
+
+### 2. rejected at once, and no adjuster saw it (zenbpm-ui: route is "reject")
+GET {{app}}/claims/{{liability}}
+
+> {%
+    client.test("rejected without a review", function () {
+        client.assert(response.body.status === "REJECTED", "status is " + response.body.status);
+        client.assert(response.body.reviewed === false, "an adjuster saw it");
+    });
+%}
+
+### InsuranceClaimIT#aReviewOfAClaimWhichWaitsForNoneIsRefused: a review of the small claim paid above
+POST {{app}}/claims/{{smallComprehensive}}/review
+Content-Type: application/json
+
+{"approved": true, "comment": "too late"}
+
+> {%
+    client.test("409 Conflict", function () {
+        client.assert(response.status === 409, "answered " + response.status);
+    });
+%}
+
+### InsuranceClaimIT#anIncompleteOrMisstatedClaimIsRefused: a coverage the table does not know
+POST {{app}}/claims
+Content-Type: application/json
+
+{"policyNumber": "MOT-2024-0815", "claimant": "Jane Doe", "coverage": "everything", "damageAmount": 480.00, "description": "a dent in the door"}
+
+> {%
+    client.test("400 Bad Request", function () {
+        client.assert(response.status === 400, "answered " + response.status);
+    });
+%}
+
+### InsuranceClaimIT#anIncompleteOrMisstatedClaimIsRefused: a claim without a policy number
+POST {{app}}/claims
+Content-Type: application/json
+
+{"claimant": "Jane Doe", "coverage": "comprehensive", "damageAmount": 480.00, "description": "a dent in the door"}
+
+> {%
+    client.test("400 Bad Request", function () {
+        client.assert(response.status === 400, "answered " + response.status);
+    });
+%}
+
+# Not here: InsuranceClaimIT#onlyOneOfTheAnswersGivenAtOnceIsAccepted sends eight reviews at the
+# same moment, which an HTTP client that sends one request after the other cannot do.

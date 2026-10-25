@@ -78,18 +78,21 @@ cd examples/bank-transfer-order/springboot && mvn spring-boot:run
 cd examples/bank-transfer-order/quarkus && mvn quarkus:dev
 ```
 
-Both answer on `http://localhost:8080`.
+Both answer on `http://localhost:8103`.
 
 ## Walk through it
+
+The same steps, and those of the other ways listed below, are in
+[`requests.http`](requests.http), to run one by one from the HTTP client of IntelliJ IDEA.
 
 Place an order, and report its transfer as the bank would:
 
 ```bash
-curl -s -X POST localhost:8080/orders -H 'Content-Type: application/json' \
+curl -s -X POST localhost:8103/orders -H 'Content-Type: application/json' \
   -d '{"orderId": "ORD-2001", "customerEmail": "jane.doe@example.com", "item": "hiking boots", "total": 89.90}'
-curl -s -X POST localhost:8080/bank/transfers -H 'Content-Type: application/json' \
+curl -s -X POST localhost:8103/bank/transfers -H 'Content-Type: application/json' \
   -d '{"reference": "ORD-2001", "amount": 89.90}'
-curl -s localhost:8080/orders/ORD-2001
+curl -s localhost:8103/orders/ORD-2001
 ```
 
 ```json

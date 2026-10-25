@@ -1,0 +1,87 @@
+# Employee onboarding, step by step, for the HTTP client of IntelliJ IDEA.
+#
+# Start the engine on port 8080 and zenbpm-ui as examples/README.md says, then either twin of this
+# example (README "Run it"); both answer on port 8105. Run the requests of a scenario one after the
+# other. A step which reads the onboarding checks where it stands: a red check means "not yet", run
+# it again. zenbpm-ui shows each onboarding as an instance of
+# employee-onboarding__employee_onboarding whose business key is the onboarding's id, and the
+# workplace it calls as an instance of employee-onboarding__workplace_provisioning beneath it.
+
+@app = http://localhost:8105
+
+### EmployeeOnboardingIT#aNewEmployeeIsOnboardedOnceTheWelcomeMeetingIsHeld: 1. the contract is signed
+POST {{app}}/onboardings
+Content-Type: application/json
+
+{"employeeName": "Jane Doe", "position": "backend developer", "startDate": "2026-11-02"}
+
+> {%
+    client.global.set("onboarding", response.body.onboardingId);
+%}
+
+### 2. accounts created, laptop and badge ready (EmployeeOnboardingIT#theCalledProcessPreparesTheWorkplaceWithBothBranchesKept)
+GET {{app}}/onboardings/{{onboarding}}
+
+> {%
+    client.test("the welcome meeting is due, with the whole workplace", function () {
+        client.assert(response.body.status === "WELCOME_MEETING_DUE", "status is " + response.body.status);
+        client.assert(response.body.emailAddress !== null, "no accounts yet");
+        client.assert(response.body.laptopSerialNumber !== null, "no laptop");
+        client.assert(response.body.badgeNumber !== null, "no badge");
+    });
+%}
+
+### 3. HR holds the welcome meeting
+POST {{app}}/onboardings/{{onboarding}}/welcome-meeting
+Content-Type: application/json
+
+{"notes": "met the team, got the keys"}
+
+### 4. onboarded: the end of the workflow reached the application (it logs "welcome aboard")
+GET {{app}}/onboardings/{{onboarding}}
+
+> {%
+    client.test("onboarded", function () {
+        client.assert(response.body.status === "ONBOARDED", "status is " + response.body.status);
+        client.assert(response.body.welcomeMeetingNotes === "met the team, got the keys", "notes are " + response.body.welcomeMeetingNotes);
+    });
+%}
+
+### EmployeeOnboardingIT#aWelcomeMeetingWhichIsNotDueIsRefused: the welcome meeting of the onboarding above, a second time
+POST {{app}}/onboardings/{{onboarding}}/welcome-meeting
+Content-Type: application/json
+
+{"notes": "once more"}
+
+> {%
+    client.test("409 Conflict", function () {
+        client.assert(response.status === 409, "answered " + response.status);
+    });
+%}
+
+### EmployeeOnboardingIT#aWelcomeMeetingWhichIsNotDueIsRefused: the welcome meeting of an onboarding nobody started
+POST {{app}}/onboardings/no-such-onboarding/welcome-meeting
+Content-Type: application/json
+
+{"notes": "who is this?"}
+
+> {%
+    client.test("404 Not Found", function () {
+        client.assert(response.status === 404, "answered " + response.status);
+    });
+%}
+
+### EmployeeOnboardingIT#anIncompleteNewHireIsRefused: a new hire without a start date
+POST {{app}}/onboardings
+Content-Type: application/json
+
+{"employeeName": "Jane Doe", "position": "backend developer"}
+
+> {%
+    client.test("400 Bad Request", function () {
+        client.assert(response.status === 400, "answered " + response.status);
+    });
+%}
+
+# Not here: EmployeeOnboardingIT#aWelcomeMeetingReportedSeveralTimesAtOnceIsAcceptedOnce sends eight
+# reports at the same moment, which an HTTP client that sends one request after the other cannot do.

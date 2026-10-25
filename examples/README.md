@@ -15,7 +15,12 @@ and the same REST API, so the difference between them is only what the platform 
 
 Each example directory is an application of its own, with no parent of the adapter's build: copy
 it out and it still builds. Its README tells the story, draws the process, and walks through it
-with `curl`.
+with `curl`. Its `requests.http` holds the same steps for the HTTP client of IntelliJ IDEA, so you
+can step through every story by hand, as in a demo.
+
+Each example answers on a port of its own, whichever twin runs, so all of them can run at the same
+time beside one engine: `purchase-approval` on 8101, `card-payment` on 8102, `bank-transfer-order`
+on 8103, `insurance-claim` on 8104 and `employee-onboarding` on 8105.
 
 ## What you need
 
@@ -39,7 +44,7 @@ Every example talks to the engine the adapter is tested against, on the ports th
 configured for. Start it in a terminal of its own:
 
 ```bash
-docker run --rm -p 18080:8080 -p 9090:9090 -e POLL_TIMER_DELAY_SECONDS=1 ghcr.io/pbinitiative/zenbpm@sha256:d7808e30821a7349e0f42476d8aaa21ff92fc752c0ccc432771764d307b87ed0
+docker run --rm -p 8080:8080 -p 9090:9090 -e POLL_TIMER_DELAY_SECONDS=1 ghcr.io/pbinitiative/zenbpm@sha256:d7808e30821a7349e0f42476d8aaa21ff92fc752c0ccc432771764d307b87ed0
 ```
 
 `POLL_TIMER_DELAY_SECONDS=1` makes the engine look for due timers every second instead of every
@@ -48,9 +53,33 @@ for example `ZENBPM_REST_ADDRESS=http://zenbpm.example.com:8080`; the gRPC addre
 9090 of the same host.
 
 To watch what happens, run [zenbpm-ui](https://github.com/pbinitiative/zenbpm-ui) against the
-engine's REST address `http://localhost:18080`. The examples run their processes under the
+engine's REST address `http://localhost:8080`, which is where it looks by default. The examples run their processes under the
 workflow module's id as a prefix, so the process `purchase_approval` of the example
 `purchase-approval` is `purchase-approval__purchase_approval` in the engine.
+
+## Stepping through an example with `requests.http`
+
+Open `examples/<example>/requests.http` in IntelliJ IDEA, with the engine, zenbpm-ui and one twin
+of the example running, and run the requests of a scenario one after the other. Each scenario
+starts with the name of the integration test which walks the same way, and its steps say where to
+wait for the engine and what zenbpm-ui shows meanwhile. A step which reads the state of the
+application checks it, so the HTTP client shows whether the story got there yet. Every run takes
+new numbers for its orders, so nothing clashes with an earlier run in zenbpm-ui.
+
+Instead of the `docker run` above, the engine can run from a checkout of
+[zenbpm](https://github.com/pbinitiative/zenbpm) with its development configuration, which listens
+on the same ports:
+
+```bash
+CONFIG_FILE=conf/zenbpm/conf-dev.yaml PROFILE=DEV POLL_TIMER_DELAY_SECONDS=1 go run ./cmd/zenbpm
+```
+
+Without `POLL_TIMER_DELAY_SECONDS=1` the timers of the bank transfer order fire up to ten seconds
+late. An engine built from another commit than the image above is one the adapter was not tested
+with, so each application says so at startup and runs all the same. Such an engine keeps its data across restarts, the applications do not: their database lives
+in memory. A workflow started before an application's restart still waits in the engine, for an
+order the application no longer knows and cannot work on. Finish the scenarios before restarting an application, or start the engine on an
+empty data directory.
 
 ## Building and testing
 

@@ -61,16 +61,19 @@ cd examples/purchase-approval/springboot && mvn spring-boot:run
 cd examples/purchase-approval/quarkus && mvn quarkus:dev
 ```
 
-Both answer on `http://localhost:8080`.
+Both answer on `http://localhost:8101`.
 
 ## Walk through it
+
+The same steps, and those of the other ways listed below, are in
+[`requests.http`](requests.http), to run one by one from the HTTP client of IntelliJ IDEA.
 
 Submit a request above the limit and keep its id (`jq` only extracts it):
 
 ```bash
-ID=$(curl -s -X POST localhost:8080/purchase-requests -H 'Content-Type: application/json' \
+ID=$(curl -s -X POST localhost:8101/purchase-requests -H 'Content-Type: application/json' \
   -d '{"requester": "Jane Doe", "item": "CNC milling machine", "amount": 75000}' | jq -r .id)
-curl -s localhost:8080/purchase-requests/$ID
+curl -s localhost:8101/purchase-requests/$ID
 ```
 
 ```json
@@ -81,7 +84,7 @@ The status is `SUBMITTED` for the second until the user task reaches the applica
 `IN_CHECK`. The clerk finds the request in order:
 
 ```bash
-curl -s -X POST localhost:8080/purchase-requests/$ID/check -H 'Content-Type: application/json' \
+curl -s -X POST localhost:8101/purchase-requests/$ID/check -H 'Content-Type: application/json' \
   -d '{"approved": true, "comment": "budget confirmed"}'
 ```
 
@@ -89,9 +92,9 @@ The amount is above the limit, so the request waits for the manager (`IN_HIGH_VA
 who approves it:
 
 ```bash
-curl -s -X POST localhost:8080/purchase-requests/$ID/high-value-approval -H 'Content-Type: application/json' \
+curl -s -X POST localhost:8101/purchase-requests/$ID/high-value-approval -H 'Content-Type: application/json' \
   -d '{"approved": true, "comment": "fits the investment plan"}'
-curl -s localhost:8080/purchase-requests/$ID
+curl -s localhost:8101/purchase-requests/$ID
 ```
 
 ```json

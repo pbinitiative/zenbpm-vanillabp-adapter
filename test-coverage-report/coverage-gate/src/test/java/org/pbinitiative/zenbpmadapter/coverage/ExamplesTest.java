@@ -31,8 +31,9 @@ import io.vanillabp.integration.test.utils.SuppressOutputExtension;
  * <code>examples/pom.xml</code> and not by this build, see decision 67 in the repository's
  * DECISIONS.md. Nothing in this build compiles them, so this test holds them to what they promise:
  * every example comes for both platforms, the two twins run the same models with the same VanillaBP
- * configuration, each twin uses the platform versions and the adapter version of this build, and
- * what an example's README says the tests prove is a test both twins have.
+ * configuration on the same port, each twin uses the platform versions and the adapter version of
+ * this build, and what an example's README and its <code>requests.http</code> say the tests prove
+ * is a test both twins have.
  */
 @ExtendWith(SuppressOutputExtension.class)
 class ExamplesTest {
@@ -48,18 +49,32 @@ class ExamplesTest {
     /** The top-level key <code>vanillabp:</code> of a YAML file, up to the next top-level key. */
     private static final Pattern VANILLABP_CONFIGURATION = Pattern.compile("(?ms)^vanillabp:$.*?(?=^[A-Za-z]|\\z)");
 
+    /** Where the requests of <code>requests.http</code> go: <code>@app = http://localhost:8101</code>. */
+    private static final Pattern PORT_OF_THE_REQUESTS = Pattern.compile("(?m)^@app = http://localhost:(\\d+)$");
+
+    /** The port of a Spring Boot twin, the key <code>server.port</code>. */
+    private static final Pattern PORT_OF_SPRING_BOOT = Pattern.compile("(?m)^server:\\n  port: (\\d+)$");
+
+    /** The port of a Quarkus twin, the key <code>quarkus.http.port</code>. */
+    private static final Pattern PORT_OF_QUARKUS = Pattern.compile("(?m)^  http:\\n    port: (\\d+)$");
+
+    /** The files of an example which cite the tests holding what they say. */
+    private static final List<String> CITING_FILES = List.of("README.md", "requests.http");
+
     /** A test the README cites, as <code>PurchaseApprovalIT#aSmallPurchaseIsOrdered</code>. */
     private static final Pattern CITED_TEST = Pattern.compile("\\b([A-Z]\\w*IT)#(\\w+)");
 
     @Test
-    @DisplayName("Every example comes for Spring Boot and for Quarkus, with a README, and the build of the examples builds every twin")
+    @DisplayName("Every example comes for Spring Boot and for Quarkus, with a README and a requests.http, and the build of the examples builds every twin")
     void everyExampleComesForBothPlatforms() throws IOException {
         final var examples = examples();
         assertFalse(examples.isEmpty(), "examples/ holds no example");
         final var twins = new TreeSet<String>();
         for (final var example : examples) {
-            assertTrue(Files.isRegularFile(example.resolve("README.md")), () -> "%s has no README.md"
-                    .formatted(ROOT.relativize(example)));
+            for (final var file : CITING_FILES) {
+                assertTrue(Files.isRegularFile(example.resolve(file)), () -> "%s has no %s".formatted(ROOT
+                        .relativize(example), file));
+            }
             for (final var platform : PLATFORMS) {
                 assertTrue(Files.isRegularFile(example.resolve(platform).resolve("pom.xml")), () -> """
                         %s has no twin for %s: every example is an application on Spring Boot and one \
@@ -104,6 +119,24 @@ class ExamplesTest {
     }
 
     @Test
+    @DisplayName("Both twins of an example answer on the port its requests.http sends to")
+    void theRequestsReachTheExamplesPort() throws IOException {
+        for (final var example : examples()) {
+            final var place = ROOT.relativize(example);
+            final var port = port(example.resolve("requests.http"), PORT_OF_THE_REQUESTS);
+
+            assertEquals(port, port(example.resolve("springboot/src/main/resources/application.yaml"),
+                    PORT_OF_SPRING_BOOT),
+                    () -> "the Spring Boot twin of %s answers on another port than %s"
+                            .formatted(place, port));
+            assertEquals(port, port(example.resolve("quarkus/src/main/resources/application.yaml"),
+                    PORT_OF_QUARKUS),
+                    () -> "the Quarkus twin of %s answers on another port than %s".formatted(
+                            place, port));
+        }
+    }
+
+    @Test
     @DisplayName("Every twin uses the platform versions and the adapter version of this build")
     void everyTwinUsesTheVersionsOfThisBuild() throws IOException {
         final var root = Files.readString(ROOT.resolve("pom.xml"));
@@ -137,27 +170,27 @@ class ExamplesTest {
     }
 
     @Test
-    @DisplayName("Every test an example's README cites is a test of both twins")
+    @DisplayName("Every test an example's README and its requests.http cite is a test of both twins")
     void everyCitedTestExistsInBothTwins() throws IOException {
         for (final var example : examples()) {
-            final var readme = Files.readString(example.resolve("README.md"));
-            final var cited = CITED_TEST
-                    .matcher(readme)
-                    .results()
-                    .toList();
-            assertFalse(cited.isEmpty(), () -> "%s/README.md names no test which holds what it says"
-                    .formatted(ROOT.relativize(example)));
-            final var missing = new ArrayList<String>();
-            for (final var test : cited) {
-                for (final var platform : PLATFORMS) {
-                    if (!hasTest(example.resolve(platform), test.group(1), test.group(2))) {
-                        missing.add("%s#%s on %s".formatted(test.group(1), test.group(2), platform));
+            for (final var file : CITING_FILES) {
+                final var place = ROOT.relativize(example.resolve(file));
+                final var cited = CITED_TEST
+                        .matcher(Files.readString(example.resolve(file)))
+                        .results()
+                        .toList();
+                assertFalse(cited.isEmpty(), () -> "%s names no test which holds what it says".formatted(place));
+                final var missing = new ArrayList<String>();
+                for (final var test : cited) {
+                    for (final var platform : PLATFORMS) {
+                        if (!hasTest(example.resolve(platform), test.group(1), test.group(2))) {
+                            missing.add("%s#%s on %s".formatted(test.group(1), test.group(2), platform));
+                        }
                     }
                 }
-            }
 
-            assertEquals(List.of(), missing, () -> "%s/README.md cites tests which do not exist"
-                    .formatted(ROOT.relativize(example)));
+                assertEquals(List.of(), missing, () -> "%s cites tests which do not exist".formatted(place));
+            }
         }
     }
 
@@ -172,6 +205,15 @@ class ExamplesTest {
                     .sorted()
                     .toList();
         }
+    }
+
+    private static String port(
+        final Path file,
+        final Pattern key
+    ) throws IOException {
+        final var port = key.matcher(Files.readString(file));
+        assertTrue(port.find(), () -> "%s names no port as %s".formatted(ROOT.relativize(file), key.pattern()));
+        return port.group(1);
     }
 
     private static String vanillaBpConfiguration(final Path twin) throws IOException {

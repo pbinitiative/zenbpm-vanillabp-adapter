@@ -38,13 +38,20 @@ its tests, all of them written for this adapter.
   adapter's CI runs every one of them on each pull request
   (`ExamplesTest#everyCitedTestExistsInBothTwins`,
   `EnginePinTest#theExamplesNameThePin`).
+- **Ready to step through by hand.** Each example has a `requests.http` for the HTTP client of
+  IntelliJ IDEA, with the steps of its integration tests, each scenario named after the test it
+  follows (`ExamplesTest#everyCitedTestExistsInBothTwins`). It is the same file for both twins:
+  they answer on the example's own port (`ExamplesTest#theRequestsReachTheExamplesPort`), so all
+  examples can run at once beside one engine on port 8080.
 
 ## Running one
 
 The
 [README of `examples/`](https://github.com/pbinitiative/zenbpm-vanillabp-adapter/blob/main/examples/README.md)
 says what you need, how to start the engine and how to build. In short: install the adapter, start
-the engine with the `docker run` of that README, which is the one of the page
-[Home](Home#an-engine-to-try-it-against) with due timers looked for every second, and start a twin
-with `mvn spring-boot:run` or `mvn quarkus:dev`. Each example's README tells its story, draws
-its process and lists the `curl` calls.
+the engine with the `docker run` of that README, and start a twin with `mvn spring-boot:run` or
+`mvn quarkus:dev`. That `docker run` is the one of the page
+[Home](Home#an-engine-to-try-it-against) on port 8080 instead of 18080, because the examples
+answer on ports of their own, and with due timers looked for every second. Each example's README
+tells its story, draws its process and lists the `curl` calls; its `requests.http` holds the same
+steps.
