@@ -11,6 +11,7 @@ and the same REST API, so the difference between them is only what the platform 
 | [`card-payment`](card-payment)               | A web shop charges a card: declined, retried, or stopped by an outage an operator resolves.             | A BPMN error on a boundary event, retries with a backoff, an incident              |
 | [`bank-transfer-order`](bank-transfer-order) | An order paid by bank transfer: shipped when the money arrives, reminded, or cancelled at the deadline. | A message the application correlates, an interrupting and a non-interrupting timer |
 | [`insurance-claim`](insurance-claim)         | A decision table routes a motor claim to an immediate payout, an adjuster or a rejection.               | A business rule task with a DMN table, a declared number, a user task              |
+| [`employee-onboarding`](employee-onboarding) | A new employee gets accounts, a workplace prepared by a reusable process, and a welcome meeting.        | A call activity on the same aggregate, parallel branches, the end of a workflow    |
 
 Each example directory is an application of its own, with no parent of the adapter's build: copy
 it out and it still builds. Its README tells the story, draws the process, and walks through it

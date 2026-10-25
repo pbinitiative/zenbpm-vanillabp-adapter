@@ -17,6 +17,7 @@ its tests, all of them written for this adapter.
 | [Card payment](https://github.com/pbinitiative/zenbpm-vanillabp-adapter/tree/main/examples/card-payment)               | A web shop charges a card: declined, retried, or stopped by an outage an operator resolves.             | a BPMN error, retries, an incident resolved                    |
 | [Bank transfer order](https://github.com/pbinitiative/zenbpm-vanillabp-adapter/tree/main/examples/bank-transfer-order) | An order paid by bank transfer: shipped when the money arrives, reminded, or cancelled at the deadline. | a message correlated by the application, timers                |
 | [Insurance claim](https://github.com/pbinitiative/zenbpm-vanillabp-adapter/tree/main/examples/insurance-claim)         | A decision table routes a motor claim to an immediate payout, an adjuster or a rejection.               | a DMN decision table, a declared number                        |
+| [Employee onboarding](https://github.com/pbinitiative/zenbpm-vanillabp-adapter/tree/main/examples/employee-onboarding) | A new employee gets accounts, a workplace prepared by a reusable process, and a welcome meeting.        | a call activity, parallel branches, `@WorkflowEnded`           |
 
 ## What every example is
 

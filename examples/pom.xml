@@ -20,6 +20,8 @@
     <module>bank-transfer-order/quarkus</module>
     <module>insurance-claim/springboot</module>
     <module>insurance-claim/quarkus</module>
+    <module>employee-onboarding/springboot</module>
+    <module>employee-onboarding/quarkus</module>
   </modules>
 
   <properties>

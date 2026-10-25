@@ -1,0 +1,77 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL"
+    xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI"
+    xmlns:dc="http://www.omg.org/spec/DD/20100524/DC"
+    xmlns:di="http://www.omg.org/spec/DD/20100524/DI"
+    xmlns:zenbpm="http://zenbpm.pbinitiative.org/1.0"
+    id="employee-onboarding" targetNamespace="http://bpmn.io/schema/bpmn">
+  <bpmn:process id="employee_onboarding" name="Employee onboarding" isExecutable="true">
+    <bpmn:documentation>A new employee signed the contract. IT creates the accounts, the reusable process workplace_provisioning prepares the workplace, and on the first day HR holds the welcome meeting.</bpmn:documentation>
+    <bpmn:startEvent id="ContractSigned" name="Employment contract signed">
+      <bpmn:outgoing>Flow_ToCreateAccounts</bpmn:outgoing>
+    </bpmn:startEvent>
+    <bpmn:serviceTask id="CreateAccounts" name="Create the accounts">
+      <bpmn:extensionElements>
+        <zenbpm:taskDefinition type="createAccounts" retries="3" />
+      </bpmn:extensionElements>
+      <bpmn:incoming>Flow_ToCreateAccounts</bpmn:incoming>
+      <bpmn:outgoing>Flow_ToProvisionWorkplace</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:callActivity id="ProvisionWorkplace" name="Provision the workplace">
+      <bpmn:extensionElements>
+        <zenbpm:calledElement processId="workplace_provisioning" />
+      </bpmn:extensionElements>
+      <bpmn:incoming>Flow_ToProvisionWorkplace</bpmn:incoming>
+      <bpmn:outgoing>Flow_ToHoldWelcomeMeeting</bpmn:outgoing>
+    </bpmn:callActivity>
+    <bpmn:userTask id="HoldWelcomeMeeting" name="Hold the welcome meeting">
+      <bpmn:extensionElements>
+        <zenbpm:taskDefinition type="holdWelcomeMeeting" />
+      </bpmn:extensionElements>
+      <bpmn:incoming>Flow_ToHoldWelcomeMeeting</bpmn:incoming>
+      <bpmn:outgoing>Flow_ToEmployeeOnboarded</bpmn:outgoing>
+    </bpmn:userTask>
+    <bpmn:endEvent id="EmployeeOnboarded" name="Employee onboarded">
+      <bpmn:incoming>Flow_ToEmployeeOnboarded</bpmn:incoming>
+    </bpmn:endEvent>
+    <bpmn:sequenceFlow id="Flow_ToCreateAccounts" sourceRef="ContractSigned" targetRef="CreateAccounts" />
+    <bpmn:sequenceFlow id="Flow_ToProvisionWorkplace" sourceRef="CreateAccounts" targetRef="ProvisionWorkplace" />
+    <bpmn:sequenceFlow id="Flow_ToHoldWelcomeMeeting" sourceRef="ProvisionWorkplace" targetRef="HoldWelcomeMeeting" />
+    <bpmn:sequenceFlow id="Flow_ToEmployeeOnboarded" sourceRef="HoldWelcomeMeeting" targetRef="EmployeeOnboarded" />
+  </bpmn:process>
+  <bpmndi:BPMNDiagram id="employee_onboardingDiagram">
+    <bpmndi:BPMNPlane id="employee_onboardingPlane" bpmnElement="employee_onboarding">
+      <bpmndi:BPMNShape id="ContractSigned_di" bpmnElement="ContractSigned">
+        <dc:Bounds x="172" y="102" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="CreateAccounts_di" bpmnElement="CreateAccounts">
+        <dc:Bounds x="260" y="80" width="100" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="ProvisionWorkplace_di" bpmnElement="ProvisionWorkplace">
+        <dc:Bounds x="420" y="80" width="100" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="HoldWelcomeMeeting_di" bpmnElement="HoldWelcomeMeeting">
+        <dc:Bounds x="580" y="80" width="100" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="EmployeeOnboarded_di" bpmnElement="EmployeeOnboarded">
+        <dc:Bounds x="742" y="102" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNEdge id="Flow_ToCreateAccounts_di" bpmnElement="Flow_ToCreateAccounts">
+        <di:waypoint x="208" y="120" />
+        <di:waypoint x="260" y="120" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_ToProvisionWorkplace_di" bpmnElement="Flow_ToProvisionWorkplace">
+        <di:waypoint x="360" y="120" />
+        <di:waypoint x="420" y="120" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_ToHoldWelcomeMeeting_di" bpmnElement="Flow_ToHoldWelcomeMeeting">
+        <di:waypoint x="520" y="120" />
+        <di:waypoint x="580" y="120" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_ToEmployeeOnboarded_di" bpmnElement="Flow_ToEmployeeOnboarded">
+        <di:waypoint x="680" y="120" />
+        <di:waypoint x="742" y="120" />
+      </bpmndi:BPMNEdge>
+    </bpmndi:BPMNPlane>
+  </bpmndi:BPMNDiagram>
+</bpmn:definitions>
