@@ -2042,21 +2042,20 @@ pin.
 
 The owners of this repository asked for example applications of their own, written for this
 adapter and kept here, beside the blueprints of decision 64, which belong to the VanillaBP project
-and are only adapted from outside. An example tells a realistic business story, and its model,
-code, configuration and tests are all of this repository; it runs against a standalone engine and
-is driven through its own REST API, which calls VanillaBP and through it the adapter, as a real
-application does.
+and are only adapted from outside. An example tells a realistic business story. Its model, code,
+configuration and tests all belong to this repository. It runs against a standalone engine and is
+driven through its own REST API. That API calls VanillaBP, and VanillaBP calls the adapter, as in
+a real application.
 
 Each example lives in `examples/<name>/` and comes twice, `springboot/` and `quarkus/`, because the
 adapter promises both platforms and an example on one of them would show half of it. A twin is a
-Maven project of its own and no module of the root POM: it inherits `spring-boot-starter-parent` or
+Maven project of its own and no module of the root POM. It inherits `spring-boot-starter-parent` or
 imports `quarkus-bom` and names the adapter by its version, so a reader can copy the directory out
-and build it. That it is outside the reactor costs a second build, which the job `examples` of
-`checks.yaml` runs on every pull request after installing the adapter of the same commit, so a
-change of the adapter which breaks an example is red in the pull request which made it. The root
-build cannot see that an example drifted from it, so `ExamplesTest` holds the twins to one
-another and to the versions of the root POM, and `EnginePinTest` holds the engine they test against
-to the pin.
+and build it. Being outside the reactor costs a second build. The job `examples` of `checks.yaml`
+runs it on every pull request, after it installs the adapter of the same commit. So a change of the
+adapter which breaks an example is red in the pull request which made it. The root build cannot
+see that an example drifted from it. So `ExamplesTest` holds the twins to one another and to the
+versions of the root POM, and `EnginePinTest` holds the engine they test against to the pin.
 
 What is a rule of this repository's own code applies to an example where an application would
 follow it too: Spotless, the diagram of every model (decision 29), the order of methods (decision

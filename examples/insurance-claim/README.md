@@ -50,11 +50,10 @@ the same files in both twins. The adapter deploys the decision with the process.
   the gateway reads. The adapter's wiki explains both, under GAPS 27 and GAPS 34 of the page
   Deviations.
 - **These expressions are meant as they are.** VanillaBP recommends that a model reads one name
-  and that Java computes the rest, because an expression which walks an object or compares
-  values ties the model to the application's data and to the engine's expression language.
-  `routing.route` and the gateway's comparisons read the table's answer, not the claim, so
-  `application.yaml` accepts them with
-  `accept-expressions-in-the-model: true` for this process.
+  and that Java computes the rest. An expression which walks an object or compares values ties
+  the model to the application's data and to the engine's expression language. Here
+  `routing.route` and the gateway's comparisons read the table's answer, not the claim. So
+  `application.yaml` accepts them for this process with `accept-expressions-in-the-model: true`.
 - **A number reaches the engine only when it is declared.** The coverage, a text, and the
   adjuster's answer, a boolean, are `@SyncWithBPMS` and travel as they are. The damage amount is a
   number, and VanillaBP hands a number to the engine only once

@@ -1034,9 +1034,9 @@ run as the artifact `test-reports` (`test-reports-java-21` for the run on Java 2
 stops earlier, at Spotless or the compiler, has none, and its log is the place to read. The job
 `workflow-lint` checks every workflow of the repository with actionlint and every script of `bin/`
 with shellcheck. The job `examples` installs the adapter of the same commit without its tests and
-runs `mvn -f examples/pom.xml verify`, which walks through every example's README against an engine
-of its own, see [The examples](#the-examples); the failsafe reports of a red run are attached as
-the artifact `examples-reports`.
+runs `mvn -f examples/pom.xml verify`. That walks through every example's README against an engine
+of its own, see [The examples](#the-examples). A red run attaches the failsafe reports as the
+artifact `examples-reports`.
 
 The build reads the VanillaBP snapshots from the snapshot repository of Maven Central, which needs
 no login. So a pull request from a fork builds exactly like one from this repository.
@@ -1279,24 +1279,28 @@ what the job runs, on a laptop with Docker, after the adapter was installed as t
 ## The examples
 
 [`examples/`](examples) holds complete applications which use the adapter as an application does,
-each a business story on Spring Boot (`springboot/`) and on Quarkus (`quarkus/`). They are no
-modules of the root POM: each twin inherits `spring-boot-starter-parent` or imports `quarkus-bom`
-and names the adapter by its version, so it can be copied out as it is; `examples/pom.xml` only
-lists them, so one `mvn -f examples/pom.xml verify` builds all of them (decision 67 in
+each a business story on Spring Boot (`springboot/`) and on Quarkus (`quarkus/`). They are not
+modules of the root POM. Each twin inherits `spring-boot-starter-parent` or imports `quarkus-bom`
+and names the adapter by its version, so it can be copied out as it is. `examples/pom.xml` only
+lists them, and one `mvn -f examples/pom.xml verify` builds all of them (decision 67 in
 [`DECISIONS.md`](./DECISIONS.md)). What a user reads about them is on the wiki page
 [Examples](https://github.com/pbinitiative/zenbpm-vanillabp-adapter/wiki/Examples).
 
 The root build still holds them to this repository's rules where those fit an application:
 Spotless formats their Java, `BpmnDiagramTest` checks their models, and `MethodOrderTest` and
-`TestVisibilityTest` read them. Two rules are left out on purpose: no coverage report reads them,
-because they are applications and not code of the adapter, and their tests use the platform's test
-support rather than `SuppressOutputExtension` of VanillaBP's test utilities, which an application
-copied out would not have. `ExamplesTest` checks that every example has both twins and is listed
-in `examples/pom.xml`, that the twins deploy the same models and configure VanillaBP alike, that
-they use the Spring Boot, Quarkus, VanillaBP and adapter versions of the root POM, that both answer
-on the port the example's `requests.http` sends to, and that every test an example's README or
-`requests.http` cites exists in both twins. `EnginePinTest#theExamplesNameThePin` holds the engine image their POMs and READMEs
-name to the pin, so moving the pin moves them as well. Renovate reads their POMs and leaves their
+`TestVisibilityTest` read them. Two rules are left out on purpose. No coverage report reads them,
+because they are applications and not code of the adapter. And their tests use the platform's test
+support, not `SuppressOutputExtension` of VanillaBP's test utilities, which an application copied
+out would not have. `ExamplesTest` checks that
+
+- every example has both twins and is listed in `examples/pom.xml`;
+- the twins deploy the same models and configure VanillaBP alike;
+- they use the Spring Boot, Quarkus, VanillaBP and adapter versions of the root POM;
+- both twins answer on the port the example's `requests.http` sends to;
+- every test an example's README or `requests.http` cites exists in both twins.
+
+`EnginePinTest#theExamplesNameThePin` holds the engine image their POMs and READMEs name to the
+pin, so moving the pin moves them as well. Renovate reads their POMs and leaves their
 platform versions to the root POM.
 
 A new example is a directory `examples/<name>/` with a `README.md`, a `requests.http`, the twins

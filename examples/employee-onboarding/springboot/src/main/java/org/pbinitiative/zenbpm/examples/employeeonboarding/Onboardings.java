@@ -139,9 +139,9 @@ public class Onboardings {
     }
 
     /**
-     * HR held the welcome meeting. The onboarding is locked while it is read, so a second report of
-     * the same meeting waits for the first to commit and then finds no meeting due: without the
-     * lock both would read the open task and both would answer it.
+     * HR held the welcome meeting. The onboarding is locked while it is read. So a second report
+     * of the same meeting waits until the first commits, and then finds no meeting due. Without the
+     * lock, both would read the open task and both would answer it.
      *
      * @param onboardingId The id of the onboarding
      * @param notes What HR noted

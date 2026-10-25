@@ -93,9 +93,9 @@ a Quarkus twin (decision 67 in the repository's DECISIONS.md). They are not modu
 POM: each twin is a standalone Maven project which uses the installed adapter, so `mvn install` in
 the root does not compile them. After changing the adapter's behaviour, install it and run
 `mvn -f examples/pom.xml verify`, which needs Docker. Write an example as an application would be
-written, following the class roles of the VanillaBP blueprints, and keep both twins alike: the
-same model files, the same REST API on the example's own port, the same test names, which the
-README of the example cites. Its `requests.http` walks the same scenarios for the HTTP client of
+written, with the class roles of the VanillaBP blueprints. Keep both twins alike: the same model
+files, the same REST API on the example's own port, and the same test names, which the README of
+the example cites. Its `requests.http` walks the same scenarios for the HTTP client of
 IntelliJ IDEA, each named after the integration test it follows; change it with the API.
 Their tests use the platform's test support, not VanillaBP's `test-utils`.
 

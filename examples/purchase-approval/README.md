@@ -5,9 +5,9 @@ workshop. A clerk of the purchasing department checks the request. Above 50 000 
 approve it as well. An approved request becomes a purchase order in the purchasing system; a
 rejected one is reported back to the employee with the reason.
 
-The model is derived from the showcase process of the ZenBPM engine, with the lanes Clerk and
-Manager and the gateway on the amount, and adds what a real department needs around them: a way
-to reject, and the steps which place the order or tell the requester.
+The model is derived from the showcase process of the ZenBPM engine, with its lanes Clerk and
+Manager and its gateway on the amount. It adds what a real department needs around them: a way to
+reject, and the steps which place the order or tell the requester.
 
 ```
 Clerk     (o)--[Check purchase request]--<in order?>--yes--<above 50 000?>--no-----------+

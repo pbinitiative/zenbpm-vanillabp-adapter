@@ -94,9 +94,9 @@ for two payments sent at the same moment too: the payment is inserted before its
 the order's number is its primary key, and the database lets one of them in, so the card is
 charged once (`CardPaymentIT#paymentsOfTheSameOrderAtTheSameTimeChargeOnce`).
 
-A payment which cannot be charged as it is gets `400 Bad Request`, and nothing is stored: an
-amount which is not positive or has more than two decimals, a missing e-mail address or card
-token, or an order number which is not 1 to 40 letters, digits and dashes. The order number is
+A payment which cannot be charged as it is gets `400 Bad Request`, and nothing is stored. That is
+an amount which is not positive or has more than two decimals, or a missing e-mail address or card
+token. It is also an order number which is not 1 to 40 letters, digits and dashes. The order number is
 part of the payment's address, `/payments/{orderId}`
 (`CardPaymentIT#anInvalidPaymentIsRefused`).
 

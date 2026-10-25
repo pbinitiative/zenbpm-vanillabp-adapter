@@ -201,8 +201,9 @@ Content-Type: application/json
 %}
 
 # Not here, because a client which sends one request after the other cannot cause them:
-# BankTransferOrderIT#aTransferWhichArrivesWithTheDeadlineIsPaidBack and
-# BankTransferOrderIT#aCustomerWhoHasJustPaidIsNotReminded need a transfer in the second between a
-# timer firing and its task; BankTransferOrderIT#aShipmentRepeatedAfterAFailureSendsOneParcel needs
-# a failed task; BankTransferOrderIT#anOrderPlacedTwiceAtOnceIsTakenOnce and
-# BankTransferOrderIT#aTransferReportedTwiceAtOnceIsAcceptedOnce send requests at the same moment.
+# - BankTransferOrderIT#aTransferWhichArrivesWithTheDeadlineIsPaidBack and
+#   BankTransferOrderIT#aCustomerWhoHasJustPaidIsNotReminded need a transfer in the second between
+#   a timer firing and its task.
+# - BankTransferOrderIT#aShipmentRepeatedAfterAFailureSendsOneParcel needs a failed task.
+# - BankTransferOrderIT#anOrderPlacedTwiceAtOnceIsTakenOnce and
+#   BankTransferOrderIT#aTransferReportedTwiceAtOnceIsAcceptedOnce send requests at the same moment.

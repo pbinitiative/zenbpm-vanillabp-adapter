@@ -53,8 +53,8 @@ the order, so the numbers are in the model.
   the bank gets an error back and sends the transfer again, as banks do with a webhook which
   fails.
 - **A task can run twice, the warehouse ships once.** A task handed out again calls the warehouse
-  again, so the order's number is the idempotency key of the warehouse: shipping an order a second
-  time answers the parcel of the first
+  again. So the order's number is the warehouse's idempotency key: shipping an order a second
+  time answers with the parcel of the first
   (`BankTransferOrderIT#aShipmentRepeatedAfterAFailureSendsOneParcel`).
 - **Two deliveries, one payment.** Banks deliver a webhook twice now and then. The order is locked
   while a transfer is checked against it, so of two deliveries of the same transfer at once one is

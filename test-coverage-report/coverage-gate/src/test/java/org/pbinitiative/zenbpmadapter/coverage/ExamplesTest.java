@@ -29,11 +29,11 @@ import io.vanillabp.integration.test.utils.SuppressOutputExtension;
 /**
  * The examples of <code>examples/</code> are applications of their own, built by
  * <code>examples/pom.xml</code> and not by this build, see decision 67 in the repository's
- * DECISIONS.md. Nothing in this build compiles them, so this test holds them to what they promise:
- * every example comes for both platforms, the two twins run the same models with the same VanillaBP
- * configuration on the same port, each twin uses the platform versions and the adapter version of
- * this build, and what an example's README and its <code>requests.http</code> say the tests prove
- * is a test both twins have.
+ * DECISIONS.md. Nothing in this build compiles them, so this test holds them to what they promise.
+ * Every example comes for both platforms. The two twins run the same models with the same VanillaBP
+ * configuration on the same port. Each twin uses the platform versions and the adapter version of
+ * this build. And every test an example's README or its <code>requests.http</code> names is a test
+ * both twins have.
  */
 @ExtendWith(SuppressOutputExtension.class)
 class ExamplesTest {
@@ -252,11 +252,11 @@ class ExamplesTest {
         final String pom,
         final String name
     ) {
-        final var value = Pattern
+        final var declaration = Pattern
                 .compile("<%1$s>([^<]+)</%1$s>".formatted(Pattern.quote(name)))
                 .matcher(pom);
-        assertTrue(value.find(), () -> "no property %s".formatted(name));
-        return value
+        assertTrue(declaration.find(), () -> "no property %s".formatted(name));
+        return declaration
                 .group(1)
                 .trim();
     }

@@ -201,7 +201,7 @@ class PurchaseApprovalIT {
     }
 
     private String submit(final int amount) {
-        final var result = api
+        final var response = api
                 .post()
                 .uri("/purchase-requests")
                 .contentType(MediaType.APPLICATION_JSON)
@@ -209,9 +209,9 @@ class PurchaseApprovalIT {
                         {"requester": "Jane Doe", "item": "laptop", "amount": %d}
                         """.formatted(amount))
                 .exchange();
-        assertThat(result).hasStatus(201);
+        assertThat(response).hasStatus(201);
         try {
-            return JsonPath.read(result
+            return JsonPath.read(response
                     .getResponse()
                     .getContentAsString(), "$.id");
         } catch (final UnsupportedEncodingException e) {

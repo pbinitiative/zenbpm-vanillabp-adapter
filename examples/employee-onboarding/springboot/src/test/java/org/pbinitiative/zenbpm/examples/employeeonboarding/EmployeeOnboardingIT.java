@@ -163,12 +163,12 @@ class EmployeeOnboardingIT {
     }
 
     private String contractSigned() {
-        final var result = contractSigned("""
+        final var response = contractSigned("""
                 {"employeeName": "Jane Doe", "position": "backend developer", "startDate": "2026-11-02"}
                 """);
-        assertThat(result).hasStatus(201);
+        assertThat(response).hasStatus(201);
         try {
-            return JsonPath.read(result
+            return JsonPath.read(response
                     .getResponse()
                     .getContentAsString(), "$.onboardingId");
         } catch (final UnsupportedEncodingException e) {

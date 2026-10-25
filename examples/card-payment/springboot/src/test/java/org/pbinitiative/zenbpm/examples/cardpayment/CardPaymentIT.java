@@ -196,15 +196,15 @@ class CardPaymentIT {
     }
 
     private int status(final String payment) {
-        final var result = api
+        final var response = api
                 .post()
                 .uri("/payments")
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(payment)
                 .exchange();
         // MockMvc hands an exception no handler answered to the test instead of answering 500
-        return result.getUnresolvedException() == null
-                ? result
+        return response.getUnresolvedException() == null
+                ? response
                         .getResponse()
                         .getStatus()
                 : 500;

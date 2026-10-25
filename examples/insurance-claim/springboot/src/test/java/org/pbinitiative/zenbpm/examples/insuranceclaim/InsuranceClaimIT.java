@@ -205,13 +205,13 @@ class InsuranceClaimIT {
         final String coverage,
         final String damageAmount
     ) {
-        final var result = send("""
+        final var response = send("""
                 {"policyNumber": "MOT-2024-0815", "claimant": "Jane Doe", "coverage": "%s",
                  "damageAmount": %s, "description": "a dent in the rear door"}
                 """.formatted(coverage, damageAmount));
-        assertThat(result).hasStatus(201);
+        assertThat(response).hasStatus(201);
         try {
-            return JsonPath.read(result
+            return JsonPath.read(response
                     .getResponse()
                     .getContentAsString(), "$.claimId");
         } catch (final UnsupportedEncodingException e) {
