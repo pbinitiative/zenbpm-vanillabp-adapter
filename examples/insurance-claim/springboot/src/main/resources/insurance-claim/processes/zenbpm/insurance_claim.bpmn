@@ -1,0 +1,182 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL"
+    xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI"
+    xmlns:dc="http://www.omg.org/spec/DD/20100524/DC"
+    xmlns:di="http://www.omg.org/spec/DD/20100524/DI"
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    xmlns:zenbpm="http://zenbpm.pbinitiative.org/1.0"
+    id="insurance-claim" targetNamespace="http://bpmn.io/schema/bpmn">
+  <bpmn:process id="insurance_claim" name="Motor insurance claim" isExecutable="true">
+    <bpmn:documentation>A policyholder reports damage to their car. The decision table claim_routing decides by the policy's coverage and the damage amount whether the claim is paid at once, looked at by an adjuster, or rejected. Inspired by the claim liquidation of the ZenBPM engine's business rule tests.</bpmn:documentation>
+    <bpmn:startEvent id="ClaimReported" name="Claim reported">
+      <bpmn:outgoing>Flow_ToRouteClaim</bpmn:outgoing>
+    </bpmn:startEvent>
+    <bpmn:businessRuleTask id="RouteClaim" name="Route the claim">
+      <bpmn:extensionElements>
+        <zenbpm:calledDecision decisionId="claim_routing" resultVariable="routing" />
+        <zenbpm:ioMapping>
+          <zenbpm:output source="=routing.route" target="route" />
+        </zenbpm:ioMapping>
+      </bpmn:extensionElements>
+      <bpmn:incoming>Flow_ToRouteClaim</bpmn:incoming>
+      <bpmn:outgoing>Flow_ToRoute</bpmn:outgoing>
+    </bpmn:businessRuleTask>
+    <bpmn:exclusiveGateway id="Route" name="Route?" default="Flow_Review">
+      <bpmn:incoming>Flow_ToRoute</bpmn:incoming>
+      <bpmn:outgoing>Flow_AutoPay</bpmn:outgoing>
+      <bpmn:outgoing>Flow_Review</bpmn:outgoing>
+      <bpmn:outgoing>Flow_Reject</bpmn:outgoing>
+    </bpmn:exclusiveGateway>
+    <bpmn:userTask id="ReviewClaim" name="Review the claim">
+      <bpmn:extensionElements>
+        <zenbpm:taskDefinition type="reviewClaim" />
+      </bpmn:extensionElements>
+      <bpmn:incoming>Flow_Review</bpmn:incoming>
+      <bpmn:outgoing>Flow_ToApproved</bpmn:outgoing>
+    </bpmn:userTask>
+    <bpmn:exclusiveGateway id="Approved" name="Approved by the adjuster?" default="Flow_NotApproved">
+      <bpmn:incoming>Flow_ToApproved</bpmn:incoming>
+      <bpmn:outgoing>Flow_IsApproved</bpmn:outgoing>
+      <bpmn:outgoing>Flow_NotApproved</bpmn:outgoing>
+    </bpmn:exclusiveGateway>
+    <bpmn:exclusiveGateway id="ToBePaid">
+      <bpmn:incoming>Flow_AutoPay</bpmn:incoming>
+      <bpmn:incoming>Flow_IsApproved</bpmn:incoming>
+      <bpmn:outgoing>Flow_ToPayOut</bpmn:outgoing>
+    </bpmn:exclusiveGateway>
+    <bpmn:serviceTask id="PayOut" name="Pay out the damage">
+      <bpmn:extensionElements>
+        <zenbpm:taskDefinition type="payOut" retries="3" />
+      </bpmn:extensionElements>
+      <bpmn:incoming>Flow_ToPayOut</bpmn:incoming>
+      <bpmn:outgoing>Flow_ToClaimPaid</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:endEvent id="ClaimPaid" name="Claim paid">
+      <bpmn:incoming>Flow_ToClaimPaid</bpmn:incoming>
+    </bpmn:endEvent>
+    <bpmn:exclusiveGateway id="ToBeRejected">
+      <bpmn:incoming>Flow_Reject</bpmn:incoming>
+      <bpmn:incoming>Flow_NotApproved</bpmn:incoming>
+      <bpmn:outgoing>Flow_ToRejectClaim</bpmn:outgoing>
+    </bpmn:exclusiveGateway>
+    <bpmn:serviceTask id="RejectClaim" name="Reject the claim">
+      <bpmn:extensionElements>
+        <zenbpm:taskDefinition type="rejectClaim" retries="3" />
+      </bpmn:extensionElements>
+      <bpmn:incoming>Flow_ToRejectClaim</bpmn:incoming>
+      <bpmn:outgoing>Flow_ToClaimRejected</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:endEvent id="ClaimRejected" name="Claim rejected">
+      <bpmn:incoming>Flow_ToClaimRejected</bpmn:incoming>
+    </bpmn:endEvent>
+    <bpmn:sequenceFlow id="Flow_ToRouteClaim" sourceRef="ClaimReported" targetRef="RouteClaim" />
+    <bpmn:sequenceFlow id="Flow_ToRoute" sourceRef="RouteClaim" targetRef="Route" />
+    <bpmn:sequenceFlow id="Flow_AutoPay" name="auto-pay" sourceRef="Route" targetRef="ToBePaid">
+      <bpmn:conditionExpression xsi:type="bpmn:tFormalExpression">=route = "auto-pay"</bpmn:conditionExpression>
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="Flow_Review" name="review" sourceRef="Route" targetRef="ReviewClaim" />
+    <bpmn:sequenceFlow id="Flow_Reject" name="reject" sourceRef="Route" targetRef="ToBeRejected">
+      <bpmn:conditionExpression xsi:type="bpmn:tFormalExpression">=route = "reject"</bpmn:conditionExpression>
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="Flow_ToApproved" sourceRef="ReviewClaim" targetRef="Approved" />
+    <bpmn:sequenceFlow id="Flow_IsApproved" name="Yes" sourceRef="Approved" targetRef="ToBePaid">
+      <bpmn:conditionExpression xsi:type="bpmn:tFormalExpression">=approvedByAdjuster</bpmn:conditionExpression>
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="Flow_NotApproved" name="No" sourceRef="Approved" targetRef="ToBeRejected" />
+    <bpmn:sequenceFlow id="Flow_ToPayOut" sourceRef="ToBePaid" targetRef="PayOut" />
+    <bpmn:sequenceFlow id="Flow_ToClaimPaid" sourceRef="PayOut" targetRef="ClaimPaid" />
+    <bpmn:sequenceFlow id="Flow_ToRejectClaim" sourceRef="ToBeRejected" targetRef="RejectClaim" />
+    <bpmn:sequenceFlow id="Flow_ToClaimRejected" sourceRef="RejectClaim" targetRef="ClaimRejected" />
+  </bpmn:process>
+  <bpmndi:BPMNDiagram id="InsuranceClaimDiagram">
+    <bpmndi:BPMNPlane id="InsuranceClaimPlane" bpmnElement="insurance_claim">
+      <bpmndi:BPMNShape id="ClaimReported_di" bpmnElement="ClaimReported">
+        <dc:Bounds x="172" y="222" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="RouteClaim_di" bpmnElement="RouteClaim">
+        <dc:Bounds x="250" y="200" width="100" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Route_di" bpmnElement="Route" isMarkerVisible="true">
+        <dc:Bounds x="395" y="215" width="50" height="50" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="ReviewClaim_di" bpmnElement="ReviewClaim">
+        <dc:Bounds x="490" y="200" width="100" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Approved_di" bpmnElement="Approved" isMarkerVisible="true">
+        <dc:Bounds x="635" y="215" width="50" height="50" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="ToBePaid_di" bpmnElement="ToBePaid" isMarkerVisible="true">
+        <dc:Bounds x="735" y="95" width="50" height="50" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="PayOut_di" bpmnElement="PayOut">
+        <dc:Bounds x="830" y="80" width="100" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="ClaimPaid_di" bpmnElement="ClaimPaid">
+        <dc:Bounds x="982" y="102" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="ToBeRejected_di" bpmnElement="ToBeRejected" isMarkerVisible="true">
+        <dc:Bounds x="735" y="335" width="50" height="50" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="RejectClaim_di" bpmnElement="RejectClaim">
+        <dc:Bounds x="830" y="320" width="100" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="ClaimRejected_di" bpmnElement="ClaimRejected">
+        <dc:Bounds x="982" y="342" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNEdge id="Flow_ToRouteClaim_di" bpmnElement="Flow_ToRouteClaim">
+        <di:waypoint x="208" y="240" />
+        <di:waypoint x="250" y="240" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_ToRoute_di" bpmnElement="Flow_ToRoute">
+        <di:waypoint x="350" y="240" />
+        <di:waypoint x="395" y="240" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_AutoPay_di" bpmnElement="Flow_AutoPay">
+        <di:waypoint x="420" y="215" />
+        <di:waypoint x="420" y="120" />
+        <di:waypoint x="735" y="120" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_Review_di" bpmnElement="Flow_Review">
+        <di:waypoint x="445" y="240" />
+        <di:waypoint x="490" y="240" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_Reject_di" bpmnElement="Flow_Reject">
+        <di:waypoint x="420" y="265" />
+        <di:waypoint x="420" y="360" />
+        <di:waypoint x="735" y="360" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_ToApproved_di" bpmnElement="Flow_ToApproved">
+        <di:waypoint x="590" y="240" />
+        <di:waypoint x="635" y="240" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_IsApproved_di" bpmnElement="Flow_IsApproved">
+        <di:waypoint x="660" y="215" />
+        <di:waypoint x="660" y="170" />
+        <di:waypoint x="760" y="170" />
+        <di:waypoint x="760" y="145" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_NotApproved_di" bpmnElement="Flow_NotApproved">
+        <di:waypoint x="660" y="265" />
+        <di:waypoint x="660" y="310" />
+        <di:waypoint x="760" y="310" />
+        <di:waypoint x="760" y="335" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_ToPayOut_di" bpmnElement="Flow_ToPayOut">
+        <di:waypoint x="785" y="120" />
+        <di:waypoint x="830" y="120" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_ToClaimPaid_di" bpmnElement="Flow_ToClaimPaid">
+        <di:waypoint x="930" y="120" />
+        <di:waypoint x="982" y="120" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_ToRejectClaim_di" bpmnElement="Flow_ToRejectClaim">
+        <di:waypoint x="785" y="360" />
+        <di:waypoint x="830" y="360" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_ToClaimRejected_di" bpmnElement="Flow_ToClaimRejected">
+        <di:waypoint x="930" y="360" />
+        <di:waypoint x="982" y="360" />
+      </bpmndi:BPMNEdge>
+    </bpmndi:BPMNPlane>
+  </bpmndi:BPMNDiagram>
+</bpmn:definitions>

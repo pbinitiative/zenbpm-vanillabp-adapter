@@ -168,6 +168,11 @@ final class ProductionModules {
                     if (name.equals("target") || name.startsWith(".")) {
                         return FileVisitResult.SKIP_SUBTREE;
                     }
+                    // the examples are applications using the adapter, built on their own, not
+                    // modules of it, see decision 67 in the repository's DECISIONS.md
+                    if (directory.equals(repositoryRoot.resolve("examples"))) {
+                        return FileVisitResult.SKIP_SUBTREE;
+                    }
                     if (directory.endsWith(productionSources)) {
                         final var module = directory
                                 .getParent()

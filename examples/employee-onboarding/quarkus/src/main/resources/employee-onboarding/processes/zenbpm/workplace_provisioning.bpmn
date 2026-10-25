@@ -1,0 +1,97 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL"
+    xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI"
+    xmlns:dc="http://www.omg.org/spec/DD/20100524/DC"
+    xmlns:di="http://www.omg.org/spec/DD/20100524/DI"
+    xmlns:zenbpm="http://zenbpm.pbinitiative.org/1.0"
+    id="workplace-provisioning" targetNamespace="http://bpmn.io/schema/bpmn">
+  <bpmn:process id="workplace_provisioning" name="Workplace provisioning" isExecutable="true">
+    <bpmn:documentation>Prepares the workplace of an employee: IT orders the laptop while facility management issues the badge. A process of its own, so that every process which needs a workplace, an onboarding or a move to another site, calls the same one.</bpmn:documentation>
+    <bpmn:startEvent id="WorkplaceRequested" name="Workplace requested">
+      <bpmn:outgoing>Flow_ToSplit</bpmn:outgoing>
+    </bpmn:startEvent>
+    <bpmn:parallelGateway id="Split">
+      <bpmn:incoming>Flow_ToSplit</bpmn:incoming>
+      <bpmn:outgoing>Flow_ToOrderLaptop</bpmn:outgoing>
+      <bpmn:outgoing>Flow_ToIssueBadge</bpmn:outgoing>
+    </bpmn:parallelGateway>
+    <bpmn:serviceTask id="OrderLaptop" name="Order the laptop">
+      <bpmn:extensionElements>
+        <zenbpm:taskDefinition type="orderLaptop" retries="3" />
+      </bpmn:extensionElements>
+      <bpmn:incoming>Flow_ToOrderLaptop</bpmn:incoming>
+      <bpmn:outgoing>Flow_FromOrderLaptop</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:serviceTask id="IssueBadge" name="Issue the badge">
+      <bpmn:extensionElements>
+        <zenbpm:taskDefinition type="issueBadge" retries="3" />
+      </bpmn:extensionElements>
+      <bpmn:incoming>Flow_ToIssueBadge</bpmn:incoming>
+      <bpmn:outgoing>Flow_FromIssueBadge</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:parallelGateway id="Join">
+      <bpmn:incoming>Flow_FromOrderLaptop</bpmn:incoming>
+      <bpmn:incoming>Flow_FromIssueBadge</bpmn:incoming>
+      <bpmn:outgoing>Flow_ToWorkplaceReady</bpmn:outgoing>
+    </bpmn:parallelGateway>
+    <bpmn:endEvent id="WorkplaceReady" name="Workplace ready">
+      <bpmn:incoming>Flow_ToWorkplaceReady</bpmn:incoming>
+    </bpmn:endEvent>
+    <bpmn:sequenceFlow id="Flow_ToSplit" sourceRef="WorkplaceRequested" targetRef="Split" />
+    <bpmn:sequenceFlow id="Flow_ToOrderLaptop" sourceRef="Split" targetRef="OrderLaptop" />
+    <bpmn:sequenceFlow id="Flow_ToIssueBadge" sourceRef="Split" targetRef="IssueBadge" />
+    <bpmn:sequenceFlow id="Flow_FromOrderLaptop" sourceRef="OrderLaptop" targetRef="Join" />
+    <bpmn:sequenceFlow id="Flow_FromIssueBadge" sourceRef="IssueBadge" targetRef="Join" />
+    <bpmn:sequenceFlow id="Flow_ToWorkplaceReady" sourceRef="Join" targetRef="WorkplaceReady" />
+  </bpmn:process>
+  <bpmndi:BPMNDiagram id="workplace_provisioningDiagram">
+    <bpmndi:BPMNPlane id="workplace_provisioningPlane" bpmnElement="workplace_provisioning">
+      <bpmndi:BPMNShape id="WorkplaceRequested_di" bpmnElement="WorkplaceRequested">
+        <dc:Bounds x="172" y="162" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Split_di" bpmnElement="Split">
+        <dc:Bounds x="255" y="155" width="50" height="50" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="OrderLaptop_di" bpmnElement="OrderLaptop">
+        <dc:Bounds x="350" y="80" width="100" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="IssueBadge_di" bpmnElement="IssueBadge">
+        <dc:Bounds x="350" y="200" width="100" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Join_di" bpmnElement="Join">
+        <dc:Bounds x="495" y="155" width="50" height="50" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="WorkplaceReady_di" bpmnElement="WorkplaceReady">
+        <dc:Bounds x="592" y="162" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNEdge id="Flow_ToSplit_di" bpmnElement="Flow_ToSplit">
+        <di:waypoint x="208" y="180" />
+        <di:waypoint x="255" y="180" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_ToOrderLaptop_di" bpmnElement="Flow_ToOrderLaptop">
+        <di:waypoint x="280" y="155" />
+        <di:waypoint x="280" y="120" />
+        <di:waypoint x="350" y="120" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_ToIssueBadge_di" bpmnElement="Flow_ToIssueBadge">
+        <di:waypoint x="280" y="205" />
+        <di:waypoint x="280" y="240" />
+        <di:waypoint x="350" y="240" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_FromOrderLaptop_di" bpmnElement="Flow_FromOrderLaptop">
+        <di:waypoint x="450" y="120" />
+        <di:waypoint x="520" y="120" />
+        <di:waypoint x="520" y="155" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_FromIssueBadge_di" bpmnElement="Flow_FromIssueBadge">
+        <di:waypoint x="450" y="240" />
+        <di:waypoint x="520" y="240" />
+        <di:waypoint x="520" y="205" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_ToWorkplaceReady_di" bpmnElement="Flow_ToWorkplaceReady">
+        <di:waypoint x="545" y="180" />
+        <di:waypoint x="592" y="180" />
+      </bpmndi:BPMNEdge>
+    </bpmndi:BPMNPlane>
+  </bpmndi:BPMNDiagram>
+</bpmn:definitions>

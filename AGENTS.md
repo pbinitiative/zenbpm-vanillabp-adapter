@@ -86,6 +86,19 @@ DECISIONS.md). Save the file from a modeler, or give a file written by hand a ge
 the build on a file without one and names what is missing. BPMN written inline in a Java test is
 exempt, and so is a file which is no model on purpose; the check names such a file with its reason.
 
+## The examples are applications
+
+[`examples/`](examples) holds example applications, each a business story with a Spring Boot and
+a Quarkus twin (decision 67 in the repository's DECISIONS.md). They are not modules of the root
+POM: each twin is a standalone Maven project which uses the installed adapter, so `mvn install` in
+the root does not compile them. After changing the adapter's behaviour, install it and run
+`mvn -f examples/pom.xml verify`, which needs Docker. Write an example as an application would be
+written, with the class roles of the VanillaBP blueprints. Keep both twins alike: the same model
+files, the same REST API on the example's own port, and the same test names, which the README of
+the example cites. Its `requests.http` walks the same scenarios for the HTTP client of
+IntelliJ IDEA, each named after the integration test it follows; change it with the API.
+Their tests use the platform's test support, not VanillaBP's `test-utils`.
+
 ## The wiki is written here
 
 The user documentation is the repository's wiki, and its pages are written in [`wiki/`](wiki), one

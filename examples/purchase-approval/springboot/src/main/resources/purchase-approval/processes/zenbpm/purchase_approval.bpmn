@@ -1,0 +1,227 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL"
+    xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI"
+    xmlns:dc="http://www.omg.org/spec/DD/20100524/DC"
+    xmlns:di="http://www.omg.org/spec/DD/20100524/DI"
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    xmlns:zenbpm="http://zenbpm.pbinitiative.org/1.0"
+    id="purchase-approval" targetNamespace="http://bpmn.io/schema/bpmn">
+  <bpmn:collaboration id="PurchaseApprovalCollaboration">
+    <bpmn:participant id="Purchasing" name="Purchasing" processRef="purchase_approval" />
+  </bpmn:collaboration>
+  <bpmn:process id="purchase_approval" name="Purchase approval" isExecutable="true">
+    <bpmn:documentation>An employee asks to buy something. A clerk checks the request, and above 50 000 a manager has to approve it as well. An approved request becomes a purchase order; a rejected one is reported back to the employee. Derived from the showcase process of the ZenBPM engine.</bpmn:documentation>
+    <bpmn:laneSet id="PurchasingLanes">
+      <bpmn:lane id="Clerk" name="Clerk">
+        <bpmn:flowNodeRef>PurchaseRequested</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>CheckRequest</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>RequestInOrder</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>AboveLimit</bpmn:flowNodeRef>
+      </bpmn:lane>
+      <bpmn:lane id="Manager" name="Manager">
+        <bpmn:flowNodeRef>ApproveHighValue</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>ApprovedByManager</bpmn:flowNodeRef>
+      </bpmn:lane>
+      <bpmn:lane id="PurchasingSystem" name="Purchasing system">
+        <bpmn:flowNodeRef>ToBeOrdered</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>PlaceOrder</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>PurchaseOrdered</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>ToBeRejected</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>NotifyRejection</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>PurchaseRejected</bpmn:flowNodeRef>
+      </bpmn:lane>
+    </bpmn:laneSet>
+    <bpmn:startEvent id="PurchaseRequested" name="Purchase requested">
+      <bpmn:outgoing>Flow_ToCheckRequest</bpmn:outgoing>
+    </bpmn:startEvent>
+    <bpmn:userTask id="CheckRequest" name="Check purchase request">
+      <bpmn:extensionElements>
+        <zenbpm:taskDefinition type="checkRequest" />
+      </bpmn:extensionElements>
+      <bpmn:incoming>Flow_ToCheckRequest</bpmn:incoming>
+      <bpmn:outgoing>Flow_ToRequestInOrder</bpmn:outgoing>
+    </bpmn:userTask>
+    <bpmn:exclusiveGateway id="RequestInOrder" name="Request in order?" default="Flow_RequestNotInOrder">
+      <bpmn:incoming>Flow_ToRequestInOrder</bpmn:incoming>
+      <bpmn:outgoing>Flow_RequestIsInOrder</bpmn:outgoing>
+      <bpmn:outgoing>Flow_RequestNotInOrder</bpmn:outgoing>
+    </bpmn:exclusiveGateway>
+    <bpmn:exclusiveGateway id="AboveLimit" name="Amount above 50 000?" default="Flow_NotAboveLimit">
+      <bpmn:incoming>Flow_RequestIsInOrder</bpmn:incoming>
+      <bpmn:outgoing>Flow_IsAboveLimit</bpmn:outgoing>
+      <bpmn:outgoing>Flow_NotAboveLimit</bpmn:outgoing>
+    </bpmn:exclusiveGateway>
+    <bpmn:userTask id="ApproveHighValue" name="Approve high-value purchase">
+      <bpmn:extensionElements>
+        <zenbpm:taskDefinition type="approveHighValue" />
+      </bpmn:extensionElements>
+      <bpmn:incoming>Flow_IsAboveLimit</bpmn:incoming>
+      <bpmn:outgoing>Flow_ToApprovedByManager</bpmn:outgoing>
+    </bpmn:userTask>
+    <bpmn:exclusiveGateway id="ApprovedByManager" name="Approved by the manager?" default="Flow_NotApprovedByManager">
+      <bpmn:incoming>Flow_ToApprovedByManager</bpmn:incoming>
+      <bpmn:outgoing>Flow_IsApprovedByManager</bpmn:outgoing>
+      <bpmn:outgoing>Flow_NotApprovedByManager</bpmn:outgoing>
+    </bpmn:exclusiveGateway>
+    <bpmn:exclusiveGateway id="ToBeOrdered">
+      <bpmn:incoming>Flow_NotAboveLimit</bpmn:incoming>
+      <bpmn:incoming>Flow_IsApprovedByManager</bpmn:incoming>
+      <bpmn:outgoing>Flow_ToPlaceOrder</bpmn:outgoing>
+    </bpmn:exclusiveGateway>
+    <bpmn:serviceTask id="PlaceOrder" name="Place purchase order">
+      <bpmn:extensionElements>
+        <zenbpm:taskDefinition type="placeOrder" retries="3" />
+      </bpmn:extensionElements>
+      <bpmn:incoming>Flow_ToPlaceOrder</bpmn:incoming>
+      <bpmn:outgoing>Flow_ToPurchaseOrdered</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:endEvent id="PurchaseOrdered" name="Purchase ordered">
+      <bpmn:incoming>Flow_ToPurchaseOrdered</bpmn:incoming>
+    </bpmn:endEvent>
+    <bpmn:exclusiveGateway id="ToBeRejected">
+      <bpmn:incoming>Flow_RequestNotInOrder</bpmn:incoming>
+      <bpmn:incoming>Flow_NotApprovedByManager</bpmn:incoming>
+      <bpmn:outgoing>Flow_ToNotifyRejection</bpmn:outgoing>
+    </bpmn:exclusiveGateway>
+    <bpmn:serviceTask id="NotifyRejection" name="Notify the requester">
+      <bpmn:extensionElements>
+        <zenbpm:taskDefinition type="notifyRejection" retries="3" />
+      </bpmn:extensionElements>
+      <bpmn:incoming>Flow_ToNotifyRejection</bpmn:incoming>
+      <bpmn:outgoing>Flow_ToPurchaseRejected</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:endEvent id="PurchaseRejected" name="Purchase rejected">
+      <bpmn:incoming>Flow_ToPurchaseRejected</bpmn:incoming>
+    </bpmn:endEvent>
+    <bpmn:sequenceFlow id="Flow_ToCheckRequest" sourceRef="PurchaseRequested" targetRef="CheckRequest" />
+    <bpmn:sequenceFlow id="Flow_ToRequestInOrder" sourceRef="CheckRequest" targetRef="RequestInOrder" />
+    <bpmn:sequenceFlow id="Flow_RequestIsInOrder" name="Yes" sourceRef="RequestInOrder" targetRef="AboveLimit">
+      <bpmn:conditionExpression xsi:type="bpmn:tFormalExpression">=requestInOrder</bpmn:conditionExpression>
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="Flow_RequestNotInOrder" name="No" sourceRef="RequestInOrder" targetRef="ToBeRejected" />
+    <bpmn:sequenceFlow id="Flow_IsAboveLimit" name="Yes" sourceRef="AboveLimit" targetRef="ApproveHighValue">
+      <bpmn:conditionExpression xsi:type="bpmn:tFormalExpression">=aboveApprovalLimit</bpmn:conditionExpression>
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="Flow_NotAboveLimit" name="No" sourceRef="AboveLimit" targetRef="ToBeOrdered" />
+    <bpmn:sequenceFlow id="Flow_ToApprovedByManager" sourceRef="ApproveHighValue" targetRef="ApprovedByManager" />
+    <bpmn:sequenceFlow id="Flow_IsApprovedByManager" name="Yes" sourceRef="ApprovedByManager" targetRef="ToBeOrdered">
+      <bpmn:conditionExpression xsi:type="bpmn:tFormalExpression">=approvedByManager</bpmn:conditionExpression>
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="Flow_NotApprovedByManager" name="No" sourceRef="ApprovedByManager" targetRef="ToBeRejected" />
+    <bpmn:sequenceFlow id="Flow_ToPlaceOrder" sourceRef="ToBeOrdered" targetRef="PlaceOrder" />
+    <bpmn:sequenceFlow id="Flow_ToPurchaseOrdered" sourceRef="PlaceOrder" targetRef="PurchaseOrdered" />
+    <bpmn:sequenceFlow id="Flow_ToNotifyRejection" sourceRef="ToBeRejected" targetRef="NotifyRejection" />
+    <bpmn:sequenceFlow id="Flow_ToPurchaseRejected" sourceRef="NotifyRejection" targetRef="PurchaseRejected" />
+  </bpmn:process>
+  <bpmndi:BPMNDiagram id="PurchaseApprovalDiagram">
+    <bpmndi:BPMNPlane id="PurchaseApprovalPlane" bpmnElement="PurchaseApprovalCollaboration">
+      <bpmndi:BPMNShape id="Purchasing_di" bpmnElement="Purchasing" isHorizontal="true">
+        <dc:Bounds x="130" y="80" width="1090" height="520" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Clerk_di" bpmnElement="Clerk" isHorizontal="true">
+        <dc:Bounds x="160" y="80" width="1060" height="160" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Manager_di" bpmnElement="Manager" isHorizontal="true">
+        <dc:Bounds x="160" y="240" width="1060" height="140" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="PurchasingSystem_di" bpmnElement="PurchasingSystem" isHorizontal="true">
+        <dc:Bounds x="160" y="380" width="1060" height="220" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="PurchaseRequested_di" bpmnElement="PurchaseRequested">
+        <dc:Bounds x="232" y="142" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="CheckRequest_di" bpmnElement="CheckRequest">
+        <dc:Bounds x="310" y="120" width="100" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="RequestInOrder_di" bpmnElement="RequestInOrder" isMarkerVisible="true">
+        <dc:Bounds x="465" y="135" width="50" height="50" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="AboveLimit_di" bpmnElement="AboveLimit" isMarkerVisible="true">
+        <dc:Bounds x="575" y="135" width="50" height="50" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="ApproveHighValue_di" bpmnElement="ApproveHighValue">
+        <dc:Bounds x="660" y="270" width="100" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="ApprovedByManager_di" bpmnElement="ApprovedByManager" isMarkerVisible="true">
+        <dc:Bounds x="805" y="285" width="50" height="50" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="ToBeOrdered_di" bpmnElement="ToBeOrdered" isMarkerVisible="true">
+        <dc:Bounds x="905" y="395" width="50" height="50" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="PlaceOrder_di" bpmnElement="PlaceOrder">
+        <dc:Bounds x="990" y="380" width="100" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="PurchaseOrdered_di" bpmnElement="PurchaseOrdered">
+        <dc:Bounds x="1132" y="402" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="ToBeRejected_di" bpmnElement="ToBeRejected" isMarkerVisible="true">
+        <dc:Bounds x="905" y="485" width="50" height="50" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="NotifyRejection_di" bpmnElement="NotifyRejection">
+        <dc:Bounds x="990" y="470" width="100" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="PurchaseRejected_di" bpmnElement="PurchaseRejected">
+        <dc:Bounds x="1132" y="492" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNEdge id="Flow_ToCheckRequest_di" bpmnElement="Flow_ToCheckRequest">
+        <di:waypoint x="268" y="160" />
+        <di:waypoint x="310" y="160" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_ToRequestInOrder_di" bpmnElement="Flow_ToRequestInOrder">
+        <di:waypoint x="410" y="160" />
+        <di:waypoint x="465" y="160" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_RequestIsInOrder_di" bpmnElement="Flow_RequestIsInOrder">
+        <di:waypoint x="515" y="160" />
+        <di:waypoint x="575" y="160" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_RequestNotInOrder_di" bpmnElement="Flow_RequestNotInOrder">
+        <di:waypoint x="490" y="185" />
+        <di:waypoint x="490" y="570" />
+        <di:waypoint x="930" y="570" />
+        <di:waypoint x="930" y="535" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_IsAboveLimit_di" bpmnElement="Flow_IsAboveLimit">
+        <di:waypoint x="600" y="185" />
+        <di:waypoint x="600" y="310" />
+        <di:waypoint x="660" y="310" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_NotAboveLimit_di" bpmnElement="Flow_NotAboveLimit">
+        <di:waypoint x="625" y="160" />
+        <di:waypoint x="930" y="160" />
+        <di:waypoint x="930" y="395" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_ToApprovedByManager_di" bpmnElement="Flow_ToApprovedByManager">
+        <di:waypoint x="760" y="310" />
+        <di:waypoint x="805" y="310" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_IsApprovedByManager_di" bpmnElement="Flow_IsApprovedByManager">
+        <di:waypoint x="855" y="310" />
+        <di:waypoint x="880" y="310" />
+        <di:waypoint x="880" y="420" />
+        <di:waypoint x="905" y="420" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_NotApprovedByManager_di" bpmnElement="Flow_NotApprovedByManager">
+        <di:waypoint x="830" y="335" />
+        <di:waypoint x="830" y="510" />
+        <di:waypoint x="905" y="510" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_ToPlaceOrder_di" bpmnElement="Flow_ToPlaceOrder">
+        <di:waypoint x="955" y="420" />
+        <di:waypoint x="990" y="420" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_ToPurchaseOrdered_di" bpmnElement="Flow_ToPurchaseOrdered">
+        <di:waypoint x="1090" y="420" />
+        <di:waypoint x="1132" y="420" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_ToNotifyRejection_di" bpmnElement="Flow_ToNotifyRejection">
+        <di:waypoint x="955" y="510" />
+        <di:waypoint x="990" y="510" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_ToPurchaseRejected_di" bpmnElement="Flow_ToPurchaseRejected">
+        <di:waypoint x="1090" y="510" />
+        <di:waypoint x="1132" y="510" />
+      </bpmndi:BPMNEdge>
+    </bpmndi:BPMNPlane>
+  </bpmndi:BPMNDiagram>
+</bpmn:definitions>

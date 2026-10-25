@@ -1,0 +1,170 @@
+# Card payment, step by step, for the HTTP client of IntelliJ IDEA.
+#
+# Start the engine on port 8080 and zenbpm-ui as examples/README.md says, then either twin of this
+# example (README "Run it"); both answer on port 8102. Run the requests of a scenario one after the
+# other. A step which reads the payment checks where it stands: a red check means "not yet", run it
+# again. Every run pays orders of new numbers, so earlier runs do not get in the way. zenbpm-ui
+# shows each payment as an instance of card-payment__card_payment whose business key is the order's
+# number.
+
+@app = http://localhost:8102
+@engine = http://localhost:8080
+
+### CardPaymentIT#aValidCardIsChargedAndTheOrderConfirmed: 1. pay with a valid card
+POST {{app}}/payments
+Content-Type: application/json
+
+{"orderId": "ORD-{{$random.alphanumeric(6)}}", "customerEmail": "jane.doe@example.com", "amount": 49.90, "cardToken": "tok_visa"}
+
+> {%
+    client.global.set("validCard", response.body.orderId);
+%}
+
+### 2. charged, and the order confirmed
+GET {{app}}/payments/{{validCard}}
+
+> {%
+    client.test("the order is paid and confirmed", function () {
+        client.assert(response.body.status === "PAID", "status is " + response.body.status);
+        client.assert(response.body.transactionId.startsWith("ch_"), "no charge");
+        client.assert(response.body.orderConfirmed === true, "the order is not confirmed yet");
+    });
+%}
+
+### CardPaymentIT#aDeclinedCardMakesTheShopAskForAnotherOne: 1. pay with a card the provider declines
+POST {{app}}/payments
+Content-Type: application/json
+
+{"orderId": "ORD-{{$random.alphanumeric(6)}}", "customerEmail": "jane.doe@example.com", "amount": 89.00, "cardToken": "tok_chargeDeclined"}
+
+> {%
+    client.global.set("declinedCard", response.body.orderId);
+%}
+
+### 2. declined: the BPMN error took the path to the customer (zenbpm-ui: the boundary event)
+GET {{app}}/payments/{{declinedCard}}
+
+> {%
+    client.test("the customer is asked for another card", function () {
+        client.assert(response.body.status === "DECLINED", "status is " + response.body.status);
+        client.assert(response.body.customerAskedForAnotherCard === true, "the customer is not asked yet");
+    });
+%}
+
+### CardPaymentIT#aProviderWhichDoesNotAnswerOnceIsTriedAgain: 1. pay while the provider misses one answer
+POST {{app}}/payments
+Content-Type: application/json
+
+{"orderId": "ORD-{{$random.alphanumeric(6)}}", "customerEmail": "jane.doe@example.com", "amount": 19.99, "cardToken": "tok_processingError"}
+
+> {%
+    client.global.set("triedAgain", response.body.orderId);
+%}
+
+### 2. after two seconds the engine hands the task out again, and the second attempt charges the card
+GET {{app}}/payments/{{triedAgain}}
+
+> {%
+    client.test("paid on the second attempt", function () {
+        client.assert(response.body.status === "PAID", "status is " + response.body.status);
+    });
+%}
+
+### CardPaymentIT#anOutageLongerThanTheAttemptsIsAnIncidentAnOperatorResolves: 1. take the provider down
+PUT {{app}}/simulation/payment-provider
+Content-Type: application/json
+
+{"available": false}
+
+### 2. pay during the outage
+POST {{app}}/payments
+Content-Type: application/json
+
+{"orderId": "ORD-{{$random.alphanumeric(6)}}", "customerEmail": "jane.doe@example.com", "amount": 129.00, "cardToken": "tok_visa"}
+
+> {%
+    client.global.set("outage", response.body.orderId);
+%}
+
+### 3. three attempts two seconds apart, then an incident: the payment stays pending
+GET {{app}}/payments/{{outage}}
+
+> {%
+    client.test("the payment is pending", function () {
+        client.assert(response.body.status === "PENDING", "status is " + response.body.status);
+    });
+%}
+
+### 4. the engine shows the incident (zenbpm-ui: the instance with this business key, tab Incidents)
+GET {{engine}}/v1/process-instances?businessKey={{outage}}
+
+> {%
+    client.test("the workflow has an incident", function () {
+        const instances = response.body.partitions.flatMap(function (partition) {
+            return partition.items;
+        });
+        client.assert(instances.length === 1 && instances[0].incidentCount > 0, "no incident yet");
+    });
+%}
+
+### 5. bring the provider back: nothing happens yet, the attempts are spent
+PUT {{app}}/simulation/payment-provider
+Content-Type: application/json
+
+{"available": true}
+
+# 6. Resolve the incident in zenbpm-ui, as an operator would. Resolving gives the task a fresh
+#    series of attempts, and the first one charges the card. The engine's keys are 64-bit numbers,
+#    which the JavaScript of this client cannot keep exactly, so no request here takes them over.
+#    To resolve it from here instead, paste the incident's key from zenbpm-ui and run:
+#
+#    @incident = <the incident's key>
+#    POST {{engine}}/v1/incidents/{{incident}}/resolve
+
+### 7. paid once the incident is resolved
+GET {{app}}/payments/{{outage}}
+
+> {%
+    client.test("the order is paid", function () {
+        client.assert(response.body.status === "PAID", "status is " + response.body.status);
+    });
+%}
+
+### CardPaymentIT#aSecondPaymentOfTheSameOrderIsRefused: pay the order of the valid card again
+POST {{app}}/payments
+Content-Type: application/json
+
+{"orderId": "{{validCard}}", "customerEmail": "jane.doe@example.com", "amount": 49.90, "cardToken": "tok_visa"}
+
+> {%
+    client.test("409 Conflict", function () {
+        client.assert(response.status === 409, "answered " + response.status);
+    });
+%}
+
+### CardPaymentIT#anInvalidPaymentIsRefused: an amount which is not positive
+POST {{app}}/payments
+Content-Type: application/json
+
+{"orderId": "ORD-{{$random.alphanumeric(6)}}", "customerEmail": "jane.doe@example.com", "amount": -49.90, "cardToken": "tok_visa"}
+
+> {%
+    client.test("400 Bad Request", function () {
+        client.assert(response.status === 400, "answered " + response.status);
+    });
+%}
+
+### CardPaymentIT#anInvalidPaymentIsRefused: an order number with a space
+POST {{app}}/payments
+Content-Type: application/json
+
+{"orderId": "ORD 1003", "customerEmail": "jane.doe@example.com", "amount": 49.90, "cardToken": "tok_visa"}
+
+> {%
+    client.test("400 Bad Request", function () {
+        client.assert(response.status === 400, "answered " + response.status);
+    });
+%}
+
+# Not here: CardPaymentIT#paymentsOfTheSameOrderAtTheSameTimeChargeOnce sends eight payments at the
+# same moment, which an HTTP client that sends one request after the other cannot do.

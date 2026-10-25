@@ -1,7 +1,9 @@
 name: Checks
 # The build of every pull request and of every push to main: Spotless, compile, javadoc,
 # the tests, the per-platform coverage reports and the coverage gate, all of it one
-# 'mvn install'. The job 'build' is the check branch protection on main requires.
+# 'mvn install'. The job 'build' is the check branch protection on main requires. The job
+# 'examples' builds and tests the example applications of examples/ against the adapter of
+# the same commit.
 "on":
   pull_request:
   push:
@@ -92,6 +94,48 @@ jobs:
             **/target/failsafe-reports/**
             **/target/site/jacoco*/**
             test-coverage-report/*/report/**
+          retention-days: 7
+          if-no-files-found: warn
+
+  # The examples are applications of their own, outside the reactor 'build' runs, see decision 67
+  # in the repository's DECISIONS.md. Each twin's integration test walks through its README
+  # against an engine of its own, so a change of the adapter which breaks an example turns this
+  # job red in the same pull request. The adapter is installed from this checkout first, without
+  # its tests, which 'build' runs.
+  examples:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      # the engine image the integration tests start, as in 'build'
+      packages: read
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@v6
+        with:
+          java-version: 25.0.4+101.0.LTS
+          distribution: temurin
+          cache: maven
+          settings-path: ${{ runner.temp }}/setup-java
+      - name: Log in to the GitHub container registry
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Install the adapter
+        run: mvn --batch-mode --no-transfer-progress --update-snapshots -Dmaven.test.skip=true
+          --projects spring-boot,quarkus/deployment --also-make install
+      - name: Build and test the examples
+        run: mvn --batch-mode --no-transfer-progress --update-snapshots -f examples/pom.xml verify
+      - name: Upload the reports of failed examples
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: examples-reports
+          path: examples/**/target/failsafe-reports/**
           retention-days: 7
           if-no-files-found: warn
 

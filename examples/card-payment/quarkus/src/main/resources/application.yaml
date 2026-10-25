@@ -1,0 +1,36 @@
+# The payments live in an in-memory database, which is enough for an example: a restart starts
+# empty, on both sides, as long as the engine is restarted too.
+quarkus:
+  application:
+    name: card-payment
+  # Every example answers on a port of its own, so all of them can run beside one engine on
+  # 8080. The tests run on the test port of Quarkus instead.
+  http:
+    port: 8102
+  datasource:
+    db-kind: h2
+    jdbc:
+      url: jdbc:h2:mem:card-payment;DB_CLOSE_DELAY=-1
+  hibernate-orm:
+    schema-management:
+      strategy: drop-and-create
+vanillabp:
+  adapters:
+    zenbpm:
+      # The engine on port 8080 of this machine, where the README's docker run publishes it and
+      # where the engine's development configuration listens. ZENBPM_REST_ADDRESS points the
+      # application at another one; the gRPC address defaults to the same host on port 9090.
+      rest-address: ${ZENBPM_REST_ADDRESS:http://localhost:8080}
+      # The identifiers of the workflow module are prefixed in the engine, so the process runs
+      # there as card-payment__card_payment. Required by the adapter.
+      name-clash-avoidance: use-prefix
+  workflow-modules:
+    card-payment:
+      workflows:
+        card_payment:
+          adapters:
+            zenbpm:
+              # How long the engine waits before it hands a failed task out again. The model
+              # gives every task three attempts, so a provider which is away for less than about
+              # four seconds costs a short delay and nothing else.
+              retry-backoff: PT2S
