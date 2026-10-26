@@ -1899,6 +1899,8 @@ this repository changed, and the workflow writes its finding into the run's summ
 no issue and writes nowhere, in this repository or the engine's. A person reads it and takes the
 finding to the engine's maintainers.
 
+*How often the job `latest-engine` runs is decided by decision 68.*
+
 ### 63. The wiki's pages are written in `wiki/` and copied into the wiki after the merge
 
 Decided by the implementation pipeline in place of the maintainers, as their policy for the
@@ -1975,6 +1977,10 @@ same identifiers, and a twin must not find the workflows, timers and versions th
 left. The blueprints' models are written for Camunda 8, which gives a task without `retries` three
 attempts, so the script starts the engine with `JOBS_DEFAULT_RETRIES=3`, as the wiki page
 `Configuration` advises for such models.
+
+*"Built every night" is superseded in part by decision 68: the job `blueprints` runs where the
+blueprints' `main`, VanillaBP's snapshots or this repository changed since its last run, and every
+Sunday.*
 
 ### 65. A release is published by the release workflow from a tag, to this repository's GitHub Packages
 
@@ -2065,3 +2071,46 @@ VanillaBP's `test-utils` and its `SuppressOutputExtension`, which an application
 not have. Each twin's integration test starts the pinned engine itself from the image its POM names
 and walks through the story its README tells, so the README's promises are tested, on both
 platforms.
+
+### 68. A job of the nightly runs where something it builds on changed, and every job runs on Sunday
+
+The maintainers asked for it. Most nights none of the nightly's inputs changes, and the jobs
+then build what they built the night before. `latest-engine` was red every night after a
+deliberate change of the engine, until the pin would move, and a regression arriving meanwhile
+would have shown up in a job nobody looks at any more. A run which only starts where something
+changed points at that change.
+
+The job `what-changed` reads, with `bin/what-the-nightly-builds-on.sh`, the commit of `main`, the
+timestamp and build number of the newest snapshot of every VanillaBP artifact the root POM names,
+the digest of `ghcr.io/pbinitiative/zenbpm:dev` and the newest commit of the blueprints' `main`. It
+needs no Docker and no login. The modules and the blueprints read further VanillaBP artifacts, such
+as `bpms-double-quarkus` or `vanillabp-bom`. They are no inputs of their own, because `spi-for-java`
+and `adapter-platform-integration` each publish all their modules in one deploy from their `main`.
+Each job gets a key, `nightly-<job>-<SHA-256>` of the inputs it builds on: every job builds on the
+commit and on VanillaBP, `latest-engine` also on the engine's digest and `blueprints` also on the
+blueprints' commit. The pinned engine is no input of its own, as it moves only with a commit. The
+runner image and the newest Mandrel the native build installs are left out: they change without
+anything of the adapter's changing, and the run of Sunday covers them.
+
+A job runs where its key is not in the workflow's cache, which `actions/cache/restore` asks with
+`lookup-only`. Once its build passed, the job saves its key with `actions/cache/save`. A failed
+build saves nothing, so the job runs again every night until it passes. GitHub reports a skipped
+job as passed, so a red job skipped the next night would turn the run and the `Nightly` badge green
+while the build is still broken. `latest-engine` saves its key also after a failed build, because
+it never turns the run red, and so a new build of the engine is reported once. A failure before the
+build, such as an image which could not be pulled, saves nothing in any job. Only a run on `main`
+saves, because the schedule reads the cache of `main`. A pull request's run could only save into
+the cache of its own branch. The cache is no repository, package or issue tracker, and it needs no
+permission, so the workflow still writes nowhere in the sense of the README.
+
+Every doubt runs the job. An input which cannot be read leaves the keys of its jobs empty. A
+failed `what-changed` lets every job run, since each one's condition is
+`!cancelled() && (needs.what-changed.result != 'success' || needs.what-changed.outputs.<job> == 'run')`.
+A key GitHub evicted from the cache, after seven days without use, makes its job run once more.
+Reading an input a little before the build uses it may record an older input than the one built
+on; the job then runs once more the next night. A pull request, a dispatch and the run of Sunday
+(`37 2 * * 0`) run every job. Sunday keeps what the nightly was also for, a test which fails now and
+then showing up with nobody waiting for it, at least once a week.
+
+The jobs still do not depend on one another: each waits for `what-changed` alone, and a red job
+hides the answer of no other.
