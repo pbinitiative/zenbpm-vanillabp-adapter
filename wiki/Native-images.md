@@ -12,7 +12,8 @@ through VanillaBP's two-phase start, serves the job of a first task, correlates 
 workflow then waits for, serves the job of a second task and reports the end of the workflow to the
 application's `@WorkflowEnded` method. The test accepts the run only when the binary exits with 0
 and the engine shows the workflow completed (`ZenBpmNativeImageIT`). The adapter's nightly build
-runs it every night.
+runs it every night where the adapter or VanillaBP changed, and every Sunday
+(`NightlyWorkflowTest`, `NightlyChangeDetectionTest`).
 
 That application has no Micrometer: the adapter's meters are tested in the JVM only, see
 [What an operator gets to see](Configuration#what-an-operator-gets-to-see).

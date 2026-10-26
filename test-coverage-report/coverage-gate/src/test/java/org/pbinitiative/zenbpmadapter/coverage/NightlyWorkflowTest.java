@@ -16,8 +16,11 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.TreeMap;
 import java.util.TreeSet;
+import java.util.function.Predicate;
 import java.util.regex.Pattern;
+import java.util.stream.Collectors;
 
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -33,9 +36,10 @@ import io.vanillabp.integration.test.utils.SuppressOutputExtension;
  * The nightly workflow runs only on GitHub, and nothing else reads it before it runs: actionlint in
  * the pull-request check finds what is no valid workflow, not what contradicts the README. This test
  * holds <code>.github/workflows/nightly.yaml</code> to what the README's section "What CI runs"
- * says about it: when it runs, which jobs it has, that they do not wait for one another, that only
- * the job against the engine's newest build may fail, that it writes nothing, and that every job
- * writes its line into the run's summary.
+ * says about it: when it runs, which jobs it has, that they do not wait for one another but only
+ * for the job which decides whether they run, that a job runs where its inputs changed or cannot be
+ * read and records them once its build ran, that only the job against the engine's newest build may
+ * fail, that it writes nothing, and that every job writes its line into the run's summary.
  */
 @ExtendWith(SuppressOutputExtension.class)
 class NightlyWorkflowTest {
@@ -48,13 +52,23 @@ class NightlyWorkflowTest {
 
     private static final String BLUEPRINTS_SCRIPT = "bin/build-blueprints-on-zenbpm.sh";
 
+    private static final String INPUTS_SCRIPT = "bin/what-the-nightly-builds-on.sh";
+
+    /** The job which reads what the others build on and decides which of them run. */
+    private static final String DECIDING_JOB = "what-changed";
+
     /** What a change of starts the nightly in its pull request: the workflow, what it runs, the overlay. */
-    private static final List<String> STARTING_PATHS = List.of(WORKFLOW, RESOLVING_SCRIPT, BLUEPRINTS_SCRIPT,
-            "bin/zenbpm-engine.sh", "blueprints-overlay/**");
+    private static final List<String> STARTING_PATHS = List.of(WORKFLOW, INPUTS_SCRIPT, RESOLVING_SCRIPT,
+            BLUEPRINTS_SCRIPT, "bin/zenbpm-engine.sh", "blueprints-overlay/**");
 
     /** The jobs the plan asks of the nightly; a later one is added next to them. */
-    private static final Set<String> REQUIRED_JOBS = Set.of("pinned-engine", "latest-engine", "native-image",
-            "blueprints");
+    private static final Set<String> REQUIRED_JOBS = Set.of(DECIDING_JOB, "pinned-engine", "latest-engine",
+            "native-image", "blueprints");
+
+    /** The days of the two schedules: the runs of Monday to Saturday, and the run of Sunday. */
+    private static final List<String> SCHEDULED_DAYS = List.of("1-6", "0");
+
+    private static final Pattern DECIDED_JOBS = Pattern.compile("(?m)^for job in ([a-z0-9 -]+); do$");
 
     private static final Pattern JOB_OF_THE_README = Pattern.compile("(?m)^- `([a-z0-9-]+)`:");
 
@@ -72,7 +86,7 @@ class NightlyWorkflowTest {
             """;
 
     @Test
-    @DisplayName("The nightly runs every night at the time the README names, on a dispatch, and on a pull request changing it")
+    @DisplayName("The nightly runs every night at the time the README names, every job on Sunday, on a dispatch, and on a pull request changing it")
     void theNightlyRunsWhenTheReadmeSays() {
         final var triggers = map(workflow().get("on"), "on");
         assertEquals(Set.of("schedule", "workflow_dispatch", "pull_request"), triggers.keySet(), """
@@ -89,20 +103,34 @@ class NightlyWorkflowTest {
                     nightly in its pull request.""".formatted(path));
         }
 
-        final var schedules = list(triggers.get("schedule"), "on.schedule");
-        assertEquals(1, schedules.size(), "The nightly runs once a night: one schedule.");
-        final var cron = String.valueOf(map(schedules.getFirst(), "on.schedule[0]").get("cron"));
+        final var schedules = list(triggers.get("schedule"), "on.schedule")
+                .stream()
+                .map(schedule -> String.valueOf(map(schedule, "a schedule").get("cron")))
+                .toList();
+        final var cron = schedules.getFirst();
+        assertTrue(cron.matches("[1-5]?[0-9] (1?[0-9]|2[0-3]) \\* \\* [0-9,-]+"), () -> """
+                The schedule '%s' is not one fixed time on some days of the week.""".formatted(cron));
         final var fields = cron.split(" ");
-        assertTrue(
-                (fields.length == 5) && fields[0].matches("[1-5]?[0-9]") && fields[1].matches("1?[0-9]|2[0-3]") && cron
-                        .endsWith(" * * *"),
-                () -> "The schedule '%s' is not one fixed time every day.".formatted(cron));
+        final var time = "%s %s".formatted(fields[0], fields[1]);
+        assertEquals(SCHEDULED_DAYS
+                .stream()
+                .map(days -> "%s * * %s".formatted(time, days))
+                .toList(), schedules, """
+                        The nightly runs once a night, at one time: Monday to Saturday ('1-6') only the jobs \
+                        whose inputs changed, and on Sunday ('0') every job, as the README says.""");
+        assertEquals("%s * * %s".formatted(time, SCHEDULED_DAYS.getLast()), deciding()
+                .get("EVERY_JOB_ON"), """
+                        The step of 'what-changed' which decides which jobs run has to name the schedule of \
+                        Sunday in EVERY_JOB_ON, so that the run of Sunday runs every job.""");
+        assertTrue(readmeSection().contains("every job on Sunday"), """
+                The README's section 'What CI runs' has to say that the nightly runs 'every job on \
+                Sunday'.""");
         final var minute = Integer.parseInt(fields[0]);
         assertTrue(minute != 0, "GitHub delays the runs it starts at the full hour; take another minute.");
-        final var time = "**Every night** at %02d:%02d UTC".formatted(Integer.parseInt(fields[1]), minute);
-        assertTrue(readmeSection().contains(time), () -> """
+        final var named = "**Every night** at %02d:%02d UTC".formatted(Integer.parseInt(fields[1]), minute);
+        assertTrue(readmeSection().contains(named), () -> """
                 The README's section 'What CI runs' has to say '%s', the time of the schedule '%s'."""
-                .formatted(time, cron));
+                .formatted(named, cron));
     }
 
     @Test
@@ -125,27 +153,195 @@ class NightlyWorkflowTest {
     }
 
     @Test
-    @DisplayName("No job of the nightly waits for another, and only the job against the engine's newest build may fail")
+    @DisplayName("Every job waits only for what-changed and runs where it failed, and only latest-engine may fail")
     void theJobsAreIndependentAndOnlyTheLatestEngineMayFail() {
-        final var waiting = new TreeSet<String>();
+        final var waiting = new TreeMap<String, Object>();
+        final var gated = new TreeMap<String, Object>();
         final var mayFail = new TreeSet<String>();
         for (final var job : jobs().entrySet()) {
-            if (job
+            if (DECIDING_JOB.equals(job.getKey())) {
+                waiting.put(job.getKey(), job
+                        .getValue()
+                        .get("needs"));
+                continue;
+            }
+            if (!DECIDING_JOB.equals(job
                     .getValue()
-                    .containsKey("needs")) {
-                waiting.add(job.getKey());
+                    .get("needs"))) {
+                waiting.put(job.getKey(), job
+                        .getValue()
+                        .get("needs"));
+            }
+            final var expected = """
+                    ${{ !cancelled() && (needs.%s.result != 'success' || needs.%s.outputs.%s == 'run') }}"""
+                    .formatted(DECIDING_JOB, DECIDING_JOB, job.getKey());
+            if (!expected.equals(job
+                    .getValue()
+                    .get("if"))) {
+                gated.put(job.getKey(), job
+                        .getValue()
+                        .get("if"));
             }
             if (mayFail(job.getValue())) {
                 mayFail.add(job.getKey());
             }
         }
 
-        assertEquals(Set.of(), waiting, """
-                These jobs of the nightly wait for another one ('needs'). The README promises jobs \
-                which do not depend on one another, so a red job never hides the answer of another.""");
+        final var nobody = new TreeMap<String, Object>();
+        nobody.put(DECIDING_JOB, null);
+        assertEquals(nobody, waiting, """
+                Every job of the nightly but '%s' has to wait for it alone ('needs: %s'), and '%s' \
+                for none. The README promises jobs which do not depend on one another, so a red job \
+                never hides the answer of another.""".formatted(DECIDING_JOB, DECIDING_JOB, DECIDING_JOB));
+        assertEquals(Map.of(), gated, """
+                These jobs of the nightly are not run exactly where '%s' decided so or failed. A job \
+                has to say "if: ${{ !cancelled() && (needs.%s.result != 'success' || \
+                needs.%s.outputs.<job> == 'run') }}": an input which cannot be read is no reason to \
+                skip a build.""".formatted(DECIDING_JOB, DECIDING_JOB, DECIDING_JOB));
         assertEquals(Set.of("latest-engine"), mayFail, """
                 Only 'latest-engine' may fail without turning the nightly red ('continue-on-error'): it \
                 runs against an engine this repository does not pin. Every other job has to fail the run.""");
+    }
+
+    @Test
+    @DisplayName("The job which decides reads every job's inputs with the script, looks each key up, and decides for every job")
+    void whatChangedDecidesForEveryJob() {
+        final var decided = jobs()
+                .keySet()
+                .stream()
+                .filter(job -> !DECIDING_JOB.equals(job))
+                .toList();
+        final var deciding = jobs().get(DECIDING_JOB);
+        final var steps = steps(DECIDING_JOB);
+        final var outputs = map(deciding.get("outputs"), "the outputs of '%s'".formatted(DECIDING_JOB));
+        final var script = String.valueOf(steps
+                .stream()
+                .filter(step -> "decide".equals(step.get("id")))
+                .findFirst()
+                .orElseThrow()
+                .get("run"));
+        final var loop = DECIDED_JOBS.matcher(script);
+
+        assertTrue(steps
+                .stream()
+                .anyMatch(step -> "read".equals(step.get("id")) && INPUTS_SCRIPT.equals(step.get("run"))),
+                () -> """
+                        '%s' has to read the inputs with '%s' in a step of the id 'read'."""
+                        .formatted(DECIDING_JOB, INPUTS_SCRIPT));
+        assertTrue(loop.find() && List
+                .of(loop
+                        .group(1)
+                        .split(" "))
+                .equals(decided), () -> """
+                        The step 'decide' of '%s' has to decide for every other job, in the order of the \
+                        workflow: 'for job in %s; do'.""".formatted(DECIDING_JOB, String.join(" ", decided)));
+        for (final var job : decided) {
+            assertEquals("${{ steps.decide.outputs.%s }}".formatted(job), outputs.get(job), () -> """
+                    '%s' has to hand on the decision for '%s' as its output '%s'; without it the job \
+                    never runs.""".formatted(DECIDING_JOB, job, job));
+            assertEquals("${{ steps.read.outputs.%s-key }}".formatted(job), outputs.get(job
+                    + "-key"),
+                    () -> """
+                            '%s' has to hand on the key of the inputs of '%s' as its output '%s-key'."""
+                            .formatted(DECIDING_JOB, job, job));
+            assertEquals("${{ steps.%s.outputs.cache-hit }}".formatted(job), outputs.get(job
+                    + "-seen"), () -> """
+                            '%s' has to hand on whether '%s' ran against these inputs before as its output \
+                            '%s-seen'.""".formatted(DECIDING_JOB, job, job));
+            final var lookup = steps
+                    .stream()
+                    .filter(step -> job.equals(step.get("id")))
+                    .findFirst();
+            assertTrue(lookup.isPresent() && String
+                    .valueOf(lookup
+                            .get()
+                            .get("uses"))
+                    .startsWith("actions/cache/restore@") && "${{ steps.read.outputs.%s-key != '' }}".formatted(job)
+                            .equals(lookup
+                                    .get()
+                                    .get("if")),
+                    () -> """
+                            '%s' has to look the key of '%s' up with actions/cache/restore in \
+                            a step of the id '%s', only where the key is not empty."""
+                            .formatted(DECIDING_JOB, job, job));
+            final var with = map(lookup
+                    .get()
+                    .get("with"), "the inputs of the lookup of '%s'".formatted(job));
+            assertEquals(Boolean.TRUE, with.get("lookup-only"),
+                    () -> "The lookup of '%s' only asks; 'lookup-only: true'."
+                            .formatted(job));
+            assertEquals("${{ steps.read.outputs.%s-key }}".formatted(job), with.get("key"), () -> """
+                    The lookup of '%s' has to look up the key of its inputs.""".formatted(job));
+        }
+    }
+
+    /**
+     * A job which recorded its inputs before its build ran would be skipped the next night without
+     * a build behind it. A job which has to fail the run and recorded a failed build would be skipped
+     * the next night as well, and GitHub reports a skipped job as passed: the run and the badge would
+     * turn green while the build is still broken. So such a job records only a passed build, and
+     * 'latest-engine', which never turns the run red, records a failed one too, so that a new build
+     * of the engine is reported once. A step which writes no file into the saved path, or a lookup
+     * of another path, would find nothing and never skip a job, without any test noticing.
+     */
+    @Test
+    @DisplayName("Every job records the key of its inputs after its build, a failed build only in latest-engine, and only on main")
+    void everyJobRecordsItsInputsAfterItsBuild() {
+        final var lookups = steps(DECIDING_JOB)
+                .stream()
+                .filter(step -> String
+                        .valueOf(step.get("uses"))
+                        .startsWith("actions/cache/restore@"))
+                .map(step -> map(step.get("with"), "the inputs of actions/cache/restore").get("path"))
+                .collect(Collectors.toSet());
+        assertEquals(1, lookups.size(), () -> "The lookups of '%s' have to look up one path, but look up %s."
+                .formatted(DECIDING_JOB, lookups));
+        final var path = String.valueOf(lookups
+                .iterator()
+                .next());
+
+        final var unrecorded = new TreeMap<String, String>();
+        for (final var job : jobs().keySet()) {
+            if (DECIDING_JOB.equals(job)) {
+                continue;
+            }
+            final var outcome = "latest-engine".equals(job)
+                    ? "(steps.build.outcome == 'success' || steps.build.outcome == 'failure')"
+                    : "steps.build.outcome == 'success'";
+            final var condition = """
+                    ${{ !cancelled() && %s && github.ref == 'refs/heads/main' \
+                    && needs.%s.outputs.%s-key != '' && needs.%s.outputs.%s-seen != 'true' }}"""
+                    .formatted(outcome, DECIDING_JOB, job, DECIDING_JOB, job);
+            final var key = "${{ needs.%s.outputs.%s-key }}".formatted(DECIDING_JOB, job);
+            final var steps = steps(job);
+            final var building = indexOf(steps, step -> "build".equals(step.get("id")));
+            final var noting = indexOf(steps,
+                    step -> condition.equals(step.get("if")) && "echo \"$KEY\" >\"$RUNNER_TEMP/nightly-inputs\""
+                            .equals(step.get("run")) && key
+                                    .equals(map(step.get("env"), "the env of the note").get("KEY")));
+            final var saving = indexOf(steps, step -> String
+                    .valueOf(step.get("uses"))
+                    .startsWith("actions/cache/save@") && condition.equals(step.get("if")) && key.equals(map(step.get(
+                            "with"), "the inputs of actions/cache/save").get("key")) && path.equals(map(
+                                    step.get(
+                                            "with"),
+                                    "the inputs of actions/cache/save").get("path")));
+            if ((building < 0) || (noting <= building) || (saving <= noting)) {
+                unrecorded.put(job, "build at %d, note at %d, save at %d".formatted(building, noting, saving));
+            }
+        }
+
+        assertEquals(Map.of(), unrecorded, """
+                These jobs of the nightly do not record the key of their inputs as the README says. \
+                Each needs, in this order, a step of the id 'build'; a step which writes the key with \
+                'echo "$KEY" >"$RUNNER_TEMP/nightly-inputs"' and KEY set to \
+                '${{ needs.%s.outputs.<job>-key }}'; and actions/cache/save of that key and of the path \
+                the lookups of '%s' look up, '%s'. Both run with "if: ${{ !cancelled() && \
+                steps.build.outcome == 'success' && github.ref == 'refs/heads/main' && \
+                needs.%s.outputs.<job>-key != '' && needs.%s.outputs.<job>-seen != 'true' }}", and \
+                'latest-engine' also after a failed build, with "(steps.build.outcome == 'success' || \
+                steps.build.outcome == 'failure')"."""
+                .formatted(DECIDING_JOB, DECIDING_JOB, path, DECIDING_JOB, DECIDING_JOB));
     }
 
     /**
@@ -366,6 +562,30 @@ class NightlyWorkflowTest {
      */
     private static boolean mayFail(final Map<String, Object> jobOrStep) {
         return jobOrStep.containsKey("continue-on-error") && !Boolean.FALSE.equals(jobOrStep.get("continue-on-error"));
+    }
+
+    /** The position of the first step which matches, or -1. */
+    private static int indexOf(
+        final List<Map<String, Object>> steps,
+        final Predicate<Map<String, Object>> matching
+    ) {
+        for (var index = 0; index < steps.size(); ++index) {
+            if (matching.test(steps.get(index))) {
+                return index;
+            }
+        }
+        return -1;
+    }
+
+    /** The environment of the step of the deciding job which decides which jobs run. */
+    private static Map<String, Object> deciding() {
+        return map(steps(DECIDING_JOB)
+                .stream()
+                .filter(step -> "decide".equals(step.get("id")))
+                .findFirst()
+                .orElseThrow(() -> new AssertionError("'%s' has no step of the id 'decide' any more."
+                        .formatted(DECIDING_JOB)))
+                .get("env"), "the env of the step 'decide'");
     }
 
     private static Map<String, Object> workflow() {

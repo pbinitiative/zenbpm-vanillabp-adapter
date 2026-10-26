@@ -2,8 +2,9 @@ The [VanillaBP blueprints](https://github.com/vanillabp-blueprints/blueprints) s
 application is built, one blueprint per topic, each as a Spring Boot and a Quarkus twin. They
 belong to the VanillaBP project and choose their BPMS by a Maven profile, `camunda7` or `camunda8`;
 there is no profile for ZenBPM in them. This adapter adds one from outside, with an overlay kept in
-its repository, and builds the blueprints with it every night against the engine it is tested
-against, see [Home](Home#the-engine-this-adapter-is-tested-against).
+its repository. It builds the blueprints with it against the engine it is tested against, see
+[Home](Home#the-engine-this-adapter-is-tested-against): every night where the blueprints, VanillaBP
+or the adapter changed, and every Sunday (`NightlyWorkflowTest`, `NightlyChangeDetectionTest`).
 
 ## What the overlay adds
 

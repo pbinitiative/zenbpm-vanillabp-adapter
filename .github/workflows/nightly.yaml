@@ -1,16 +1,23 @@
 name: Nightly
-# What no pull request should have to wait for: the full build against the pinned engine on a
-# quiet night, the same integration tests against the engine's newest build of its main, the
-# native image, and the VanillaBP blueprints on ZenBPM. The jobs do not depend on one another,
-# so one more is added without touching the others. Each writes its result into the run's
-# summary and nothing anywhere else: no job of this workflow may write to any repository,
-# package or issue tracker. The README describes the jobs in its section 'What CI runs', and
-# NightlyWorkflowTest in test-coverage-report/coverage-gate holds what the README says.
+# What no pull request should have to wait for: the full build against the pinned engine on a quiet
+# night, the same integration tests against the engine's newest build of its main, the native image,
+# and the VanillaBP blueprints on ZenBPM. Those four jobs do not depend on one another. Each waits
+# only for the job 'what-changed', which reads what they build on, and runs where something of it
+# changed since the job's last run in the same week, or where that cannot be read. One more job is
+# added next to them, with its key in bin/what-the-nightly-builds-on.sh, and its lookup, its outputs
+# and its name in the loop of the step 'decide' in 'what-changed'. On a Sunday, a dispatch and a
+# pull request every job runs (see decision 68 in the repository's DECISIONS.md). Each job writes
+# its result into the run's summary and nothing anywhere else: no job of this workflow may write to
+# any repository, package or issue tracker. The README describes the jobs in its section 'What CI
+# runs', and NightlyWorkflowTest in test-coverage-report/coverage-gate holds what the README says.
 "on":
   schedule:
-    # 02:37 UTC every night: before the engine's own scheduled workflows, which run from 04:00
-    # to 06:00 UTC, and off the full hour, at which GitHub delays the runs it starts
-    - cron: "37 2 * * *"
+    # 02:37 UTC, off the full hour, at which GitHub delays the runs it starts the most. It starts
+    # a scheduled run late all the same, by hours on some nights.
+    # Monday to Saturday: only the jobs whose inputs changed since their last run
+    - cron: "37 2 * * 1-6"
+    # Sunday: every job, whatever changed, so a test which fails now and then still shows up
+    - cron: "37 2 * * 0"
   workflow_dispatch:
   # A pull request which changes this file, a script it runs or the blueprints' overlay runs it,
   # so a change of the nightly is seen working before it is merged. A dispatch or a schedule can
@@ -18,6 +25,7 @@ name: Nightly
   pull_request:
     paths:
       - .github/workflows/nightly.yaml
+      - bin/what-the-nightly-builds-on.sh
       - bin/resolve-latest-engine.sh
       - bin/build-blueprints-on-zenbpm.sh
       - bin/zenbpm-engine.sh
@@ -29,9 +37,128 @@ concurrency:
   group: nightly-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 jobs:
-  # The build of checks.yaml's required check, once a night with nobody waiting for it: a test
-  # which fails now and then shows up here and not in somebody's pull request.
+  # Reads what every other job builds on and decides which of them run. A job ran against the
+  # same inputs in the same week where the key of its inputs is in the cache: the job records it
+  # there once its build passed, and 'latest-engine' also once it failed, so a new build of the
+  # engine is reported once a week. A failed run of this job skips nothing, since every other job
+  # also runs when it did not succeed.
+  what-changed:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    outputs:
+      pinned-engine: ${{ steps.decide.outputs.pinned-engine }}
+      latest-engine: ${{ steps.decide.outputs.latest-engine }}
+      native-image: ${{ steps.decide.outputs.native-image }}
+      blueprints: ${{ steps.decide.outputs.blueprints }}
+      pinned-engine-key: ${{ steps.read.outputs.pinned-engine-key }}
+      latest-engine-key: ${{ steps.read.outputs.latest-engine-key }}
+      native-image-key: ${{ steps.read.outputs.native-image-key }}
+      blueprints-key: ${{ steps.read.outputs.blueprints-key }}
+      pinned-engine-seen: ${{ steps.pinned-engine.outputs.cache-hit }}
+      latest-engine-seen: ${{ steps.latest-engine.outputs.cache-hit }}
+      native-image-seen: ${{ steps.native-image.outputs.cache-hit }}
+      blueprints-seen: ${{ steps.blueprints.outputs.cache-hit }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Read what the jobs build on
+        id: read
+        run: bin/what-the-nightly-builds-on.sh
+      # The lookups only ask whether a key is there; a key left empty, because an input could not
+      # be read, is not looked up, and its job runs.
+      - name: Look up whether pinned-engine ran against these inputs
+        id: pinned-engine
+        if: ${{ steps.read.outputs.pinned-engine-key != '' }}
+        uses: actions/cache/restore@v6
+        with:
+          path: ${{ runner.temp }}/nightly-inputs
+          key: ${{ steps.read.outputs.pinned-engine-key }}
+          lookup-only: true
+      - name: Look up whether latest-engine ran against these inputs
+        id: latest-engine
+        if: ${{ steps.read.outputs.latest-engine-key != '' }}
+        uses: actions/cache/restore@v6
+        with:
+          path: ${{ runner.temp }}/nightly-inputs
+          key: ${{ steps.read.outputs.latest-engine-key }}
+          lookup-only: true
+      - name: Look up whether native-image ran against these inputs
+        id: native-image
+        if: ${{ steps.read.outputs.native-image-key != '' }}
+        uses: actions/cache/restore@v6
+        with:
+          path: ${{ runner.temp }}/nightly-inputs
+          key: ${{ steps.read.outputs.native-image-key }}
+          lookup-only: true
+      - name: Look up whether blueprints ran against these inputs
+        id: blueprints
+        if: ${{ steps.read.outputs.blueprints-key != '' }}
+        uses: actions/cache/restore@v6
+        with:
+          path: ${{ runner.temp }}/nightly-inputs
+          key: ${{ steps.read.outputs.blueprints-key }}
+          lookup-only: true
+      # EVERY_JOB_ON is the schedule of Sunday above. The line is written also where the inputs
+      # could not be read, and then every job runs.
+      - name: Decide which jobs run, and write the summary line
+        id: decide
+        if: always()
+        env:
+          EVENT: ${{ github.event_name }}
+          SCHEDULE: ${{ github.event.schedule }}
+          EVERY_JOB_ON: "37 2 * * 0"
+          ADAPTER: ${{ steps.read.outputs.adapter }}
+          VANILLABP: ${{ steps.read.outputs.vanillabp }}
+          ENGINE: ${{ steps.read.outputs.engine }}
+          BLUEPRINTS: ${{ steps.read.outputs.blueprints }}
+          WEEK: ${{ steps.read.outputs.week }}
+          SEEN_PINNED_ENGINE: ${{ steps.pinned-engine.outputs.cache-hit }}
+          SEEN_LATEST_ENGINE: ${{ steps.latest-engine.outputs.cache-hit }}
+          SEEN_NATIVE_IMAGE: ${{ steps.native-image.outputs.cache-hit }}
+          SEEN_BLUEPRINTS: ${{ steps.blueprints.outputs.cache-hit }}
+        run: |
+          case "$EVENT" in
+            schedule) every="" ;;
+            pull_request) every="a pull request started this run" ;;
+            *) every="a person started this run" ;;
+          esac
+          if [ "$EVENT" = schedule ] && [ "$SCHEDULE" = "$EVERY_JOB_ON" ]; then
+            every="this is the run of Sunday"
+          fi
+          running=""
+          skipped=""
+          for job in pinned-engine latest-engine native-image blueprints; do
+            seen="SEEN_${job//-/_}"
+            seen="${seen^^}"
+            if [ -z "$every" ] && [ "${!seen}" = true ]; then
+              echo "$job=skip" >>"$GITHUB_OUTPUT"
+              skipped="${skipped:+$skipped, }\`$job\`"
+            else
+              echo "$job=run" >>"$GITHUB_OUTPUT"
+              running="${running:+$running, }\`$job\`"
+            fi
+          done
+          inputs="adapter \`${ADAPTER:-unread}\`, VanillaBP \`${VANILLABP:-unread}\`, engine \`ghcr.io/pbinitiative/zenbpm:dev\` at \`${ENGINE:-unread}\`, blueprints \`${BLUEPRINTS:-unread}\`, in the week \`${WEEK:-unread}\`"
+          if [ -n "$every" ]; then
+            decision="every job runs, because $every."
+          elif [ -z "$skipped" ]; then
+            decision="every job runs, because none of them ran against these inputs this week, or an input could not be read."
+          elif [ -z "$running" ]; then
+            decision="no job runs, because nothing any of them builds on changed since its last run this week."
+          else
+            decision="running $running; skipped, because nothing they build on changed since their last run this week: $skipped."
+          fi
+          echo "What changed: the jobs build on $inputs; $decision" >>"$GITHUB_STEP_SUMMARY"
+
+  # The build of checks.yaml's required check with nobody waiting for it: a test which fails now
+  # and then shows up here and not in somebody's pull request.
   pinned-engine:
+    needs: what-changed
+    # also where 'what-changed' failed: an input which cannot be read is no reason to skip a build
+    if: ${{ !cancelled() && (needs.what-changed.result != 'success' || needs.what-changed.outputs.pinned-engine == 'run') }}
     runs-on: ubuntu-latest
     # as in checks.yaml: well above a normal run, so a container which hangs costs this much
     timeout-minutes: 45
@@ -57,6 +184,7 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
       - name: Build and test against the pinned engine
+        id: build
         run: mvn --batch-mode --no-transfer-progress --update-snapshots install
       - name: Upload the reports of a failed build
         if: failure()
@@ -70,6 +198,21 @@ jobs:
             test-coverage-report/*/report/**
           retention-days: 7
           if-no-files-found: warn
+      # What the build ran against, for the next night: recorded once the build passed, so a red
+      # build runs again every night and keeps the run red until it passes, and only on main,
+      # whose cache the schedule reads. A key which was there already, because a run which runs
+      # every job found it, is not saved twice.
+      - name: Note what the build ran against
+        if: ${{ !cancelled() && steps.build.outcome == 'success' && github.ref == 'refs/heads/main' && needs.what-changed.outputs.pinned-engine-key != '' && needs.what-changed.outputs.pinned-engine-seen != 'true' }}
+        env:
+          KEY: ${{ needs.what-changed.outputs.pinned-engine-key }}
+        run: echo "$KEY" >"$RUNNER_TEMP/nightly-inputs"
+      - name: Record it for the next night
+        if: ${{ !cancelled() && steps.build.outcome == 'success' && github.ref == 'refs/heads/main' && needs.what-changed.outputs.pinned-engine-key != '' && needs.what-changed.outputs.pinned-engine-seen != 'true' }}
+        uses: actions/cache/save@v6
+        with:
+          path: ${{ runner.temp }}/nightly-inputs
+          key: ${{ needs.what-changed.outputs.pinned-engine-key }}
       - name: Write the summary line
         if: always()
         env:
@@ -85,6 +228,9 @@ jobs:
   # turn the nightly red, because nothing in this repository changed. See decision 62 in the
   # repository's DECISIONS.md.
   latest-engine:
+    needs: what-changed
+    # also where 'what-changed' failed: an input which cannot be read is no reason to skip a build
+    if: ${{ !cancelled() && (needs.what-changed.result != 'success' || needs.what-changed.outputs.latest-engine == 'run') }}
     runs-on: ubuntu-latest
     continue-on-error: true
     timeout-minutes: 45
@@ -118,6 +264,7 @@ jobs:
       # with the engine the build runs against, which here is on purpose another one, and
       # coverage is the business of the pinned build.
       - name: Build and test against the engine's newest build
+        id: build
         env:
           ENGINE_IMAGE: ${{ steps.engine.outputs.image }}
           ENGINE_COMMIT: ${{ steps.engine.outputs.commit }}
@@ -134,6 +281,21 @@ jobs:
             **/target/failsafe-reports/**
           retention-days: 7
           if-no-files-found: warn
+      # What the build ran against, for the next night: recorded once the build ran, also where
+      # it failed, so a new build of the engine is reported once a week; this job does not turn
+      # the run red anyway. Only on main, whose cache the schedule reads. A key which was there
+      # already, because a run which runs every job found it, is not saved twice.
+      - name: Note what the build ran against
+        if: ${{ !cancelled() && (steps.build.outcome == 'success' || steps.build.outcome == 'failure') && github.ref == 'refs/heads/main' && needs.what-changed.outputs.latest-engine-key != '' && needs.what-changed.outputs.latest-engine-seen != 'true' }}
+        env:
+          KEY: ${{ needs.what-changed.outputs.latest-engine-key }}
+        run: echo "$KEY" >"$RUNNER_TEMP/nightly-inputs"
+      - name: Record it for the next night
+        if: ${{ !cancelled() && (steps.build.outcome == 'success' || steps.build.outcome == 'failure') && github.ref == 'refs/heads/main' && needs.what-changed.outputs.latest-engine-key != '' && needs.what-changed.outputs.latest-engine-seen != 'true' }}
+        uses: actions/cache/save@v6
+        with:
+          path: ${{ runner.temp }}/nightly-inputs
+          key: ${{ needs.what-changed.outputs.latest-engine-key }}
       - name: Write the summary line
         if: always()
         env:
@@ -148,6 +310,9 @@ jobs:
   # runner rather than in the builder container a laptop uses, so the build with a local GraalVM
   # the README names is the one tested here.
   native-image:
+    needs: what-changed
+    # also where 'what-changed' failed: an input which cannot be read is no reason to skip a build
+    if: ${{ !cancelled() && (needs.what-changed.result != 'success' || needs.what-changed.outputs.native-image == 'run') }}
     runs-on: ubuntu-latest
     timeout-minutes: 45
     permissions:
@@ -176,6 +341,7 @@ jobs:
         run: mvn --batch-mode --no-transfer-progress --update-snapshots -Dmaven.test.skip=true
           --projects quarkus/deployment,quarkus/native-image-tests --also-make install
       - name: Build the native image and run it against the pinned engine
+        id: build
         run: mvn --batch-mode --no-transfer-progress --projects quarkus/native-image-tests
           -Dnative -Dquarkus.native.container-build=false verify
       # what the binary printed is the place to read when it failed
@@ -189,6 +355,21 @@ jobs:
             quarkus/native-image-tests/target/failsafe-reports/**
           retention-days: 7
           if-no-files-found: warn
+      # What the build ran against, for the next night: recorded once the build passed, so a red
+      # build runs again every night and keeps the run red until it passes, and only on main,
+      # whose cache the schedule reads. A key which was there already, because a run which runs
+      # every job found it, is not saved twice.
+      - name: Note what the build ran against
+        if: ${{ !cancelled() && steps.build.outcome == 'success' && github.ref == 'refs/heads/main' && needs.what-changed.outputs.native-image-key != '' && needs.what-changed.outputs.native-image-seen != 'true' }}
+        env:
+          KEY: ${{ needs.what-changed.outputs.native-image-key }}
+        run: echo "$KEY" >"$RUNNER_TEMP/nightly-inputs"
+      - name: Record it for the next night
+        if: ${{ !cancelled() && steps.build.outcome == 'success' && github.ref == 'refs/heads/main' && needs.what-changed.outputs.native-image-key != '' && needs.what-changed.outputs.native-image-seen != 'true' }}
+        uses: actions/cache/save@v6
+        with:
+          path: ${{ runner.temp }}/nightly-inputs
+          key: ${{ needs.what-changed.outputs.native-image-key }}
       - name: Write the summary line
         if: always()
         env:
@@ -205,6 +386,9 @@ jobs:
   # snapshots. A change of the blueprints which the overlay cannot follow, or which breaks a
   # blueprint on ZenBPM, turns the run red. See decision 64 in the repository's DECISIONS.md.
   blueprints:
+    needs: what-changed
+    # also where 'what-changed' failed: an input which cannot be read is no reason to skip a build
+    if: ${{ !cancelled() && (needs.what-changed.result != 'success' || needs.what-changed.outputs.blueprints == 'run') }}
     runs-on: ubuntu-latest
     # the twins one after the other took 54 minutes on a laptop with 14 cores; GitHub's runner
     # has four, and the first run of a night downloads what every blueprint needs
@@ -233,6 +417,7 @@ jobs:
         run: mvn --batch-mode --no-transfer-progress --update-snapshots -Dmaven.test.skip=true
           --projects spring-boot,quarkus/deployment --also-make install
       - name: Build the blueprints with -Pzenbpm against the pinned engine
+        id: build
         run: bin/build-blueprints-on-zenbpm.sh "$RUNNER_TEMP/blueprints"
       - name: Upload the logs and the reports of the twins
         if: failure()
@@ -245,6 +430,21 @@ jobs:
             ${{ runner.temp }}/blueprints/**/target/failsafe-reports/**
           retention-days: 7
           if-no-files-found: warn
+      # What the build ran against, for the next night: recorded once the build passed, so a red
+      # build runs again every night and keeps the run red until it passes, and only on main,
+      # whose cache the schedule reads. A key which was there already, because a run which runs
+      # every job found it, is not saved twice.
+      - name: Note what the build ran against
+        if: ${{ !cancelled() && steps.build.outcome == 'success' && github.ref == 'refs/heads/main' && needs.what-changed.outputs.blueprints-key != '' && needs.what-changed.outputs.blueprints-seen != 'true' }}
+        env:
+          KEY: ${{ needs.what-changed.outputs.blueprints-key }}
+        run: echo "$KEY" >"$RUNNER_TEMP/nightly-inputs"
+      - name: Record it for the next night
+        if: ${{ !cancelled() && steps.build.outcome == 'success' && github.ref == 'refs/heads/main' && needs.what-changed.outputs.blueprints-key != '' && needs.what-changed.outputs.blueprints-seen != 'true' }}
+        uses: actions/cache/save@v6
+        with:
+          path: ${{ runner.temp }}/nightly-inputs
+          key: ${{ needs.what-changed.outputs.blueprints-key }}
       - name: Write the summary line
         if: always()
         env:
