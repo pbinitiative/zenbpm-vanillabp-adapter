@@ -2088,20 +2088,28 @@ as `bpms-double-quarkus` or `vanillabp-bom`. They are no inputs of their own, be
 and `adapter-platform-integration` each publish all their modules in one deploy from their `main`.
 Each job gets a key, `nightly-<job>-<SHA-256>` of the inputs it builds on: every job builds on the
 commit and on VanillaBP, `latest-engine` also on the engine's digest and `blueprints` also on the
-blueprints' commit. The pinned engine is no input of its own, as it moves only with a commit. The
-runner image and the newest Mandrel the native build installs are left out: they change without
-anything of the adapter's changing, and the run of Sunday covers them.
+blueprints' commit. Every key also holds the week, by `date -u +%Y-%U`, whose weeks begin on Sunday.
+The pinned engine is no input of its own, as it moves only with a commit. The runner image and the
+newest Mandrel the native build installs are left out: they change without anything of the adapter's
+changing, and the run of Sunday covers them.
 
 A job runs where its key is not in the workflow's cache, which `actions/cache/restore` asks with
 `lookup-only`. Once its build passed, the job saves its key with `actions/cache/save`. A failed
-build saves nothing, so the job runs again every night until it passes. GitHub reports a skipped
-job as passed, so a red job skipped the next night would turn the run and the `Nightly` badge green
-while the build is still broken. `latest-engine` saves its key also after a failed build, because
-it never turns the run red, and so a new build of the engine is reported once. A failure before the
-build, such as an image which could not be pulled, saves nothing in any job. Only a run on `main`
-saves, because the schedule reads the cache of `main`. A pull request's run could only save into
-the cache of its own branch. The cache is no repository, package or issue tracker, and it needs no
-permission, so the workflow still writes nowhere in the sense of the README.
+build saves nothing, so the job runs again every night until it passes. GitHub reports a skipped job
+as passed, so a red job skipped the next night would turn the run and the `Nightly` badge green
+while the build is still broken. `latest-engine` saves its key also after a failed build, because it
+never turns the run red, and so a new build of the engine is reported in the night after it
+appeared, and after that once a week, on Sunday. A key which held into the next week would let the
+run of Sunday, which runs every job, fail against inputs an earlier night passed with. It would save
+nothing, the earlier key would stay, and Monday would skip the job and turn the run green. With the
+week in the key, the run of Sunday finds no key saved before it. A run a person starts can still
+fail against a key of its week, and the next nights then skip the job until something changes or
+until Sunday. Only that person sees the run red. Deleting a key after a failed build would close
+that gap too, but it needs the permission `actions: write`, which the nightly does not ask for. A
+failure before the build, such as an image which could not be pulled, saves nothing in any job. Only
+a run on `main` saves, because the schedule reads the cache of `main`. A pull request's run could
+only save into the cache of its own branch. The cache is no repository, package or issue tracker,
+and it needs no permission, so the workflow still writes nowhere in the sense of the README.
 
 Every doubt runs the job. An input which cannot be read leaves the keys of its jobs empty. A
 failed `what-changed` lets every job run, since each one's condition is

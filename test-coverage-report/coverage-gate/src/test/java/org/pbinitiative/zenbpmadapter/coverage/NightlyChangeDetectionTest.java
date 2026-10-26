@@ -41,9 +41,9 @@ import io.vanillabp.integration.test.utils.SuppressOutputExtension;
  * <code>.github/workflows/nightly.yaml</code>. This test runs both, the script against stand-ins for
  * curl and git which answer as the snapshot repository, the registry and the blueprints' repository
  * would, and the step's bash as the workflow holds it. It holds them to what the README's section
- * "What CI runs" says: which inputs every job builds on, that an input which cannot be read runs its
- * jobs, that a job runs only where its inputs are new, and that the run of Sunday, a pull request
- * and a person's start run every job.
+ * "What CI runs" says: which inputs every job builds on, that a key holds for one week beginning on
+ * Sunday, that an input which cannot be read runs its jobs, that a job runs only where its inputs
+ * are new, and that the run of Sunday, a pull request and a person's start run every job.
  */
 @ExtendWith(SuppressOutputExtension.class)
 class NightlyChangeDetectionTest {
@@ -66,6 +66,14 @@ class NightlyChangeDetectionTest {
             "<groupId>io\\.vanillabp</groupId>\\s*<artifactId>([^<]+)</artifactId>");
 
     private static final Pattern BLUEPRINTS_REPOSITORY = Pattern.compile("(?m)^REPOSITORY=(.+)$");
+
+    /**
+     * The time of a run of Monday, and its week as <code>date -u +%Y-%U</code> names it: weeks begin
+     * on Sunday. The times of the tests are the schedule's, in UTC.
+     */
+    private static final String TODAY = "2026-10-26 02:37 UTC";
+
+    private static final String WEEK = "2026-43";
 
     /** The schedule of the runs from Monday to Saturday. */
     private static final String WEEKDAY = "37 2 * * 1-6";
@@ -105,6 +113,7 @@ class NightlyChangeDetectionTest {
                 "The script has to read every io.vanillabp artifact of the root POM.");
         assertEquals(DIGEST, outputs.get("engine"));
         assertEquals(BLUEPRINTS, outputs.get("blueprints"));
+        assertEquals(WEEK, outputs.get("week"));
         for (final var job : JOBS) {
             assertTrue(outputs
                     .get(job
@@ -115,6 +124,24 @@ class NightlyChangeDetectionTest {
                                     + "-key")));
         }
         assertEquals(keys(outputs), keys(inputs(Map.of())), "The same inputs have to give the same keys.");
+    }
+
+    /**
+     * A key which held from one week into the next would let a build of Sunday, which runs every
+     * job, fail against inputs an earlier night passed with: it saves nothing, the earlier key stays,
+     * Monday skips the job, and GitHub reports the skipped job as passed.
+     */
+    @Test
+    @DisplayName("A key holds from Sunday to Saturday, and every job gets a new one on Sunday")
+    void aKeyHoldsForOneWeekBeginningOnSunday() {
+        final var sunday = keys(inputs(Map.of("TODAY", "2026-10-25 02:37 UTC")));
+
+        assertEquals(sunday, keys(inputs(Map.of())), "Monday is in the week of the Sunday before it.");
+        assertEquals(sunday, keys(inputs(Map.of("TODAY", "2026-10-31 02:37 UTC"))), "Saturday is in the week as well.");
+        assertEquals(Set.copyOf(JOBS), changed(keys(inputs(Map.of("TODAY", "2026-10-24 02:37 UTC"))), sunday),
+                "Every job gets a new key on Sunday.");
+        assertEquals(Set.copyOf(JOBS), changed(sunday, keys(inputs(Map.of("TODAY", "2026-11-01 02:37 UTC")))),
+                "Every job gets a new key on the next Sunday.");
     }
 
     @Test
@@ -195,15 +222,19 @@ class NightlyChangeDetectionTest {
         assertEquals(decisions("skip", "skip", "skip", "skip"), nothingNew.decisions());
         assertTrue(nothingNew
                 .summary()
-                .contains("no job runs, because nothing any of them builds on changed since its last run."),
+                .contains("no job runs, because nothing any of them builds on changed since its last run this week."),
                 nothingNew.summary());
+        assertTrue(nothingNew
+                .summary()
+                .contains("in the week `%s`".formatted(WEEK)), nothingNew.summary());
 
         final var newEngine = decide("schedule", WEEKDAY, Set.of("pinned-engine", "native-image", "blueprints"));
         assertEquals(decisions("skip", "run", "skip", "skip"), newEngine.decisions());
         assertTrue(newEngine
                 .summary()
                 .contains(
-                        "running `latest-engine`; skipped, because nothing they build on changed since their last run: "
+                        "running `latest-engine`; skipped, because nothing they build on changed since their last run this "
+                                + "week: "
                                 + "`pinned-engine`, `native-image`, `blueprints`."),
                 newEngine.summary());
 
@@ -246,6 +277,10 @@ class NightlyChangeDetectionTest {
         environment.put("TOKEN", "a-token");
         environment.put("LS_REMOTE", "%s\trefs/heads/main".formatted(BLUEPRINTS));
         environment.put("UNREADABLE", "");
+        environment.put("TODAY", TODAY);
+        // where it is still Saturday evening when it is Sunday morning in UTC, so a script which
+        // read the day of the runner's time zone would fail; GitHub's runners are set to UTC
+        environment.put("TZ", "America/New_York");
         environment.putAll(changes);
         final var run = run(List.of("bash", adapter
                 .resolve("bin/what-the-nightly-builds-on.sh")
@@ -277,6 +312,7 @@ class NightlyChangeDetectionTest {
         environment.put("VANILLABP", "spi-for-java 2.0.0-%s".formatted(SNAPSHOT));
         environment.put("ENGINE", DIGEST);
         environment.put("BLUEPRINTS", BLUEPRINTS);
+        environment.put("WEEK", WEEK);
         for (final var job : JOBS) {
             environment.put("SEEN_%s".formatted(job
                     .replace('-', '_')
@@ -454,7 +490,8 @@ class NightlyChangeDetectionTest {
      * snapshot repository's metadata with the upload <code>SNAPSHOT</code>, except for the artifact
      * <code>UNREADABLE</code>, the registry's token with <code>TOKEN</code> and the digest of the
      * engine's tag with <code>DIGEST</code>. An empty value is an answer of 4xx or 5xx, or a
-     * repository which names nothing.
+     * repository which names nothing. date is the system's, asked about the time <code>TODAY</code>
+     * instead of now, so the format the script asks for is the one tested.
      */
     private void writeStandIns() {
         final var standIns = temporary.resolve("stand-ins");
@@ -488,7 +525,11 @@ class NightlyChangeDetectionTest {
                           *) exit 6 ;;
                         esac
                         """);
-        for (final var command : List.of("git", "curl")) {
+        write(standIns.resolve("date"), """
+                #!/usr/bin/env bash
+                PATH=/usr/bin:/bin exec date --date "$TODAY" "$@"
+                """);
+        for (final var command : List.of("git", "curl", "date")) {
             standIns
                     .resolve(command)
                     .toFile()

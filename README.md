@@ -1048,7 +1048,7 @@ coverage". It deploys with the workflow's `GITHUB_TOKEN`.
 **Every night** at 02:37 UTC, `.github/workflows/nightly.yaml` runs what no pull request should
 wait for, in jobs which do not depend on one another. GitHub starts a scheduled run late, by hours
 on some nights. From Monday to Saturday a job runs only where something it builds on changed since
-its last run, and the nightly runs every job on Sunday (decision 68 in
+its last run in the same week, and the nightly runs every job on Sunday (decision 68 in
 [`DECISIONS.md`](./DECISIONS.md)). Its badge at the top shows the last run on `main`. A pull request
 which changes the workflow, a script it runs (`bin/what-the-nightly-builds-on.sh`,
 `bin/resolve-latest-engine.sh`, `bin/build-blueprints-on-zenbpm.sh`, `bin/zenbpm-engine.sh`) or the
@@ -1065,16 +1065,20 @@ Actions tab. A pull request and a person's start run every job as well. Its jobs
   - the digest of `ghcr.io/pbinitiative/zenbpm:dev`;
   - the newest commit of the blueprints' `main`.
 
-  Every job gets a key of the inputs it builds on. The commit and VanillaBP are inputs of every
-  job, the engine's digest of `latest-engine` only, and the blueprints' commit of `blueprints`
-  only. The pinned engine moves only with a commit, so it is no input of its own. A job runs where
-  its key is not in the workflow's cache. Once its build passed, the job saves its key there, on
-  `main` only. A job whose build failed saves nothing and runs again the next night, so the run
-  and the badge stay red until the build passes: GitHub reports a skipped job as passed, so a
-  skipped red job would turn them green. `latest-engine` is the exception, see below. Where an
-  input cannot be read, its jobs run: not knowing what changed is no reason to skip a build. They
-  also run where `what-changed` itself failed, or where GitHub evicted the key from the cache. The
-  summary line names the inputs and which jobs run.
+  Every job gets a key of the inputs it builds on. The commit and VanillaBP are inputs of every job,
+  the engine's digest of `latest-engine` only, and the blueprints' commit of `blueprints` only. The
+  pinned engine moves only with a commit, so it is no input of its own. A job runs where its key is
+  not in the workflow's cache. Once its build passed, the job saves its key there, on `main` only. A
+  job whose build failed saves nothing and runs again the next night, so the run and the badge stay
+  red until the build passes: GitHub reports a skipped job as passed, so a skipped red job would
+  turn them green. `latest-engine` is the exception, see below. Every key also holds the week, which
+  begins on Sunday, so the run of Sunday finds no key of an earlier night. A build of Sunday which
+  fails saves nothing, and the job runs again on Monday. A run a person starts finds the keys of its
+  week. Where its build fails against inputs a night of that week passed with, the next nights still
+  skip the job until something changes or until Sunday. Only the person who started the run sees it
+  red. Where an input cannot be read, its jobs run: not knowing what changed is no reason to skip a
+  build. They also run where `what-changed` itself failed, or where GitHub evicted the key from the
+  cache. The summary line names the inputs and which jobs run.
 
 - `pinned-engine`: the build of `checks.yaml`'s job `build`, against the pinned engine. With nobody
   waiting for it, a test which fails now and then shows up here, on Sunday at the latest, and not
@@ -1082,18 +1086,19 @@ Actions tab. A pull request and a person's start run every job as well. Its jobs
 
 - `latest-engine`: the same build against the engine's newest build of its `main`, the moving tag
   `ghcr.io/pbinitiative/zenbpm:dev`. `bin/resolve-latest-engine.sh` turns the tag into the image's
-  digest and the commit it was built from, starts it once to read the commit the engine reports,
-  and writes all three into the run's summary together with the version the engine reports and
-  whether that commit is the pin. The build then runs with `-Dzenbpm.image` and `-Dzenbpm.commit`
-  set to them and without the coverage gate: the gate compares the README and the copies of the
-  engine's contract with the engine the build runs against, which here is another one on purpose,
-  and coverage is the pinned build's business. The job may fail without turning the run red (`continue-on-error`), because nothing in
-  this repository changed. A red job is the earliest warning that an engine change breaks the
-  adapter: a person reads it and takes the finding to the engine's maintainers. It saves its key
-  also after a failed build, so it reports a new build of the engine once, in the night after it
-  appeared. The next nights skip the job until the engine, VanillaBP or this repository changes
-  again, or until Sunday. The workflow
-  itself opens no issue and writes nowhere (decision 62 in [`DECISIONS.md`](./DECISIONS.md)).
+  digest and the commit it was built from, starts it once to read the commit the engine reports, and
+  writes all three into the run's summary together with the version the engine reports and whether
+  that commit is the pin. The build then runs with `-Dzenbpm.image` and `-Dzenbpm.commit` set to
+  them and without the coverage gate: the gate compares the README and the copies of the engine's
+  contract with the engine the build runs against, which here is another one on purpose, and
+  coverage is the pinned build's business. The job may fail without turning the run red
+  (`continue-on-error`), because nothing in this repository changed. A red job is the earliest
+  warning that an engine change breaks the adapter: a person reads it and takes the finding to the
+  engine's maintainers. It saves its key also after a failed build, so it reports a new build of the
+  engine in the night after it appeared, and after that once a week, on Sunday. The next nights skip
+  the job until the engine, VanillaBP or this repository changes again, or until Sunday. The
+  workflow itself opens no issue and writes nowhere (decision 62 in
+  [`DECISIONS.md`](./DECISIONS.md)).
 
 - `native-image`: the two Maven calls of the section "Native image", with Mandrel for Java 25
   installed on the runner by `graalvm/setup-graalvm` and `-Dquarkus.native.container-build=false`,
@@ -1129,10 +1134,11 @@ the workflow's token and writes nothing but its key into the workflow's cache.
 - the permissions and the summary line.
 
 `NightlyChangeDetectionTest` runs what decides: `bin/what-the-nightly-builds-on.sh` against
-stand-ins for curl and git, and the bash of the step `decide` of `what-changed` as the workflow
-holds it. It holds which inputs each job's key is built from, that an input which cannot be read
-leaves the keys of its jobs empty, that a weekday runs only the jobs whose key is new, and that
-Sunday, a pull request and a person's start run every job.
+stand-ins for curl, git and date, and the bash of the step `decide` of `what-changed` as the
+workflow holds it. It holds which inputs each job's key is built from, that a key holds from Sunday
+to Saturday, that an input which cannot be read leaves the keys of its jobs empty, that a weekday
+runs only the jobs whose key is new, and that Sunday, a pull request and a person's start run every
+job.
 
 `BlueprintsOverlayTest` applies the overlay to a small checkout of the blueprints' shape in every
 build, and `EnginePinTest#theBlueprintsEngineIsThePin` holds the engine script to the pin.

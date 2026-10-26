@@ -13,15 +13,20 @@
 #   engine       the digest of ghcr.io/pbinitiative/zenbpm:dev, the engine's newest build of its main
 #   blueprints   the newest commit of the blueprints' main, which bin/build-blueprints-on-zenbpm.sh
 #                clones
+#   week         the year and the week of the year, a week beginning on Sunday
 #
-#   pinned-engine-key and native-image-key   adapter and vanillabp
-#   latest-engine-key                        adapter, vanillabp and engine
-#   blueprints-key                           adapter, vanillabp and blueprints
+#   pinned-engine-key and native-image-key   week, adapter and vanillabp
+#   latest-engine-key                        week, adapter, vanillabp and engine
+#   blueprints-key                           week, adapter, vanillabp and blueprints
+#
+# The week is in every key, so the run of Sunday finds no key saved before it. A build of Sunday
+# which fails saves nothing, and the job runs again on Monday, also where its inputs did not change.
+# The first of January begins a week as well, and every job runs once more.
 #
 # The pinned engine is no input of its own: it moves only with a commit of this repository. An
 # input which cannot be read is written as 'unread' and leaves the key of every job which builds on
 # it empty, so that job runs: not knowing what changed is no reason to skip a build. The script
-# needs curl, git, jq, sha256sum and timeout, and no Docker and no login: the registry, the
+# needs curl, date, git, jq, sha256sum and timeout, and no Docker and no login: the registry, the
 # snapshot repository and the blueprints are read anonymously.
 #
 # On GitHub Actions everything goes to the step's outputs. Run by hand, it is printed.
@@ -109,6 +114,9 @@ if ! [[ "$blueprints" =~ ^[0-9a-f]{40}$ ]]; then
   blueprints="$UNREAD"
 fi
 
+# %U counts the weeks of the year from its first Sunday, so a new week begins on every Sunday
+week="$(date -u +%Y-%U)"
+
 # nightly-<job>-<SHA-256 of its inputs>, or nothing where one of them is unread
 key() {
   local job="$1"
@@ -125,10 +133,11 @@ outputs="adapter=$adapter
 vanillabp=$vanillabp
 engine=$engine
 blueprints=$blueprints
-pinned-engine-key=$(key pinned-engine "$adapter" "$vanillabp")
-latest-engine-key=$(key latest-engine "$adapter" "$vanillabp" "$engine")
-native-image-key=$(key native-image "$adapter" "$vanillabp")
-blueprints-key=$(key blueprints "$adapter" "$vanillabp" "$blueprints")"
+week=$week
+pinned-engine-key=$(key pinned-engine "$week" "$adapter" "$vanillabp")
+latest-engine-key=$(key latest-engine "$week" "$adapter" "$vanillabp" "$engine")
+native-image-key=$(key native-image "$week" "$adapter" "$vanillabp")
+blueprints-key=$(key blueprints "$week" "$adapter" "$vanillabp" "$blueprints")"
 
 if [ -n "${GITHUB_OUTPUT:-}" ]; then
   echo "$outputs" >>"$GITHUB_OUTPUT"
