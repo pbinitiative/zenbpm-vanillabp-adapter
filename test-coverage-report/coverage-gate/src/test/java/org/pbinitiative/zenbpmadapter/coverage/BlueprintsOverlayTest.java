@@ -146,6 +146,23 @@ class BlueprintsOverlayTest {
     }
 
     @Test
+    @DisplayName("Both values of the Camunda 8 adapter's job-lease are left out of the application-zenbpm.yaml")
+    void bothValuesOfTheJobLeaseAreLeftOut() {
+        final var configurations = List.of(
+                checkout.resolve(RUNS).resolve("springboot/application/src/main/resources/application-camunda8.yaml"),
+                checkout.resolve(RUNS).resolve("quarkus/application/src/main/resources/application-camunda8.yaml"));
+        write(configurations.get(1), read(configurations.get(1)).replace("job-lease: do-not-use", "job-lease: use"));
+
+        final var run = overlay();
+
+        assertEquals(0, run.exitCode(), run::output);
+        for (final var configuration : configurations) {
+            final var zenbpm = read(configuration.resolveSibling("application-zenbpm.yaml"));
+            assertFalse(zenbpm.contains("job-lease"), zenbpm);
+        }
+    }
+
+    @Test
     @DisplayName("Another file named for Camunda 8 is copied for ZenBPM, the other remote engine, where it names no Camunda")
     void anotherFileForCamunda8IsCopied() {
         final var changelog = checkout.resolve(RUNS)
@@ -779,8 +796,8 @@ class BlueprintsOverlayTest {
                     camunda8:
                       name-clash-avoidance: use-prefix
                       rest-address: http://localhost:8080
-                      # a lease
-                      job-lease: use
+                      # no lease, as the blueprints advise on 8.10
+                      job-lease: do-not-use
                 """;
         write(twin.resolve("application/src/main/resources/application-camunda8.yaml"), camunda8);
         write(twin.resolve("loan-approval/src/test/resources/application-camunda8.yaml"), camunda8);

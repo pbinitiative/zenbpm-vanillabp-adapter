@@ -95,14 +95,19 @@ class ZenBpmOverlay {
     private static final Pattern FORM_REFERENCE = Pattern.compile(
             "([ \\t]*)<((?:[\\w-]+:)?)formDefinition\\b[^>]*\\bexternalReference=\"([^\"]+)\"");
 
-    /** What an <code>application-camunda8.yaml</code> may say, comments left aside. */
+    /**
+     * What an <code>application-camunda8.yaml</code> may say, comments left aside. The lease of a
+     * job is a setting of the Camunda 8 adapter which this adapter does not have, so the
+     * configuration for ZenBPM leaves it out, whichever value a blueprint chooses.
+     */
     private static final Set<String> CAMUNDA8_CONFIGURATION = Set.of(
             "vanillabp:",
             "adapters:",
             "camunda8:",
             "name-clash-avoidance: use-prefix",
             "rest-address: http://localhost:8080",
-            "job-lease: use");
+            "job-lease: use",
+            "job-lease: do-not-use");
 
     private static final String ZENBPM_CONFIGURATION = """
             # Everything specific to ZenBPM, loaded only while the 'zenbpm' profile applies. Written by the
