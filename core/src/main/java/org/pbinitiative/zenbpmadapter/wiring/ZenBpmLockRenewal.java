@@ -19,6 +19,7 @@ import org.pbinitiative.zenbpmadapter.client.ReceivedJob;
 import org.pbinitiative.zenbpmadapter.client.ZenBpmCommandRetry;
 import org.pbinitiative.zenbpmadapter.client.ZenBpmErrors;
 import org.pbinitiative.zenbpmadapter.client.ZenBpmRestClient;
+import org.pbinitiative.zenbpmadapter.client.api.JobRef;
 import org.pbinitiative.zenbpmadapter.observability.ZenBpmMetrics;
 
 import lombok.extern.slf4j.Slf4j;
@@ -47,7 +48,10 @@ import lombok.extern.slf4j.Slf4j;
  * lock has not lapsed meanwhile. A lock the engine says is lost (<code>409</code>: it lapsed, or
  * another client holds the job) ends the renewal with a WARN, because a second delivery of the job
  * may run beside the handler now; the platform's record of deliveries decides which of them
- * counts. A job the engine no longer holds ends it quietly. The renewal ends with the handler.
+ * counts. The engine answers <code>409</code> as well where it released the lock because the job
+ * ended, such as by the handler's own answer arriving just before the extension, so the job is read
+ * once then: a job which ended, or a handler which ended meanwhile, ends the renewal quietly. A job
+ * the engine no longer holds ends it quietly, too. The renewal ends with the handler.
  * <p>
  * A job whose task stays open for its asynchronous completion is <b>parked</b> instead: the renewal
  * ends, an extension under way is waited for, and the lock is extended once by
@@ -362,6 +366,15 @@ public final class ZenBpmLockRenewal {
                 return;
             }
             if (ZenBpmErrors.lockLost(failure)) {
+                final var jobEnded = endedAtTheEngine();
+                // the handler ended while the job was read, as it does right after its answer
+                if (ended || jobEnded) {
+                    ended = true;
+                    log.debug(
+                            "ZenBPM[{}]: the lock of job {} (task '{}') is not renewed, the job or its handler ended meanwhile",
+                            adapterId, jobKey, taskDefinition);
+                    return;
+                }
                 ended = true;
                 metrics.lockLost(adapterId);
                 log.warn("""
@@ -400,6 +413,23 @@ public final class ZenBpmLockRenewal {
                     handler runs, so it lapses at {}. The engine may hand the job out again then, so a second \
                     delivery may run beside this one: {}""", adapterId, jobKey, taskDefinition, aggregateId, lockEnd,
                     failure.getMessage());
+        }
+
+        // A follower of the job's partition answers, which may lag behind the leader, but a job it
+        // shows ended has ended on the leader, too. So only an ended job counts: an active one, one
+        // the follower does not know yet and no answer leave the lock lost. A job another delivery
+        // completed ends quietly as well, because nothing runs beside the handler any more; its own
+        // answer then finds the job gone and says so.
+        private boolean endedAtTheEngine() {
+            try {
+                return rest
+                        .job(jobKey)
+                        .map(JobRef::state)
+                        .filter(state -> state != JobRef.State.ACTIVE)
+                        .isPresent();
+            } catch (final RuntimeException e) {
+                return false;
+            }
         }
 
     }

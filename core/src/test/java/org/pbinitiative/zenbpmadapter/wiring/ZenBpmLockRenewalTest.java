@@ -14,6 +14,7 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
@@ -28,6 +29,8 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.pbinitiative.zenbpmadapter.client.FakeEngine;
 import org.pbinitiative.zenbpmadapter.client.ReceivedJob;
 import org.pbinitiative.zenbpmadapter.client.ZenBpmAdapterConfiguration;
@@ -45,8 +48,8 @@ import io.vanillabp.integration.test.utils.SuppressOutputExtension;
 /**
  * How the lock of a running handler's job is kept: extended at once only where less than half of
  * the job-timeout is left, then whenever half of it is left; ended by a lost lock with a WARN, by a
- * job the engine no longer holds quietly, by any other refusal with a WARN, and by the end of the
- * handler; repeated within the lock where the engine could not be asked. Every extension names its
+ * lock refused for a job which ended or while the handler ends quietly, by a job the engine no
+ * longer holds quietly, by any other refusal with a WARN, and by the end of the handler; repeated within the lock where the engine could not be asked. Every extension names its
  * delivery, and the lock is counted on the application's clock: an engine clock behind it is named
  * once and changes nothing. A parked job is extended once by its window, after an extension under
  * way came back, and a window the engine lowered is named once. Every extension the engine granted
@@ -57,6 +60,10 @@ import io.vanillabp.integration.test.utils.SuppressOutputExtension;
 class ZenBpmLockRenewalTest {
 
     private static final String EXTEND = "/v1/jobs/42/extend-lock";
+
+    private static final String JOB = "/v1/jobs/42";
+
+    private static final String LOCK_NOT_HELD = "{\"code\":\"CONFLICT\",\"message\":\"lock not held\"}";
 
     private static final Duration JOB_TIMEOUT = Duration.ofMillis(600);
 
@@ -144,7 +151,8 @@ class ZenBpmLockRenewalTest {
     @Test
     @DisplayName("A lost lock ends the renewal with a WARN naming job, task as the application knows it and aggregate, and that a second delivery may run")
     void aLostLockEndsTheRenewal(final CapturedOutput output) {
-        engine.answers("POST", EXTEND, 409, "{\"code\":\"CONFLICT\",\"message\":\"lock not held\"}");
+        engine.answers("POST", EXTEND, 409, LOCK_NOT_HELD);
+        engine.answers("GET", JOB, 200, jobIn("active"));
 
         try (var renewal = lockRenewal.start(job(Duration.ZERO), JOB_TIMEOUT, "shop__Orders__ship")) {
             renewal.describe("ship", "order-7");
@@ -161,6 +169,78 @@ class ZenBpmLockRenewalTest {
                 () -> assertTrue(log.contains("a second delivery may run beside this one"), log),
                 () -> assertEquals(1, counted(ZenBpmMetrics.LOCK_LOST)),
                 () -> assertEquals(0, counted(ZenBpmMetrics.LOCK_RENEWED)));
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {
+            "completed", "terminated", "failed"
+    })
+    @DisplayName("A lock the engine refuses because the job ended, as when the handler's own answer arrives just before the extension, ends the renewal without a WARN")
+    void aRefusalForAnEndedJobEndsTheRenewalQuietly(
+        final String state,
+        final CapturedOutput output
+    ) {
+        engine.answers("POST", EXTEND, 409, LOCK_NOT_HELD);
+        engine.answers("GET", JOB, 200, jobIn(state));
+
+        try (var renewal = lockRenewal.start(job(Duration.ZERO), JOB_TIMEOUT, "ship")) {
+            await(() -> engine
+                    .requests()
+                    .stream()
+                    .anyMatch(request -> JOB.equals(request.path())), "the job to be read");
+            pause(JOB_TIMEOUT);
+        }
+
+        assertAll(
+                () -> assertEquals(1, extensions().size()),
+                () -> assertFalse(output
+                        .getAllOfThisTest()
+                        .contains("WARN"), output::getAllOfThisTest),
+                () -> assertEquals(0, counted(ZenBpmMetrics.LOCK_LOST), "the job ended, nothing runs beside it"));
+    }
+
+    @ParameterizedTest
+    @ValueSource(ints = {
+            404, 502
+    })
+    @DisplayName("A lock the engine refuses for a job the follower asked does not know, or which cannot be read, is lost as well: a lagging follower never shows a job ended")
+    void aRefusalForAJobWhichCannotBeReadIsALostLock(
+        final int status,
+        final CapturedOutput output
+    ) {
+        engine.answers("POST", EXTEND, 409, LOCK_NOT_HELD);
+        engine.answers("GET", JOB, status, "{\"code\":\"NOT_FOUND\",\"message\":\"no\"}");
+
+        try (var renewal = lockRenewal.start(job(Duration.ZERO), JOB_TIMEOUT, "ship")) {
+            awaitLog(output, "is lost while its handler runs");
+        }
+
+        assertEquals(1, counted(ZenBpmMetrics.LOCK_LOST));
+    }
+
+    @Test
+    @DisplayName("A lock the engine refuses while the handler ends, as it does right after its answer, ends the renewal without a WARN, even where the job still reads as active")
+    void aRefusalWhileTheHandlerEndsEndsTheRenewalQuietly(final CapturedOutput output) {
+        final var read = new CountDownLatch(1);
+        final var closed = new CountDownLatch(1);
+        engine.answers("POST", EXTEND, 409, LOCK_NOT_HELD);
+        engine.answers("GET", JOB, exchange -> {
+            read.countDown();
+            awaitLatch(closed);
+            FakeEngine.respond(exchange, 200, jobIn("active"));
+        });
+
+        try (var renewal = lockRenewal.start(job(Duration.ZERO), JOB_TIMEOUT, "ship")) {
+            awaitLatch(read);
+        }
+        closed.countDown();
+        pause(JOB_TIMEOUT);
+
+        assertAll(
+                () -> assertFalse(output
+                        .getAllOfThisTest()
+                        .contains("is lost"), output::getAllOfThisTest),
+                () -> assertEquals(0, counted(ZenBpmMetrics.LOCK_LOST), "the handler ended before the answer"));
     }
 
     @Test
@@ -239,7 +319,7 @@ class ZenBpmLockRenewalTest {
     void theRenewalEndsWithTheHandler(final CapturedOutput output) {
         engine.answers("POST", EXTEND, exchange -> {
             pause(Duration.ofMillis(300));
-            FakeEngine.respond(exchange, 409, "{\"code\":\"CONFLICT\",\"message\":\"lock not held\"}");
+            FakeEngine.respond(exchange, 409, LOCK_NOT_HELD);
         });
 
         try (var renewal = lockRenewal.start(job(Duration.ZERO), JOB_TIMEOUT, "ship")) {
@@ -499,7 +579,7 @@ class ZenBpmLockRenewalTest {
     @Test
     @DisplayName("A parking the engine refuses passes the refusal on, so the handler decides")
     void aRefusedParkingIsPassedOn() {
-        engine.answers("POST", EXTEND, 409, "{\"code\":\"CONFLICT\",\"message\":\"lock not held\"}");
+        engine.answers("POST", EXTEND, 409, LOCK_NOT_HELD);
 
         try (var renewal = lockRenewal.start(job(JOB_TIMEOUT), JOB_TIMEOUT, "ship")) {
             final var refusal = assertThrows(RuntimeException.class, () -> renewal.park(Duration.ofHours(1),
@@ -521,6 +601,14 @@ class ZenBpmLockRenewalTest {
                         .plus(lockLeft)
                         .toEpochMilli())
                 .build(), now.minus(JOB_TIMEOUT.minus(lockLeft)));
+    }
+
+    // the job as GET /v1/jobs/{key} answers it, in a state
+    private static String jobIn(final String state) {
+        return """
+                {"key": 42, "elementId": "Task_Ship", "type": "ship", "elementType": "SERVICE_TASK",
+                 "processInstanceKey": 4503599627370500, "elementInstanceKey": 4503599627370501, "state": "%s",
+                 "createdAt": "2026-10-30T09:00:00Z", "inputVariables": {}}""".formatted(state);
     }
 
     private static ZenBpmCommandRetry retryOf(final ZenBpmLockRenewal.Renewal renewal) {
@@ -574,6 +662,17 @@ class ZenBpmLockRenewalTest {
                     .now()
                     .isBefore(deadline), () -> "waited %s for %s".formatted(PATIENCE, what));
             pause(Duration.ofMillis(10));
+        }
+    }
+
+    private static void awaitLatch(final CountDownLatch latch) {
+        try {
+            assertTrue(latch.await(PATIENCE.toMillis(), TimeUnit.MILLISECONDS), "waited %s".formatted(PATIENCE));
+        } catch (final InterruptedException e) {
+            Thread
+                    .currentThread()
+                    .interrupt();
+            throw new IllegalStateException(e);
         }
     }
 
