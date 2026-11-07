@@ -304,6 +304,19 @@ class BlueprintsOverlayTest {
     }
 
     @Test
+    @DisplayName("The Camunda 8 adapter under a group other than io.vanillabp ends the run")
+    void aCamunda8AdapterOfAnotherGroupEndsTheRun() {
+        final var pom = checkout.resolve(RUNS).resolve("quarkus/application/pom.xml");
+        write(pom, read(pom).replace("<groupId>io.vanillabp</groupId>",
+                "<groupId>org.camunda.community.vanillabp</groupId>"));
+
+        assertTheRunEndsNaming(
+                "The profile 'camunda8' of %s/quarkus/application/pom.xml has more than the overlay translates"
+                        .formatted(RUNS),
+                "<groupId>org.camunda.community.vanillabp</groupId>");
+    }
+
+    @Test
     @DisplayName("A POM which chooses a BPMS without a profile camunda8 ends the run")
     void aPomChoosingABpmsWithoutACamunda8ProfileEndsTheRun() {
         final var pom = checkout.resolve(RUNS).resolve("quarkus/loan-approval/pom.xml");
@@ -779,7 +792,7 @@ class BlueprintsOverlayTest {
                           <dependencies>
                             <!-- the adapter of Camunda 8 -->
                             <dependency>
-                              <groupId>org.camunda.community.vanillabp</groupId>
+                              <groupId>io.vanillabp</groupId>
                               <artifactId>camunda8-adapter-%s</artifactId>
                               <version>${camunda8-adapter.version}</version>%s
                             </dependency>

@@ -1982,6 +1982,11 @@ attempts, so the script starts the engine with `JOBS_DEFAULT_RETRIES=3`, as the 
 blueprints' `main`, VanillaBP's snapshots or this repository changed since its last run, and every
 Sunday.*
 
+*The Camunda adapters publish their snapshots to the snapshot repository of Maven Central now, as
+`io.vanillabp`, so `blueprints-overlay/settings.xml` names their registry, too. Nothing else
+changes: `-Pzenbpm` still switches off the profile a blueprint activates by default, and the
+generator still ends the run where a profile of a BPMS would stay on next to `zenbpm`.*
+
 ### 65. A release is published by the release workflow from a tag, to this repository's GitHub Packages
 
 Decided by the implementation pipeline in place of the maintainers, as their policy for the

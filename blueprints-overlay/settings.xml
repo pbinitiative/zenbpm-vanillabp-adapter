@@ -4,8 +4,10 @@
   Maven Central for releases, and its snapshot repository for spi-for-java and the VanillaBP
   platform, neither of which asks for a login. The adapter is not read from any repository: it
   is installed into the local repository from the checkout the blueprints are built for, see
-  decision 64 in the repository's DECISIONS.md. Neither of the Camunda adapters' registries is
-  named, so a build which still asks for one fails instead of passing on a token.
+  decision 64 in the repository's DECISIONS.md. The Camunda adapters publish their snapshots to the
+  same snapshot repository, so these settings do not keep them out: '-Pzenbpm' does, by switching off
+  the profile a blueprint activates by default, and the overlay ends the run where a profile of a BPMS
+  would stay on next to 'zenbpm'.
 -->
 <settings xmlns="http://maven.apache.org/SETTINGS/1.0.0"
           xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
