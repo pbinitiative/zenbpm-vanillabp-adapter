@@ -64,8 +64,12 @@ class ZenBpmOverlay {
     private static final Pattern CAMUNDA8_PROFILE = Pattern.compile(
             "(?s)([ \\t]*)<profile>\\s*<id>camunda8</id>.*?</profile>");
 
+    /**
+     * The Camunda 8 adapter as the blueprints name it. Under any other group it is left in the
+     * profile zenbpm, so the run ends, naming it.
+     */
     private static final Pattern CAMUNDA8_ADAPTER = Pattern.compile("""
-            <groupId>org\\.camunda\\.community\\.vanillabp</groupId>(\\s*)\
+            <groupId>io\\.vanillabp</groupId>(\\s*)\
             <artifactId>camunda8-adapter-(spring-boot|quarkus)</artifactId>(\\s*)\
             <version>\\$\\{camunda8-adapter\\.version\\}</version>""");
 
