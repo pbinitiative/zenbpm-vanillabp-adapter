@@ -25,6 +25,8 @@ blueprints-bpmn/bpmn-timer                              runs
 blueprints-bpmn/bpmn-user-task                          runs
 blueprints-bpmn/bpmn-versioning                         runs
 blueprints-bpmn/bpmn-workflow-ended                     runs
+blueprints-cockpit/cockpit-header-extension-application not-runnable
+blueprints-cockpit/cockpit-header-extension-backend     not-runnable
 blueprints-cockpit/cockpit-organizing-usertasks         not-runnable
 blueprints-cockpit/cockpit-user-task-application        not-runnable
 blueprints-cockpit/cockpit-user-task-application-proxy  not-runnable
