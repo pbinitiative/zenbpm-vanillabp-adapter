@@ -380,6 +380,10 @@ of the first one, see
 answer of the engine names its installation, so the adapter reports none and VanillaBP compares
 nothing at startup (`ZenBpmProcessServiceTest#theEngineSaysNeitherBusyNorCollisionNorWhoItIs`).
 Such an application boots. What the comparison mainly protects against, a new installation which
-hands out the ids of the old one again, hardly happens on ZenBPM, because a key of the engine holds
-the millisecond it was made in.
+hands out the ids of the old one again, hardly happens on ZenBPM: a key of the engine holds the
+millisecond it was made in, so an installation set up later hands out later keys. It is not ruled
+out, because nothing in a key names its installation: two engines which made a key in the same
+millisecond on the same partition, or an engine whose clock was set back, can hand out the same key.
+The adapter derives no identity of its own either, because a value it made up from what the engine
+holds today would end the start of every application once it changed.
 [README: What the adapter leaves to the core's defaults](https://github.com/pbinitiative/zenbpm-vanillabp-adapter/blob/main/README.md#what-the-adapter-leaves-to-the-cores-defaults)

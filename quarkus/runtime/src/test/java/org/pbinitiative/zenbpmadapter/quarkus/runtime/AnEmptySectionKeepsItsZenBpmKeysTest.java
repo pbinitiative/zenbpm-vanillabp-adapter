@@ -12,10 +12,12 @@ import java.util.Map;
 import java.util.Optional;
 
 import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
 
+import io.smallrye.config.EnvConfigSource;
 import io.smallrye.config.PropertiesConfigSource;
 import io.smallrye.config.SmallRyeConfigBuilder;
 import io.smallrye.config.source.yaml.YamlConfigSource;
@@ -29,6 +31,10 @@ import io.vanillabp.integration.test.utils.SuppressOutputExtension;
  * reads keys from: an adapter id, its section at a workflow module, a workflow and a task, and the
  * sections of a workflow module, a workflow and a task themselves. The Spring Boot twin of the same
  * name holds what that platform needs for it.
+ * <p>
+ * An environment variable is such a source as well, with one limit which is Quarkus's own: a
+ * variable is written in capitals, so it cannot say how an id is spelt, and a section written as
+ * <code>{}</code> does not tell it either.
  */
 @ExtendWith(SuppressOutputExtension.class)
 class AnEmptySectionKeepsItsZenBpmKeysTest {
@@ -79,6 +85,20 @@ class AnEmptySectionKeepsItsZenBpmKeysTest {
 
     private static final int ORDINAL_OF_THE_KEYS = 300;
 
+    private static final String MODULES_AS_A_VARIABLE = "VANILLABP_WORKFLOW_MODULES_";
+
+    private static final Map<String, String> ENVIRONMENT_VARIABLES = Map.of(
+            "VANILLABP_ADAPTERS_ORDERS_REST_ADDRESS", "http://engine:8080",
+            MODULES_AS_A_VARIABLE
+                    + "SHOP_ADAPTERS_ORDERS_RETRY_BACKOFF",
+            "PT2S",
+            MODULES_AS_A_VARIABLE
+                    + "SHOP_WORKFLOWS_ORDER_TASKS_PACK_ADAPTERS_ORDERS_RETRY_BACKOFF",
+            "PT5S",
+            MODULES_AS_A_VARIABLE
+                    + "CRM_ADAPTERS_ORDERS_RETRY_BACKOFF",
+            "PT7S");
+
     @ParameterizedTest(name = "the YAML file at ordinal {0}, the keys at 300")
     @ValueSource(ints = {
             255, 400
@@ -109,6 +129,32 @@ class AnEmptySectionKeepsItsZenBpmKeysTest {
                         overlay.retryBackoffFor("shop", "Invoice", "send", "orders")),
                 () -> assertEquals(Optional.of(Duration.ofSeconds(7)),
                         overlay.retryBackoffFor("crm", "Lead", "call", "orders")));
+    }
+
+    @Test
+    @DisplayName("Environment variables reach the keys below a section written as {} where its ids are in lower case")
+    void environmentVariablesReachTheKeysBelowSectionsWithIdsInLowerCase() {
+        final var overlay = new SmallRyeConfigBuilder()
+                .withSources(
+                        new YamlConfigSource("application.yaml", EVERY_SECTION_WRITTEN_EMPTY, 255),
+                        new EnvConfigSource(ENVIRONMENT_VARIABLES, ORDINAL_OF_THE_KEYS))
+                .withMapping(VanillaBpZenBpmProperties.class)
+                .build()
+                .getConfigMapping(VanillaBpZenBpmProperties.class);
+
+        assertAll(
+                () -> assertEquals("http://engine:8080", overlay
+                        .configurationOf("orders")
+                        .getRestAddress()),
+                () -> assertEquals(Optional.of(Duration.ofSeconds(2)),
+                        overlay.retryBackoffFor("shop", "Returns", "check", "orders")),
+                () -> assertEquals(Optional.of(Duration.ofSeconds(7)),
+                        overlay.retryBackoffFor("crm", "Lead", "call", "orders")),
+                // the limit: 'Order: {}' is no property, so the variable names a workflow 'order'
+                () -> assertEquals(Optional.of(Duration.ofSeconds(5)),
+                        overlay.retryBackoffFor("shop", "order", "pack", "orders")),
+                () -> assertEquals(Optional.of(Duration.ofSeconds(2)),
+                        overlay.retryBackoffFor("shop", "Order", "pack", "orders")));
     }
 
 }

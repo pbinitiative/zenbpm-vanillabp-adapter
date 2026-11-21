@@ -2156,10 +2156,15 @@ Moving the overlay's types into a package below `io.vanillabp` was rejected. Tha
 to the VanillaBP project, and decision 16 keeps this adapter's packages its own.
 
 Quarkus needs nothing. The YAML source of SmallRye Config turns `{}` into no property at all, and a
-mapping finds the keys of a map by their names, whichever source is stronger.
+mapping finds the keys of a map by their names, whichever source is stronger. One difference
+between the platforms remains, and it is Quarkus's own: an environment variable cannot say how an
+id is spelt, and since `{}` is no property there, a variable reaches a workflow `order`, not
+`Order`. On Spring Boot the section written as `{}` gives the id its spelling.
 
 `AnEmptySectionKeepsItsZenBpmKeysTest` holds it on both platforms, for every section the overlay
 reads keys from: an adapter id, its section at a workflow module, a workflow and a task, and the
 sections of a workflow module, a workflow and a task themselves. The Spring Boot one also holds the
 cause, so it fails once Spring Boot binds an empty section differently and the class is not needed
-any more.
+any more. It holds where the rule ends as well: a single value with a key below it keeps its value,
+and a section with nothing below it, or outside the `vanillabp` tree, is bound as Spring Boot binds
+it.

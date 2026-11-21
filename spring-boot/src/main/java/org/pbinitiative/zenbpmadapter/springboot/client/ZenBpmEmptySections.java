@@ -23,9 +23,9 @@ import io.vanillabp.integration.adapter.migration.config.MigrationAdapterPropert
  * Boot reads the empty map of a YAML file as a property with an empty value,
  * <code>vanillabp.adapters.zenbpm=</code>. When it binds an object, it first asks every property
  * source for a value at the object's own name, and only then for the keys below it. So the empty
- * value wins, an empty section is bound, and every key of this adapter from the command line, an
- * environment variable or a second YAML document is lost: <code>rest-address</code> first of all,
- * which leaves the adapter id unconfigured.
+ * value wins, an empty section is bound, and every key of this adapter from the command line or an
+ * environment variable is lost: <code>rest-address</code> first of all, which leaves the adapter id
+ * unconfigured.
  * <p>
  * A section never has a value of its own. So where keys exist below a section, the section is bound
  * with {@link Bindable.BindRestriction#NO_DIRECT_PROPERTY}, which tells Spring Boot to skip the

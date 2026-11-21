@@ -659,15 +659,19 @@ Where the status says less than it seems:
 
 Two switches of the adapter SPI keep their defaults, each for a reason in the engine:
 
-- `kindOfPhaseTwoFailure` answers `OTHER` for every failure, so the outbox counts each failed
-  attempt and repeats it with its backoff. `BUSY` is for a BPMS which refuses a command with a code
-  that says "come back later" before it did anything, and `COLLISION` for one which undid a command
-  that lost a race. The engine has neither answer. It refuses no command because it is busy: no
+- `kindOfPhaseTwoFailure` answers `OTHER` for every failure. The core asks it only about a failure
+  the adapter calls repeatable (the table above), so the outbox counts each such attempt and repeats
+  it with its backoff; a failure which is not repeatable blocks its entry at once, as before. `BUSY`
+  is for a BPMS which refuses a command with a code that says "come back later" before it did
+  anything, and `COLLISION` for one which undid a command that lost a race. The engine has neither answer. It refuses no command because it is busy: no
   status of its REST API says so. And the `409` it answers to a command of a job says that the job
   is gone, not that a repetition would win (see the table above).
 - `identityOfTheBpms` answers `null`, because nothing names an installation of the engine
   (GAPS 35 in [`GAPS.md`](./GAPS.md)). So the core does not compare the engine it meets at startup
-  with the one it met before.
+  with the one it met before. The adapter derives no identity of its own either, from the key of
+  the oldest process definition for example: such a value names the installation only for as long
+  as the engine deletes no definition, and an identity which changes ends the start of every
+  application of that engine.
 
 `ZenBpmProcessServiceTest#theEngineSaysNeitherBusyNorCollisionNorWhoItIs` holds both. Where the
 engine learns to refuse under load, or to name its installation, the answer changes here and in

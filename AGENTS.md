@@ -31,9 +31,10 @@ bin/check-deploy-safety.sh    # after touching deploying, module order or the co
 
 ## Licence headers
 
-The repository is MIT-licensed, and code copied from the Apache-2.0 VanillaBP adapters keeps its
-licence (decision 17 in the repository's DECISIONS.md). So every Java file starts with one of two
-headers, chosen when the file is created and never changed afterwards. A file written here:
+The repository is MIT-licensed, and code copied from an Apache-2.0 repository of the VanillaBP
+project keeps its licence (decision 17 in the repository's DECISIONS.md). So every Java file starts
+with one of two headers, chosen when the file is created and never changed afterwards. A file
+written here:
 
 ```java
 /*
