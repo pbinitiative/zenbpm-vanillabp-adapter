@@ -155,6 +155,13 @@ mapping `VanillaBpZenBpmProperties` on Quarkus, and copies them into the core's 
 `VanillaBpZenBpmPropertiesTest` fails where the Spring Boot overlay misses a setter of the core
 configuration.
 
+A section which a YAML file writes as `{}` keeps the keys another property source sets below it. On
+Spring Boot that takes `ZenBpmEmptySections`, a bind handler advisor for the overlay's types, because
+the platform's own rule covers only types below `io.vanillabp` (decision 71 in
+[`DECISIONS.md`](./DECISIONS.md)). So a type of the overlay below `vanillabp` is always a section,
+and a single value is a JDK type or an enum. `AnEmptySectionKeepsItsZenBpmKeysTest` holds it on both
+platforms.
+
 On Spring Boot and on Quarkus the adapter registers one process service and one deployment service
 per adapter id of type `zenbpm`, validates the configuration of each id while the application starts
 and answers the platform's health check. The smoke tests in `smoke-test` boot it on Spring Boot with
@@ -1367,10 +1374,12 @@ This repository is licensed under the [MIT License](./LICENSE).
 
 Parts of it are copied and adapted from the VanillaBP adapters
 [`camunda8-adapter`](https://github.com/vanillabp/camunda8-adapter) and
-[`process-engine-api-adapter`](https://github.com/vanillabp/process-engine-api-adapter), which are
-licensed under the Apache License, Version 2.0. Those files keep that licence: each carries a header
-naming its origin and `SPDX-License-Identifier: Apache-2.0`, the licence text is in
-[`LICENSE-APACHE-2.0`](./LICENSE-APACHE-2.0), and [`NOTICE`](./NOTICE) names both origins. Every
+[`process-engine-api-adapter`](https://github.com/vanillabp/process-engine-api-adapter) and, one
+class, from the platform's
+[`adapter-platform-integration`](https://github.com/vanillabp/adapter-platform-integration), which
+are licensed under the Apache License, Version 2.0. Those files keep that licence: each carries a
+header naming its origin and `SPDX-License-Identifier: Apache-2.0`, the licence text is in
+[`LICENSE-APACHE-2.0`](./LICENSE-APACHE-2.0), and [`NOTICE`](./NOTICE) names the origins. Every
 other file is MIT, with one exception that is still open. Decision 17 in
 [`DECISIONS.md`](./DECISIONS.md) says why.
 

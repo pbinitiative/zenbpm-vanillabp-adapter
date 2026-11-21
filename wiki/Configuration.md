@@ -134,6 +134,16 @@ for example:
   ZenBPM has both extensions while it migrates. This was seen in a boot beside the Camunda 8
   extension; no test of this repository holds it, because it needs that extension.
 
+### A section written as `{}`
+
+A YAML file may write a section as `{}`, `vanillabp.adapters.zenbpm: {}` for example, and leave its
+keys to another source: the command line, an environment variable or a second YAML document. The
+keys of the adapter below such a section arrive on both platforms. That holds for the section of an
+adapter id, for its section at a workflow module, a workflow and a task, and for the sections of a
+workflow module, a workflow and a task themselves
+(`AnEmptySectionKeepsItsZenBpmKeysTest#aBootedApplicationKeepsTheKeysBelowEveryEmptySection` on
+Spring Boot, `AnEmptySectionKeepsItsZenBpmKeysTest#theKeysBelowEveryEmptySectionArrive` on Quarkus).
+
 ### Several adapter ids
 
 An application may configure several adapter ids of the type `zenbpm`, for example one per engine,

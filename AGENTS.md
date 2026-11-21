@@ -42,9 +42,9 @@ headers, chosen when the file is created and never changed afterwards. A file wr
  */
 ```
 
-A file copied and adapted from one of the VanillaBP adapters names the repository it actually came
-from, so the second line reads either `from vanillabp/camunda8-adapter` or
-`from vanillabp/process-engine-api-adapter`:
+A file copied and adapted from a repository of the VanillaBP project names the repository it
+actually came from, so the second line reads `from vanillabp/camunda8-adapter`,
+`from vanillabp/process-engine-api-adapter` or `from vanillabp/adapter-platform-integration`:
 
 ```java
 /*
