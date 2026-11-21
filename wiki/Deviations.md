@@ -370,3 +370,16 @@ adapter does not detect a mapping which takes the whole context.
 An expression in the model which reads an attribute the aggregate does not share is not found while
 the application starts; it fails while the workflow runs. As on Camunda 8, the adapter does not tell
 VanillaBP which attributes its expressions read.
+
+### GAPS 35: The engine does not say which installation it is
+
+VanillaBP can compare the BPMS it meets at startup with the one it met before, and end the start
+where an application was pointed at another installation while its delivery log still holds records
+of the first one, see
+[Workflow tasks](https://github.com/vanillabp/adapter-platform-integration/wiki/Workflow-tasks). No
+answer of the engine names its installation, so the adapter reports none and VanillaBP compares
+nothing at startup (`ZenBpmProcessServiceTest#theEngineSaysNeitherBusyNorCollisionNorWhoItIs`).
+Such an application boots. What the comparison mainly protects against, a new installation which
+hands out the ids of the old one again, hardly happens on ZenBPM, because a key of the engine holds
+the millisecond it was made in.
+[README: What the adapter leaves to the core's defaults](https://github.com/pbinitiative/zenbpm-vanillabp-adapter/blob/main/README.md#what-the-adapter-leaves-to-the-cores-defaults)

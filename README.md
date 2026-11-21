@@ -655,6 +655,24 @@ Where the status says less than it seems:
   which answers `404` to a call of a job, for example because its routes leave out a path, is read
   as a gone job like the engine's own answer.
 
+### What the adapter leaves to the core's defaults
+
+Two switches of the adapter SPI keep their defaults, each for a reason in the engine:
+
+- `kindOfPhaseTwoFailure` answers `OTHER` for every failure, so the outbox counts each failed
+  attempt and repeats it with its backoff. `BUSY` is for a BPMS which refuses a command with a code
+  that says "come back later" before it did anything, and `COLLISION` for one which undid a command
+  that lost a race. The engine has neither answer. It refuses no command because it is busy: no
+  status of its REST API says so. And the `409` it answers to a command of a job says that the job
+  is gone, not that a repetition would win (see the table above).
+- `identityOfTheBpms` answers `null`, because nothing names an installation of the engine
+  (GAPS 35 in [`GAPS.md`](./GAPS.md)). So the core does not compare the engine it meets at startup
+  with the one it met before.
+
+`ZenBpmProcessServiceTest#theEngineSaysNeitherBusyNorCollisionNorWhoItIs` holds both. Where the
+engine learns to refuse under load, or to name its installation, the answer changes here and in
+`GAPS.md`.
+
 ### Testing
 
 The adapter is tested at the boundary of VanillaBP's adapter SPI, as every VanillaBP adapter is, and
