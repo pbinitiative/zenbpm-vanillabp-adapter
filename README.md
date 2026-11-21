@@ -155,6 +155,13 @@ mapping `VanillaBpZenBpmProperties` on Quarkus, and copies them into the core's 
 `VanillaBpZenBpmPropertiesTest` fails where the Spring Boot overlay misses a setter of the core
 configuration.
 
+A section which a YAML file writes as `{}` keeps the keys another property source sets below it. On
+Spring Boot that takes `ZenBpmEmptySections`, a bind handler advisor for the overlay's types, because
+the platform's own rule covers only types below `io.vanillabp` (decision 71 in
+[`DECISIONS.md`](./DECISIONS.md)). So a type of the overlay below `vanillabp` is always a section,
+and a single value is a JDK type or an enum. `AnEmptySectionKeepsItsZenBpmKeysTest` holds it on both
+platforms.
+
 On Spring Boot and on Quarkus the adapter registers one process service and one deployment service
 per adapter id of type `zenbpm`, validates the configuration of each id while the application starts
 and answers the platform's health check. The smoke tests in `smoke-test` boot it on Spring Boot with
@@ -647,6 +654,28 @@ Where the status says less than it seems:
 - A `404` or `409` is read from its status, method and path alone. A proxy in front of the engine
   which answers `404` to a call of a job, for example because its routes leave out a path, is read
   as a gone job like the engine's own answer.
+
+### What the adapter leaves to the core's defaults
+
+Two switches of the adapter SPI keep their defaults, each for a reason in the engine:
+
+- `kindOfPhaseTwoFailure` answers `OTHER` for every failure. The core asks it only about a failure
+  the adapter calls repeatable (the table above), so the outbox counts each such attempt and repeats
+  it with its backoff; a failure which is not repeatable blocks its entry at once, as before. `BUSY`
+  is for a BPMS which refuses a command with a code that says "come back later" before it did
+  anything, and `COLLISION` for one which undid a command that lost a race. The engine has neither answer. It refuses no command because it is busy: no
+  status of its REST API says so. And the `409` it answers to a command of a job says that the job
+  is gone, not that a repetition would win (see the table above).
+- `identityOfTheBpms` answers `null`, because nothing names an installation of the engine
+  (GAPS 35 in [`GAPS.md`](./GAPS.md)). So the core does not compare the engine it meets at startup
+  with the one it met before. The adapter derives no identity of its own either, from the key of
+  the oldest process definition for example: such a value names the installation only for as long
+  as the engine deletes no definition, and an identity which changes ends the start of every
+  application of that engine.
+
+`ZenBpmProcessServiceTest#theEngineSaysNeitherBusyNorCollisionNorWhoItIs` holds both. Where the
+engine learns to refuse under load, or to name its installation, the answer changes here and in
+`GAPS.md`.
 
 ### Testing
 
@@ -1367,10 +1396,12 @@ This repository is licensed under the [MIT License](./LICENSE).
 
 Parts of it are copied and adapted from the VanillaBP adapters
 [`camunda8-adapter`](https://github.com/vanillabp/camunda8-adapter) and
-[`process-engine-api-adapter`](https://github.com/vanillabp/process-engine-api-adapter), which are
-licensed under the Apache License, Version 2.0. Those files keep that licence: each carries a header
-naming its origin and `SPDX-License-Identifier: Apache-2.0`, the licence text is in
-[`LICENSE-APACHE-2.0`](./LICENSE-APACHE-2.0), and [`NOTICE`](./NOTICE) names both origins. Every
+[`process-engine-api-adapter`](https://github.com/vanillabp/process-engine-api-adapter) and, one
+class, from the platform's
+[`adapter-platform-integration`](https://github.com/vanillabp/adapter-platform-integration), which
+are licensed under the Apache License, Version 2.0. Those files keep that licence: each carries a
+header naming its origin and `SPDX-License-Identifier: Apache-2.0`, the licence text is in
+[`LICENSE-APACHE-2.0`](./LICENSE-APACHE-2.0), and [`NOTICE`](./NOTICE) names the origins. Every
 other file is MIT, with one exception that is still open. Decision 17 in
 [`DECISIONS.md`](./DECISIONS.md) says why.
 

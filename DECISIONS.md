@@ -2127,3 +2127,44 @@ then showing up with nobody waiting for it, at least once a week.
 
 The jobs still do not depend on one another: each waits for `what-changed` alone, and a red job
 hides the answer of no other.
+
+### 71. On Spring Boot the adapter itself makes a section written as `{}` keep its keys
+
+A YAML file may write a section of the `vanillabp` tree as `{}`, `vanillabp.adapters.zenbpm: {}` for
+example, and set the keys of that section in another property source. Spring Boot reads the empty
+map as a property with an empty value at the section's name. When it binds an object, it asks for a
+value at the object's own name first and never looks at the keys below a value it found. So the
+adapter's overlay lost every key below such a section: `rest-address` from the command line or an
+environment variable was gone, the adapter id counted as unconfigured, and the start only warned
+about a `rest-address` the application had written.
+
+The platform has a rule against it. Where keys exist below a section, the section is bound with the
+restriction `NO_DIRECT_PROPERTY`, so Spring Boot skips the empty value and reads the keys. The
+platform applies the rule to the types of VanillaBP, which it knows by their package below
+`io.vanillabp`, and it asks adapters to keep their section types there. This adapter's types live
+below `org.pbinitiative.zenbpmadapter` (decision 16), so the platform's rule passes them by.
+
+`ZenBpmEmptySections` therefore applies the same rule to the types of this adapter, and
+`ZenBpmClientAutoConfiguration` registers it as a `ConfigurationPropertiesBindHandlerAdvisor`. It is
+adapted from the platform's `EmptySections` and carries the Apache-2.0 header (decision 17). It
+covers every type whose class name starts with `org.pbinitiative.zenbpmadapter.`, bound below the
+name `vanillabp`, except enums. The rule relies on one promise: such a type is always a section. A
+single value of the overlay is a JDK type or an enum, never a class of this adapter, because a
+class which is converted from a single text would lose its value under the rule.
+
+Moving the overlay's types into a package below `io.vanillabp` was rejected. That namespace belongs
+to the VanillaBP project, and decision 16 keeps this adapter's packages its own.
+
+Quarkus needs nothing. The YAML source of SmallRye Config turns `{}` into no property at all, and a
+mapping finds the keys of a map by their names, whichever source is stronger. One difference
+between the platforms remains, and it is Quarkus's own: an environment variable cannot say how an
+id is spelt, and since `{}` is no property there, a variable reaches a workflow `order`, not
+`Order`. On Spring Boot the section written as `{}` gives the id its spelling.
+
+`AnEmptySectionKeepsItsZenBpmKeysTest` holds it on both platforms, for every section the overlay
+reads keys from: an adapter id, its section at a workflow module, a workflow and a task, and the
+sections of a workflow module, a workflow and a task themselves. The Spring Boot one also holds the
+cause, so it fails once Spring Boot binds an empty section differently and the class is not needed
+any more. It holds where the rule ends as well: a single value with a key below it keeps its value,
+and a section with nothing below it, or outside the `vanillabp` tree, is bound as Spring Boot binds
+it.

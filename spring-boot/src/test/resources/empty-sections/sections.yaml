@@ -1,0 +1,18 @@
+vanillabp:
+  adapters:
+    orders: {}
+  workflow-modules:
+    shop:
+      adapters:
+        orders: {}
+      workflows:
+        Order:
+          adapters:
+            orders: {}
+          tasks:
+            ship:
+              adapters:
+                orders: {}
+            pack: {}
+        Invoice: {}
+    crm: {}
