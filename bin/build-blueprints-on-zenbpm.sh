@@ -9,8 +9,8 @@
 #
 # It clones the newest 'main' of vanillabp-blueprints/blueprints into <directory>, which must not
 # exist yet, applies the overlay of blueprints-overlay/ to it, and builds every twin the overlay
-# lists, or only the twins named (for example 'blueprints-bpmn/bpmn-timer/quarkus'), each with
-# 'mvn -Pzenbpm verify' against an engine of its own which bin/zenbpm-engine.sh starts and
+# lists, or only the twins named (for example 'blueprints-bpmn/bpmn-service-task/quarkus'), each
+# with 'mvn -Pzenbpm verify' against an engine of its own which bin/zenbpm-engine.sh starts and
 # removes again: the twins of a blueprint deploy the same processes under the same identifiers,
 # and a twin must not find the workflows, timers and versions the one before it left. It reads
 # the adapter from the local Maven repository, so install it from this checkout first:
