@@ -11,6 +11,7 @@ blueprints-bpmn/bpmn-boundary-events                    runs
 blueprints-bpmn/bpmn-bpms-initiated-start               not-runnable
 blueprints-bpmn/bpmn-business-rule-task                 runs
 blueprints-bpmn/bpmn-call-activity-decomposition        runs
+blueprints-bpmn/bpmn-call-activity-reuse                runs
 blueprints-bpmn/bpmn-error-escalation                   not-runnable
 blueprints-bpmn/bpmn-gateways                           runs
 blueprints-bpmn/bpmn-history-and-diagram                runs
@@ -22,6 +23,7 @@ blueprints-bpmn/bpmn-process-sections                   runs
 blueprints-bpmn/bpmn-service-task                       runs
 blueprints-bpmn/bpmn-signals                            not-runnable
 blueprints-bpmn/bpmn-timer                              not-runnable
+blueprints-bpmn/bpmn-timer-start-event                  not-runnable
 blueprints-bpmn/bpmn-user-task                          runs
 blueprints-bpmn/bpmn-versioning                         runs
 blueprints-bpmn/bpmn-workflow-ended                     runs
