@@ -46,6 +46,11 @@ ignores the key, warning only that it does, and the start warns about the key th
 so, because an application moved from Camunda 8 to ZenBPM has both extensions while it migrates.
 Until the page exists, the javadoc of `VanillaBpZenBpmProperties` says it.
 
+*Note of 2026-11-22.* Spring Boot ignores such a key no longer: VanillaBP's Spring Boot integration
+ends the start for a key nobody reads. `aMisspeltKeyIsIgnored`, which this note and item 10 below
+name, is now `ZenBpmStartupValidationBootTest#aMisspeltKeyEndsTheStart`, and the page and the
+javadoc of both overlays say what holds now.
+
 *Note from S3.2.1, 2026-10-16.* Two more differences of the platform belong on the same page. On
 Quarkus an application whose classpath holds the adapter but which configures adapter ids of
 another type only does not start: the platform wants an id of every adapter extension on the

@@ -12,6 +12,7 @@ import java.util.Comparator;
 import java.util.List;
 import java.util.Objects;
 
+import org.eclipse.microprofile.config.ConfigProvider;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -33,11 +34,15 @@ import jakarta.inject.Inject;
  * An adapter id of type <code>zenbpm</code> beside one of another type, the setup of a migration
  * from another BPMS to ZenBPM: the platform's BPMS double stands in for the other one. Both write
  * a key of their own under <code>vanillabp.adapters.</code>, and the start passes the check for
- * unknown keys, because each overlay knows its own keys and none of them claims the other's. Each
- * type has its list of services, and the ZenBPM adapter holds nothing of the other id.
+ * unknown keys, because each overlay knows its own keys. Each type has its list of services, and
+ * the ZenBPM adapter holds nothing of the other id. That check sees keys, not ids: the mapping of
+ * this adapter takes any adapter id, so a <code>rest-address</code> below the id of the other type
+ * passes it too, and nobody reads it.
  */
 @ExtendWith(SuppressOutputExtension.class)
 class ZenBpmBesideAnotherAdapterTypeTest {
+
+    private static final String A_KEY_OF_THIS_ADAPTER_BELOW_THE_OTHER_ID = "vanillabp.adapters.dummy.rest-address";
 
     @RegisterExtension
     static final QuarkusExtensionTest extensionTest = SmokeApplication
@@ -47,6 +52,7 @@ class ZenBpmBesideAnotherAdapterTypeTest {
             .overrideConfigKey("vanillabp.adapters.zenbpm.rest-address", "http://localhost:8080")
             .overrideConfigKey("vanillabp.adapters.dummy.type", "dummy")
             .overrideConfigKey("vanillabp.adapters.dummy.test", "7")
+            .overrideConfigKey(A_KEY_OF_THIS_ADAPTER_BELOW_THE_OTHER_ID, "http://localhost:8081")
             .assertLogRecords(records -> {
                 final var log = SmokeApplication.logOf(records);
                 assertAll(
@@ -87,6 +93,21 @@ class ZenBpmBesideAnotherAdapterTypeTest {
                 .stream()
                 .map(ZenBpmClientFactory::getAdapterId)
                 .toList());
+    }
+
+    @Test
+    @DisplayName("A key of the ZenBPM adapter below the id of the other type is not refused, and nobody reads it")
+    void aKeyOfThisAdapterBelowTheOtherTypesIdIsNotRefused() {
+        // the application of this class started with the key set
+        assertAll(
+                () -> assertEquals("http://localhost:8081", ConfigProvider
+                        .getConfig()
+                        .getValue(A_KEY_OF_THIS_ADAPTER_BELOW_THE_OTHER_ID, String.class)),
+                () -> assertEquals(List.of("zenbpm"), registry
+                        .factories()
+                        .stream()
+                        .map(ZenBpmClientFactory::getAdapterId)
+                        .toList()));
     }
 
     // the adapter ids of every list, one list per adapter type, sorted so the order is fixed

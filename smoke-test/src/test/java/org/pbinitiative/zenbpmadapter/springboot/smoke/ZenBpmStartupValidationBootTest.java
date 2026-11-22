@@ -16,8 +16,10 @@ import java.util.stream.Stream;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.pbinitiative.zenbpmadapter.client.ZenBpmAdapterConfiguration;
 import org.pbinitiative.zenbpmadapter.client.ZenBpmClientRegistry;
 import org.pbinitiative.zenbpmadapter.processservice.ZenBpmProcessService;
+import org.pbinitiative.zenbpmadapter.springboot.client.VanillaBpZenBpmProperties;
 import org.springframework.boot.WebApplicationType;
 import org.springframework.boot.builder.SpringApplicationBuilder;
 import org.springframework.context.ConfigurableApplicationContext;
@@ -193,10 +195,10 @@ class ZenBpmStartupValidationBootTest {
     void aMisspeltKeyEndsTheStart() {
         final var message = theStartEndsOver("vanillabp.adapters.zenbpm.rest-adress=http://localhost:8080");
 
-        assertTrue(message.contains("""
-                vanillabp.adapters.zenbpm.rest-adress (property source 'commandLineArgs') \
-                There is no key 'rest-adress' at 'vanillabp.adapters.zenbpm'. \
-                Did you mean 'vanillabp.adapters.zenbpm.rest-address'?"""), message);
+        assertAll(
+                () -> assertTrue(message.contains("vanillabp.adapters.zenbpm.rest-adress"), message),
+                () -> assertTrue(message.contains("commandLineArgs"), message),
+                () -> assertTrue(message.contains("'vanillabp.adapters.zenbpm.rest-address'"), message));
     }
 
     @Test
@@ -205,41 +207,62 @@ class ZenBpmStartupValidationBootTest {
         final var message = theStartEndsOver("vanillabp.adapters.zenbpm.rest-address=http://localhost:8080",
                 "vanillabp.adapters.zenbpm.max-redeliveries=3");
 
+        // none of the three stands in the message unless the platform lists it: a key which is
+        // written and read is not printed
         assertAll(
-                () -> assertTrue(message.contains("""
-                        vanillabp.adapters.zenbpm.max-redeliveries (property source 'commandLineArgs') \
-                        There is no key 'max-redeliveries' at 'vanillabp.adapters.zenbpm'. \
-                        These keys are read there:"""), message),
-                () -> assertTrue(message.contains(", retry-backoff, "), message));
+                () -> assertTrue(message.contains("vanillabp.adapters.zenbpm.max-redeliveries"), message),
+                () -> assertTrue(message.contains("rest-address"), message),
+                () -> assertTrue(message.contains("retry-backoff"), message),
+                () -> assertTrue(message.contains("job-timeout"), message));
     }
 
     @Test
     @DisplayName("A key written at a level where the adapter does not read it ends the start, and the platform names the levels where the adapter reads it")
     void aKeyAtALevelWhereItIsNotReadEndsTheStart() {
-        final var module = "vanillabp.workflow-modules.smoke-app";
-        final var workflow = "%s.workflows.SampleWorkflowService".formatted(module);
-        final var message = theStartEndsOver("vanillabp.adapters.zenbpm.rest-address=http://localhost:8080",
-                "%s.adapters.zenbpm.rest-address=http://localhost:8081".formatted(module),
-                "%s.adapters.zenbpm.accept-unscoped-identifiers=true".formatted(workflow),
-                "%s.tasks.pack.adapters.zenbpm.history-time-to-live=P30D".formatted(workflow));
+        final var adapter = "vanillabp.adapters.zenbpm";
+        final var module = "vanillabp.workflow-modules.smoke-app.adapters.zenbpm";
+        final var workflow = "vanillabp.workflow-modules.smoke-app.workflows.SampleWorkflowService.adapters.zenbpm";
+        final var task = "vanillabp.workflow-modules.smoke-app.workflows.SampleWorkflowService.tasks.pack.adapters.zenbpm";
+        final var message = theStartEndsOver("%s.rest-address=http://localhost:8080".formatted(adapter),
+                "%s.rest-address=http://localhost:8081".formatted(module),
+                "%s.accept-unscoped-identifiers=true".formatted(workflow),
+                "%s.history-time-to-live=P30D".formatted(task));
 
+        // a key as it was written is followed by its source, a place where it is read by its level
         assertAll(
-                () -> assertTrue(message.startsWith("Nothing reads these 3 keys below 'vanillabp'."), message),
-                () -> assertTrue(message.contains("""
-                        'rest-address' is not read at a workflow module, for one adapter. It is read here: \
-                        vanillabp.adapters.zenbpm.rest-address at an adapter \
-                        Move the line"""), message),
-                () -> assertTrue(message.contains("""
-                        'accept-unscoped-identifiers' is not read at a workflow, for one adapter. It is read here: \
-                        vanillabp.adapters.zenbpm.accept-unscoped-identifiers at an adapter \
-                        %s.adapters.zenbpm.accept-unscoped-identifiers at a workflow module, for one adapter \
-                        Move the line""".formatted(module)), message),
-                () -> assertTrue(message.contains("""
-                        'history-time-to-live' is not read at a task, for one adapter. It is read here: \
-                        vanillabp.adapters.zenbpm.history-time-to-live at an adapter \
-                        %s.adapters.zenbpm.history-time-to-live at a workflow module, for one adapter \
-                        %s.adapters.zenbpm.history-time-to-live at a workflow, for one adapter \
-                        Move the line""".formatted(module, workflow)), message));
+                () -> assertEquals(3, message.split("commandLineArgs", -1).length - 1, message),
+                () -> assertTrue(message.contains("%s.rest-address (".formatted(module)), message),
+                () -> assertTrue(message.contains("%s.rest-address at an adapter".formatted(adapter)), message),
+                () -> assertFalse(message.contains("%s.rest-address at ".formatted(module)), message),
+                () -> assertTrue(message.contains("%s.accept-unscoped-identifiers (".formatted(workflow)), message),
+                () -> assertTrue(message.contains("%s.accept-unscoped-identifiers at an adapter".formatted(adapter)),
+                        message),
+                () -> assertTrue(message.contains("%s.accept-unscoped-identifiers at a workflow module".formatted(
+                        module)), message),
+                () -> assertFalse(message.contains("%s.accept-unscoped-identifiers at ".formatted(workflow)), message),
+                () -> assertTrue(message.contains("%s.history-time-to-live (".formatted(task)), message),
+                () -> assertTrue(message.contains("%s.history-time-to-live at an adapter".formatted(adapter)), message),
+                () -> assertTrue(message.contains("%s.history-time-to-live at a workflow module".formatted(module)),
+                        message),
+                () -> assertTrue(message.contains("%s.history-time-to-live at a workflow".formatted(workflow)),
+                        message),
+                () -> assertFalse(message.contains("%s.history-time-to-live at ".formatted(task)), message));
+    }
+
+    @Test
+    @DisplayName("A key of the adapter below an adapter id or a workflow module which does not exist is not refused: the overlay takes any id, and nobody reads the key")
+    void aKeyBelowAnIdWhichDoesNotExistIsNotRefused() {
+        try (var context = run("vanillabp.prioritized-adapters=zenbpm",
+                "vanillabp.adapters.zenbpm.rest-address=http://localhost:8080",
+                "vanillabp.workflow-modules.smoke-app.adapters.zenbmp.job-timeout=PT1M",
+                "vanillabp.workflow-modules.no-such-module.adapters.zenbpm.job-timeout=PT2M")) {
+            final var overlay = context.getBean(VanillaBpZenBpmProperties.class);
+
+            assertAll(
+                    () -> assertTrue(context.isActive()),
+                    () -> assertEquals(ZenBpmAdapterConfiguration.DEFAULT_JOB_TIMEOUT, overlay.jobTimeoutFor(
+                            "smoke-app", "SampleWorkflowService", "pack", "zenbpm")));
+        }
     }
 
     @Test

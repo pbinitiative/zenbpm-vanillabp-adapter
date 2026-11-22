@@ -155,6 +155,18 @@ mapping `VanillaBpZenBpmProperties` on Quarkus, and copies them into the core's 
 `VanillaBpZenBpmPropertiesTest` fails where the Spring Boot overlay misses a setter of the core
 configuration.
 
+On both platforms a key below `vanillabp` at a place where no class binds one ends the start. So
+the adapter reads its keys through the overlay only, never with `Environment#getProperty`, `@Value`
+or a binder of its own, and each level of the overlay models only the keys the adapter reads there:
+the platform takes the levels it names for a misplaced key from the overlay's types
+(`ZenBpmStartupValidationBootTest#aKeyAtALevelWhereItIsNotReadEndsTheStart`,
+`ZenBpmMisplacedKeyTest#aKeyAtALevelWhereItIsNotReadFailsTheStart`). The maps of the overlay take any
+adapter id and any workflow module, so a key below an id which does not exist is bound and read by
+nobody (`ZenBpmStartupValidationBootTest#aKeyBelowAnIdWhichDoesNotExistIsNotRefused`,
+`ZenBpmKeyBelowAnUnknownIdTest#aKeyBelowAnIdWhichDoesNotExistIsNotRefused`); the wiki's page
+[Configuration](https://github.com/pbinitiative/zenbpm-vanillabp-adapter/wiki/Configuration#a-key-the-adapter-does-not-know)
+says what an application sees.
+
 A section which a YAML file writes as `{}` keeps the keys another property source sets below it. On
 Spring Boot that takes `ZenBpmEmptySections`, a bind handler advisor for the overlay's types, because
 the platform's own rule covers only types below `io.vanillabp` (decision 71 in

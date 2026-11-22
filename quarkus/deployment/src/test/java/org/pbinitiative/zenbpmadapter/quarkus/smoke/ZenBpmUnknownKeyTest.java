@@ -21,7 +21,7 @@ import io.vanillabp.integration.test.utils.SuppressOutputExtension;
  * message of the platform which also says which key it most likely is.
  * The application has no other adapter extension: beside one which declares a build-time
  * configuration root under <code>vanillabp</code>, as the Camunda 8 adapter does, Quarkus ignores
- * the key as well.
+ * the key and only warns that it does.
  */
 @ExtendWith(SuppressOutputExtension.class)
 class ZenBpmUnknownKeyTest {
