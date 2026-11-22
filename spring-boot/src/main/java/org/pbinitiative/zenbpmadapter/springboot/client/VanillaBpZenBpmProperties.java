@@ -34,13 +34,23 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
  * <code>accept-unscoped-identifiers</code> may also be set at the workflow module, which wins over
  * the adapter level: the platform reports <code>name-clash-avoidance: none</code> once per workflow
  * module, so no level below it would mean anything.
- * Spring Boot ignores a key neither view knows, so a typo under
- * <code>vanillabp.adapters.&lt;id&gt;.</code> changes nothing and fails nothing: a misspelt
- * <code>rest-adress</code> leaves the adapter id unconfigured, and the start warns about the
- * missing <code>rest-address</code>. That is the difference to Quarkus, where every key under
- * <code>vanillabp.</code> is modelled and an unknown one fails the start, as long as no extension
- * of the application declares a build-time configuration root under <code>vanillabp</code>; the
- * Camunda 8 adapter declares one.
+ * <p>
+ * Each level models the keys the adapter reads there and no other, and the adapter reads no key
+ * of the tree in another way. The platform relies on both. It ends the start for a key under
+ * <code>vanillabp.</code> at a place where no class binds one, so a key which the adapter read
+ * past this overlay, at a place of its own, would end every start which sets it. And it takes the
+ * levels at which a key IS read from the types of this overlay, to name them in its message. So a
+ * misspelt <code>rest-adress</code> ends the start, and so does a <code>rest-address</code>
+ * written for a workflow module. What the platform cannot see is an id. The maps of this overlay
+ * take any adapter id and any workflow module, so a key of this adapter below an id which does
+ * not exist, or below the id of another adapter type, is bound and changes nothing. Only the
+ * validation still sees a value below a workflow module which does not exist:
+ * {@link #configurationOf(String)} hands it the values of every workflow module of the overlay.
+ * <p>
+ * Quarkus ends the start for a misspelt and for a misplaced key as well, because there every key
+ * under <code>vanillabp.</code> has to be modelled, unless an extension of the application
+ * declares a build-time configuration root under <code>vanillabp</code>, as the Camunda 8 adapter
+ * does.
  * <p>
  * The adapter ids are NEVER taken from this overlay's maps. They come from the platform's core
  * properties, and the overlay is only asked about an id the core knows: an environment variable can

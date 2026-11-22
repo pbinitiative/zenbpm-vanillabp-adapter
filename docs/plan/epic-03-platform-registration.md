@@ -158,6 +158,8 @@ each factory is a bean of its own which the container closes. `checkHealth()` is
   `rest-adress` set and finds the warning about the missing `rest-address` in the block. The
   javadoc of `VanillaBpZenBpmProperties` says so until the wiki's `Configuration` page exists (note
   under S12.1.1).
+  *Note of 2026-11-22.* This holds no longer: VanillaBP's Spring Boot integration ends the start
+  for a key nobody reads. The test is now `ZenBpmStartupValidationBootTest#aMisspeltKeyEndsTheStart`.
 
 **Implemented 2026-10-15.** `spring-boot`: `ZenBpmAdapterConfiguration` (the announcement),
 `ZenBpmAdapterBeanRegistrar` and `processservice.ZenBpmAdapterProcessServiceConfiguration`,

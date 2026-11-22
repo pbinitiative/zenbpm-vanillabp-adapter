@@ -81,6 +81,23 @@ class ZenBpmBesideAnotherAdapterTypeBootTest {
         }
     }
 
+    @Test
+    @DisplayName("A key of the ZenBPM adapter below the id of the other type is not refused: the overlay takes any adapter id, and nobody reads the key")
+    void aKeyOfThisAdapterBelowTheOtherTypesIdIsNotRefused() {
+        try (var context = run("vanillabp.prioritized-adapters=zenbpm,dummy", "vanillabp.adapters.zenbpm.type=zenbpm",
+                "vanillabp.adapters.zenbpm.rest-address=http://localhost:8080", "vanillabp.adapters.dummy.type=dummy",
+                "vanillabp.adapters.dummy.rest-address=http://localhost:8081")) {
+            assertAll(
+                    () -> assertTrue(context.isActive()),
+                    () -> assertEquals(List.of("zenbpm"), context
+                            .getBean(ZenBpmClientRegistry.class)
+                            .factories()
+                            .stream()
+                            .map(ZenBpmClientFactory::getAdapterId)
+                            .toList()));
+        }
+    }
+
     private static ConfigurableApplicationContext run(final String... properties) {
         return new SpringApplicationBuilder(SmokeTestApplication.class)
                 .web(WebApplicationType.NONE)

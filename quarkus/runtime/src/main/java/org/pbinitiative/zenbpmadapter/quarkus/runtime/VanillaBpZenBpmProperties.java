@@ -39,13 +39,12 @@ import io.smallrye.config.ConfigMapping;
  * the adapter level: the platform reports <code>name-clash-avoidance: none</code> once per workflow
  * module, so no level below it would mean anything.
  * SmallRye Config refuses a key under <code>vanillabp.</code> which no mapping knows, so a typo
- * under <code>vanillabp.adapters.&lt;id&gt;.</code> fails the start and names the key. That is
- * the difference to Spring Boot, which ignores such a key; this mapping is what makes the keys of
- * this adapter known to that check. The check is off for the whole <code>vanillabp.*</code> tree
+ * under <code>vanillabp.adapters.&lt;id&gt;.</code> fails the start and names the key; this
+ * mapping is what makes the keys of this adapter known to that check. On Spring Boot the platform
+ * ends the start in the same case. The check is off for the whole <code>vanillabp.*</code> tree
  * where an extension of the application declares a build-time configuration root under
  * <code>vanillabp</code>, and the Camunda 8 adapter declares an empty one. Beside it, Quarkus only
- * warns that it ignores the key, and the start warns about the key the adapter misses, as on Spring
- * Boot.
+ * warns that it ignores the key, and the start warns about the key the adapter misses.
  * <p>
  * The mapping is never injected: an injected mapping makes Quarkus check the
  * <code>vanillabp.*</code> tree while it initializes its static configuration, before the

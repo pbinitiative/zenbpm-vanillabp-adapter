@@ -8,7 +8,8 @@ everything else has a default which works, so read on when you have a reason.
    The keys of this adapter with the levels they may be set at and their defaults, and the keys of
    VanillaBP which change what the adapter does.
 3. [A key the adapter does not know](#a-key-the-adapter-does-not-know)<br>
-   What a misspelt key does on Spring Boot, and what it does on Quarkus.
+   What a misspelt key does, and a key at a level where the adapter does not read it, and what no
+   check sees.
 4. [Several adapter ids](#several-adapter-ids)<br>
    Two ids of this type in one application, and when two of them may name one engine.
 5. [The BPMN model for ZenBPM](#the-bpmn-model-for-zenbpm)<br>
@@ -120,19 +121,44 @@ And keys of VanillaBP outside the section which decide what this adapter does:
 
 ### A key the adapter does not know
 
-The platforms differ for a key under `vanillabp.adapters.<id>.` which nobody knows, a misspelt one
-for example:
+A key under `vanillabp.` which nothing reads at the place where it stands ends the start on both
+platforms. That is a misspelt key, a key the adapter has no longer, such as `max-redeliveries`, and
+a key written at a level which the table of [Every key](#every-key) does not name for it, a
+`rest-address` for a workflow module for example. The platforms differ in what the message says:
 
-- **Spring Boot** ignores it. A misspelt `rest-adress` leaves the adapter id without an address, and
-  the start warns about the `rest-address` it misses
-  (`ZenBpmStartupValidationBootTest#aMisspeltKeyIsIgnored`).
-- **Quarkus** ends the start, naming the key (`ZenBpmUnknownKeyTest#aMisspeltKeyFailsTheStart`), the
-  removed `max-redeliveries` included (`ZenBpmRemovedKeyTest#maxRedeliveriesFailsTheStart`). Unless
-  another extension of the application declares a configuration root of its own under `vanillabp`,
-  as the Camunda 8 adapter does: then Quarkus too ignores the key, warning only that it does, and
-  the start warns about the key the adapter misses. An application which moves from Camunda 8 to
-  ZenBPM has both extensions while it migrates. This was seen in a boot beside the Camunda 8
-  extension; no test of this repository holds it, because it needs that extension.
+- **Spring Boot** names every such key in one message, each with the place it was written at, and
+  says what to do about it. For a misspelt `rest-adress` it asks whether you meant `rest-address`
+  (`ZenBpmStartupValidationBootTest#aMisspeltKeyEndsTheStart`). For a key at a level where the
+  adapter does not read it, it lists the levels where the adapter does
+  (`ZenBpmStartupValidationBootTest#aKeyAtALevelWhereItIsNotReadEndsTheStart`). For a name the
+  adapter does not have, such as `max-redeliveries`, it lists the keys which are read at that place
+  (`ZenBpmStartupValidationBootTest#aKeyTheAdapterReadsNoLongerEndsTheStart`).
+- **Quarkus** names the key and no more (`ZenBpmUnknownKeyTest#aMisspeltKeyFailsTheStart`,
+  `ZenBpmRemovedKeyTest#maxRedeliveriesFailsTheStart`,
+  `ZenBpmMisplacedKeyTest#aKeyAtALevelWhereItIsNotReadFailsTheStart`). Unless another extension of
+  the application declares a configuration root of its own under `vanillabp`, as the Camunda 8
+  adapter does: then Quarkus ignores the key, warning only that it does, and the start warns about
+  the key the adapter misses. An application which moves from Camunda 8 to ZenBPM has both
+  extensions while it migrates. This was seen in a boot beside the Camunda 8 extension; no test of
+  this repository holds it, because it needs that extension.
+
+On neither platform does this check look at the id a key stands below. The sections of adapter ids
+and of workflow modules take any name, so a key of this adapter is accepted, and changes nothing,
+
+- below the id of an adapter of another type, a `rest-address` below the id of a Camunda 8 adapter
+  for example
+  (`ZenBpmBesideAnotherAdapterTypeBootTest#aKeyOfThisAdapterBelowTheOtherTypesIdIsNotRefused`,
+  `ZenBpmBesideAnotherAdapterTypeTest#aKeyOfThisAdapterBelowTheOtherTypesIdIsNotRefused`);
+- below the adapter level, under an adapter id which does not exist, a misspelt `zenbmp` for
+  example, or under a workflow module which does not exist
+  (`ZenBpmStartupValidationBootTest#aKeyBelowAnIdWhichDoesNotExistIsNotRefused`,
+  `ZenBpmKeyBelowAnUnknownIdTest#aKeyBelowAnIdWhichDoesNotExistIsNotRefused`).
+
+Only its value is still checked, where the adapter id is one of this adapter: a negative
+`retry-backoff` below a workflow module which does not exist ends the start
+(`ZenBpmStartupValidationBootTest#aValueBelowAWorkflowModuleWhichDoesNotExistIsStillChecked`,
+`ZenBpmNegativeValueBelowAnUnknownModuleTest#aNegativeValueBelowAnUnknownModuleEndsTheStart`). So
+where a key seems to change nothing, check the ids on its way first.
 
 ### A section written as `{}`
 

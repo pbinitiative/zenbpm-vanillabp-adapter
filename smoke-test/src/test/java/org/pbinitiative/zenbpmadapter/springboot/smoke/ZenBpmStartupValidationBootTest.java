@@ -16,8 +16,10 @@ import java.util.stream.Stream;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.pbinitiative.zenbpmadapter.client.ZenBpmAdapterConfiguration;
 import org.pbinitiative.zenbpmadapter.client.ZenBpmClientRegistry;
 import org.pbinitiative.zenbpmadapter.processservice.ZenBpmProcessService;
+import org.pbinitiative.zenbpmadapter.springboot.client.VanillaBpZenBpmProperties;
 import org.springframework.boot.WebApplicationType;
 import org.springframework.boot.builder.SpringApplicationBuilder;
 import org.springframework.context.ConfigurableApplicationContext;
@@ -189,16 +191,90 @@ class ZenBpmStartupValidationBootTest {
     }
 
     @Test
-    @DisplayName("A misspelt key is ignored on Spring Boot: the adapter id stays unconfigured, and the warning names the right key")
-    void aMisspeltKeyIsIgnored(final CapturedOutput output) {
+    @DisplayName("A misspelt key ends the start, as on Quarkus: the platform names the key, where it was written and the key it most likely is")
+    void aMisspeltKeyEndsTheStart() {
+        final var message = theStartEndsOver("vanillabp.adapters.zenbpm.rest-adress=http://localhost:8080");
+
+        assertAll(
+                () -> assertTrue(message.contains("vanillabp.adapters.zenbpm.rest-adress"), message),
+                () -> assertTrue(message.contains("commandLineArgs"), message),
+                () -> assertTrue(message.contains("'vanillabp.adapters.zenbpm.rest-address'"), message));
+    }
+
+    @Test
+    @DisplayName("A key the adapter read once and reads no longer ends the start, and the platform lists the keys which are read in its place")
+    void aKeyTheAdapterReadsNoLongerEndsTheStart() {
+        final var message = theStartEndsOver("vanillabp.adapters.zenbpm.rest-address=http://localhost:8080",
+                "vanillabp.adapters.zenbpm.max-redeliveries=3");
+
+        // none of the three stands in the message unless the platform lists it: a key which is
+        // written and read is not printed
+        assertAll(
+                () -> assertTrue(message.contains("vanillabp.adapters.zenbpm.max-redeliveries"), message),
+                () -> assertTrue(message.contains("rest-address"), message),
+                () -> assertTrue(message.contains("retry-backoff"), message),
+                () -> assertTrue(message.contains("job-timeout"), message));
+    }
+
+    @Test
+    @DisplayName("A key written at a level where the adapter does not read it ends the start, and the platform names the levels where the adapter reads it")
+    void aKeyAtALevelWhereItIsNotReadEndsTheStart() {
+        final var adapter = "vanillabp.adapters.zenbpm";
+        final var module = "vanillabp.workflow-modules.smoke-app.adapters.zenbpm";
+        final var workflow = "vanillabp.workflow-modules.smoke-app.workflows.SampleWorkflowService.adapters.zenbpm";
+        final var task = "vanillabp.workflow-modules.smoke-app.workflows.SampleWorkflowService.tasks.pack.adapters.zenbpm";
+        final var message = theStartEndsOver("%s.rest-address=http://localhost:8080".formatted(adapter),
+                "%s.rest-address=http://localhost:8081".formatted(module),
+                "%s.accept-unscoped-identifiers=true".formatted(workflow),
+                "%s.history-time-to-live=P30D".formatted(task));
+
+        // a key as it was written is followed by its source, a place where it is read by its level
+        assertAll(
+                () -> assertEquals(3, message.split("commandLineArgs", -1).length - 1, message),
+                () -> assertTrue(message.contains("%s.rest-address (".formatted(module)), message),
+                () -> assertTrue(message.contains("%s.rest-address at an adapter".formatted(adapter)), message),
+                () -> assertFalse(message.contains("%s.rest-address at ".formatted(module)), message),
+                () -> assertTrue(message.contains("%s.accept-unscoped-identifiers (".formatted(workflow)), message),
+                () -> assertTrue(message.contains("%s.accept-unscoped-identifiers at an adapter".formatted(adapter)),
+                        message),
+                () -> assertTrue(message.contains("%s.accept-unscoped-identifiers at a workflow module".formatted(
+                        module)), message),
+                () -> assertFalse(message.contains("%s.accept-unscoped-identifiers at ".formatted(workflow)), message),
+                () -> assertTrue(message.contains("%s.history-time-to-live (".formatted(task)), message),
+                () -> assertTrue(message.contains("%s.history-time-to-live at an adapter".formatted(adapter)), message),
+                () -> assertTrue(message.contains("%s.history-time-to-live at a workflow module".formatted(module)),
+                        message),
+                () -> assertTrue(message.contains("%s.history-time-to-live at a workflow".formatted(workflow)),
+                        message),
+                () -> assertFalse(message.contains("%s.history-time-to-live at ".formatted(task)), message));
+    }
+
+    @Test
+    @DisplayName("A key of the adapter below an adapter id or a workflow module which does not exist is not refused: the overlay takes any id, and no task takes the value")
+    void aKeyBelowAnIdWhichDoesNotExistIsNotRefused() {
         try (var context = run("vanillabp.prioritized-adapters=zenbpm",
-                "vanillabp.adapters.zenbpm.rest-adress=http://localhost:8080")) {
-            final var block = StartupBlock.configuration(output.getAllOfThisTest());
+                "vanillabp.adapters.zenbpm.rest-address=http://localhost:8080",
+                "vanillabp.workflow-modules.smoke-app.adapters.zenbmp.job-timeout=PT1M",
+                "vanillabp.workflow-modules.no-such-module.adapters.zenbpm.job-timeout=PT2M")) {
+            final var overlay = context.getBean(VanillaBpZenBpmProperties.class);
 
             assertAll(
                     () -> assertTrue(context.isActive()),
-                    () -> assertTrue(block.contains("'vanillabp.adapters.zenbpm.rest-address' is missing"), block));
+                    () -> assertEquals(ZenBpmAdapterConfiguration.DEFAULT_JOB_TIMEOUT, overlay.jobTimeoutFor(
+                            "smoke-app", "SampleWorkflowService", "pack", "zenbpm")));
         }
+    }
+
+    @Test
+    @DisplayName("A value below a workflow module which does not exist is still checked: the validation walks every workflow module of the overlay")
+    void aValueBelowAWorkflowModuleWhichDoesNotExistIsStillChecked() {
+        final var key = "vanillabp.workflow-modules.no-such-module.adapters.zenbpm.retry-backoff";
+        final var failure = rootOf(assertThrows(Exception.class, () -> run("vanillabp.prioritized-adapters=zenbpm",
+                "vanillabp.adapters.zenbpm.rest-address=http://localhost:8080", "%s=-PT1S".formatted(key)).close()));
+
+        assertTrue(failure
+                .getMessage()
+                .contains("%s is PT-1S and must not be negative".formatted(key)), failure.getMessage());
     }
 
     @Test
@@ -436,6 +512,17 @@ class ZenBpmStartupValidationBootTest {
                         .of(properties)
                         .map("--%s"::formatted)
                         .toArray(String[]::new));
+    }
+
+    // the message which ends the start, its line breaks and the columns the platform aligns its
+    // places in read as one space each: these tests hold what the message says, not its layout
+    private static String theStartEndsOver(final String... properties) {
+        final var failure = rootOf(assertThrows(Exception.class, () -> run(Stream
+                .concat(Stream.of("vanillabp.prioritized-adapters=zenbpm"), Stream.of(properties))
+                .toArray(String[]::new)).close()));
+        return failure
+                .getMessage()
+                .replaceAll("\\s+", " ");
     }
 
     private static Throwable rootOf(final Throwable throwable) {
