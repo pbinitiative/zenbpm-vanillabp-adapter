@@ -65,6 +65,9 @@ class ZenBpmExecutorTest {
      */
     private static final long UNTIL_THE_EXECUTOR_COUNTS_AS_STUCK = 30_000;
 
+    // see untilItWaitsForASlot: the time a submitter waits at a time must be no multiple of it
+    private static final Duration BETWEEN_TWO_LOOKS_AT_A_SUBMITTER = Duration.ofMillis(7);
+
     @ParameterizedTest(name = "{0}")
     @MethodSource("executionModels")
     @DisplayName("More submissions than slots make the submitter wait, and nothing is queued")
@@ -101,9 +104,7 @@ class ZenBpmExecutorTest {
 
             assertTrue(everySlotTaken.await(UNTIL_THE_EXECUTOR_COUNTS_AS_STUCK, TimeUnit.MILLISECONDS),
                     "every slot is used");
-            eventually(() -> Optional
-                    .of(submitter.getState())
-                    .filter(Thread.State.TIMED_WAITING::equals));
+            untilItWaitsForASlot(submitter);
             assertEquals(slots, submitted.get(), "the submission beyond the slots has not returned");
             assertTrue(submitter.isAlive(), "the submitter waits inside execute");
             assertEquals(slots, running.get(), "nothing beyond the slots runs");
@@ -559,9 +560,7 @@ class ZenBpmExecutorTest {
                             refusal.set(e);
                         }
                     });
-            eventually(() -> Optional
-                    .of(submitter.getState())
-                    .filter(Thread.State.TIMED_WAITING::equals));
+            untilItWaitsForASlot(submitter);
 
             executor.shutdown();
 
@@ -610,9 +609,7 @@ class ZenBpmExecutorTest {
                                     .isInterrupted());
                         }
                     });
-            eventually(() -> Optional
-                    .of(submitter.getState())
-                    .filter(Thread.State.TIMED_WAITING::equals));
+            untilItWaitsForASlot(submitter);
 
             submitter.interrupt();
 
@@ -982,6 +979,25 @@ class ZenBpmExecutorTest {
                 Arguments.of("worker-threads: virtual",
                         (IntFunction<ZenBpmExecutor>) slots -> new ZenBpmVirtualThreadExecutor(
                                 ADAPTER_ID, slots)));
+    }
+
+    /**
+     * Waits until a thread waits inside {@link ZenBpmExecutor#execute(Runnable)} for a slot.
+     * <p>
+     * Such a thread waits {@link ZenBpmExecutor#LOOK_FOR_A_SHUTDOWN_AGAIN} at a time and runs for
+     * an instant in between. A look once per such time can fall into that instant again and again:
+     * the thread and the look start their waits together, so they also end them together. So this
+     * looks at a pace which the time is no multiple of, and no look falls where the one before fell.
+     */
+    private static void untilItWaitsForASlot(final Thread submitter) throws InterruptedException {
+        final var deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(UNTIL_THE_EXECUTOR_COUNTS_AS_STUCK);
+        while (submitter.getState() != Thread.State.TIMED_WAITING) {
+            assertTrue(submitter.isAlive(), "the submitter ended instead of waiting for a slot");
+            // what it does instead tells a submitter which is stuck from a look which missed it
+            assertTrue(System.nanoTime() < deadline, () -> "the submitter does not wait for a slot, it is %s at %s"
+                    .formatted(submitter.getState(), List.of(submitter.getStackTrace())));
+            Thread.sleep(BETWEEN_TWO_LOOKS_AT_A_SUBMITTER.toMillis());
+        }
     }
 
     /**

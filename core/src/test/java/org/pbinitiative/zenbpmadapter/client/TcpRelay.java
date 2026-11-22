@@ -14,8 +14,12 @@ import java.net.ServerSocket;
 import java.net.Socket;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 
 /**
  * A TCP relay between the job stream and an engine: what the network between them would be. A
@@ -33,6 +37,8 @@ final class TcpRelay implements AutoCloseable {
 
     private volatile ServerSocket listener;
 
+    private volatile Future<?> accepting;
+
     private volatile InetSocketAddress target;
 
     private volatile boolean swallowing;
@@ -41,7 +47,7 @@ final class TcpRelay implements AutoCloseable {
         this.target = target;
         this.listener = listen(0);
         this.port = listener.getLocalPort();
-        accept(listener);
+        this.accepting = accept(listener);
     }
 
     /**
@@ -64,10 +70,12 @@ final class TcpRelay implements AutoCloseable {
     }
 
     /**
-     * Breaks every connection and refuses new ones, like a network which went away.
+     * Breaks every connection and refuses new ones, like a network which went away. When it
+     * returns, the port is free: {@link #restoreTo(String)} may follow at once.
      */
     void cut() {
         close(listener);
+        untilNobodyAcceptsAnyMore();
         sockets.forEach(TcpRelay::close);
         sockets.clear();
     }
@@ -90,7 +98,7 @@ final class TcpRelay implements AutoCloseable {
     void restoreTo(final String address) {
         target = socketAddress(address);
         listener = listen(port);
-        accept(listener);
+        accepting = accept(listener);
     }
 
     @Override
@@ -123,12 +131,30 @@ final class TcpRelay implements AutoCloseable {
         }
     }
 
-    private void accept(final ServerSocket accepting) {
-        threads.execute(() -> {
-            while (!accepting.isClosed()) {
+    // Closing a server socket returns before its port is free: the thread which waits in accept()
+    // holds the socket until it has woken up, and until then a new socket cannot listen on the
+    // port ("Address already in use"). That thread is also the only one which adds connections, so
+    // once it is gone every connection is known and none is left out of the cut.
+    private void untilNobodyAcceptsAnyMore() {
+        try {
+            accepting.get(10, TimeUnit.SECONDS);
+        } catch (InterruptedException e) {
+            Thread
+                    .currentThread()
+                    .interrupt();
+            throw new IllegalStateException("Interrupted while the relay on port %d was cut".formatted(port), e);
+        } catch (ExecutionException | TimeoutException e) {
+            throw new IllegalStateException("The relay on port %d did not stop accepting connections"
+                    .formatted(port), e);
+        }
+    }
+
+    private Future<?> accept(final ServerSocket server) {
+        return threads.submit(() -> {
+            while (!server.isClosed()) {
                 final Socket client;
                 try {
-                    client = accepting.accept();
+                    client = server.accept();
                 } catch (IOException e) {
                     // the relay was cut
                     continue;
