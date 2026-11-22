@@ -11,6 +11,7 @@ blueprints-bpmn/bpmn-boundary-events                    runs
 blueprints-bpmn/bpmn-bpms-initiated-start               not-runnable
 blueprints-bpmn/bpmn-business-rule-task                 runs
 blueprints-bpmn/bpmn-call-activity-decomposition        runs
+blueprints-bpmn/bpmn-call-activity-reuse                runs
 blueprints-bpmn/bpmn-error-escalation                   not-runnable
 blueprints-bpmn/bpmn-gateways                           runs
 blueprints-bpmn/bpmn-history-and-diagram                runs
@@ -21,7 +22,8 @@ blueprints-bpmn/bpmn-multi-instance-task                runs
 blueprints-bpmn/bpmn-process-sections                   runs
 blueprints-bpmn/bpmn-service-task                       runs
 blueprints-bpmn/bpmn-signals                            not-runnable
-blueprints-bpmn/bpmn-timer                              runs
+blueprints-bpmn/bpmn-timer                              not-runnable
+blueprints-bpmn/bpmn-timer-start-event                  not-runnable
 blueprints-bpmn/bpmn-user-task                          runs
 blueprints-bpmn/bpmn-versioning                         runs
 blueprints-bpmn/bpmn-workflow-ended                     runs
@@ -40,9 +42,11 @@ blueprints-modules/module-idle-application              runs
 blueprints-modules/module-interaction                   runs
 blueprints-modules/module-multi                         runs
 blueprints-modules/module-packaging                     runs
+blueprints-modules/module-process-driver                not-runnable
 blueprints-modules/module-simulator                     not-runnable
 blueprints-modules/module-single                        runs
 blueprints-modules/module-standalone                    runs
+blueprints-modules/module-under-load                    not-runnable
 blueprints-persistence/persistence-active-record        runs
 blueprints-persistence/persistence-audited-aggregate    runs
 blueprints-persistence/persistence-custom               runs
