@@ -26,7 +26,7 @@ import jakarta.inject.Inject;
  * The check for unknown keys sees keys, not ids. The sections of adapter ids and of workflow
  * modules are maps, and the mapping of this adapter takes any name in them. So a key of the adapter
  * below an adapter id which does not exist, a misspelt one for example, or below a workflow module
- * which does not exist, passes the check, and nobody reads it. Spring Boot does the same.
+ * which does not exist, passes the check, and no task takes its value. Spring Boot does the same.
  */
 @ExtendWith(SuppressOutputExtension.class)
 class ZenBpmKeyBelowAnUnknownIdTest {

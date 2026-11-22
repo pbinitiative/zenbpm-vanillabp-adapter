@@ -43,7 +43,9 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
  * misspelt <code>rest-adress</code> ends the start, and so does a <code>rest-address</code>
  * written for a workflow module. What the platform cannot see is an id. The maps of this overlay
  * take any adapter id and any workflow module, so a key of this adapter below an id which does
- * not exist, or below the id of another adapter type, is bound and read by nobody.
+ * not exist, or below the id of another adapter type, is bound and changes nothing. Only the
+ * validation still sees a value below a workflow module which does not exist:
+ * {@link #configurationOf(String)} hands it the values of every workflow module of the overlay.
  * <p>
  * Quarkus ends the start for a misspelt and for a misplaced key as well, because there every key
  * under <code>vanillabp.</code> has to be modelled, unless an extension of the application

@@ -250,7 +250,7 @@ class ZenBpmStartupValidationBootTest {
     }
 
     @Test
-    @DisplayName("A key of the adapter below an adapter id or a workflow module which does not exist is not refused: the overlay takes any id, and nobody reads the key")
+    @DisplayName("A key of the adapter below an adapter id or a workflow module which does not exist is not refused: the overlay takes any id, and no task takes the value")
     void aKeyBelowAnIdWhichDoesNotExistIsNotRefused() {
         try (var context = run("vanillabp.prioritized-adapters=zenbpm",
                 "vanillabp.adapters.zenbpm.rest-address=http://localhost:8080",
@@ -263,6 +263,18 @@ class ZenBpmStartupValidationBootTest {
                     () -> assertEquals(ZenBpmAdapterConfiguration.DEFAULT_JOB_TIMEOUT, overlay.jobTimeoutFor(
                             "smoke-app", "SampleWorkflowService", "pack", "zenbpm")));
         }
+    }
+
+    @Test
+    @DisplayName("A value below a workflow module which does not exist is still checked: the validation walks every workflow module of the overlay")
+    void aValueBelowAWorkflowModuleWhichDoesNotExistIsStillChecked() {
+        final var key = "vanillabp.workflow-modules.no-such-module.adapters.zenbpm.retry-backoff";
+        final var failure = rootOf(assertThrows(Exception.class, () -> run("vanillabp.prioritized-adapters=zenbpm",
+                "vanillabp.adapters.zenbpm.rest-address=http://localhost:8080", "%s=-PT1S".formatted(key)).close()));
+
+        assertTrue(failure
+                .getMessage()
+                .contains("%s is PT-1S and must not be negative".formatted(key)), failure.getMessage());
     }
 
     @Test

@@ -143,7 +143,7 @@ a key written at a level which the table of [Every key](#every-key) does not nam
   this repository holds it, because it needs that extension.
 
 On neither platform does this check look at the id a key stands below. The sections of adapter ids
-and of workflow modules take any name, so a key of this adapter is accepted, and read by nobody,
+and of workflow modules take any name, so a key of this adapter is accepted, and changes nothing,
 
 - below the id of an adapter of another type, a `rest-address` below the id of a Camunda 8 adapter
   for example
@@ -154,7 +154,11 @@ and of workflow modules take any name, so a key of this adapter is accepted, and
   (`ZenBpmStartupValidationBootTest#aKeyBelowAnIdWhichDoesNotExistIsNotRefused`,
   `ZenBpmKeyBelowAnUnknownIdTest#aKeyBelowAnIdWhichDoesNotExistIsNotRefused`).
 
-So where a key seems to change nothing, check the ids on its way first.
+Only its value is still checked, where the adapter id is one of this adapter: a negative
+`retry-backoff` below a workflow module which does not exist ends the start
+(`ZenBpmStartupValidationBootTest#aValueBelowAWorkflowModuleWhichDoesNotExistIsStillChecked`,
+`ZenBpmNegativeValueBelowAnUnknownModuleTest#aNegativeValueBelowAnUnknownModuleEndsTheStart`). So
+where a key seems to change nothing, check the ids on its way first.
 
 ### A section written as `{}`
 
