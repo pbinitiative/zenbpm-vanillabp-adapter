@@ -14,6 +14,7 @@ import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.boot.autoconfigure.AutoConfiguration;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnClass;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
+import org.springframework.boot.context.properties.ConfigurationPropertiesBindHandlerAdvisor;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -50,6 +51,18 @@ public class ZenBpmClientAutoConfiguration {
      * Built by Spring Boot while it reads the auto-configuration imports.
      */
     public ZenBpmClientAutoConfiguration() {
+    }
+
+    /**
+     * Makes a section written as <code>{}</code> keep the keys of this adapter which another
+     * property source sets below it, see {@link ZenBpmEmptySections}. The method is static, so the
+     * advisor exists before the overlay is bound.
+     *
+     * @return The advisor
+     */
+    @Bean
+    public static ConfigurationPropertiesBindHandlerAdvisor zenBpmEmptySectionsKeepTheirKeys() {
+        return ZenBpmEmptySections.advisor();
     }
 
     /**

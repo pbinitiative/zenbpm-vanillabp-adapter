@@ -87,6 +87,12 @@
       <artifactId>asm</artifactId>
       <scope>test</scope>
     </dependency>
+    <!-- reads a YAML file the way quarkus-config-yaml does, for AnEmptySectionKeepsItsZenBpmKeysTest -->
+    <dependency>
+      <groupId>io.smallrye.config</groupId>
+      <artifactId>smallrye-config-source-yaml</artifactId>
+      <scope>test</scope>
+    </dependency>
   </dependencies>
 
   <build>

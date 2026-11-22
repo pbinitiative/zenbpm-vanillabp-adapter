@@ -8,10 +8,12 @@ import static org.junit.jupiter.api.Assertions.assertAll;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.net.ConnectException;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -39,6 +41,7 @@ import org.pbinitiative.zenbpmadapter.client.ZenBpmAdapterConfiguration.MessageS
 import org.pbinitiative.zenbpmadapter.client.ZenBpmApiException;
 import org.pbinitiative.zenbpmadapter.client.ZenBpmClientFactory;
 import org.pbinitiative.zenbpmadapter.client.ZenBpmErrors;
+import org.pbinitiative.zenbpmadapter.client.ZenBpmUnavailableException;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 
@@ -46,6 +49,7 @@ import io.vanillabp.integration.adapter.spi.AdapterCollaborators;
 import io.vanillabp.integration.adapter.spi.AggregateSyncMode;
 import io.vanillabp.integration.adapter.spi.NameClashAvoidance;
 import io.vanillabp.integration.adapter.spi.PhaseOneRequest;
+import io.vanillabp.integration.adapter.spi.PhaseTwoFailureKind;
 import io.vanillabp.integration.adapter.spi.PhaseTwoRequest;
 import io.vanillabp.integration.adapter.spi.WorkflowAggregateSync;
 import io.vanillabp.integration.adapter.spi.WorkflowAwareness;
@@ -726,6 +730,24 @@ class ZenBpmProcessServiceTest {
                         .whatThisBpmsDoesWith(Long.class, ValueDirection.TO_BPMS)),
                 () -> assertEquals(ValueTypeVerdict.survives(), processService.whatThisBpmsDoesWith(String.class,
                         ValueDirection.FROM_BPMS)));
+    }
+
+    @Test
+    @DisplayName("No failure of the engine is a collision or a busy engine, and the engine names no installation")
+    void theEngineSaysNeitherBusyNorCollisionNorWhoItIs() {
+        final var processService = startingProcessService(unconfigured("orders"), (
+            module,
+            process) -> null);
+        final var failuresOfTheEngine = Stream.of(409, 429, 500, 502, 503, 504).<Throwable>map(
+                status -> new ZenBpmApiException("orders", status, null, null, "POST", "/v1/jobs/42/complete"));
+        final var noAnswer = new ZenBpmUnavailableException("orders", "no answer", new ConnectException(), "POST", "/v1/messages");
+
+        assertAll(
+                () -> assertTrue(Stream
+                        .concat(failuresOfTheEngine, Stream.of(noAnswer))
+                        .allMatch(failure -> processService.kindOfPhaseTwoFailure(
+                                failure) == PhaseTwoFailureKind.OTHER)),
+                () -> assertNull(processService.identityOfTheBpms()));
     }
 
     // the three methods of the viewer/history API

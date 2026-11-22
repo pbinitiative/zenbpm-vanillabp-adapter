@@ -134,6 +134,28 @@ for example:
   ZenBPM has both extensions while it migrates. This was seen in a boot beside the Camunda 8
   extension; no test of this repository holds it, because it needs that extension.
 
+### A section written as `{}`
+
+A YAML file may write a section as `{}`, `vanillabp.adapters.zenbpm: {}` for example, and leave its
+keys to another source, such as the command line. The keys of the adapter below such a section
+arrive on both platforms. That holds for the section of an adapter id, for its section at a workflow
+module, a workflow and a task, and for the sections of a workflow module, a workflow and a task
+themselves
+(`AnEmptySectionKeepsItsZenBpmKeysTest#aBootedApplicationKeepsTheKeysBelowEveryEmptySection` on
+Spring Boot, `AnEmptySectionKeepsItsZenBpmKeysTest#theKeysBelowEveryEmptySectionArrive` on Quarkus).
+
+An environment variable is such a source too, with one difference between the platforms. A variable
+is written in capitals, so it cannot say how an id is spelt:
+
+- On Spring Boot the section written as `{}` gives the id its spelling. Below
+  `vanillabp.workflow-modules.shop.workflows.Order: {}` a variable reaches the workflow `Order`
+  (`AnEmptySectionKeepsItsZenBpmKeysTest#environmentVariablesReachTheKeysBelowEveryEmptySection`).
+- On Quarkus a section written as `{}` is no property at all, so a variable reaches the keys below
+  it only where every id on its way is written in lower case, as `shop` and `orders` are. Below
+  `Order: {}` it sets the key of a workflow `order`, which nothing reads
+  (`AnEmptySectionKeepsItsZenBpmKeysTest#environmentVariablesReachTheKeysBelowSectionsWithIdsInLowerCase`).
+  Set such a key in a source which keeps the spelling, as the first test above does.
+
 ### Several adapter ids
 
 An application may configure several adapter ids of the type `zenbpm`, for example one per engine,

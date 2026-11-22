@@ -31,9 +31,10 @@ bin/check-deploy-safety.sh    # after touching deploying, module order or the co
 
 ## Licence headers
 
-The repository is MIT-licensed, and code copied from the Apache-2.0 VanillaBP adapters keeps its
-licence (decision 17 in the repository's DECISIONS.md). So every Java file starts with one of two
-headers, chosen when the file is created and never changed afterwards. A file written here:
+The repository is MIT-licensed, and code copied from an Apache-2.0 repository of the VanillaBP
+project keeps its licence (decision 17 in the repository's DECISIONS.md). So every Java file starts
+with one of two headers, chosen when the file is created and never changed afterwards. A file
+written here:
 
 ```java
 /*
@@ -42,9 +43,9 @@ headers, chosen when the file is created and never changed afterwards. A file wr
  */
 ```
 
-A file copied and adapted from one of the VanillaBP adapters names the repository it actually came
-from, so the second line reads either `from vanillabp/camunda8-adapter` or
-`from vanillabp/process-engine-api-adapter`:
+A file copied and adapted from a repository of the VanillaBP project names the repository it
+actually came from, so the second line reads `from vanillabp/camunda8-adapter`,
+`from vanillabp/process-engine-api-adapter` or `from vanillabp/adapter-platform-integration`:
 
 ```java
 /*

@@ -3,11 +3,12 @@ Copyright (c) 2026 Process Builders Initiative
 
 This repository is licensed under the MIT License, see LICENSE.
 
-Parts of it are copied and adapted from two repositories of the VanillaBP project,
-both licensed under the Apache License, Version 2.0:
+Parts of it are copied and adapted from three repositories of the VanillaBP project,
+all licensed under the Apache License, Version 2.0:
 
-  - vanillabp/camunda8-adapter          https://github.com/vanillabp/camunda8-adapter
-  - vanillabp/process-engine-api-adapter https://github.com/vanillabp/process-engine-api-adapter
+  - vanillabp/camunda8-adapter             https://github.com/vanillabp/camunda8-adapter
+  - vanillabp/process-engine-api-adapter   https://github.com/vanillabp/process-engine-api-adapter
+  - vanillabp/adapter-platform-integration https://github.com/vanillabp/adapter-platform-integration
 
 The software components provided as part of "VanillaBP" were developed by Phactum
 Softwareentwicklung GmbH (https://www.phactum.at/).
